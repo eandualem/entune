@@ -112,7 +112,10 @@ def test_unknown_routes(client: TestClient) -> None:
         == 404
     )
     assert client.get("/api/recordings/999/audio").status_code == 404
-    assert client.get("/").status_code == 200 and "<title>Dictum</title>" in client.get("/").text
+    page = client.get("/")
+    assert page.status_code == 200 and "<title>Dictum</title>" in page.text
+    assert page.headers["cache-control"] == "no-cache"
+    assert client.get("/static/app.js").headers["cache-control"] == "no-cache"
 
 
 def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None:

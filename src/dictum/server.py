@@ -9,6 +9,8 @@ from typing import Any
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
@@ -19,6 +21,16 @@ from dictum.service import Dictum, NoDefaultModel, UnknownModel
 from dictum.store import Recording
 
 WEB_DIR = Path(__file__).parent / "web"
+
+
+class NoCache(BaseHTTPMiddleware):
+    """The page and its script change with every release; browsers must revalidate them."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        response = await call_next(request)
+        if request.method == "GET" and not request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def _bad(message: str, status: int = 400) -> Response:
@@ -167,6 +179,7 @@ def create_app(app: Dictum) -> Starlette:
         )
 
     return Starlette(
+        middleware=[Middleware(NoCache)],
         routes=[
             Route("/", index),
             Route("/api/settings", get_settings, methods=["GET"]),
@@ -183,5 +196,5 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/recordings/{id:int}/transcriptions", retry, methods=["POST"]),
             Route("/api/recordings/{id:int}/audio", audio),
             Mount("/static", StaticFiles(directory=WEB_DIR), name="static"),
-        ]
+        ],
     )
