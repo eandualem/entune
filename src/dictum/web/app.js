@@ -12,6 +12,89 @@ const defaultSelect = el("default-model");
 const settingsStatus = el("settings-status");
 const shortcutHold = el("shortcut-hold");
 const shortcutToggle = el("shortcut-toggle");
+const shortcutStatus = el("shortcut-status");
+
+// Recording a shortcut: the menu-bar app's global listener captures the keys
+// (it is the only thing that can see fn), the page polls for the result and
+// saves it. Without the app, the page captures what the browser lets it see.
+async function saveShortcuts() {
+  const body = { keys: {}, shortcuts: { hold: shortcutHold.value.trim(), toggle: shortcutToggle.value.trim() } };
+  try {
+    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    shortcutStatus.textContent = "Saved.";
+  } catch (err) {
+    shortcutStatus.textContent = String(err.message ?? err);
+  }
+}
+
+async function captureShortcut(input, button) {
+  const previous = input.value;
+  input.value = "";
+  input.placeholder = "Press keys…";
+  button.disabled = true;
+  shortcutStatus.textContent = "";
+  try {
+    const res = await fetch("/api/capture", { method: "POST" });
+    if (res.status === 409) {
+      input.value = await captureInPage(input);
+    } else if (!res.ok) {
+      throw new Error(await res.text());
+    } else {
+      const deadline = Date.now() + 15000;
+      let keys = null;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 120));
+        const status = await api("/api/capture");
+        if (status.state === "done") { keys = status.keys; break; }
+        if (status.state === "idle") break;
+      }
+      if (keys === null) {
+        await fetch("/api/capture", { method: "DELETE" });
+        throw new Error("Nothing pressed.");
+      }
+      input.value = keys;
+    }
+    await saveShortcuts();
+  } catch (err) {
+    input.value = previous;
+    shortcutStatus.textContent = String(err.message ?? err);
+  } finally {
+    input.placeholder = "not set";
+    button.disabled = false;
+  }
+}
+
+// Browser-only capture (no menu-bar app): keys the page can see, in press order.
+function captureInPage(input) {
+  return new Promise((resolve, reject) => {
+    const names = { Meta: "cmd", Control: "ctrl", Alt: "alt", Shift: "shift", " ": "space", Enter: "enter", Escape: "esc", Tab: "tab", Backspace: "backspace", ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
+    const keys = [];
+    const down = new Set();
+    const onDown = (e) => {
+      e.preventDefault();
+      const name = names[e.key] ?? (e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase());
+      if (!keys.includes(name)) keys.push(name);
+      down.add(name);
+    };
+    const onUp = (e) => {
+      const name = names[e.key] ?? e.key.toLowerCase();
+      down.delete(name);
+      if (keys.length && down.size === 0) { cleanup(); resolve(keys.join("+")); }
+    };
+    const cleanup = () => { window.removeEventListener("keydown", onDown, true); window.removeEventListener("keyup", onUp, true); };
+    window.addEventListener("keydown", onDown, true);
+    window.addEventListener("keyup", onUp, true);
+    setTimeout(() => { if (down.size === 0 && keys.length === 0) { cleanup(); reject(new Error("Nothing pressed.")); } }, 15000);
+    input.focus();
+  });
+}
+
+for (const button of settingsForm.querySelectorAll("button.capture")) {
+  button.addEventListener("click", () => captureShortcut(el(button.dataset.target), button));
+}
+for (const button of settingsForm.querySelectorAll("button.clear")) {
+  button.addEventListener("click", async () => { el(button.dataset.target).value = ""; await saveShortcuts(); });
+}
 const settingsPanel = el("settings");
 const themeSelect = el("theme");
 

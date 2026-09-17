@@ -73,6 +73,18 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc))
         return JSONResponse({"ok": True})
 
+    async def start_capture(_: Request) -> Response:
+        if not app.can_capture():
+            return _bad("Recording a shortcut needs the menu-bar app; type the keys instead.", 409)
+        return JSONResponse(asdict(app.start_capture()), status_code=202)
+
+    async def capture_status(_: Request) -> Response:
+        return JSONResponse(asdict(app.capture_status()))
+
+    async def cancel_capture(_: Request) -> Response:
+        app.cancel_capture()
+        return JSONResponse({"ok": True})
+
     async def models(_: Request) -> Response:
         return JSONResponse([asdict(m) for m in app.available_models()])
 
@@ -127,6 +139,9 @@ def create_app(app: Dictum) -> Starlette:
             Route("/", index),
             Route("/api/settings", get_settings, methods=["GET"]),
             Route("/api/settings", put_settings, methods=["PUT"]),
+            Route("/api/capture", start_capture, methods=["POST"]),
+            Route("/api/capture", capture_status, methods=["GET"]),
+            Route("/api/capture", cancel_capture, methods=["DELETE"]),
             Route("/api/models", models),
             Route("/api/recordings", list_recordings, methods=["GET"]),
             Route("/api/recordings", create_recording, methods=["POST"]),

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 NAMED_KEYS = frozenset(
     {
-        "alt", "alt_r", "cmd", "cmd_r", "ctrl", "ctrl_r", "shift", "shift_r",
+        "fn", "alt", "alt_r", "cmd", "cmd_r", "ctrl", "ctrl_r", "shift", "shift_r",
         "space", "tab", "enter", "esc", "backspace", "delete", "caps_lock",
         "up", "down", "left", "right", "home", "end", "page_up", "page_down",
         *(f"f{n}" for n in range(1, 21)),
@@ -55,12 +55,17 @@ def parse_keys(text: str) -> tuple[str, ...]:
         token = ALIASES.get(token, token)
         if not token:
             raise ValueError("Empty key name in shortcut")
-        if len(token) > 1 and token not in NAMED_KEYS:
+        if len(token) > 1 and token not in NAMED_KEYS and not _is_vk(token):
             raise ValueError(f"Unknown key: {raw.strip()!r}")
         if token in keys:
             raise ValueError(f"Key given twice: {token}")
         keys.append(token)
     return tuple(keys)
+
+
+def _is_vk(token: str) -> bool:
+    """`vk123`: a key with no name, identified by its virtual key code."""
+    return token.startswith("vk") and token[2:].isdigit()
 
 
 def format_keys(keys: tuple[str, ...]) -> str:
