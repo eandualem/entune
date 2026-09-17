@@ -178,3 +178,32 @@ def test_assemblyai_short_wav_stays_on_the_sync_endpoint() -> None:
     assert AssemblyAI(client).transcribe(short_clip, "universal-3-5-pro", "k") == Transcript(
         "short"
     )
+
+
+def test_terms_are_passed_in_each_providers_own_shape(clip: Clip) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        path = request.url.path
+        if request.method == "DELETE":
+            return httpx.Response(204)
+        if path == "/v1/files":
+            return httpx.Response(201, json={"id": "f1"})
+        if path == "/v1/transcriptions":
+            return httpx.Response(201, json={"id": "t1", "status": "completed"})
+        if path == "/v1/transcriptions/t1":
+            return httpx.Response(200, json={"id": "t1", "status": "completed"})
+        return httpx.Response(200, json={"text": "ok"})
+
+    terms = ("Dictum", "Wispr Flow")
+    AssemblyAI(mock_client(handler)).transcribe(clip, "universal-3-5-pro", "k", terms)
+    assert (
+        b'name="config"' in seen[-1].content
+        and b'"keyterms_prompt": ["Dictum", "Wispr Flow"]' in seen[-1].content
+    )
+    Groq(mock_client(handler)).transcribe(clip, "whisper-large-v3-turbo", "k", terms)
+    assert b'name="prompt"\r\n\r\nDictum, Wispr Flow' in seen[-1].content
+    Soniox(mock_client(handler)).transcribe(clip, "stt-async-v5", "k", terms)
+    create = next(r for r in seen if r.url.path == "/v1/transcriptions" and r.method == "POST")
+    assert json.loads(create.content)["context"] == {"terms": ["Dictum", "Wispr Flow"]}
