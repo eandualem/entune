@@ -213,6 +213,9 @@ legend { padding: 0 0.35rem; color: var(--text); font-weight: 600; font-size: 0.
 #settings-form fieldset label.choice { display: flex; align-items: center; gap: 0.5rem; color: var(--text); font-size: 0.95rem; }
 fieldset label.choice input { margin: 0; }
 fieldset small { color: var(--muted); }
+.shortcut-row { gap: 0.5rem; }
+.shortcut-row input { flex: 0 1 12rem; }
+.shortcut-row input[readonly] { background: var(--surface-2); cursor: default; }
 
 /* History */
 

@@ -8,6 +8,8 @@ def test_parse_hold_and_toggle_together() -> None:
     assert both == shortcuts.Shortcuts(hold=("alt_r",), toggle=("cmd", "shift", "space"))
     assert both.describe() == "hold alt_r or press cmd+shift+space"
     assert shortcuts.parse("option_r", "").hold == ("alt_r",)
+    assert shortcuts.parse("fn", "cmd+fn").describe() == "hold fn or press cmd+fn"
+    assert shortcuts.parse("vk179", None).hold == ("vk179",)
     assert shortcuts.parse("option_r", "").toggle is None
     assert not shortcuts.parse(None, None)
     assert shortcuts.parse(None, None).describe() == "no shortcut"

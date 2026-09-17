@@ -181,7 +181,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
-    { name = "pynput", marker = "sys_platform == 'darwin'", specifier = ">=1.7" },
+    { name = "pynput", marker = "sys_platform == 'darwin'", specifier = ">=1.7,<2" },
     { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'", specifier = ">=12" },
     { name = "python-multipart", specifier = ">=0.0.12" },
     { name = "rumps", marker = "sys_platform == 'darwin'", specifier = ">=0.4" },
