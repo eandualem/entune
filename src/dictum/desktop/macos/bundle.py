@@ -1,10 +1,16 @@
-"""A Dictum.app that runs this very installation: Dictum's name and icon in the menu bar,
-the Dock and the permission prompts, without PyInstaller.
+"""A Dictum.app that runs this very installation: Dictum's name and icon in the menu bar
+and the Dock, without PyInstaller.
 
-macOS names a process, attaches its permissions and picks its Dock icon from the
-application bundle it was launched from. A plain `dictum` process has none, so it shows
-as "python3". `dictum install-app` writes a bundle whose executable is a two-line
-script running the current Python with the same arguments; nothing is copied.
+macOS names a process and picks its Dock icon from the application bundle it was
+launched from. A plain `dictum` process has none, so it shows as "python3".
+`dictum install-app` writes a bundle whose executable is a two-line script running the
+current Python with the same arguments; nothing is copied.
+
+Known limit: macOS's permission panels were not willing to list the first version of
+this bundle (a script executable, unsigned). It is now signed ad hoc, which may be
+enough; the standalone bundle from `packaging/build_app.py`, a real Mach-O executable,
+is the sure route for the three permissions. `dictum install-app --from DIST_APP`
+copies that one instead.
 """
 
 from __future__ import annotations
@@ -22,12 +28,19 @@ ASSETS = Path(__file__).resolve().parents[2] / "assets"
 ICON_SIZES = (16, 32, 64, 128, 256, 512)
 
 
-def install_app(directory: Path) -> Path:
-    """Write `<directory>/Dictum.app` and return its path. Replaces an existing one."""
+def install_app(directory: Path, source: Path | None = None) -> Path:
+    """Write `<directory>/Dictum.app` and return its path. Replaces an existing one.
+
+    With `source`, copy that already-built bundle (the PyInstaller one) instead of
+    writing the script bundle.
+    """
     app = directory / "Dictum.app"
-    contents = app / "Contents"
     if app.exists():
         shutil.rmtree(app)
+    if source is not None:
+        shutil.copytree(source, app, symlinks=True)
+        return app
+    contents = app / "Contents"
     (contents / "MacOS").mkdir(parents=True)
     (contents / "Resources").mkdir()
 
@@ -57,6 +70,11 @@ def install_app(directory: Path) -> Path:
         info["CFBundleIconFile"] = icon_file
     with (contents / "Info.plist").open("wb") as f:
         plistlib.dump(info, f)
+    # An ad-hoc signature gives the bundle a code identity; without one, System Settings
+    # would not list it under Input Monitoring or Accessibility when Elias tried.
+    subprocess.run(
+        ["codesign", "--force", "--sign", "-", str(app)], check=False, capture_output=True
+    )
     return app
 
 

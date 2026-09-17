@@ -59,13 +59,20 @@ def port_is_free(port: int) -> bool:
     return True
 
 
-def install_app(directory: Path) -> None:
+def install_app(directory: Path, source: Path | None) -> None:
     if sys.platform != "darwin":
         sys.exit("install-app writes a macOS application bundle; nothing to do here.")
     from dictum.desktop.macos.bundle import install_app as write_bundle
 
-    app = write_bundle(directory)
-    print(f"Installed {app}. Open it from there; it runs this same Dictum.", flush=True)
+    app = write_bundle(directory, source)
+    what = "a copy of the standalone bundle" if source else "a launcher for this same Dictum"
+    print(f"Installed {app}: {what}. Open it from there.", flush=True)
+    if source is None:
+        print(
+            "If System Settings will not list Dictum under Input Monitoring or Accessibility,"
+            " build the standalone bundle and install that: see docs/packaging.md.",
+            flush=True,
+        )
 
 
 def _show_running_window(port: int) -> bool:
@@ -104,7 +111,15 @@ def main(argv: list[str] | None = None) -> None:
             default=Path.home() / "Applications",
             help="where to write Dictum.app (default: ~/Applications)",
         )
-        install_app(sub.parse_args(argv[1:]).into)
+        sub.add_argument(
+            "--from",
+            dest="source",
+            type=Path,
+            default=None,
+            help="copy an already-built Dictum.app (the PyInstaller one) instead",
+        )
+        opts = sub.parse_args(argv[1:])
+        install_app(opts.into, opts.source)
         return
     args = build_parser().parse_args(argv)
     data_dir = args.data or default_data_dir()
