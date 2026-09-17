@@ -1,6 +1,7 @@
 # Packaging Dictum.app
 
-Two ways. The first is what most people want.
+Two ways. The standalone bundle is the sure one; the launcher bundle is
+lighter but macOS's permission panels may refuse to list it.
 
 ## `dictum install-app`
 
@@ -10,7 +11,10 @@ usage string and an icns built from the shipped PNG with `sips` and
 `iconutil`; and an executable that is a two-line shell script running the
 current Python with `-m dictum`. Nothing is copied, so the app follows the
 installation it was created from: upgrade `dictum` and the app is upgraded.
-macOS attaches the three permissions to this bundle.
+It is signed ad hoc. Observed on macOS 26: the unsigned first version was
+not accepted by the Input Monitoring and Accessibility panels; if that
+happens, use the standalone bundle below and `dictum install-app --from
+dist/Dictum.app` to put it in place.
 
 ## A standalone bundle with PyInstaller
 
