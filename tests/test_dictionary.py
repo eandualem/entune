@@ -78,3 +78,25 @@ def test_propose_respects_pinned_and_diffs_against_learned() -> None:
     assert p.added == Entries(("AssemblyAI",), {})
     assert p.removed == Entries(("Old Term",), {})
     assert p.as_json()["added"] == {"terms": ["AssemblyAI"], "replacements": {}}
+
+
+def test_agents_section_is_confirmed_and_ranks_between_pinned_and_learned() -> None:
+    d = Dictionary(
+        pinned=Entries(replacements={"a": "pinned"}),
+        agents=Entries(("Soniox",), {"a": "agents", "b": "agents"}),
+        learned=Entries(("Groq",), {"b": "learned", "c": "learned"}),
+    )
+    assert d.effective.replacements == {"a": "pinned", "b": "agents", "c": "learned"}
+    assert d.effective.terms == ("Soniox", "Groq")
+    assert d.confirmed.replacements == {"a": "pinned", "b": "agents"}
+    updated, added = d.with_agent_corrections(
+        Entries(("soniox", "Dictum"), {"a": "x", "d": "agents"})
+    )
+    assert added == Entries(("Dictum",), {"a": "x", "d": "agents"})
+    assert updated.agents.terms == ("Soniox", "Dictum")
+    assert updated.agents.replacements == {"a": "x", "b": "agents", "d": "agents"}
+    assert updated.effective.replacements["a"] == "pinned"  # pinned still wins when applied
+    p = dictionary.propose(updated, Entries(("Dictum", "New"), {"d": "learned again"}))
+    assert p.learned == Entries(("New",), {})  # confirmed entries are not re-learned
+    text = dictionary.dumps(updated)
+    assert dictionary.parse(text) == updated

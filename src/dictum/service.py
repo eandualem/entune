@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from dictum import dictionary as dictionary_file
 from dictum import llm, shortcuts
 from dictum.audio import sniff_mime
-from dictum.dictionary import Dictionary, Proposal
+from dictum.dictionary import Dictionary, Entries, Proposal
 from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, model_id, resolve_model
 from dictum.shortcuts import Shortcuts
 from dictum.store import Recording, Store
@@ -183,6 +183,25 @@ class Dictum:
         dictionary_file.save(self.store.data_dir, parsed)
         self._changed()
         return parsed
+
+    def add_agent_corrections(self, data: object) -> Entries:
+        """Merge corrections an agent sent (after confirming with the user) into the agents section.
+
+        `data` is the request body: terms and replacements, plus an optional `source`.
+        Returns what was actually new. Raises ValueError with the reason on bad input.
+        """
+        if not isinstance(data, dict):
+            raise ValueError("Send a JSON object with terms and/or replacements")
+        body = {k: v for k, v in data.items() if k in ("terms", "replacements")}
+        corrections = dictionary_file.parse_entries(body, "corrections")
+        if not corrections:
+            raise ValueError("Nothing to add: give terms and/or replacements")
+        current = self.dictionary()
+        updated, added = current.with_agent_corrections(corrections)
+        if added:
+            dictionary_file.save(self.store.data_dir, updated)
+            self._changed()
+        return added
 
     def build_dictionary(self) -> Proposal:
         """Ask the configured language model for a new learned section. Nothing is saved.

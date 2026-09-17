@@ -62,8 +62,9 @@ speech provider returned them, plus the current dictionary. Produce the `learned
   common English word to something else unless the transcripts make the mistake unmistakable.
   Prefer multi-word phrases; keep the list short.
 
-The "pinned" section is the user's own, already approved. Do not alter, remove or
-contradict it; do not repeat its entries. Build on top of it.
+The "pinned" section is the user's own, already approved, and the "agents" section holds
+corrections the user confirmed through their assistants. Do not alter, remove or
+contradict either; do not repeat their entries. Build on top of them.
 The previous "learned" section is included; keep what still holds, drop what does not.
 
 Reply with one JSON object only, no prose, no code fence:
@@ -84,6 +85,8 @@ def build_user_prompt(current: Dictionary, transcripts: Sequence[str]) -> str:
     return (
         "Pinned by the user (approved, do not change):\n"
         f"{json.dumps(current.pinned.as_json(), ensure_ascii=False)}\n\n"
+        "Confirmed through the user's agents (approved, do not change):\n"
+        f"{json.dumps(current.agents.as_json(), ensure_ascii=False)}\n\n"
         "Previously learned (revise):\n"
         f"{json.dumps(current.learned.as_json(), ensure_ascii=False)}\n\n"
         f"Recent raw transcripts, newest first ({len(kept)}):\n" + "\n".join(f"- {t}" for t in kept)

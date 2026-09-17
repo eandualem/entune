@@ -175,7 +175,11 @@ def test_dictionary_round_trip_terms_reach_the_provider_and_replacements_apply(
     client: TestClient, stub: StubProvider
 ) -> None:
     empty: dict[str, object] = {"terms": [], "replacements": {}}
-    assert client.get("/api/dictionary").json() == {"pinned": empty, "learned": empty}
+    assert client.get("/api/dictionary").json() == {
+        "pinned": empty,
+        "agents": empty,
+        "learned": empty,
+    }
     bad = client.put("/api/dictionary", content='{"pinned": {"terms": "x"}}')
     assert bad.status_code == 400 and "pinned.terms must be a list" in bad.text
     saved = client.put(
@@ -255,3 +259,36 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     assert proposal["added"]["terms"] == ["Soniox"]
     # Nothing is saved until the page accepts.
     assert client.get("/api/dictionary").json()["learned"] == {"terms": [], "replacements": {}}
+
+
+def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvider) -> None:
+    assert client.post("/api/dictionary/corrections", content="nope").status_code == 400
+    assert client.post("/api/dictionary/corrections", json={"source": "x"}).status_code == 400
+    bad = client.post("/api/dictionary/corrections", json={"replacements": {"a": 1}})
+    assert bad.status_code == 400 and "corrections.replacements" in bad.text
+
+    client.put(
+        "/api/dictionary", content='{"pinned": {"replacements": {"cloud code": "Claude Code"}}}'
+    )
+    res = client.post(
+        "/api/dictionary/corrections",
+        json={
+            "replacements": {"whisper flow": "Wispr Flow", "cloud code": "Claude Code"},
+            "terms": ["Soniox"],
+            "source": "dictum-agent",
+        },
+    )
+    assert res.status_code == 200
+    # What the user already pinned is not added again; the rest lands in the agents section.
+    assert res.json() == {
+        "added": {"terms": ["Soniox"], "replacements": {"whisper flow": "Wispr Flow"}}
+    }
+    stored = client.get("/api/dictionary").json()
+    assert stored["agents"] == {"terms": ["Soniox"], "replacements": {"whisper flow": "Wispr Flow"}}
+    assert stored["pinned"]["replacements"] == {"cloud code": "Claude Code"}
+    again = client.post("/api/dictionary/corrections", json={"terms": ["soniox"]})
+    assert again.json() == {"added": {"terms": [], "replacements": {}}}
+
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
+    assert stub.terms == ("Soniox",)
