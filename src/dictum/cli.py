@@ -59,6 +59,18 @@ def port_is_free(port: int) -> bool:
     return True
 
 
+def applications_folder() -> Path:
+    """Where people look for apps: /Applications when this user may write there.
+
+    ~/Applications is legitimate but Finder's sidebar does not show it, so an app
+    installed there seems to be missing; Elias hit exactly that.
+    """
+    system = Path("/Applications")
+    if os.access(system, os.W_OK):
+        return system
+    return Path.home() / "Applications"
+
+
 def install_app(directory: Path, source: Path | None) -> None:
     if sys.platform != "darwin":
         sys.exit("install-app writes a macOS application bundle; nothing to do here.")
@@ -108,8 +120,8 @@ def main(argv: list[str] | None = None) -> None:
         sub.add_argument(
             "--into",
             type=Path,
-            default=Path.home() / "Applications",
-            help="where to write Dictum.app (default: ~/Applications)",
+            default=None,
+            help="where to write Dictum.app (default: /Applications, else ~/Applications)",
         )
         sub.add_argument(
             "--from",
@@ -119,7 +131,7 @@ def main(argv: list[str] | None = None) -> None:
             help="copy an already-built Dictum.app (the PyInstaller one) instead",
         )
         opts = sub.parse_args(argv[1:])
-        install_app(opts.into, opts.source)
+        install_app(opts.into or applications_folder(), opts.source)
         return
     args = build_parser().parse_args(argv)
     data_dir = args.data or default_data_dir()
