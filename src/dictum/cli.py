@@ -37,7 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"dictum {__version__}")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", DEFAULT_PORT)))
     parser.add_argument("--data", type=Path, default=None, help="data directory")
-    parser.add_argument("--no-open", action="store_true", help="do not open the browser")
+    parser.add_argument(
+        "--no-open", action="store_true", help="do not open the window (or browser) at start"
+    )
     parser.add_argument(
         "--no-menu", action="store_true", help="web page only, no menu-bar app (macOS)"
     )
@@ -80,12 +82,11 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     # Menu-bar mode: the web server runs in a thread, the app owns the main thread.
+    # Dictum's own window opens on launch unless --no-open; first run lands on Settings.
     threading.Thread(target=server.run, daemon=True).start()
-    if not args.no_open and dictum.shortcut() is None:
-        threading.Timer(0.5, webbrowser.open, args=(f"{url}#settings",)).start()
     from dictum.desktop.app import DictumApp
 
-    DictumApp(dictum, url).run()
+    DictumApp(dictum, url, show_window=not args.no_open).run()
     server.should_exit = True
 
 

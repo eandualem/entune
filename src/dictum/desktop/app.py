@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import queue
+import socket
 import threading
 import time
-import webbrowser
 from collections.abc import Callable
 from typing import Any
 
 import rumps
+from PyObjCTools import AppHelper
 
 from dictum.desktop import actions, permissions
 from dictum.desktop.engine import ShortcutEngine
 from dictum.desktop.hotkeys import HotkeyListener
+from dictum.desktop.window import AppWindow
 from dictum.recorder import Capture, Recorder
 from dictum.service import Dictum, NoDefaultModel, UnknownModel
 
@@ -21,13 +23,15 @@ IDLE, RECORDING, BUSY = "🎙", "🔴", "⏳"
 MIN_CLIP_SECONDS = 0.25  # a tap on the hold key is not a dictation
 KEYS_UP_WAIT_SECONDS = 1.0  # let chord keys come up before pasting so Cmd+V is just Cmd+V
 PERMISSION_POLL_SECONDS = 5.0  # permissions are granted in System Settings; notice when they are
+SERVER_WAIT_SECONDS = 10.0  # the page is served from a thread that may still be starting
 
 
 class DictumApp(rumps.App):  # type: ignore[misc]
-    def __init__(self, dictum: Dictum, url: str) -> None:
+    def __init__(self, dictum: Dictum, url: str, show_window: bool = False) -> None:
         super().__init__("Dictum", title=IDLE, quit_button=None)
         self.dictum = dictum
         self.url = url
+        self.window = AppWindow(url)
         self.recorder = Recorder()
         self.listener = HotkeyListener()
         self.engine: ShortcutEngine | None = None
@@ -37,7 +41,7 @@ class DictumApp(rumps.App):  # type: ignore[misc]
         self.status_item.set_callback(None)
         self.menu = [
             self.status_item,
-            rumps.MenuItem("Open history", callback=self.open_history),
+            rumps.MenuItem("Open Dictum", callback=self.open_window),
             rumps.MenuItem("Settings…", callback=self.open_settings),
             None,
             rumps.MenuItem("Quit Dictum", callback=self.quit),
@@ -50,14 +54,33 @@ class DictumApp(rumps.App):  # type: ignore[misc]
 
         dictum.on_change(lambda: self._later(self.apply_shortcut))
         self.apply_shortcut()
+        if show_window:
+            # Not a rumps.Timer: started before the run loop, those fire at once, not after
+            # their interval. callLater runs on the loop after the given delay.
+            AppHelper.callLater(0.1, self._show_window_when_served, time.monotonic())
 
     # Menu
 
-    def open_history(self, _: Any = None) -> None:
-        webbrowser.open(self.url)
+    def open_window(self, _: Any = None) -> None:
+        self.window.show()
 
     def open_settings(self, _: Any = None) -> None:
-        webbrowser.open(f"{self.url}#settings")
+        self.window.show("#settings")
+
+    def _show_window_when_served(self, started: float) -> None:
+        """Open the window once the local server answers, so it never shows a connection error."""
+        if not self._server_answers() and time.monotonic() - started < SERVER_WAIT_SECONDS:
+            AppHelper.callLater(0.2, self._show_window_when_served, started)
+            return
+        self.window.show("#settings" if self.dictum.shortcut() is None else "")
+
+    def _server_answers(self) -> bool:
+        host, _, port = self.url.removeprefix("http://").rstrip("/").partition(":")
+        try:
+            with socket.create_connection((host, int(port)), timeout=0.2):
+                return True
+        except OSError:
+            return False
 
     def quit(self, _: Any = None) -> None:
         self.listener.stop()
