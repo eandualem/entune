@@ -101,15 +101,28 @@ def sign(app: Path) -> str:
     """Sign the bundle with the stable identity when there is one, ad hoc otherwise.
 
     Without any signature, System Settings would not list the bundle under Input
-    Monitoring or Accessibility when Elias tried. Returns the identity used.
+    Monitoring or Accessibility when Elias tried. Returns the identity used; when
+    signing with the certificate fails (typically macOS refusing the private key to a
+    process that cannot show its "allow" prompt) the bundle is signed ad hoc instead
+    and the error is printed, so a half-signed bundle is never left behind.
     """
-    identity = signing_identity() or "-"
-    subprocess.run(
+    identity = signing_identity()
+    if identity is not None:
+        done = _codesign(app, identity)
+        if done.returncode == 0:
+            return identity
+        print(f"Could not sign with {identity}: {done.stderr.strip()}", file=sys.stderr)
+    _codesign(app, "-")
+    return "-"
+
+
+def _codesign(app: Path, identity: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         ["codesign", "--force", "--deep", "--sign", identity, str(app)],
         check=False,
         capture_output=True,
+        text=True,
     )
-    return identity
 
 
 def _write_icns(resources: Path) -> str | None:

@@ -24,12 +24,34 @@ enough for the permission panels but ties the grants to the exact binary:
 after every rebuild macOS forgets Microphone, Input Monitoring and
 Accessibility and asks again (seen 2026-09-18, issue #51).
 
-To keep them across rebuilds, create a certificate once: Keychain Access ›
-Certificate Assistant › Create a Certificate…, name **Dictum Developer**,
-identity type self-signed root, certificate type **Code Signing**. When
-that certificate exists, `install-app` signs with it instead, every build
-has the same identity, and the grants stay. Nothing else changes; this is
-not Developer ID and does not help other Macs.
+To keep them across rebuilds, create a certificate once. Three steps in
+Keychain Access, as it took on macOS 26 (2026-09-18):
+
+1. Certificate Assistant › Create a Certificate…: name **Dictum Developer**
+   exactly, identity type Self Signed Root, certificate type **Code
+   Signing** (the popup defaults to S/MIME; that one cannot sign code).
+2. My Certificates › double-click it › Trust › Code Signing: **Always
+   Trust**. Without this `security find-identity -v -p codesigning` lists
+   no valid identity.
+3. Keys › the private key "Dictum Developer" › double-click › Access
+   Control › **Allow all applications to access this item** › Save.
+   Without this `codesign` fails with `errSecInternalComponent`, and its
+   password dialog rejects the correct password.
+
+When that certificate exists, `install-app` signs with it instead, every
+build has the same identity (`codesign -d -r- Dictum.app` shows
+`certificate leaf = H"…"` rather than `cdhash`), and the grants stay.
+Nothing else changes; this is not Developer ID and does not help other
+Macs.
+
+Two things the assistant did not do on this machine (macOS 26) and that
+`install-app` reports when they bite: the certificate was not trusted for
+code signing (open it in Keychain Access, expand Trust, set Code Signing to
+Always Trust), and the first `codesign` with it must run from a terminal
+you are looking at, so macOS can ask whether codesign may use the key;
+choose Always Allow. `install-app` falls back to ad hoc and prints the
+error when signing with the certificate fails, rather than leave a
+half-signed bundle.
 
 ## A standalone bundle with PyInstaller
 
