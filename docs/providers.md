@@ -6,8 +6,8 @@ in `providers/__init__.py`.
 
 ```python
 class Provider(Protocol):
-    id: str                  # "assemblyai": used in settings keys and model ids
-    name: str                # "AssemblyAI": shown in the UI
+    id: str  # "assemblyai": used in settings keys and model ids
+    name: str  # "AssemblyAI": shown in the UI
     models: tuple[str, ...]  # the model ids offered for this provider
 
     def transcribe(
