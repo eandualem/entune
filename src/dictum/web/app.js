@@ -10,6 +10,8 @@ const settingsForm = el("settings-form");
 const keysDiv = el("keys");
 const defaultSelect = el("default-model");
 const settingsStatus = el("settings-status");
+const shortcutKeys = el("shortcut-keys");
+const shortcutMode = () => settingsForm.querySelector("input[name=shortcut-mode]:checked").value;
 
 let models = [];
 
@@ -56,6 +58,10 @@ async function loadSettings() {
       return label;
     }),
   );
+  if (s.shortcut) {
+    settingsForm.querySelector(`input[name=shortcut-mode][value=${s.shortcut.mode}]`).checked = true;
+    shortcutKeys.value = s.shortcut.keys;
+  }
   await loadModels();
 }
 
@@ -67,6 +73,7 @@ settingsForm.addEventListener("submit", async (e) => {
   }
   const body = { keys };
   if (!defaultSelect.disabled) body.defaultModel = defaultSelect.value || null;
+  if (shortcutKeys.value.trim()) body.shortcut = { mode: shortcutMode(), keys: shortcutKeys.value.trim() };
   settingsStatus.textContent = "Saving…";
   try {
     await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -234,5 +241,5 @@ async function loadHistory() {
 }
 
 await loadSettings();
-if (models.length === 0) el("settings").open = true;
+if (models.length === 0 || location.hash === "#settings") el("settings").open = true;
 await loadHistory();

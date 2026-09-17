@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
+from dictum import shortcuts
 from dictum.audio import sniff_mime
 from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, model_id, resolve_model
+from dictum.shortcuts import Shortcut
 from dictum.store import Recording, Store
 
 DEFAULT_MODEL_KEY = "default_model"
+SHORTCUT_MODE_KEY = "shortcut_mode"
+SHORTCUT_KEYS_KEY = "shortcut_keys"
 
 
 def key_setting(provider_id: str) -> str:
@@ -48,6 +53,15 @@ class Dictum:
     def __init__(self, store: Store, providers: list[Provider]) -> None:
         self.store = store
         self.providers = providers
+        self._listeners: list[Callable[[], None]] = []
+
+    def on_change(self, listener: Callable[[], None]) -> None:
+        """Called after any setting changes; the menu-bar app uses it to reload its shortcut."""
+        self._listeners.append(listener)
+
+    def _changed(self) -> None:
+        for listener in self._listeners:
+            listener()
 
     # Settings
 
@@ -66,6 +80,7 @@ class Dictum:
         if ref is not None and self.resolve(ref) is None:
             raise UnknownModel(ref)
         self.store.set_setting(DEFAULT_MODEL_KEY, ref)
+        self._changed()
 
     def set_key(self, provider_id: str, key: str) -> None:
         if not any(p.id == provider_id for p in self.providers):
@@ -73,6 +88,23 @@ class Dictum:
         if not key.strip():
             raise ValueError(f"Empty key for {provider_id}")
         self.store.set_setting(key_setting(provider_id), key.strip())
+        self._changed()
+
+    def shortcut(self) -> Shortcut | None:
+        """The configured shortcut, or None until the user sets one."""
+        mode = self.store.get_setting(SHORTCUT_MODE_KEY)
+        keys = self.store.get_setting(SHORTCUT_KEYS_KEY)
+        if mode is None or keys is None:
+            return None
+        return shortcuts.parse(mode, keys)
+
+    def set_shortcut(self, mode: str, keys: str) -> Shortcut:
+        """Validate and store a shortcut. Raises ValueError with the reason if it is not usable."""
+        shortcut = shortcuts.parse(mode, keys)
+        self.store.set_setting(SHORTCUT_MODE_KEY, shortcut.mode)
+        self.store.set_setting(SHORTCUT_KEYS_KEY, shortcuts.format_keys(shortcut.keys))
+        self._changed()
+        return shortcut
 
     # Models
 
