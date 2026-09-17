@@ -40,7 +40,11 @@ def catalog(provider: str) -> list[ModelChoice]:
     from assistant_runtime.model_catalog import MODEL_CATALOG
 
     default = LLM_PROVIDERS[provider][1]
-    choices = [ModelChoice(m.id, m.name) for m in MODEL_CATALOG if m.provider == provider]
+    choices = [
+        ModelChoice(m.id, m.name)
+        for m in MODEL_CATALOG
+        if m.provider == provider and "text" in m.capabilities  # not image or video models
+    ]
     return sorted(choices, key=lambda c: c.id != default)
 
 

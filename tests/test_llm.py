@@ -68,3 +68,4 @@ def test_catalog_lists_the_strongest_model_first() -> None:
     )
     assert llm.catalog("openai")[0].id == "openai:gpt-6-astra"
     assert all(c.id.startswith("openai:") for c in llm.catalog("openai"))
+    assert not any("image" in c.id for c in llm.catalog("openai"))
