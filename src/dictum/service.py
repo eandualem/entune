@@ -8,12 +8,15 @@ from dataclasses import dataclass
 from dictum import shortcuts
 from dictum.audio import sniff_mime
 from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, model_id, resolve_model
-from dictum.shortcuts import Shortcut
+from dictum.shortcuts import Shortcuts
 from dictum.store import Recording, Store
 
 DEFAULT_MODEL_KEY = "default_model"
-SHORTCUT_MODE_KEY = "shortcut_mode"
-SHORTCUT_KEYS_KEY = "shortcut_keys"
+SHORTCUT_HOLD_KEY = "shortcut_hold"
+SHORTCUT_TOGGLE_KEY = "shortcut_toggle"
+# Before two shortcuts could be active at once, one was stored as a mode plus keys.
+LEGACY_MODE_KEY = "shortcut_mode"
+LEGACY_KEYS_KEY = "shortcut_keys"
 
 
 def key_setting(provider_id: str) -> str:
@@ -90,21 +93,32 @@ class Dictum:
         self.store.set_setting(key_setting(provider_id), key.strip())
         self._changed()
 
-    def shortcut(self) -> Shortcut | None:
-        """The configured shortcut, or None until the user sets one."""
-        mode = self.store.get_setting(SHORTCUT_MODE_KEY)
-        keys = self.store.get_setting(SHORTCUT_KEYS_KEY)
-        if mode is None or keys is None:
-            return None
-        return shortcuts.parse(mode, keys)
+    def shortcuts(self) -> Shortcuts:
+        """The configured shortcuts; empty until the user sets one."""
+        hold = self.store.get_setting(SHORTCUT_HOLD_KEY)
+        toggle = self.store.get_setting(SHORTCUT_TOGGLE_KEY)
+        if hold is None and toggle is None:
+            mode = self.store.get_setting(LEGACY_MODE_KEY)
+            keys = self.store.get_setting(LEGACY_KEYS_KEY)
+            if mode == "hold":
+                hold = keys
+            elif mode == "toggle":
+                toggle = keys
+        return shortcuts.parse(hold, toggle)
 
-    def set_shortcut(self, mode: str, keys: str) -> Shortcut:
-        """Validate and store a shortcut. Raises ValueError with the reason if it is not usable."""
-        shortcut = shortcuts.parse(mode, keys)
-        self.store.set_setting(SHORTCUT_MODE_KEY, shortcut.mode)
-        self.store.set_setting(SHORTCUT_KEYS_KEY, shortcuts.format_keys(shortcut.keys))
+    def set_shortcuts(self, hold: str | None, toggle: str | None) -> Shortcuts:
+        """Validate and store both shortcuts; blank clears one. ValueError says what is wrong."""
+        parsed = shortcuts.parse(hold, toggle)
+        self.store.set_setting(
+            SHORTCUT_HOLD_KEY, shortcuts.format_keys(parsed.hold) if parsed.hold else None
+        )
+        self.store.set_setting(
+            SHORTCUT_TOGGLE_KEY, shortcuts.format_keys(parsed.toggle) if parsed.toggle else None
+        )
+        self.store.set_setting(LEGACY_MODE_KEY, None)
+        self.store.set_setting(LEGACY_KEYS_KEY, None)
         self._changed()
-        return shortcut
+        return parsed
 
     # Models
 

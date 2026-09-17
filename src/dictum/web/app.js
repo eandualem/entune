@@ -10,8 +10,8 @@ const settingsForm = el("settings-form");
 const keysDiv = el("keys");
 const defaultSelect = el("default-model");
 const settingsStatus = el("settings-status");
-const shortcutKeys = el("shortcut-keys");
-const shortcutMode = () => settingsForm.querySelector("input[name=shortcut-mode]:checked").value;
+const shortcutHold = el("shortcut-hold");
+const shortcutToggle = el("shortcut-toggle");
 const settingsPanel = el("settings");
 const themeSelect = el("theme");
 
@@ -77,10 +77,8 @@ async function loadSettings() {
       return label;
     }),
   );
-  if (s.shortcut) {
-    settingsForm.querySelector(`input[name=shortcut-mode][value=${s.shortcut.mode}]`).checked = true;
-    shortcutKeys.value = s.shortcut.keys;
-  }
+  shortcutHold.value = s.shortcuts.hold ?? "";
+  shortcutToggle.value = s.shortcuts.toggle ?? "";
   await loadModels();
 }
 
@@ -92,7 +90,7 @@ settingsForm.addEventListener("submit", async (e) => {
   }
   const body = { keys };
   if (!defaultSelect.disabled) body.defaultModel = defaultSelect.value || null;
-  if (shortcutKeys.value.trim()) body.shortcut = { mode: shortcutMode(), keys: shortcutKeys.value.trim() };
+  body.shortcuts = { hold: shortcutHold.value.trim(), toggle: shortcutToggle.value.trim() };
   settingsStatus.textContent = "Saving…";
   try {
     await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -148,10 +146,10 @@ async function upload(audio) {
   } catch (err) {
     status.textContent = err.message ?? String(err);
   }
-  await loadHistory();
+  await loadHistory(true);
 }
 
-async function retry(recording, modelId, card) {
+async function transcribeAgain(recording, modelId, card) {
   card.querySelector(".retry-status").textContent = "Transcribing…";
   try {
     await api(`/api/recordings/${recording.id}/transcriptions`, {
@@ -162,36 +160,56 @@ async function retry(recording, modelId, card) {
   } catch (err) {
     card.querySelector(".retry-status").textContent = err.message ?? String(err);
   }
-  await loadHistory();
+  await loadHistory(true);
 }
 
 function attemptLabel(t) {
   return `${t.provider} / ${t.model}`;
 }
 
+const COPY_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>`;
+const DOWNLOAD_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 2.5v8m0 0L4.8 7.3M8 10.5l3.2-3.2M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+async function copyText(text, feedback) {
+  try {
+    await navigator.clipboard.writeText(text);
+    feedback("Copied");
+  } catch (err) {
+    feedback(`Copy failed: ${err.message ?? err}`);
+  }
+}
+
 function renderAttempt(t) {
   const box = document.createElement("div");
   box.className = `attempt ${t.status}`;
   if (t.status === "ok") {
+    // The transcript is a copyable block: click it, or the icon in its corner.
+    const block = document.createElement("div");
+    block.className = t.text ? "transcript" : "transcript empty";
+    block.title = t.text ? "Click to copy" : "";
     const p = document.createElement("p");
-    p.className = t.text ? "text" : "text empty";
+    p.className = "text";
     p.textContent = t.text || "(no speech detected)";
-    const actions = document.createElement("div");
-    actions.className = "row actions";
     const copy = document.createElement("button");
     copy.type = "button";
-    copy.textContent = "Copy";
-    copy.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(t.text ?? "");
-        copy.textContent = "Copied";
-      } catch (err) {
-        copy.textContent = `Copy failed: ${err.message ?? err}`;
-      }
-      setTimeout(() => (copy.textContent = "Copy"), 2500);
-    });
-    actions.append(copy);
-    box.append(p, actions);
+    copy.className = "icon copy";
+    copy.title = "Copy transcript";
+    copy.setAttribute("aria-label", "Copy transcript");
+    copy.innerHTML = COPY_ICON;
+    const note = document.createElement("span");
+    note.className = "copy-note";
+    const feedback = (message) => {
+      note.textContent = message;
+      setTimeout(() => (note.textContent = ""), 1800);
+    };
+    if (t.text) {
+      copy.addEventListener("click", (e) => { e.stopPropagation(); copyText(t.text, feedback); });
+      block.addEventListener("click", () => copyText(t.text, feedback));
+    } else {
+      copy.disabled = true;
+    }
+    block.append(p, copy, note);
+    box.append(block);
   } else {
     const pre = document.createElement("pre");
     pre.className = "error";
@@ -211,11 +229,21 @@ function renderRecording(r) {
   const time = document.createElement("time");
   time.dateTime = r.created_at;
   time.textContent = new Date(r.created_at).toLocaleString();
+  const media = document.createElement("div");
+  media.className = "row media";
   const audio = document.createElement("audio");
   audio.controls = true;
   audio.preload = "none";
   audio.src = `/api/recordings/${r.id}/audio`;
-  head.append(time, audio);
+  const download = document.createElement("a");
+  download.className = "icon";
+  download.href = `/api/recordings/${r.id}/audio`;
+  download.download = "";
+  download.title = "Download audio";
+  download.setAttribute("aria-label", "Download audio");
+  download.innerHTML = DOWNLOAD_ICON;
+  media.append(audio, download);
+  head.append(time, media);
   card.append(head);
 
   const [latest, ...earlier] = r.transcriptions;
@@ -223,23 +251,25 @@ function renderRecording(r) {
     const meta = document.createElement("small");
     meta.textContent = attemptLabel(latest);
     card.append(meta, renderAttempt(latest));
-    if (latest.status === "error") {
-      const row = document.createElement("div");
-      row.className = "row retry";
-      const select = document.createElement("select");
-      const other = models.find((m) => m.id !== `${latest.provider}/${latest.model}`)?.id ?? models[0]?.id ?? null;
-      fillModels(select, other, "No models: add an API key in Settings");
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = "Retry with a different model";
-      btn.disabled = select.disabled;
-      btn.addEventListener("click", () => retry(r, select.value, card));
-      const rs = document.createElement("span");
-      rs.className = "status retry-status";
-      row.append(select, btn, rs);
-      card.append(row);
-    }
   }
+
+  // Any recording can be transcribed again with another model, not only a failed one.
+  const row = document.createElement("div");
+  row.className = "row retry";
+  const select = document.createElement("select");
+  const current = latest ? `${latest.provider}/${latest.model}` : null;
+  const other = models.find((m) => m.id !== current)?.id ?? models[0]?.id ?? null;
+  fillModels(select, other, "No models: add an API key in Settings");
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = latest?.status === "error" ? "Retry with this model" : "Transcribe with this model";
+  btn.disabled = select.disabled;
+  btn.addEventListener("click", () => transcribeAgain(r, select.value, card));
+  const rs = document.createElement("span");
+  rs.className = "status retry-status";
+  row.append(select, btn, rs);
+  card.append(row);
+
   if (earlier.length > 0) {
     const details = document.createElement("details");
     const summary = document.createElement("summary");
@@ -255,8 +285,16 @@ function renderRecording(r) {
   return card;
 }
 
-async function loadHistory() {
+// Dictations made with the shortcut arrive while this page is open, so it keeps
+// itself current: it re-reads the history every few seconds while visible and
+// re-renders only when something changed.
+let historySnapshot = "";
+
+async function loadHistory(force = false) {
   const recordings = await api("/api/recordings");
+  const snapshot = JSON.stringify(recordings);
+  if (!force && snapshot === historySnapshot) return;
+  historySnapshot = snapshot;
   history.replaceChildren(...recordings.map(renderRecording));
   if (recordings.length === 0) {
     const p = document.createElement("p");
@@ -266,6 +304,14 @@ async function loadHistory() {
   }
 }
 
+const HISTORY_POLL_MS = 3000;
+setInterval(() => {
+  if (document.visibilityState === "visible") loadHistory().catch(() => {});
+}, HISTORY_POLL_MS);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") loadHistory().catch(() => {});
+});
+
 await loadSettings();
 if (models.length === 0 || location.hash === "#settings") settingsPanel.open = true;
-await loadHistory();
+await loadHistory(true);
