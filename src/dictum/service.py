@@ -45,6 +45,7 @@ class ProviderStatus:
     name: str
     key_hint: str | None
     default_model: str | None = None  # language-model providers only
+    models: tuple[llm.ModelChoice, ...] = ()  # language-model providers only
 
 
 @dataclass(frozen=True)
@@ -112,7 +113,11 @@ class Dictum:
         for provider_id, (name, default_model) in llm.LLM_PROVIDERS.items():
             key = self.store.get_setting(key_setting(provider_id))
             hint = None if key is None else mask_key(key)
-            statuses.append(ProviderStatus(provider_id, name, hint, default_model))
+            statuses.append(
+                ProviderStatus(
+                    provider_id, name, hint, default_model, tuple(llm.catalog(provider_id))
+                )
+            )
         return statuses
 
     def dictionary_model(self) -> str | None:

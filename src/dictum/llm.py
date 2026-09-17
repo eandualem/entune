@@ -11,18 +11,42 @@ import asyncio
 import json
 import re
 from collections.abc import Callable, Coroutine, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from dictum import dictionary as dictionary_file
 from dictum.dictionary import Dictionary, Entries
 
-# Providers assistant-runtime can route to for this, with the model it uses by default.
+# Providers we route to, with the model suggested first. The dictionary is built rarely
+# and its mistakes compound, so the strongest model of each provider is the default.
 LLM_PROVIDERS: dict[str, tuple[str, str]] = {
-    "anthropic": ("Anthropic", "anthropic:claude-opus-5"),
-    "openai": ("OpenAI", "openai:gpt-5.6-terra"),
+    "anthropic": ("Anthropic", "anthropic:claude-fable-5-1"),
+    "openai": ("OpenAI", "openai:gpt-6-astra"),
 }
+# assistant-runtime maps this budget to "high" reasoning effort on both providers.
+THINKING_BUDGET = 32_000
 MAX_TRANSCRIPT_CHARS = 40_000
 MAX_TRANSCRIPTS = 300
+
+
+@dataclass(frozen=True)
+class ModelChoice:
+    id: str
+    name: str
+
+
+def catalog(provider: str) -> list[ModelChoice]:
+    """The models assistant-runtime lists for a provider, the suggested default first."""
+    from assistant_runtime.model_catalog import MODEL_CATALOG
+
+    default = LLM_PROVIDERS[provider][1]
+    choices = [
+        ModelChoice(m.id, m.name)
+        for m in MODEL_CATALOG
+        if m.provider == provider and "text" in m.capabilities  # not image or video models
+    ]
+    return sorted(choices, key=lambda c: c.id != default)
+
 
 SYSTEM_PROMPT = """You maintain a personal dictation dictionary for one person.
 
@@ -106,7 +130,10 @@ async def call_assistant_runtime(
     await service.start()
     try:
         result = await service.execute_llm_call(
-            system_prompt=system_prompt, user_prompt=user_prompt, model=model
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model,
+            thinking_budget=THINKING_BUDGET,
         )
     finally:
         await service.stop()
