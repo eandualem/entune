@@ -116,6 +116,8 @@ or OpenAI on your own key, read your recent transcripts and propose
 additions, which you review before anything is saved. Entries you add or
 pin are never changed by the model. If you dictate to AI agents, they can
 post corrections once you have confirmed a mistranscription with them.
+The suggested models, Claude Fable 5.1 and GPT-6 Astra, are the current
+strongest from each provider; any model id the provider accepts works.
 
 Details: [the dictionary file](docs/dictionary.md) and
 [the agents' API](docs/agents-api.md).
