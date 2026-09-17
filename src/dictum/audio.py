@@ -46,3 +46,18 @@ def extension_for(mime: str) -> str:
     """File extension for a MIME type, ignoring parameters such as codecs."""
     base = mime.split(";", 1)[0].strip().lower()
     return _EXTENSIONS.get(base, "audio")
+
+
+def wav_duration_seconds(data: bytes) -> float | None:
+    """Duration of a WAV clip from its header, or None for any other container."""
+    if sniff_mime(data) != "audio/wav":
+        return None
+    import io
+    import wave
+
+    try:
+        with wave.open(io.BytesIO(data), "rb") as clip:
+            frames, rate = clip.getnframes(), clip.getframerate()
+    except (wave.Error, EOFError):
+        return None
+    return frames / rate if rate else None

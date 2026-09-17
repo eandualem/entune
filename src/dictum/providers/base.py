@@ -12,7 +12,7 @@ from typing import Protocol
 
 import httpx
 
-from dictum.audio import extension_for
+from dictum.audio import extension_for, wav_duration_seconds
 
 DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 
@@ -40,6 +40,11 @@ class Clip:
     @property
     def filename(self) -> str:
         return f"clip.{extension_for(self.mime)}"
+
+    @property
+    def seconds(self) -> float | None:
+        """Duration when the container tells us (WAV, what the menu-bar app records); else None."""
+        return wav_duration_seconds(self.data)
 
 
 class Provider(Protocol):
