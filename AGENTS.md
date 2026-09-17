@@ -82,6 +82,10 @@ shortcuts, hold-to-talk or toggle, that types the transcript into the
 focused input and copies it to the clipboard. The history page stays as
 the place to browse, retry and copy.
 
-Out of scope for now: streaming, LLM cleanup or formatting passes, custom
-dictionaries, multi-user, authentication, cloud storage, platforms other
-than macOS. Simplicity is a requirement, not a preference.
+Also in scope since 2026-09-17 (issue #22): a personal dictionary, and a
+language model that builds it from the history on request. The model
+never touches a transcript on its way to the user; that stays out.
+
+Out of scope for now: streaming, LLM cleanup or formatting passes,
+multi-user, authentication, cloud storage, platforms other than macOS.
+Simplicity is a requirement, not a preference.

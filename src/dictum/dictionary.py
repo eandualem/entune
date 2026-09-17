@@ -1,9 +1,10 @@
 """The personal dictionary: terms the providers should know, and replacements applied to
 every transcript.
 
-Stored as `dictionary.json` in the data directory so it can be edited by hand or pasted
-whole. Two lists, on purpose: `terms` are safe (hints only), `replacements` change text and
-stay small and explicit.
+Two sections. `pinned` is the user's: entered by hand or approved from a proposal; a
+model never changes it. `learned` is what a model proposed from the history and the
+user accepted; the next build replaces it. Stored as `dictionary.json` in the data
+directory so it can be edited by hand or pasted whole.
 """
 
 from __future__ import annotations
@@ -15,47 +16,84 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 FILENAME = "dictionary.json"
+SECTIONS = ("pinned", "learned")
 
 
 @dataclass(frozen=True)
-class Dictionary:
+class Entries:
     terms: tuple[str, ...] = ()
     replacements: dict[str, str] = field(default_factory=dict)
 
     def __bool__(self) -> bool:
         return bool(self.terms or self.replacements)
 
+    def as_json(self) -> dict[str, object]:
+        return {"terms": list(self.terms), "replacements": dict(self.replacements)}
+
+
+@dataclass(frozen=True)
+class Dictionary:
+    pinned: Entries = field(default_factory=Entries)
+    learned: Entries = field(default_factory=Entries)
+
+    def __bool__(self) -> bool:
+        return bool(self.pinned or self.learned)
+
+    @property
+    def effective(self) -> Entries:
+        """What is applied: both sections, the user's entries winning on a conflict."""
+        terms = tuple(dict.fromkeys((*self.pinned.terms, *self.learned.terms)))
+        replacements = {**self.learned.replacements, **self.pinned.replacements}
+        return Entries(terms, replacements)
+
 
 EMPTY = Dictionary()
 
 
 def parse(text: str) -> Dictionary:
-    """Parse the JSON form. Raises ValueError with a reason a person can act on."""
+    """Parse the JSON form. Raises ValueError with a reason a person can act on.
+
+    The first release stored one flat list; that form is read as `pinned`.
+    """
     try:
         data = json.loads(text or "{}")
     except json.JSONDecodeError as exc:
         raise ValueError(f"Not valid JSON: {exc.msg} (line {exc.lineno})") from None
     if not isinstance(data, dict):
-        raise ValueError("The dictionary must be a JSON object with terms and replacements")
+        raise ValueError("The dictionary must be a JSON object with pinned and learned")
+    if "terms" in data or "replacements" in data:
+        return Dictionary(pinned=parse_entries(data, "dictionary"))
+    unknown = set(data) - set(SECTIONS)
+    if unknown:
+        raise ValueError(f"Unknown keys: {', '.join(sorted(unknown))} (use pinned, learned)")
+    return Dictionary(
+        pinned=parse_entries(data.get("pinned", {}), "pinned"),
+        learned=parse_entries(data.get("learned", {}), "learned"),
+    )
+
+
+def parse_entries(data: object, where: str) -> Entries:
+    if not isinstance(data, dict):
+        raise ValueError(f"{where} must be an object with terms and replacements")
     unknown = set(data) - {"terms", "replacements"}
     if unknown:
-        raise ValueError(f"Unknown keys: {', '.join(sorted(unknown))} (use terms, replacements)")
+        raise ValueError(f"{where}: unknown keys {', '.join(sorted(unknown))}")
     terms_raw = data.get("terms", [])
     if not isinstance(terms_raw, list) or not all(isinstance(t, str) for t in terms_raw):
-        raise ValueError("terms must be a list of strings")
+        raise ValueError(f"{where}.terms must be a list of strings")
     replacements_raw = data.get("replacements", {})
     if not isinstance(replacements_raw, dict) or not all(
         isinstance(k, str) and isinstance(v, str) for k, v in replacements_raw.items()
     ):
-        raise ValueError("replacements must be an object of string to string")
+        raise ValueError(f"{where}.replacements must be an object of string to string")
     terms = tuple(dict.fromkeys(t.strip() for t in terms_raw if t.strip()))
-    replacements = {k.strip(): v for k, v in replacements_raw.items() if k.strip()}
-    return Dictionary(terms, replacements)
+    replacements = {k.strip(): v.strip() for k, v in replacements_raw.items() if k.strip()}
+    return Entries(terms, replacements)
 
 
 def dumps(dictionary: Dictionary) -> str:
     return json.dumps(
-        {"terms": list(dictionary.terms), "replacements": dictionary.replacements},
+        {"pinned": dictionary.pinned.as_json(), "learned": dictionary.learned.as_json()},
         indent=2,
         ensure_ascii=False,
     )
@@ -73,16 +111,16 @@ def save(data_dir: Path, dictionary: Dictionary) -> None:
     (data_dir / FILENAME).write_text(dumps(dictionary) + "\n", encoding="utf-8")
 
 
-def apply(dictionary: Dictionary, text: str) -> str:
+def apply(entries: Entries, text: str) -> str:
     """Replace each heard phrase with what was meant.
 
     Whole words or phrases only, matched without regard to case, longest phrase first so
     "cloud code" wins over "cloud". The replacement is inserted exactly as written.
     """
-    if not dictionary.replacements or not text:
+    if not entries.replacements or not text:
         return text
-    for heard in sorted(dictionary.replacements, key=len, reverse=True):
-        meant = dictionary.replacements[heard]
+    for heard in sorted(entries.replacements, key=len, reverse=True):
+        meant = entries.replacements[heard]
         pattern = r"(?<!\w)" + r"\s+".join(map(re.escape, heard.split())) + r"(?!\w)"
         text = re.sub(pattern, _literal(meant), text, flags=re.IGNORECASE)
     return text
@@ -91,3 +129,39 @@ def apply(dictionary: Dictionary, text: str) -> str:
 def _literal(replacement: str) -> Callable[[re.Match[str]], str]:
     """A substitution that inserts `replacement` as is, no backslash or group expansion."""
     return lambda _match: replacement
+
+
+@dataclass(frozen=True)
+class Proposal:
+    """A model's proposed `learned` section, with what it adds and removes versus the current."""
+
+    learned: Entries
+    added: Entries
+    removed: Entries
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "learned": self.learned.as_json(),
+            "added": self.added.as_json(),
+            "removed": self.removed.as_json(),
+        }
+
+
+def propose(current: Dictionary, proposed: Entries) -> Proposal:
+    """Drop anything the user already pinned, then diff against the current learned section."""
+    pinned_terms = {t.lower() for t in current.pinned.terms}
+    pinned_heard = {h.lower() for h in current.pinned.replacements}
+    learned = Entries(
+        tuple(t for t in proposed.terms if t.lower() not in pinned_terms),
+        {h: m for h, m in proposed.replacements.items() if h.lower() not in pinned_heard},
+    )
+    old = current.learned
+    added = Entries(
+        tuple(t for t in learned.terms if t not in old.terms),
+        {h: m for h, m in learned.replacements.items() if old.replacements.get(h) != m},
+    )
+    removed = Entries(
+        tuple(t for t in old.terms if t not in learned.terms),
+        {h: m for h, m in old.replacements.items() if h not in learned.replacements},
+    )
+    return Proposal(learned, added, removed)

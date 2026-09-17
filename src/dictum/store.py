@@ -165,6 +165,17 @@ class Store:
             ).fetchall()
             return [self._recording(row) for row in rows]
 
+    def recent_transcripts(self, limit: int) -> list[str]:
+        """Provider text of the latest successful transcriptions, newest first, raw when kept."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT COALESCE(raw_text, text) AS text FROM transcriptions"
+                " WHERE status = 'ok' AND COALESCE(raw_text, text) <> ''"
+                " ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [str(row["text"]) for row in rows]
+
     def _recording(self, row: sqlite3.Row) -> Recording:
         attempts = self._db.execute(
             "SELECT * FROM transcriptions WHERE recording_id = ? ORDER BY id DESC", (row["id"],)
