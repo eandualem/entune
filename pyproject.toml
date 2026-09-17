@@ -5,8 +5,9 @@ description = "Personal dictation workbench: record, transcribe with the speech-
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
+  "assistant-runtime>=0.2",
   "httpx>=0.27",
   "pynput>=1.7,<2 ; sys_platform == 'darwin'",
   "pyobjc-framework-webkit>=12 ; sys_platform == 'darwin'",
@@ -36,7 +37,7 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 extend-exclude = ["packaging/Dictum.spec"]
 
 [tool.ruff.lint]
@@ -48,7 +49,7 @@ mypy_path = "src"
 files = ["src/dictum", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["rumps", "sounddevice", "Quartz", "AppKit", "Foundation", "WebKit", "PyObjCTools"]
+module = ["rumps", "sounddevice", "Quartz", "AppKit", "Foundation", "WebKit", "PyObjCTools", "assistant_runtime.*", "loguru"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

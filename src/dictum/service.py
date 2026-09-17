@@ -7,14 +7,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from dictum import dictionary as dictionary_file
-from dictum import shortcuts
+from dictum import llm, shortcuts
 from dictum.audio import sniff_mime
-from dictum.dictionary import Dictionary
+from dictum.dictionary import Dictionary, Proposal
 from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, model_id, resolve_model
 from dictum.shortcuts import Shortcuts
 from dictum.store import Recording, Store
 
 DEFAULT_MODEL_KEY = "default_model"
+DICTIONARY_MODEL_KEY = "dictionary_model"
 SHORTCUT_HOLD_KEY = "shortcut_hold"
 SHORTCUT_TOGGLE_KEY = "shortcut_toggle"
 # Before two shortcuts could be active at once, one was stored as a mode plus keys.
@@ -43,6 +44,7 @@ class ProviderStatus:
     id: str
     name: str
     key_hint: str | None
+    default_model: str | None = None  # language-model providers only
 
 
 @dataclass(frozen=True)
@@ -64,9 +66,15 @@ class UnknownModel(ValueError):
 class Dictum:
     """The application: a store plus the configured providers."""
 
-    def __init__(self, store: Store, providers: list[Provider]) -> None:
+    def __init__(
+        self,
+        store: Store,
+        providers: list[Provider],
+        llm_call: llm.Caller = llm.call_assistant_runtime,
+    ) -> None:
         self.store = store
         self.providers = providers
+        self._llm_call = llm_call
         self._listeners: list[Callable[[], None]] = []
         self._capture_listeners: list[Callable[[], None]] = []
         self._capture_lock = threading.Lock()
@@ -99,8 +107,30 @@ class Dictum:
         self.store.set_setting(DEFAULT_MODEL_KEY, ref)
         self._changed()
 
+    def llm_provider_statuses(self) -> list[ProviderStatus]:
+        statuses = []
+        for provider_id, (name, default_model) in llm.LLM_PROVIDERS.items():
+            key = self.store.get_setting(key_setting(provider_id))
+            hint = None if key is None else mask_key(key)
+            statuses.append(ProviderStatus(provider_id, name, hint, default_model))
+        return statuses
+
+    def dictionary_model(self) -> str | None:
+        return self.store.get_setting(DICTIONARY_MODEL_KEY)
+
+    def set_dictionary_model(self, ref: str | None) -> None:
+        """`provider:model` for a language-model provider we can route to, or None."""
+        if ref is not None:
+            provider, sep, model = ref.partition(":")
+            if not sep or provider not in llm.LLM_PROVIDERS or not model.strip():
+                known = ", ".join(llm.LLM_PROVIDERS)
+                raise ValueError(f"The dictionary model must be provider:model with one of {known}")
+        self.store.set_setting(DICTIONARY_MODEL_KEY, ref)
+        self._changed()
+
     def set_key(self, provider_id: str, key: str) -> None:
-        if not any(p.id == provider_id for p in self.providers):
+        known = any(p.id == provider_id for p in self.providers) or provider_id in llm.LLM_PROVIDERS
+        if not known:
             raise ValueError(f"Unknown provider: {provider_id}")
         if not key.strip():
             raise ValueError(f"Empty key for {provider_id}")
@@ -148,6 +178,28 @@ class Dictum:
         dictionary_file.save(self.store.data_dir, parsed)
         self._changed()
         return parsed
+
+    def build_dictionary(self) -> Proposal:
+        """Ask the configured language model for a new learned section. Nothing is saved.
+
+        Raises ValueError with the reason when unconfigured, or with the provider's or
+        model's own words when the call or its reply fails.
+        """
+        model = self.dictionary_model()
+        if model is None:
+            raise ValueError("Pick a model for the dictionary in Settings first.")
+        provider = model.partition(":")[0]
+        api_key = self.store.get_setting(key_setting(provider))
+        if api_key is None:
+            raise ValueError(f"No API key set for {llm.LLM_PROVIDERS[provider][0]}.")
+        current = self.dictionary()
+        transcripts = self.store.recent_transcripts(llm.MAX_TRANSCRIPTS)
+        if not transcripts:
+            raise ValueError("Nothing to learn from yet: the history has no transcripts.")
+        learned = llm.propose_learned(
+            provider, api_key, model, current, transcripts, call=self._llm_call
+        )
+        return dictionary_file.propose(current, learned)
 
     # Shortcut capture: the page asks, the menu-bar app's global listener records the keys.
 
@@ -224,14 +276,14 @@ class Dictum:
             if not mime.startswith("audio/"):
                 mime = sniff_mime(data) or mime
             try:
-                dictionary = self.dictionary()
-                result = ref.provider.transcribe(
-                    Clip(data, mime), ref.model, api_key, terms=dictionary.terms
-                )
+                terms = self.dictionary().effective.terms
+                result = ref.provider.transcribe(Clip(data, mime), ref.model, api_key, terms=terms)
             except Exception as exc:
                 result = Failure(f"{type(exc).__name__}: {exc}")
         raw_text = result.text if isinstance(result, Transcript) else None
-        text = dictionary_file.apply(self.dictionary(), raw_text) if raw_text is not None else None
+        text = None
+        if raw_text is not None:
+            text = dictionary_file.apply(self.dictionary().effective, raw_text)
         self.store.add_transcription(
             recording.id,
             provider=ref.provider.id,

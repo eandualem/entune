@@ -297,3 +297,39 @@ details[open].attempts summary svg { transform: rotate(90deg); }
   .row { grid-template-columns: 1fr; gap: 6px; }
   .toolbar { height: auto; padding: var(--s-2) var(--s-3); flex-wrap: wrap; }
 }
+
+/* Dictionary tab */
+.dict-toolbar { display: flex; align-items: center; gap: var(--s-3); margin-bottom: var(--s-2); }
+.dict-note { margin: 0 0 var(--s-4); }
+.section-label .inline { margin-left: var(--s-2); vertical-align: middle; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.entries { display: flex; flex-direction: column; }
+.entries:empty::after { content: "Nothing here yet."; display: block; padding: var(--s-3) var(--s-4); color: var(--text-faint); font-size: var(--fs-small); }
+.entry {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-2) var(--s-4); border-top: 1px solid var(--line);
+  -webkit-user-select: text; user-select: text;
+}
+.entry:first-child { border-top: 0; }
+.entry .kind { font-size: var(--fs-caption); color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; width: 72px; flex: none; }
+.entry .what { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.entry .what .arrow { color: var(--text-faint); margin: 0 6px; }
+.entry .what .meant { font-weight: 600; }
+.entry .actions { display: flex; gap: var(--s-1); flex: none; }
+.add-row { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-4); border-top: 1px solid var(--line); }
+.add-row .input { flex: 1; min-width: 0; }
+.add-row .arrow { color: var(--text-faint); }
+.proposal { border: 1px solid var(--accent); }
+.proposal-head { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--line); }
+.proposal-title { font-weight: 600; }
+.proposal-body { padding: var(--s-2) var(--s-4) var(--s-3); font-size: var(--fs-body); }
+.proposal-body h3 { margin: var(--s-2) 0 var(--s-1); font-size: var(--fs-caption); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); }
+.proposal-body .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: var(--fs-small); padding: 2px 8px; border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--line); }
+.chip.add { border-color: var(--accent); color: var(--accent); }
+.chip.remove { text-decoration: line-through; color: var(--text-faint); }
+.proposal-body .nothing { color: var(--text-muted); }
+.json-editor { margin-top: var(--s-5); }
+.json-editor summary { cursor: default; color: var(--text-muted); font-size: var(--fs-small); padding: 4px; }
+.json-editor summary:hover { color: var(--text); }
+.json-editor textarea { margin-top: var(--s-2); }
+.json-editor .save-row { margin-top: var(--s-2); }
