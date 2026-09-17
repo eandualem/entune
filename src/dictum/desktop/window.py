@@ -12,6 +12,7 @@ back to accessory when the window closes.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import AppKit
@@ -19,6 +20,7 @@ import Foundation
 import WebKit
 
 WIDTH, HEIGHT = 880, 640
+ICON = Path(__file__).resolve().parent.parent / "assets" / "icon-512.png"
 
 
 class _WindowDelegate(Foundation.NSObject):  # type: ignore[misc]
@@ -59,6 +61,13 @@ def install_main_menu() -> None:
     AppKit.NSApp.setMainMenu_(main)
 
 
+def set_app_icon() -> None:
+    """Dictum's own icon in the Dock and the app switcher, instead of Python's."""
+    image = AppKit.NSImage.alloc().initWithContentsOfFile_(str(ICON))
+    if image is not None:
+        AppKit.NSApp.setApplicationIconImage_(image)
+
+
 class AppWindow:
     def __init__(self, url: str) -> None:
         self.url = url
@@ -75,6 +84,7 @@ class AppWindow:
         elif fragment:
             self._load(fragment)
         AppKit.NSApp.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
+        set_app_icon()
         if hasattr(AppKit.NSApp, "activate"):
             AppKit.NSApp.activate()
         AppKit.NSApp.activateIgnoringOtherApps_(True)
