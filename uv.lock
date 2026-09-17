@@ -622,11 +622,9 @@ dependencies = [
     { name = "assistant-runtime" },
     { name = "httpx" },
     { name = "pynput", marker = "sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'" },
     { name = "pystray" },
     { name = "python-multipart" },
     { name = "pywebview" },
-    { name = "rumps", marker = "sys_platform == 'darwin'" },
     { name = "sounddevice", marker = "sys_platform == 'darwin'" },
     { name = "starlette" },
     { name = "uvicorn" },
@@ -649,11 +647,9 @@ requires-dist = [
     { name = "assistant-runtime", specifier = ">=0.2" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "pynput", marker = "sys_platform == 'darwin'", specifier = ">=1.7,<2" },
-    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'", specifier = ">=12" },
     { name = "pystray", specifier = ">=0.19" },
     { name = "python-multipart", specifier = ">=0.0.12" },
     { name = "pywebview", specifier = ">=5" },
-    { name = "rumps", marker = "sys_platform == 'darwin'", specifier = ">=0.4" },
     { name = "sounddevice", marker = "sys_platform == 'darwin'", specifier = ">=0.5" },
     { name = "starlette", specifier = ">=0.41" },
     { name = "uvicorn", specifier = ">=0.30" },
@@ -2626,15 +2622,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/5d/a509c07d714b6da88f2c518b4637cf6f1d46b074be8f0f1e5fb9ff5126fe/ruff-0.16.8-py3-none-win_amd64.whl", hash = "sha256:a6b85621fd3c81e31fc5f5add09c9c078b430db3595ca632efafdec9e64ebfaa", size = 10586899, upload-time = "2026-09-16T15:54:40.488Z" },
     { url = "https://files.pythonhosted.org/packages/fe/a0/50787329e4f20bf9dc9f6230015d46ec69c51a97ace5bc202dae4755365d/ruff-0.16.8-py3-none-win_arm64.whl", hash = "sha256:d075e820af612102ce217f07cc93e69f9490b10ec13ea85fa87bd03d996cef8a", size = 10386316, upload-time = "2026-09-16T15:54:43.332Z" },
 ]
-
-[[package]]
-name = "rumps"
-version = "0.4.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyobjc-framework-cocoa" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b2/e2/2e6a47951290bd1a2831dcc50aec4b25d104c0cf00e8b7868cbd29cf3bfe/rumps-0.4.0.tar.gz", hash = "sha256:17fb33c21b54b1e25db0d71d1d793dc19dc3c0b7d8c79dc6d833d0cffc8b1596", size = 39257, upload-time = "2022-10-15T05:15:10.386Z" }
 
 [[package]]
 name = "secretstorage"

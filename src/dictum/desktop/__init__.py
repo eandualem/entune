@@ -9,22 +9,12 @@ import sys
 from dictum.desktop.platform import Platform
 
 
-def create_platform(url: str, shell: str = "default") -> Platform | None:
-    """The platform for this operating system, or None where there is no desktop app yet.
-
-    `shell` picks the implementation: "default" is rumps and the WebKit window on macOS;
-    "webview" is the cross-platform pywebview + pystray shell, opt-in while it is proven.
-    """
+def create_platform(url: str) -> Platform | None:
+    """The platform for this operating system, or None where there is no desktop app yet."""
     if sys.platform == "darwin":
         from dictum.desktop.macos.bundle import name_this_process
-
-        name_this_process()
-    if shell == "webview":
         from dictum.desktop.webview import WebviewPlatform
 
+        name_this_process()
         return WebviewPlatform(url)
-    if sys.platform == "darwin":
-        from dictum.desktop.macos import MacPlatform
-
-        return MacPlatform(url)
     return None

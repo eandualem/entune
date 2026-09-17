@@ -44,8 +44,6 @@ browser at `http://localhost:4187`. The page's own Record button, the
 history, retry and the dictionary work wherever Python runs; the global
 shortcut and the automatic paste need the macOS menu-bar app for now.
 `dictum --help` lists `--port`, `--data DIR`, `--no-open` and `--no-menu`.
-`--shell webview` tries the cross-platform shell (pywebview window, pystray
-tray) that will replace the macOS-only one; experimental for now.
 
 ## Permissions (macOS)
 
