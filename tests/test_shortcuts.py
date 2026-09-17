@@ -3,26 +3,26 @@ import pytest
 from dictum import shortcuts
 
 
-def test_parse_hold_and_toggle() -> None:
-    assert shortcuts.parse("hold", "alt_r") == shortcuts.Shortcut("hold", ("alt_r",))
-    assert shortcuts.parse("toggle", " Cmd + Shift + space ") == shortcuts.Shortcut(
-        "toggle", ("cmd", "shift", "space")
-    )
-    assert shortcuts.parse("toggle", "option+d").keys == ("alt", "d")
-    assert str(shortcuts.parse("toggle", "cmd+shift+space")) == "toggle cmd+shift+space"
+def test_parse_hold_and_toggle_together() -> None:
+    both = shortcuts.parse("alt_r", " Cmd + Shift + space ")
+    assert both == shortcuts.Shortcuts(hold=("alt_r",), toggle=("cmd", "shift", "space"))
+    assert both.describe() == "hold alt_r or press cmd+shift+space"
+    assert shortcuts.parse("option_r", "").hold == ("alt_r",)
+    assert shortcuts.parse("option_r", "").toggle is None
+    assert not shortcuts.parse(None, None)
+    assert shortcuts.parse(None, None).describe() == "no shortcut"
 
 
 @pytest.mark.parametrize(
-    ("mode", "keys", "reason"),
+    ("hold", "toggle", "reason"),
     [
-        ("hold", "cmd+space", "exactly one key"),
-        ("toggle", "cmd", "two or more keys"),
-        ("hold", "banana", "Unknown key"),
-        ("hold", "", "Empty key"),
-        ("toggle", "cmd+cmd", "given twice"),
-        ("press", "cmd+space", "Unknown mode"),
+        ("cmd+space", None, "exactly one key"),
+        (None, "cmd", "two or more keys"),
+        ("banana", None, "Unknown key"),
+        (None, "cmd+", "Empty key"),
+        (None, "cmd+cmd", "given twice"),
     ],
 )
-def test_rejects_unusable_shortcuts(mode: str, keys: str, reason: str) -> None:
+def test_rejects_unusable_shortcuts(hold: str | None, toggle: str | None, reason: str) -> None:
     with pytest.raises(ValueError, match=reason):
-        shortcuts.parse(mode, keys)
+        shortcuts.parse(hold, toggle)

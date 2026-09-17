@@ -43,7 +43,7 @@ def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
     assert client.get("/api/settings").json() == {
         "providers": [{"id": "stub", "name": "Stub", "keyHint": None}],
         "defaultModel": None,
-        "shortcut": None,
+        "shortcuts": {"hold": None, "toggle": None},
     }
     assert client.get("/api/models").json() == []
 
@@ -114,15 +114,35 @@ def test_unknown_routes(client: TestClient) -> None:
 
 
 def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None:
-    assert client.get("/api/settings").json()["shortcut"] is None
+    assert client.get("/api/settings").json()["shortcuts"] == {"hold": None, "toggle": None}
     res = client.put(
-        "/api/settings", json={"shortcut": {"mode": "toggle", "keys": "Cmd+Shift+Space"}}
+        "/api/settings", json={"shortcuts": {"hold": "Alt_R", "toggle": "Cmd+Shift+Space"}}
     )
     assert res.status_code == 200
-    assert client.get("/api/settings").json()["shortcut"] == {
-        "mode": "toggle",
-        "keys": "cmd+shift+space",
+    assert client.get("/api/settings").json()["shortcuts"] == {
+        "hold": "alt_r",
+        "toggle": "cmd+shift+space",
     }
-    bad = client.put("/api/settings", json={"shortcut": {"mode": "hold", "keys": "cmd+space"}})
+    bad = client.put("/api/settings", json={"shortcuts": {"hold": "cmd+space", "toggle": ""}})
     assert bad.status_code == 400 and "exactly one key" in bad.text
-    assert client.get("/api/settings").json()["shortcut"]["mode"] == "toggle"
+    assert client.get("/api/settings").json()["shortcuts"]["hold"] == "alt_r"
+    client.put("/api/settings", json={"shortcuts": {"hold": "", "toggle": "cmd+shift+space"}})
+    assert client.get("/api/settings").json()["shortcuts"] == {
+        "hold": None,
+        "toggle": "cmd+shift+space",
+    }
+
+
+def test_legacy_single_shortcut_is_still_read(tmp_path: Path, stub: StubProvider) -> None:
+    store = Store(tmp_path)
+    store.set_setting("shortcut_mode", "toggle")
+    store.set_setting("shortcut_keys", "cmd+d")
+    client = TestClient(create_app(Dictum(store, [stub])))
+    assert client.get("/api/settings").json()["shortcuts"] == {"hold": None, "toggle": "cmd+d"}
+
+
+def test_audio_download_has_a_filename(client: TestClient) -> None:
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
+    res = client.get(f"/api/recordings/{rec['id']}/audio")
+    assert res.headers["content-disposition"] == f'inline; filename="dictum-{rec["id"]}.webm"'
