@@ -292,22 +292,30 @@ class Dictum:
         Every failure becomes a stored error, never an exception: the user reads it and retries.
         """
         api_key = self.store.get_setting(key_setting(ref.provider.id))
+        result: Transcript | Failure
         if api_key is None:
-            result: Transcript | Failure = Failure(f"No API key set for {ref.provider.name}")
+            result = Failure(f"No API key set for {ref.provider.name}")
         else:
-            data = self.store.audio_path(recording).read_bytes()
-            mime = recording.mime
-            if not mime.startswith("audio/"):
-                mime = sniff_mime(data) or mime
             try:
-                terms = self.dictionary().effective.terms
-                result = ref.provider.transcribe(Clip(data, mime), ref.model, api_key, terms=terms)
+                # Everything here can fail: a clip gone from disk, a hand-edited dictionary
+                # that does not parse, the provider. All of it becomes a stored error.
+                data = self.store.audio_path(recording).read_bytes()
+                mime = recording.mime
+                if not mime.startswith("audio/"):
+                    mime = sniff_mime(data) or mime
+                effective = self.dictionary().effective
+                result = ref.provider.transcribe(
+                    Clip(data, mime), ref.model, api_key, terms=effective.terms
+                )
             except Exception as exc:
                 result = Failure(f"{type(exc).__name__}: {exc}")
         raw_text = result.text if isinstance(result, Transcript) else None
         text = None
         if raw_text is not None:
-            text = dictionary_file.apply(self.dictionary().effective, raw_text)
+            try:
+                text = dictionary_file.apply(self.dictionary().effective, raw_text)
+            except ValueError:
+                text = raw_text  # a dictionary that no longer parses must not lose a transcript
         self.store.add_transcription(
             recording.id,
             provider=ref.provider.id,

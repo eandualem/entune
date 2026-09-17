@@ -1,3 +1,5 @@
+import pytest
+
 from dictum import shortcuts
 from dictum.desktop.engine import ShortcutEngine
 
@@ -99,7 +101,7 @@ def test_chord_completed_while_holding_becomes_hands_free() -> None:
 
 
 def test_only_fn_flag_events_are_swallowed_and_only_when_owned() -> None:
-    import Quartz
+    Quartz = pytest.importorskip("Quartz", reason="macOS only")
 
     from dictum.desktop.hotkeys import FN_VK, swallow_fn
 
