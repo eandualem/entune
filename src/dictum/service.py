@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -42,6 +43,14 @@ class ProviderStatus:
     key_hint: str | None
 
 
+@dataclass(frozen=True)
+class CaptureStatus:
+    """Recording a shortcut by pressing it: idle, listening for keys, or done with the keys."""
+
+    state: str  # "idle" | "listening" | "done"
+    keys: str | None
+
+
 class NoDefaultModel(Exception):
     """Transcription was asked for without a model and none is set as default."""
 
@@ -57,6 +66,9 @@ class Dictum:
         self.store = store
         self.providers = providers
         self._listeners: list[Callable[[], None]] = []
+        self._capture_listeners: list[Callable[[], None]] = []
+        self._capture_lock = threading.Lock()
+        self._capture = CaptureStatus("idle", None)
 
     def on_change(self, listener: Callable[[], None]) -> None:
         """Called after any setting changes; the menu-bar app uses it to reload its shortcut."""
@@ -119,6 +131,38 @@ class Dictum:
         self.store.set_setting(LEGACY_KEYS_KEY, None)
         self._changed()
         return parsed
+
+    # Shortcut capture: the page asks, the menu-bar app's global listener records the keys.
+
+    def on_capture(self, listener: Callable[[], None]) -> None:
+        """Called when a capture is requested; only the menu-bar app can fulfil it."""
+        self._capture_listeners.append(listener)
+
+    def can_capture(self) -> bool:
+        return bool(self._capture_listeners)
+
+    def start_capture(self) -> CaptureStatus:
+        with self._capture_lock:
+            self._capture = CaptureStatus("listening", None)
+        for listener in self._capture_listeners:
+            listener()
+        return self._capture
+
+    def finish_capture(self, keys: tuple[str, ...]) -> None:
+        with self._capture_lock:
+            if self._capture.state == "listening":
+                self._capture = CaptureStatus("done", shortcuts.format_keys(keys))
+
+    def cancel_capture(self) -> None:
+        with self._capture_lock:
+            self._capture = CaptureStatus("idle", None)
+
+    def capture_status(self) -> CaptureStatus:
+        with self._capture_lock:
+            status = self._capture
+            if status.state == "done":
+                self._capture = CaptureStatus("idle", None)  # hand the keys over once
+            return status
 
     # Models
 
@@ -185,6 +229,7 @@ class Dictum:
 
 
 __all__ = [
+    "CaptureStatus",
     "Dictum",
     "ModelOption",
     "NoDefaultModel",

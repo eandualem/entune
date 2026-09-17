@@ -53,6 +53,7 @@ class DictumApp(rumps.App):  # type: ignore[misc]
         self._permission_timer.start()
 
         dictum.on_change(lambda: self._later(self.apply_shortcut))
+        dictum.on_capture(lambda: self._later(self.begin_capture))
         self.apply_shortcut()
         if show_window:
             # Not a rumps.Timer: started before the run loop, those fire at once, not after
@@ -107,6 +108,15 @@ class DictumApp(rumps.App):  # type: ignore[misc]
         self.listener.start(self.engine)
         self._listening = True
         self.status_item.title = f"Dictate: {shortcuts.describe()}"
+
+    def begin_capture(self) -> None:
+        """Settings asked for a shortcut to be pressed: record it with the global listener."""
+        if not permissions.can_listen():
+            permissions.request_listen()
+            self.dictum.cancel_capture()
+            return
+        self.listener.start(self.engine)  # runs even with no shortcut configured yet
+        self.listener.begin_capture(self.dictum.finish_capture)
 
     def _recheck_permission(self, _: Any = None) -> None:
         """Start listening as soon as Input Monitoring is granted, without a restart."""

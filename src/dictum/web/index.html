@@ -28,10 +28,19 @@
         <fieldset id="shortcut">
           <legend>Dictation shortcuts</legend>
           <label>Hold to talk: one key, record while held, release to stop
-            <input id="shortcut-hold" type="text" autocomplete="off" spellcheck="false" placeholder="alt_r" /></label>
-          <label>Toggle: a combination, press to start, press again to stop
-            <input id="shortcut-toggle" type="text" autocomplete="off" spellcheck="false" placeholder="cmd+shift+space" /></label>
-          <small>Both can be set. Key names: alt, alt_r, cmd, ctrl, shift, space, f1…f20, or a single character. Join with +. Leave blank to remove.</small>
+            <span class="row shortcut-row">
+              <input id="shortcut-hold" type="text" readonly placeholder="not set" />
+              <button type="button" class="capture" data-target="shortcut-hold">Record shortcut</button>
+              <button type="button" class="clear" data-target="shortcut-hold" title="Remove">Clear</button>
+            </span></label>
+          <label>Hands-free: a combination to start; press again, or press the hold key, to stop
+            <span class="row shortcut-row">
+              <input id="shortcut-toggle" type="text" readonly placeholder="not set" />
+              <button type="button" class="capture" data-target="shortcut-toggle">Record shortcut</button>
+              <button type="button" class="clear" data-target="shortcut-toggle" title="Remove">Clear</button>
+            </span></label>
+          <small>Click "Record shortcut", then press the key or combination you want; it is saved when you let go. Both can be set, for example hold <b>fn</b> and <b>cmd+fn</b> hands-free.</small>
+          <span id="shortcut-status" class="status"></span>
         </fieldset>
         <label>Appearance
           <select id="theme">

@@ -146,3 +146,21 @@ def test_audio_download_has_a_filename(client: TestClient) -> None:
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     res = client.get(f"/api/recordings/{rec['id']}/audio")
     assert res.headers["content-disposition"] == f'inline; filename="dictum-{rec["id"]}.webm"'
+
+
+def test_capture_needs_the_menu_bar_app_or_hands_over_keys_once(
+    client: TestClient, tmp_path: Path, stub: StubProvider
+) -> None:
+    assert client.post("/api/capture").status_code == 409
+    assert client.get("/api/capture").json() == {"state": "idle", "keys": None}
+
+    dictum = Dictum(Store(tmp_path / "with-app"), [stub])
+    asked: list[bool] = []
+    dictum.on_capture(lambda: asked.append(True))
+    app_client = TestClient(create_app(dictum))
+    assert app_client.post("/api/capture").status_code == 202
+    assert asked == [True]
+    assert app_client.get("/api/capture").json() == {"state": "listening", "keys": None}
+    dictum.finish_capture(("cmd", "fn"))
+    assert app_client.get("/api/capture").json() == {"state": "done", "keys": "cmd+fn"}
+    assert app_client.get("/api/capture").json() == {"state": "idle", "keys": None}
