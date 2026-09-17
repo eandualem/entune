@@ -1,4 +1,4 @@
-"""`dictum`: start the app and open it in the browser."""
+"""`dictum`: the menu-bar app plus the local history page, from one command."""
 
 from __future__ import annotations
 
@@ -37,19 +37,37 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", DEFAULT_PORT)))
     parser.add_argument("--data", type=Path, default=None, help="data directory")
     parser.add_argument("--no-open", action="store_true", help="do not open the browser")
+    parser.add_argument(
+        "--no-menu", action="store_true", help="web page only, no menu-bar app (macOS)"
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     data_dir = args.data or default_data_dir()
-    store = Store(data_dir)
-    app = create_app(Dictum(store, default_providers()))
+    dictum = Dictum(Store(data_dir), default_providers())
+    server = uvicorn.Server(
+        uvicorn.Config(create_app(dictum), host="127.0.0.1", port=args.port, log_level="warning")
+    )
     url = f"http://localhost:{args.port}/"
     print(f"Dictum listening on {url}  (data in {data_dir})", flush=True)
-    if not args.no_open:
-        threading.Timer(0.5, webbrowser.open, args=(url,)).start()
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+
+    menu_bar = sys.platform == "darwin" and not args.no_menu
+    if not menu_bar:
+        if not args.no_open:
+            threading.Timer(0.5, webbrowser.open, args=(url,)).start()
+        server.run()
+        return
+
+    # Menu-bar mode: the web server runs in a thread, the app owns the main thread.
+    threading.Thread(target=server.run, daemon=True).start()
+    if not args.no_open and dictum.shortcut() is None:
+        threading.Timer(0.5, webbrowser.open, args=(f"{url}#settings",)).start()
+    from dictum.desktop.app import DictumApp
+
+    DictumApp(dictum, url).run()
+    server.should_exit = True
 
 
 if __name__ == "__main__":

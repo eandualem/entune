@@ -43,6 +43,7 @@ def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
     assert client.get("/api/settings").json() == {
         "providers": [{"id": "stub", "name": "Stub", "keyHint": None}],
         "defaultModel": None,
+        "shortcut": None,
     }
     assert client.get("/api/models").json() == []
 
@@ -110,3 +111,18 @@ def test_unknown_routes(client: TestClient) -> None:
     )
     assert client.get("/api/recordings/999/audio").status_code == 404
     assert client.get("/").status_code == 200 and "<title>Dictum</title>" in client.get("/").text
+
+
+def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None:
+    assert client.get("/api/settings").json()["shortcut"] is None
+    res = client.put(
+        "/api/settings", json={"shortcut": {"mode": "toggle", "keys": "Cmd+Shift+Space"}}
+    )
+    assert res.status_code == 200
+    assert client.get("/api/settings").json()["shortcut"] == {
+        "mode": "toggle",
+        "keys": "cmd+shift+space",
+    }
+    bad = client.put("/api/settings", json={"shortcut": {"mode": "hold", "keys": "cmd+space"}})
+    assert bad.status_code == 400 and "exactly one key" in bad.text
+    assert client.get("/api/settings").json()["shortcut"]["mode"] == "toggle"
