@@ -181,6 +181,8 @@ def test_shortcut_without_permission_asks_for_it_then_listens_once_granted(tmp_p
     app._recheck_permission()  # what the periodic timer does
     assert platform.hotkeys.running and platform.hotkeys.engine is app.engine
     assert platform.tray.status == "Dictate: hold alt_r"
+    status = dictum.desktop_status()
+    assert status["desktop"] is True and status["listening"] is True and status["canListen"]
 
 
 def test_a_dictation_is_transcribed_copied_and_pasted(tmp_path: Path) -> None:
@@ -250,6 +252,9 @@ def test_menu_actions_and_first_run_window(tmp_path: Path) -> None:
     assert platform.window.shown == ["#settings", ""]
     platform.tray.quit()
     assert platform.quit_called and not platform.hotkeys.running
+    dictum_ = _app.dictum
+    dictum_.show_window()  # a second launch asks for the window
+    assert platform.window.shown[-1] == ""
 
 
 @pytest.mark.parametrize("configured", [False, True])

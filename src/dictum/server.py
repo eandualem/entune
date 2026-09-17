@@ -16,6 +16,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
+from dictum import __version__
 from dictum.audio import extension_for
 from dictum.service import Dictum, NoDefaultModel, UnknownModel
 from dictum.store import Recording
@@ -171,6 +172,21 @@ def create_app(app: Dictum) -> Starlette:
         app.cancel_capture()
         return JSONResponse({"ok": True})
 
+    async def status(_: Request) -> Response:
+        return JSONResponse(
+            {
+                "version": __version__,
+                "shortcuts": _shortcuts_json(app),
+                "defaultModel": app.default_model(),
+                **app.desktop_status(),
+            }
+        )
+
+    async def show_window(_: Request) -> Response:
+        if not app.show_window():
+            return _bad("No desktop app is running to show a window", 409)
+        return JSONResponse({"ok": True})
+
     async def models(_: Request) -> Response:
         return JSONResponse([asdict(m) for m in app.available_models()])
 
@@ -233,6 +249,8 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/capture", start_capture, methods=["POST"]),
             Route("/api/capture", capture_status, methods=["GET"]),
             Route("/api/capture", cancel_capture, methods=["DELETE"]),
+            Route("/api/status", status),
+            Route("/api/window", show_window, methods=["POST"]),
             Route("/api/models", models),
             Route("/api/recordings", list_recordings, methods=["GET"]),
             Route("/api/recordings", create_recording, methods=["POST"]),

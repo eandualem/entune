@@ -78,8 +78,27 @@ class Dictum:
         self._llm_call = llm_call
         self._listeners: list[Callable[[], None]] = []
         self._capture_listeners: list[Callable[[], None]] = []
+        self._show_window_listeners: list[Callable[[], None]] = []
+        self._desktop_status: dict[str, object] = {"desktop": False}
         self._capture_lock = threading.Lock()
         self._capture = CaptureStatus("idle", None)
+
+    # What the desktop app reports about itself, for /api/status and for diagnosis.
+
+    def report_status(self, **fields: object) -> None:
+        self._desktop_status.update(fields)
+
+    def desktop_status(self) -> dict[str, object]:
+        return dict(self._desktop_status)
+
+    def on_show_window(self, listener: Callable[[], None]) -> None:
+        """A second launch asks the running app to show its window instead of starting."""
+        self._show_window_listeners.append(listener)
+
+    def show_window(self) -> bool:
+        for listener in self._show_window_listeners:
+            listener()
+        return bool(self._show_window_listeners)
 
     def on_change(self, listener: Callable[[], None]) -> None:
         """Called after any setting changes; the menu-bar app uses it to reload its shortcut."""
