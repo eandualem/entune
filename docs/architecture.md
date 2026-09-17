@@ -21,7 +21,8 @@ src/dictum/
                   (tray, window, hotkeys, actions, permissions, UI-thread scheduling);
                   engine.py: press/release -> start/stop, pure;
                   macos/: the macOS implementation: rumps menu bar, WebKit window,
-                  pynput listener with the fn key, pbcopy/osascript, Quartz permissions
+                  pynput listener with the fn key, pbcopy/osascript, Quartz permissions;
+                  webview/: the cross-platform shell (pywebview + pystray), opt-in
 ```
 
 Data flow for a dictation: the hotkey listener's thread feeds the engine;
