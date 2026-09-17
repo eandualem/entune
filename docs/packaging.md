@@ -44,14 +44,8 @@ build has the same identity (`codesign -d -r- Dictum.app` shows
 Nothing else changes; this is not Developer ID and does not help other
 Macs.
 
-Two things the assistant did not do on this machine (macOS 26) and that
-`install-app` reports when they bite: the certificate was not trusted for
-code signing (open it in Keychain Access, expand Trust, set Code Signing to
-Always Trust), and the first `codesign` with it must run from a terminal
-you are looking at, so macOS can ask whether codesign may use the key;
-choose Always Allow. `install-app` falls back to ad hoc and prints the
-error when signing with the certificate fails, rather than leave a
-half-signed bundle.
+If signing with the certificate fails, `install-app` prints codesign's
+error and signs ad hoc instead, rather than leave a half-signed bundle.
 
 ## A standalone bundle with PyInstaller
 
