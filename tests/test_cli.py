@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from dictum.cli import build_parser, main, port_is_free
+from dictum.cli import applications_folder, build_parser, main, port_is_free
 
 
 def test_port_probe_sees_a_listener() -> None:
@@ -47,3 +47,9 @@ def test_install_app_can_copy_a_built_bundle(tmp_path: Path) -> None:
     (built / "Contents" / "MacOS" / "Dictum").write_bytes(b"binary")
     installed = install_app(tmp_path / "apps", source=built)
     assert (installed / "Contents" / "MacOS" / "Dictum").read_bytes() == b"binary"
+
+
+def test_applications_folder_prefers_the_system_one_when_writable() -> None:
+    folder = applications_folder()
+    assert folder.name == "Applications"
+    assert folder == Path("/Applications") or folder == Path.home() / "Applications"
