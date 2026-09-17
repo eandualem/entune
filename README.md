@@ -131,7 +131,7 @@ standalone app once and install it (macOS only):
 ```sh
 uv sync --group build
 uv run --group build python packaging/build_app.py     # writes dist/Dictum.app
-uv run dictum install-app --from dist/Dictum.app        # copies it to ~/Applications
+uv run dictum install-app --from dist/Dictum.app        # copies it to /Applications
 ```
 
 Open it from Applications and grant the three permissions once to
