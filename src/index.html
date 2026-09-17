@@ -8,8 +8,28 @@
   </head>
   <body>
     <main>
-      <h1>Dictum</h1>
-      <p id="status">Starting…</p>
+      <header>
+        <h1>Dictum</h1>
+        <details id="settings">
+          <summary>Settings</summary>
+          <form id="settings-form">
+            <div id="keys"></div>
+            <label>Default model <select id="default-model"></select></label>
+            <div class="row">
+              <button type="submit">Save</button>
+              <span id="settings-status" class="status"></span>
+            </div>
+          </form>
+        </details>
+      </header>
+
+      <section id="recorder" class="row">
+        <button id="record" type="button">Record</button>
+        <label>Model <select id="model"></select></label>
+        <span id="status" class="status"></span>
+      </section>
+
+      <section id="history"></section>
     </main>
     <script type="module" src="./app.ts"></script>
   </body>

@@ -7,7 +7,19 @@ when one fails, copy the result.
 Bring your own API keys. Nothing leaves your machine except the audio you
 send to the provider you chose.
 
-Status: being built. See the issues for what is in progress.
+## Providers
+
+| Provider | Model | How |
+|---|---|---|
+| AssemblyAI | universal-3-5-pro | sync endpoint, one request |
+| Groq | whisper-large-v3-turbo | OpenAI-style transcriptions endpoint |
+| Soniox | stt-async-v5 | upload, poll, fetch; the upload is deleted afterwards |
+
+Enter a provider's API key in Settings and its model appears in the model
+list. Mark one as the default; a plain Record uses it. When a transcription
+fails, the recording shows the provider's response verbatim and offers a
+retry with another model. Keys live in the local database and are only
+ever sent to the provider they belong to.
 
 ## Run
 
@@ -34,4 +46,5 @@ The smallest stack that meets the constraints in `AGENTS.md`:
 - **TypeScript** everywhere, no front-end framework. The UI is a few
   hundred lines of DOM code at most and does not need one.
 - **SQLite** via `bun:sqlite` for history and settings, audio clips as
-  files next to it under `data/`. Everything stays on this machine.
+  files next to it under `data/` (override with `DICTUM_DATA`).
+  Everything stays on this machine.
