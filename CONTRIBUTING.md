@@ -22,7 +22,8 @@ All four pass before a commit. Commits follow conventional commits
   contract. See [adding a provider](docs/providers.md).
 - `src/dictum/service.py`: what the app does, independent of HTTP or UI.
 - `src/dictum/server.py`: the local HTTP API and the page under `web/`.
-- `src/dictum/desktop/`: the macOS menu-bar app, window, shortcuts, paste.
+- `src/dictum/desktop/`: the desktop app; `app.py` is the behaviour, `platform.py` the
+  protocols it needs, `macos/` the macOS implementation.
 - `docs/`: [architecture](docs/architecture.md), [dictionary](docs/dictionary.md),
   [agents' API](docs/agents-api.md), [packaging](docs/packaging.md).
 

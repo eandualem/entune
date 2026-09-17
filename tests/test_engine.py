@@ -103,7 +103,7 @@ def test_chord_completed_while_holding_becomes_hands_free() -> None:
 def test_only_fn_flag_events_are_swallowed_and_only_when_owned() -> None:
     Quartz = pytest.importorskip("Quartz", reason="macOS only")
 
-    from dictum.desktop.hotkeys import FN_VK, swallow_fn
+    from dictum.desktop.macos.hotkeys import FN_VK, swallow_fn
 
     flags, key_down = int(Quartz.kCGEventFlagsChanged), int(Quartz.kCGEventKeyDown)
     assert swallow_fn(flags, FN_VK, owns_fn=True)

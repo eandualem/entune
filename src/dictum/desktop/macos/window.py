@@ -20,7 +20,7 @@ import Foundation
 import WebKit
 
 WIDTH, HEIGHT = 880, 640
-ICON = Path(__file__).resolve().parent.parent / "assets" / "icon-512.png"
+ICON = Path(__file__).resolve().parents[2] / "assets" / "icon-512.png"
 
 
 class _WindowDelegate(Foundation.NSObject):  # type: ignore[misc]
