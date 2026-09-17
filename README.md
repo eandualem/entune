@@ -41,10 +41,29 @@ On release, the clip goes to your default model, the transcript is copied
 to the clipboard and pasted into whatever had focus. A failure shows as a
 notification with the provider's message; the history page has the retry.
 
-macOS will ask for three permissions the first time, for the app that runs
-`dictum` (your terminal, or Python): **Microphone** to record, **Input
-Monitoring** to see the shortcut, **Accessibility** to paste. Grant them
-in System Settings › Privacy & Security, then restart `dictum`.
+macOS will ask for three permissions the first time: **Microphone** to
+record, **Input Monitoring** to see the shortcut, **Accessibility** to
+paste. Grant them in System Settings › Privacy & Security. With `uvx
+dictum` they are granted to whatever runs it (your terminal, or Python)
+and asked again when that changes; with `Dictum.app` below they belong to
+Dictum.
+
+## Dictum.app
+
+To open Dictum from Applications like any other app, build the bundle
+(macOS only):
+
+```sh
+uv sync --group build
+uv run --group build python packaging/build_app.py
+```
+
+That writes `dist/Dictum.app`. Drag it to /Applications and open it: the
+microphone icon appears in the menu bar, no Dock icon. Quit it from its
+menu. It is the same program as `dictum`, so the data directory and
+settings are shared. If another Dictum is already running on the same
+port, the new one says so and quits rather than answering the shortcut
+twice.
 
 Recordings, transcripts and keys live in `~/Library/Application Support/dictum`
 on macOS and `~/.local/share/dictum` elsewhere, or wherever `DICTUM_DATA`
