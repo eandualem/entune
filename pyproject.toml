@@ -3,6 +3,8 @@ name = "dictum"
 version = "0.1.0"
 description = "Personal dictation workbench: record, transcribe with the speech-to-text model you pick, keep the history, retry with another model, copy."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
   "httpx>=0.27",
