@@ -1,27 +1,25 @@
-type Model = { id: string; label: string; default: boolean };
-type Transcription = { id: number; provider: string; model: string; status: "ok" | "error"; text: string | null; error: string | null; created_at: string };
-type Recording = { id: number; created_at: string; transcriptions: Transcription[] };
-type Settings = { providers: { id: string; name: string; keyHint: string | null }[]; defaultModel: string | null };
+// The history page: settings, recording, history with retry and copy.
+// Plain DOM code against the local API; no framework, no build step.
 
-const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const recordBtn = el<HTMLButtonElement>("record");
-const modelSelect = el<HTMLSelectElement>("model");
+const el = (id) => document.getElementById(id);
+const recordBtn = el("record");
+const modelSelect = el("model");
 const status = el("status");
 const history = el("history");
-const settingsForm = el<HTMLFormElement>("settings-form");
+const settingsForm = el("settings-form");
 const keysDiv = el("keys");
-const defaultSelect = el<HTMLSelectElement>("default-model");
+const defaultSelect = el("default-model");
 const settingsStatus = el("settings-status");
 
-let models: Model[] = [];
+let models = [];
 
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
+async function api(path, init) {
   const res = await fetch(path, init);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-function fillModels(select: HTMLSelectElement, selected: string | null, emptyLabel: string) {
+function fillModels(select, selected, emptyLabel) {
   select.replaceChildren();
   if (models.length === 0) {
     select.append(new Option(emptyLabel, "", true, true));
@@ -33,7 +31,7 @@ function fillModels(select: HTMLSelectElement, selected: string | null, emptyLab
 }
 
 async function loadModels() {
-  models = await api<Model[]>("/api/models");
+  models = await api("/api/models");
   const def = models.find((m) => m.default)?.id ?? null;
   fillModels(modelSelect, def, "No models: add an API key in Settings");
   fillModels(defaultSelect, def, "Add an API key first");
@@ -44,7 +42,7 @@ async function loadModels() {
 }
 
 async function loadSettings() {
-  const s = await api<Settings>("/api/settings");
+  const s = await api("/api/settings");
   keysDiv.replaceChildren(
     ...s.providers.map((p) => {
       const label = document.createElement("label");
@@ -63,11 +61,11 @@ async function loadSettings() {
 
 settingsForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const keys: Record<string, string> = {};
-  for (const input of settingsForm.querySelectorAll<HTMLInputElement>("input[type=password]")) {
+  const keys = {};
+  for (const input of settingsForm.querySelectorAll("input[type=password]")) {
     if (input.value.trim()) keys[input.name.slice("key:".length)] = input.value.trim();
   }
-  const body: { keys: Record<string, string>; defaultModel?: string | null } = { keys };
+  const body = { keys };
   if (!defaultSelect.disabled) body.defaultModel = defaultSelect.value || null;
   settingsStatus.textContent = "Saving…";
   try {
@@ -75,42 +73,42 @@ settingsForm.addEventListener("submit", async (e) => {
     settingsStatus.textContent = "Saved.";
     await loadSettings();
   } catch (err) {
-    settingsStatus.textContent = String(err instanceof Error ? err.message : err);
+    settingsStatus.textContent = String(err.message ?? err);
   }
 });
 
 // Recording: click to start, click again to stop, then upload and transcribe.
-let recorder: MediaRecorder | null = null;
+let recorder = null;
 
 recordBtn.addEventListener("click", async () => {
   if (recorder) {
     recorder.stop();
     return;
   }
-  let stream: MediaStream;
+  let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
-    status.textContent = `Microphone unavailable: ${err instanceof Error ? err.message : err}`;
+    status.textContent = `Microphone unavailable: ${err.message ?? err}`;
     return;
   }
   const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((t) => MediaRecorder.isTypeSupported(t));
-  const chunks: Blob[] = [];
+  const chunks = [];
   recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
   recorder.addEventListener("dataavailable", (e) => chunks.push(e.data));
   recorder.addEventListener("stop", () => {
-    const type = recorder!.mimeType;
+    const type = recorder.mimeType;
     stream.getTracks().forEach((t) => t.stop());
     recorder = null;
     recordBtn.textContent = "Record";
-    void upload(new Blob(chunks, { type }));
+    upload(new Blob(chunks, { type }));
   });
   recorder.start();
   recordBtn.textContent = "Stop";
   status.textContent = "Recording…";
 });
 
-async function upload(audio: Blob) {
+async function upload(audio) {
   const form = new FormData();
   form.append("audio", audio, "clip");
   if (modelSelect.value) form.append("model", modelSelect.value);
@@ -120,13 +118,13 @@ async function upload(audio: Blob) {
     await api("/api/recordings", { method: "POST", body: form });
     status.textContent = "";
   } catch (err) {
-    status.textContent = err instanceof Error ? err.message : String(err);
+    status.textContent = err.message ?? String(err);
   }
   await loadHistory();
 }
 
-async function retry(recording: Recording, modelId: string, card: HTMLElement) {
-  card.querySelector(".retry-status")!.textContent = "Transcribing…";
+async function retry(recording, modelId, card) {
+  card.querySelector(".retry-status").textContent = "Transcribing…";
   try {
     await api(`/api/recordings/${recording.id}/transcriptions`, {
       method: "POST",
@@ -134,16 +132,16 @@ async function retry(recording: Recording, modelId: string, card: HTMLElement) {
       body: JSON.stringify({ model: modelId }),
     });
   } catch (err) {
-    card.querySelector(".retry-status")!.textContent = err instanceof Error ? err.message : String(err);
+    card.querySelector(".retry-status").textContent = err.message ?? String(err);
   }
   await loadHistory();
 }
 
-function attemptLabel(t: Transcription) {
+function attemptLabel(t) {
   return `${t.provider} / ${t.model}`;
 }
 
-function renderAttempt(t: Transcription): HTMLElement {
+function renderAttempt(t) {
   const box = document.createElement("div");
   box.className = `attempt ${t.status}`;
   if (t.status === "ok") {
@@ -158,7 +156,7 @@ function renderAttempt(t: Transcription): HTMLElement {
         await navigator.clipboard.writeText(t.text ?? "");
         copy.textContent = "Copied";
       } catch (err) {
-        copy.textContent = `Copy failed: ${err instanceof Error ? err.message : err}`;
+        copy.textContent = `Copy failed: ${err.message ?? err}`;
       }
       setTimeout(() => (copy.textContent = "Copy"), 2500);
     });
@@ -172,7 +170,7 @@ function renderAttempt(t: Transcription): HTMLElement {
   return box;
 }
 
-function renderRecording(r: Recording): HTMLElement {
+function renderRecording(r) {
   const card = document.createElement("article");
   card.className = "recording";
   const head = document.createElement("div");
@@ -225,7 +223,7 @@ function renderRecording(r: Recording): HTMLElement {
 }
 
 async function loadHistory() {
-  const recordings = await api<Recording[]>("/api/recordings");
+  const recordings = await api("/api/recordings");
   history.replaceChildren(...recordings.map(renderRecording));
   if (recordings.length === 0) {
     const p = document.createElement("p");
@@ -236,7 +234,5 @@ async function loadHistory() {
 }
 
 await loadSettings();
-if (models.length === 0) el<HTMLDetailsElement>("settings").open = true;
+if (models.length === 0) el("settings").open = true;
 await loadHistory();
-
-export {};
