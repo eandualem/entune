@@ -24,9 +24,9 @@ anything else. Summary:
   a "retry with a different model" action
 - copy a transcript to the clipboard
 
-Nothing else is version 1. Not streaming, not cleanup prompts, not
-system-wide paste, not hotkeys, not accounts. Those are later issues, if
-they come at all.
+Nothing else is version 1. Version 1 shipped on 2026-09-17. The menu-bar
+app with system-wide paste and hotkeys is issue #5; streaming, cleanup
+prompts and accounts remain later issues, if they come at all.
 
 ## Providers
 
@@ -64,16 +64,24 @@ A failure is data the user reads and acts on; that is the retry feature.
 - Explicit data paths: if a component needs the default model, it reads it
   from settings, it does not infer one. Missing required configuration is
   a visible error, not a default.
-- TypeScript, bun as package manager and runner, conventional commits
-  (`feat:`, `fix:`, `docs:`, `chore:`, `test:`) with a body saying why.
-  Beyond that, choose the smallest stack that meets the constraints and
-  record the choice in the README.
+- Python (3.11+), packaged so that `uvx dictum` is the whole install and
+  run story. Owner's decision on 2026-09-17 (issue #4): the app is going
+  to be open source and Python is where his audience is. Version 1 was
+  built in TypeScript on Bun and rewritten the same day while small.
+- `uv` for environments, `ruff` for lint and format, `mypy --strict` for
+  types, `pytest` for tests. All four pass before a commit.
+- Conventional commits (`feat:`, `fix:`, `docs:`, `chore:`, `test:`) with
+  a body saying why. Beyond that, choose the smallest stack that meets the
+  constraints and record the choice in the README.
 
 ## Scope
 
-In scope: recording, provider adapters, history, settings, retry, copy.
+In scope: recording, provider adapters, history, settings, retry, copy,
+and (since 2026-09-17, issue #5) a macOS menu-bar app with configurable
+shortcuts, hold-to-talk or toggle, that types the transcript into the
+focused input and copies it to the clipboard. The history page stays as
+the place to browse, retry and copy.
 
 Out of scope for now: streaming, LLM cleanup or formatting passes, custom
-dictionaries, system-wide text insertion, hotkeys, native app shells,
-multi-user, authentication, cloud storage. Simplicity is a requirement,
-not a preference.
+dictionaries, multi-user, authentication, cloud storage, platforms other
+than macOS. Simplicity is a requirement, not a preference.

@@ -1,6 +1,12 @@
-node_modules/
+.venv/
+__pycache__/
+*.pyc
+dist/
 .env
 .env.*
 .DS_Store
 .tmp/
 data/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/

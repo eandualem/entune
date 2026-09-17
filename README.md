@@ -7,6 +7,28 @@ when one fails, copy the result.
 Bring your own API keys. Nothing leaves your machine except the audio you
 send to the provider you chose.
 
+## Run
+
+Requires Python 3.11 or newer. With [uv](https://docs.astral.sh/uv/):
+
+```sh
+uvx dictum
+```
+
+or, from a checkout:
+
+```sh
+uv run dictum
+```
+
+Either starts the app on http://localhost:4187 and opens it in your
+browser. `dictum --help` lists the options: `--port`, `--data DIR` for the
+data directory, `--no-open`.
+
+Recordings, transcripts and keys live in `~/Library/Application Support/dictum`
+on macOS and `~/.local/share/dictum` elsewhere, or wherever `DICTUM_DATA`
+or `--data` points.
+
 ## Providers
 
 | Provider | Model | How |
@@ -21,30 +43,26 @@ fails, the recording shows the provider's response verbatim and offers a
 retry with another model. Keys live in the local database and are only
 ever sent to the provider they belong to.
 
-## Run
-
-Requires [Bun](https://bun.sh) 1.4 or newer.
-
-```sh
-bun install
-bun start
-```
-
-Then open http://localhost:4187. Set `PORT` to use another port.
-
-`bun run dev` does the same with hot reload. `bun run typecheck` and
-`bun test` are the checks.
-
 ## Stack
 
 The smallest stack that meets the constraints in `AGENTS.md`:
 
-- **Bun** is the runtime, package manager, test runner and bundler.
-  `Bun.serve` serves the page and the API from one process; the page is
-  imported as HTML and Bun bundles its script and stylesheet on the fly,
-  so there is no separate build step and no bundler configuration.
-- **TypeScript** everywhere, no front-end framework. The UI is a few
-  hundred lines of DOM code at most and does not need one.
-- **SQLite** via `bun:sqlite` for history and settings, audio clips as
-  files next to it under `data/` (override with `DICTUM_DATA`).
-  Everything stays on this machine.
+- **Python** package, installed and run with `uv`. One process: a
+  Starlette app served by uvicorn, with httpx for the provider calls.
+- **SQLite** through the standard library for history and settings, audio
+  clips as files next to it. Everything stays on this machine.
+- The history page is one HTML file, one stylesheet and one plain
+  JavaScript file served as static files. No framework, no build step.
+
+## Develop
+
+```sh
+uv sync                 # environment with dev tools
+uv run pytest           # tests
+uv run ruff check .     # lint
+uv run ruff format .    # format
+uv run mypy             # types, strict
+```
+
+Adding a provider is one module in `src/dictum/providers/` implementing
+the `Provider` protocol from `base.py`, plus a line in `default_providers()`.
