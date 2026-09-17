@@ -12,6 +12,10 @@ const emptyState = el("empty");
 const emptyHint = el("empty-hint");
 const settingsForm = el("settings-form");
 const keysGroup = el("keys");
+const llmKeysGroup = el("llm-keys");
+const dictionaryModelInput = el("dictionary-model");
+const dictionaryModels = el("dictionary-models");
+const dictionaryModelChip = el("dictionary-model-chip");
 const defaultSelect = el("default-model");
 const settingsStatus = el("settings-status");
 const shortcutHold = el("shortcut-hold");
@@ -54,8 +58,8 @@ function applyTheme(theme) {
 }
 
 // ---- Tabs ----
-const tabs = { history: el("tab-history"), settings: el("tab-settings") };
-const views = { history: el("view-history"), settings: el("view-settings") };
+const tabs = { history: el("tab-history"), dictionary: el("tab-dictionary"), settings: el("tab-settings") };
+const views = { history: el("view-history"), dictionary: el("view-dictionary"), settings: el("view-settings") };
 function show(name) {
   for (const key in tabs) {
     tabs[key].setAttribute("aria-selected", String(key === name));
@@ -65,6 +69,7 @@ function show(name) {
   document.querySelector(".content").scrollTop = 0;
 }
 tabs.history.addEventListener("click", () => show("history"));
+tabs.dictionary.addEventListener("click", () => show("dictionary"));
 tabs.settings.addEventListener("click", () => show("settings"));
 
 // ---- Models ----
@@ -114,6 +119,10 @@ function keyRow(provider) {
 async function loadSettings() {
   const s = await api("/api/settings");
   keysGroup.replaceChildren(...s.providers.map(keyRow));
+  llmKeysGroup.replaceChildren(...s.llmProviders.map(keyRow));
+  dictionaryModels.replaceChildren(...s.llmProviders.map((p) => new Option(p.defaultModel)));
+  dictionaryModelInput.value = s.dictionaryModel ?? "";
+  dictionaryModelChip.textContent = s.dictionaryModel ?? "no model set";
   shortcuts = s.shortcuts;
   shortcutHold.value = s.shortcuts.hold ?? "";
   shortcutToggle.value = s.shortcuts.toggle ?? "";
@@ -134,7 +143,7 @@ settingsForm.addEventListener("submit", async (e) => {
   for (const input of settingsForm.querySelectorAll("input[type=password]")) {
     if (input.value.trim()) keys[input.name.slice("key:".length)] = input.value.trim();
   }
-  const body = { keys };
+  const body = { keys, dictionaryModel: dictionaryModelInput.value.trim() || null };
   if (!defaultSelect.disabled) body.defaultModel = defaultSelect.value || null;
   try {
     await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -145,26 +154,220 @@ settingsForm.addEventListener("submit", async (e) => {
   }
 });
 
-// ---- Dictionary: JSON the user edits or pastes whole ----
+// ---- Dictionary tab ----
+// `dict` mirrors dictionary.json: pinned (the user's, never changed by the model) and
+// learned (the model's last accepted proposal). Every change is saved whole.
+let dict = { pinned: { terms: [], replacements: {} }, learned: { terms: [], replacements: {} } };
+let proposal = null;
 const dictionaryBox = el("dictionary");
 const dictionaryStatus = el("dictionary-status");
+const buildStatus = el("build-status");
+const buildBtn = el("build-dictionary");
+const proposalPanel = el("proposal");
+const proposalBody = el("proposal-body");
 
 async function loadDictionary() {
   const res = await fetch("/api/dictionary");
   const text = await res.text();
-  if (res.ok) dictionaryBox.value = text;
-  else flash(dictionaryStatus, text, "err");
+  if (!res.ok) { flash(dictionaryStatus, text, "err"); return; }
+  dict = JSON.parse(text);
+  renderDictionary(text);
 }
 
-el("save-dictionary").addEventListener("click", async () => {
-  const res = await fetch("/api/dictionary", { method: "PUT", headers: { "content-type": "application/json" }, body: dictionaryBox.value });
+async function saveDictionary(next) {
+  const res = await fetch("/api/dictionary", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(next) });
   const text = await res.text();
-  if (res.ok) {
-    dictionaryBox.value = text;
-    flash(dictionaryStatus, "Saved", "ok");
+  if (!res.ok) { flash(dictionaryStatus, text, "err"); flash(buildStatus, text, "err"); return false; }
+  dict = JSON.parse(text);
+  renderDictionary(text);
+  return true;
+}
+
+function entryRow(section, kind, heard, meant) {
+  const row = document.createElement("div");
+  row.className = "entry";
+  const kindEl = document.createElement("span");
+  kindEl.className = "kind";
+  kindEl.textContent = kind;
+  const what = document.createElement("span");
+  what.className = "what";
+  if (kind === "term") {
+    what.textContent = heard;
   } else {
-    flash(dictionaryStatus, text, "err");
+    const arrow = document.createElement("span");
+    arrow.className = "arrow";
+    arrow.textContent = "→";
+    const m = document.createElement("span");
+    m.className = "meant";
+    m.textContent = meant;
+    what.append(heard, arrow, m);
   }
+  const actions = document.createElement("span");
+  actions.className = "actions";
+  if (section === "learned") {
+    const pin = document.createElement("button");
+    pin.type = "button";
+    pin.className = "btn sm";
+    pin.textContent = "Pin";
+    pin.title = "Keep it: the model will not change it";
+    pin.addEventListener("click", () => moveToPinned(kind, heard, meant));
+    actions.append(pin);
+  }
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "btn sm";
+  remove.textContent = "Remove";
+  remove.addEventListener("click", () => removeEntry(section, kind, heard));
+  actions.append(remove);
+  row.append(kindEl, what, actions);
+  return row;
+}
+
+function renderEntries(container, section) {
+  const entries = dict[section];
+  container.replaceChildren(
+    ...entries.terms.map((t) => entryRow(section, "term", t)),
+    ...Object.entries(entries.replacements).map(([h, m]) => entryRow(section, "replace", h, m)),
+  );
+}
+
+function renderDictionary(jsonText) {
+  renderEntries(el("pinned-entries"), "pinned");
+  renderEntries(el("learned-entries"), "learned");
+  const learnedCount = dict.learned.terms.length + Object.keys(dict.learned.replacements).length;
+  el("pin-all").hidden = learnedCount === 0;
+  buildBtn.textContent = learnedCount ? "Refine from history" : "Build from history";
+  if (jsonText !== undefined) dictionaryBox.value = jsonText;
+}
+
+function clone() {
+  return JSON.parse(JSON.stringify(dict));
+}
+
+async function addToPinned(kind, heard, meant) {
+  const next = clone();
+  if (kind === "term") {
+    if (!next.pinned.terms.includes(heard)) next.pinned.terms.push(heard);
+  } else {
+    next.pinned.replacements[heard] = meant;
+  }
+  return saveDictionary(next);
+}
+
+async function removeEntry(section, kind, heard) {
+  const next = clone();
+  if (kind === "term") next[section].terms = next[section].terms.filter((t) => t !== heard);
+  else delete next[section].replacements[heard];
+  await saveDictionary(next);
+}
+
+async function moveToPinned(kind, heard, meant) {
+  const next = clone();
+  if (kind === "term") {
+    next.learned.terms = next.learned.terms.filter((t) => t !== heard);
+    if (!next.pinned.terms.includes(heard)) next.pinned.terms.push(heard);
+  } else {
+    delete next.learned.replacements[heard];
+    next.pinned.replacements[heard] = meant;
+  }
+  await saveDictionary(next);
+}
+
+el("add-term-btn").addEventListener("click", async () => {
+  const term = el("add-term").value.trim();
+  if (!term) return;
+  if (await addToPinned("term", term)) el("add-term").value = "";
+});
+el("add-term").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el("add-term-btn").click(); } });
+el("add-replacement-btn").addEventListener("click", async () => {
+  const heard = el("add-heard").value.trim();
+  const meant = el("add-meant").value.trim();
+  if (!heard || !meant) return;
+  if (await addToPinned("replace", heard, meant)) { el("add-heard").value = ""; el("add-meant").value = ""; }
+});
+el("add-meant").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el("add-replacement-btn").click(); } });
+el("pin-all").addEventListener("click", async () => {
+  const next = clone();
+  for (const t of next.learned.terms) if (!next.pinned.terms.includes(t)) next.pinned.terms.push(t);
+  Object.assign(next.pinned.replacements, next.learned.replacements);
+  next.learned = { terms: [], replacements: {} };
+  await saveDictionary(next);
+});
+
+el("save-dictionary").addEventListener("click", async () => {
+  let parsed;
+  try { parsed = JSON.parse(dictionaryBox.value); } catch (err) { flash(dictionaryStatus, `Not valid JSON: ${err.message}`, "err"); return; }
+  if (await saveDictionary(parsed)) flash(dictionaryStatus, "Saved", "ok");
+});
+
+// Build: the model proposes a learned section; nothing changes until Accept.
+function chips(list, cls) {
+  const box = document.createElement("div");
+  box.className = "chips";
+  for (const text of list) {
+    const c = document.createElement("span");
+    c.className = `chip ${cls}`;
+    c.textContent = text;
+    box.append(c);
+  }
+  return box;
+}
+
+function renderProposal(p) {
+  proposalBody.replaceChildren();
+  const sections = [
+    ["Added terms", p.added.terms, "add"],
+    ["Added replacements", Object.entries(p.added.replacements).map(([h, m]) => `${h} → ${m}`), "add"],
+    ["Removed terms", p.removed.terms, "remove"],
+    ["Removed replacements", Object.entries(p.removed.replacements).map(([h, m]) => `${h} → ${m}`), "remove"],
+  ];
+  let any = false;
+  for (const [title, items, cls] of sections) {
+    if (items.length === 0) continue;
+    any = true;
+    const h = document.createElement("h3");
+    h.textContent = `${title} (${items.length})`;
+    proposalBody.append(h, chips(items, cls));
+  }
+  if (!any) {
+    const p2 = document.createElement("p");
+    p2.className = "nothing";
+    p2.textContent = "The model proposed no changes to what is learned.";
+    proposalBody.append(p2);
+  }
+  proposalPanel.hidden = false;
+}
+
+buildBtn.addEventListener("click", async () => {
+  buildBtn.disabled = true;
+  buildStatus.className = "save-status show";
+  buildStatus.textContent = "Asking the model… this can take a minute.";
+  try {
+    const res = await fetch("/api/dictionary/build", { method: "POST" });
+    const text = await res.text();
+    if (!res.ok) throw new Error(text);
+    proposal = JSON.parse(text);
+    buildStatus.classList.remove("show");
+    renderProposal(proposal);
+  } catch (err) {
+    flash(buildStatus, String(err.message ?? err), "err");
+  } finally {
+    buildBtn.disabled = false;
+  }
+});
+el("accept-proposal").addEventListener("click", async () => {
+  if (!proposal) return;
+  const next = clone();
+  next.learned = proposal.learned;
+  if (await saveDictionary(next)) {
+    proposal = null;
+    proposalPanel.hidden = true;
+    flash(buildStatus, "Accepted", "ok");
+  }
+});
+el("discard-proposal").addEventListener("click", () => {
+  proposal = null;
+  proposalPanel.hidden = true;
 });
 
 // ---- Shortcuts: recorded by pressing them ----
@@ -514,4 +717,5 @@ historyList.addEventListener("click", async (e) => {
 // ---- Start ----
 await loadSettings();
 if (models.length === 0 || location.hash === "#settings") show("settings");
+else if (location.hash === "#dictionary") show("dictionary");
 await loadHistory(true);

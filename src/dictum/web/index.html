@@ -31,6 +31,7 @@
 
       <div class="segmented" role="tablist" aria-label="View">
         <button type="button" role="tab" id="tab-history" aria-selected="true" aria-controls="view-history">History</button>
+        <button type="button" role="tab" id="tab-dictionary" aria-selected="false" aria-controls="view-dictionary">Dictionary</button>
         <button type="button" role="tab" id="tab-settings" aria-selected="false" aria-controls="view-settings">Settings</button>
       </div>
     </header>
@@ -45,6 +46,57 @@
             <h2>Nothing recorded yet</h2>
             <p id="empty-hint">Press Record above and speak.</p>
           </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-dictionary" role="tabpanel">
+        <div class="page">
+          <div class="dict-toolbar">
+            <button type="button" class="btn primary" id="build-dictionary">Build from history</button>
+            <span class="model-chip" id="dictionary-model-chip">no model set</span>
+            <span class="save-status" id="build-status" role="status"></span>
+          </div>
+          <p class="help dict-note">Building sends your recent transcripts and the current dictionary to the model you chose in Settings, with your key, only when you click. Entries you pin are never changed by it.</p>
+
+          <div class="group proposal" id="proposal" hidden>
+            <div class="proposal-head">
+              <span class="proposal-title">Proposed by the model</span>
+              <span class="spacer"></span>
+              <button type="button" class="btn sm primary" id="accept-proposal">Accept</button>
+              <button type="button" class="btn sm" id="discard-proposal">Discard</button>
+            </div>
+            <div class="proposal-body" id="proposal-body"></div>
+          </div>
+
+          <h2 class="section-label">Pinned by you</h2>
+          <div class="group">
+            <div class="entries" id="pinned-entries"></div>
+            <div class="add-row">
+              <input class="input" id="add-term" type="text" placeholder="A term the provider should know, e.g. Dictum" spellcheck="false" />
+              <button type="button" class="btn" id="add-term-btn">Add term</button>
+            </div>
+            <div class="add-row">
+              <input class="input" id="add-heard" type="text" placeholder="heard, e.g. whisper flow" spellcheck="false" />
+              <span class="arrow" aria-hidden="true">→</span>
+              <input class="input" id="add-meant" type="text" placeholder="meant, e.g. Wispr Flow" spellcheck="false" />
+              <button type="button" class="btn" id="add-replacement-btn">Add replacement</button>
+            </div>
+          </div>
+
+          <h2 class="section-label">Learned by the model <button type="button" class="btn sm inline" id="pin-all" hidden>Pin all</button></h2>
+          <div class="group">
+            <div class="entries" id="learned-entries"></div>
+          </div>
+
+          <details class="json-editor">
+            <summary>Edit as JSON</summary>
+            <textarea class="input dictionary" id="dictionary" spellcheck="false" rows="14"></textarea>
+            <div class="save-row">
+              <button type="button" class="btn" id="save-dictionary">Save JSON</button>
+              <span class="save-status" id="dictionary-status" role="status"></span>
+            </div>
+            <p class="help">The file is <code>dictionary.json</code> in Dictum's data folder. Replacements are whole words, matched regardless of case; the longest phrase wins.</p>
+          </details>
         </div>
       </section>
 
@@ -81,17 +133,14 @@
             </div>
           </div>
 
-          <h2 class="section-label">Dictionary</h2>
+          <h2 class="section-label">Dictionary model</h2>
+          <div class="group" id="llm-keys"></div>
           <div class="group">
             <div class="row top">
-              <div class="lbl"><label for="dictionary">Terms and replacements</label><span class="hint">Terms are sent to the provider so it knows your words. Replacements fix what it still gets wrong: "heard" → "meant", whole words only.</span></div>
+              <div class="lbl"><label for="dictionary-model">Model</label><span class="hint">Used only to build the dictionary from your history, never on a transcript.</span></div>
               <div class="field">
-                <textarea class="input dictionary" id="dictionary" spellcheck="false" rows="10"></textarea>
-                <div class="save-row">
-                  <button type="button" class="btn" id="save-dictionary">Save dictionary</button>
-                  <span class="save-status" id="dictionary-status" role="status"></span>
-                </div>
-                <p class="help">Plain JSON you can edit or paste whole; the file is <code>dictionary.json</code> in Dictum's data folder.</p>
+                <input class="input key-input" id="dictionary-model" type="text" list="dictionary-models" placeholder="provider:model, e.g. anthropic:claude-opus-5" spellcheck="false" autocomplete="off" />
+                <datalist id="dictionary-models"></datalist>
               </div>
             </div>
           </div>

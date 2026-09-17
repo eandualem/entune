@@ -43,11 +43,10 @@ def client(tmp_path: Path, stub: StubProvider) -> TestClient:
 
 
 def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
-    assert client.get("/api/settings").json() == {
-        "providers": [{"id": "stub", "name": "Stub", "keyHint": None}],
-        "defaultModel": None,
-        "shortcuts": {"hold": None, "toggle": None},
-    }
+    settings = client.get("/api/settings").json()
+    assert settings["providers"] == [{"id": "stub", "name": "Stub", "keyHint": None}]
+    assert settings["defaultModel"] is None
+    assert settings["shortcuts"] == {"hold": None, "toggle": None}
     assert client.get("/api/models").json() == []
 
     res = client.put(
@@ -113,7 +112,10 @@ def test_unknown_routes(client: TestClient) -> None:
         == 404
     )
     assert client.get("/api/recordings/999/audio").status_code == 404
-    assert client.get("/").status_code == 200 and "<title>Dictum</title>" in client.get("/").text
+    page = client.get("/")
+    assert page.status_code == 200 and "<title>Dictum</title>" in page.text
+    assert page.headers["cache-control"] == "no-cache"
+    assert client.get("/static/app.js").headers["cache-control"] == "no-cache"
 
 
 def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None:
@@ -172,19 +174,76 @@ def test_capture_needs_the_menu_bar_app_or_hands_over_keys_once(
 def test_dictionary_round_trip_terms_reach_the_provider_and_replacements_apply(
     client: TestClient, stub: StubProvider
 ) -> None:
-    assert client.get("/api/dictionary").json() == {"terms": [], "replacements": {}}
-    bad = client.put("/api/dictionary", content='{"terms": "x"}')
-    assert bad.status_code == 400 and "terms must be a list" in bad.text
+    empty: dict[str, object] = {"terms": [], "replacements": {}}
+    assert client.get("/api/dictionary").json() == {"pinned": empty, "learned": empty}
+    bad = client.put("/api/dictionary", content='{"pinned": {"terms": "x"}}')
+    assert bad.status_code == 400 and "pinned.terms must be a list" in bad.text
     saved = client.put(
         "/api/dictionary",
-        content='{"terms": ["Claude Code"], "replacements": {"cloud code": "Claude Code"}}',
+        content='{"pinned": {"terms": ["Claude Code"],'
+        ' "replacements": {"cloud code": "Claude Code"}}, "learned": {"terms": ["Soniox"]}}',
     )
     assert saved.status_code == 200
-    assert saved.json()["terms"] == ["Claude Code"]
+    assert saved.json()["learned"] == {"terms": ["Soniox"], "replacements": {}}
 
     client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     attempt = rec["transcriptions"][0]
-    assert stub.terms == ("Claude Code",)
+    assert stub.terms == ("Claude Code", "Soniox")
     assert attempt["raw_text"] == "hello there, I use cloud code"
     assert attempt["text"] == "hello there, I use Claude Code"
+
+
+def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
+    settings = client.get("/api/settings").json()
+    assert [p["id"] for p in settings["llmProviders"]] == ["anthropic", "openai"]
+    assert settings["llmProviders"][0]["defaultModel"] == "anthropic:claude-opus-5"
+    assert settings["dictionaryModel"] is None
+    bad = client.put("/api/settings", json={"dictionaryModel": "gemini:pro"})
+    assert bad.status_code == 400 and "provider:model" in bad.text
+    ok = client.put(
+        "/api/settings",
+        json={"keys": {"anthropic": "sk-ant-1234"}, "dictionaryModel": "anthropic:claude-opus-5"},
+    )
+    assert ok.status_code == 200
+    settings = client.get("/api/settings").json()
+    assert settings["dictionaryModel"] == "anthropic:claude-opus-5"
+    assert settings["llmProviders"][0]["keyHint"] == "••••1234"
+
+
+def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
+    tmp_path: Path, stub: StubProvider
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    async def fake(provider: str, api_key: str, model: str, system: str, user: str) -> str:
+        calls.append((model, api_key))
+        assert "hello there, I use cloud code" in user
+        return '{"terms": ["Claude Code", "Soniox"], "replacements": {"cloud code": "Claude Code"}}'
+
+    dictum = Dictum(Store(tmp_path), [stub], llm_call=fake)
+    client = TestClient(create_app(dictum))
+    res = client.post("/api/dictionary/build")
+    assert res.status_code == 400 and "Pick a model" in res.text
+    client.put("/api/settings", json={"dictionaryModel": "openai:gpt-5.6-terra"})
+    res = client.post("/api/dictionary/build")
+    assert res.status_code == 400 and "No API key set for OpenAI" in res.text
+    client.put(
+        "/api/settings", json={"keys": {"openai": "sk-1", "stub": "k"}, "defaultModel": "stub/good"}
+    )
+    res = client.post("/api/dictionary/build")
+    assert res.status_code == 400 and "Nothing to learn from yet" in res.text
+
+    client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
+    client.put("/api/dictionary", content='{"pinned": {"terms": ["Claude Code"]}}')
+    res = client.post("/api/dictionary/build")
+    assert res.status_code == 200, res.text
+    proposal = res.json()
+    assert calls == [("openai:gpt-5.6-terra", "sk-1")]
+    assert proposal["learned"] == {
+        "terms": ["Soniox"],
+        "replacements": {"cloud code": "Claude Code"},
+    }
+    assert proposal["added"]["terms"] == ["Soniox"]
+    # Nothing is saved until the page accepts.
+    assert client.get("/api/dictionary").json()["learned"] == {"terms": [], "replacements": {}}
