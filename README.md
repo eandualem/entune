@@ -21,9 +21,30 @@ or, from a checkout:
 uv run dictum
 ```
 
-Either starts the app on http://localhost:4187 and opens it in your
-browser. `dictum --help` lists the options: `--port`, `--data DIR` for the
-data directory, `--no-open`.
+On macOS this puts a microphone icon in the menu bar and serves the
+history page on http://localhost:4187 from the same process. Elsewhere,
+or with `--no-menu`, it is the history page alone, opened in your browser.
+`dictum --help` lists the options: `--port`, `--data DIR` for the data
+directory, `--no-open`, `--no-menu`.
+
+## Dictating from the menu bar
+
+Set a shortcut once in Settings on the history page (the app opens it for
+you on first run). Two modes:
+
+- **Hold**: one key, for example `alt_r` (the right Option key). Record
+  while it is held, release to stop.
+- **Toggle**: a combination, for example `cmd+shift+space`. Press to
+  start, press again to stop.
+
+On release, the clip goes to your default model, the transcript is copied
+to the clipboard and pasted into whatever had focus. A failure shows as a
+notification with the provider's message; the history page has the retry.
+
+macOS will ask for three permissions the first time, for the app that runs
+`dictum` (your terminal, or Python): **Microphone** to record, **Input
+Monitoring** to see the shortcut, **Accessibility** to paste. Grant them
+in System Settings › Privacy & Security, then restart `dictum`.
 
 Recordings, transcripts and keys live in `~/Library/Application Support/dictum`
 on macOS and `~/.local/share/dictum` elsewhere, or wherever `DICTUM_DATA`
@@ -48,7 +69,9 @@ ever sent to the provider they belong to.
 The smallest stack that meets the constraints in `AGENTS.md`:
 
 - **Python** package, installed and run with `uv`. One process: a
-  Starlette app served by uvicorn, with httpx for the provider calls.
+  Starlette app served by uvicorn, with httpx for the provider calls, and
+  on macOS a `rumps` menu-bar app with `pynput` for the global shortcut
+  and paste and `sounddevice` for the microphone.
 - **SQLite** through the standard library for history and settings, audio
   clips as files next to it. Everything stays on this machine.
 - The history page is one HTML file, one stylesheet and one plain

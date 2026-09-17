@@ -15,6 +15,13 @@
           <form id="settings-form">
             <div id="keys"></div>
             <label>Default model <select id="default-model"></select></label>
+            <fieldset id="shortcut">
+              <legend>Dictation shortcut (menu-bar app)</legend>
+              <label><input type="radio" name="shortcut-mode" value="hold" checked /> Hold one key to talk, release to stop</label>
+              <label><input type="radio" name="shortcut-mode" value="toggle" /> Press a key combination to start, press again to stop</label>
+              <label>Keys <input id="shortcut-keys" type="text" autocomplete="off" spellcheck="false" placeholder="alt_r  or  cmd+shift+space" /></label>
+              <small>Key names: alt, alt_r, cmd, ctrl, shift, space, f1…f20, or a single character. Join with +.</small>
+            </fieldset>
             <div class="row">
               <button type="submit">Save</button>
               <span id="settings-status" class="status"></span>
