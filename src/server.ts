@@ -36,7 +36,9 @@ async function transcribe(recording: Recording, ref: ModelRef): Promise<Recordin
     result = { ok: false, error: `No API key set for ${ref.provider.name}` };
   } else {
     try {
-      const audio = new Blob([await Bun.file(store.audioPath(recording)).arrayBuffer()], { type: recording.mime });
+      // A WebM clip may arrive labelled video/webm; providers want an audio type.
+      const type = recording.mime.replace(/^video\//, "audio/");
+      const audio = new Blob([await Bun.file(store.audioPath(recording)).arrayBuffer()], { type });
       result = await ref.provider.transcribe({ audio, filename: `clip.${extensionFor(recording.mime)}`, model: ref.model, apiKey });
     } catch (e) {
       result = { ok: false, error: e instanceof Error ? `${e.name}: ${e.message}` : String(e) };
