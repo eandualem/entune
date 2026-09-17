@@ -75,3 +75,25 @@ def test_install_app_signs_with_the_stable_identity_when_present(
     assert calls[-1][:5] == ["codesign", "--force", "--deep", "--sign", "Dictum Developer"]
     listed = "     0 valid identities found\n"
     assert bundle.sign(tmp_path) == "-"
+
+
+def test_install_app_falls_back_to_ad_hoc_when_the_certificate_cannot_sign(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import subprocess
+
+    from dictum.desktop.macos import bundle
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        if cmd[:2] == ["security", "find-identity"]:
+            return subprocess.CompletedProcess(cmd, 0, '1) AB "Dictum Developer"\n', "")
+        failed = cmd[4] == "Dictum Developer"
+        return subprocess.CompletedProcess(cmd, int(failed), "", "errSecInternalComponent")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert bundle.sign(tmp_path) == "-"
+    assert [c[4] for c in calls if c[0] == "codesign"] == ["Dictum Developer", "-"]
+    assert "errSecInternalComponent" in capsys.readouterr().err
