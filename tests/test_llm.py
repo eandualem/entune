@@ -44,10 +44,10 @@ def test_propose_learned_calls_the_model_with_the_prompts() -> None:
         return '{"terms": ["AssemblyAI"], "replacements": {}}'
 
     learned = llm.propose_learned(
-        "anthropic", "k", "anthropic:claude-opus-5", Dictionary(), ["hello"], call=fake
+        "anthropic", "k", "anthropic:claude-fable-5-1", Dictionary(), ["hello"], call=fake
     )
     assert learned == Entries(("AssemblyAI",), {})
-    assert seen["provider"] == "anthropic" and seen["model"] == "anthropic:claude-opus-5"
+    assert seen["provider"] == "anthropic" and seen["model"] == "anthropic:claude-fable-5-1"
     assert seen["system"] == llm.SYSTEM_PROMPT and "- hello" in seen["user"]
 
 
@@ -59,3 +59,12 @@ def test_provider_failures_surface_verbatim() -> None:
         llm.propose_learned(
             "openai", "k", "openai:gpt-5.6-terra", Dictionary(), ["x"], call=failing
         )
+
+
+def test_catalog_lists_the_strongest_model_first() -> None:
+    anthropic = llm.catalog("anthropic")
+    assert (
+        anthropic[0].id == "anthropic:claude-fable-5-1" and anthropic[0].name == "Claude Fable 5.1"
+    )
+    assert llm.catalog("openai")[0].id == "openai:gpt-6-astra"
+    assert all(c.id.startswith("openai:") for c in llm.catalog("openai"))

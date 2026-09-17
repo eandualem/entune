@@ -197,17 +197,25 @@ def test_dictionary_round_trip_terms_reach_the_provider_and_replacements_apply(
 def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     settings = client.get("/api/settings").json()
     assert [p["id"] for p in settings["llmProviders"]] == ["anthropic", "openai"]
-    assert settings["llmProviders"][0]["defaultModel"] == "anthropic:claude-opus-5"
+    assert settings["llmProviders"][0]["defaultModel"] == "anthropic:claude-fable-5-1"
+    assert settings["llmProviders"][0]["models"][0] == {
+        "id": "anthropic:claude-fable-5-1",
+        "name": "Claude Fable 5.1",
+    }
+    assert settings["llmProviders"][1]["models"][0]["id"] == "openai:gpt-6-astra"
     assert settings["dictionaryModel"] is None
     bad = client.put("/api/settings", json={"dictionaryModel": "gemini:pro"})
     assert bad.status_code == 400 and "provider:model" in bad.text
     ok = client.put(
         "/api/settings",
-        json={"keys": {"anthropic": "sk-ant-1234"}, "dictionaryModel": "anthropic:claude-opus-5"},
+        json={
+            "keys": {"anthropic": "sk-ant-1234"},
+            "dictionaryModel": "anthropic:claude-fable-5-1",
+        },
     )
     assert ok.status_code == 200
     settings = client.get("/api/settings").json()
-    assert settings["dictionaryModel"] == "anthropic:claude-opus-5"
+    assert settings["dictionaryModel"] == "anthropic:claude-fable-5-1"
     assert settings["llmProviders"][0]["keyHint"] == "••••1234"
 
 
@@ -225,7 +233,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     client = TestClient(create_app(dictum))
     res = client.post("/api/dictionary/build")
     assert res.status_code == 400 and "Pick a model" in res.text
-    client.put("/api/settings", json={"dictionaryModel": "openai:gpt-5.6-terra"})
+    client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
     res = client.post("/api/dictionary/build")
     assert res.status_code == 400 and "No API key set for OpenAI" in res.text
     client.put(
@@ -239,7 +247,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     res = client.post("/api/dictionary/build")
     assert res.status_code == 200, res.text
     proposal = res.json()
-    assert calls == [("openai:gpt-5.6-terra", "sk-1")]
+    assert calls == [("openai:gpt-6-astra", "sk-1")]
     assert proposal["learned"] == {
         "terms": ["Soniox"],
         "replacements": {"cloud code": "Claude Code"},
