@@ -39,6 +39,8 @@ first time). Two modes:
 - **Toggle**: a combination, for example `cmd+shift+space`. Press to
   start, press again to stop.
 
+Settings also has Appearance: match the system, light, or dark.
+
 On release, the clip goes to your default model, the transcript is copied
 to the clipboard and pasted into whatever had focus. A failure shows as a
 notification with the provider's message; the history page has the retry.
