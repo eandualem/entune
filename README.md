@@ -9,7 +9,7 @@ send to the provider you chose.
 
 ## Run
 
-Requires Python 3.11 or newer. With [uv](https://docs.astral.sh/uv/):
+Requires Python 3.12 or newer. With [uv](https://docs.astral.sh/uv/):
 
 ```sh
 uvx dictum
@@ -40,6 +40,24 @@ first time). Two modes:
   start, press again to stop.
 
 Settings also has Appearance: match the system, light, or dark.
+
+## Dictionary
+
+The Dictionary tab holds two lists. **Terms** are words the speech provider
+should expect (names, products, identifiers); they are sent along with
+every clip. **Replacements** fix what it still gets wrong, as heard →
+meant, applied to every transcript as whole words regardless of case. The
+provider's raw text is kept next to the corrected one.
+
+Entries you add or pin are yours; a model never changes them. **Build from
+history** sends your recent raw transcripts and the current dictionary to
+a language model of your choice (Anthropic or OpenAI, your key, set under
+Settings › Dictionary model) and shows what it proposes to add and remove
+before anything is saved. Later builds refine what was learned and leave
+your pinned entries alone. The model is never in the path of a dictation.
+
+The whole dictionary is one JSON file, `dictionary.json` in the data
+folder, editable by hand or pasted whole from the tab.
 
 On release, the clip goes to your default model, the transcript is copied
 to the clipboard and pasted into whatever had focus. A failure shows as a
@@ -94,7 +112,9 @@ The smallest stack that meets the constraints in `AGENTS.md`:
 - **Python** package, installed and run with `uv`. One process: a
   Starlette app served by uvicorn, with httpx for the provider calls, and
   on macOS a `rumps` menu-bar app with `pynput` for the global shortcut
-  and paste and `sounddevice` for the microphone.
+  and paste and `sounddevice` for the microphone. Language-model calls for
+  the dictionary go through
+  [assistant-runtime](https://github.com/eandualem/assistant-runtime).
 - **SQLite** through the standard library for history and settings, audio
   clips as files next to it. Everything stays on this machine.
 - The history page is one HTML file, one stylesheet and one plain

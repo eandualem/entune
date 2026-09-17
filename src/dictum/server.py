@@ -54,6 +54,16 @@ def create_app(app: Dictum) -> Starlette:
                 ],
                 "defaultModel": app.default_model(),
                 "shortcuts": _shortcuts_json(app),
+                "llmProviders": [
+                    {
+                        "id": s.id,
+                        "name": s.name,
+                        "keyHint": s.key_hint,
+                        "defaultModel": s.default_model,
+                    }
+                    for s in app.llm_provider_statuses()
+                ],
+                "dictionaryModel": app.dictionary_model(),
             }
         )
 
@@ -64,6 +74,8 @@ def create_app(app: Dictum) -> Starlette:
                 app.set_key(provider_id, key if isinstance(key, str) else "")
             if "defaultModel" in body:
                 app.set_default_model(body["defaultModel"])
+            if "dictionaryModel" in body:
+                app.set_dictionary_model(_text(body["dictionaryModel"]) or None)
             shortcuts = body.get("shortcuts")
             if isinstance(shortcuts, dict):
                 app.set_shortcuts(_text(shortcuts.get("hold")), _text(shortcuts.get("toggle")))
@@ -85,6 +97,13 @@ def create_app(app: Dictum) -> Starlette:
         except ValueError as exc:
             return _bad(str(exc))
         return PlainTextResponse(app.dictionary_text(), media_type="application/json")
+
+    async def build_dictionary(_: Request) -> Response:
+        try:
+            proposal = await run_in_threadpool(app.build_dictionary)
+        except ValueError as exc:
+            return _bad(str(exc))
+        return JSONResponse(proposal.as_json())
 
     async def start_capture(_: Request) -> Response:
         if not app.can_capture():
@@ -154,6 +173,7 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/settings", put_settings, methods=["PUT"]),
             Route("/api/dictionary", get_dictionary, methods=["GET"]),
             Route("/api/dictionary", put_dictionary, methods=["PUT"]),
+            Route("/api/dictionary/build", build_dictionary, methods=["POST"]),
             Route("/api/capture", start_capture, methods=["POST"]),
             Route("/api/capture", capture_status, methods=["GET"]),
             Route("/api/capture", cancel_capture, methods=["DELETE"]),
