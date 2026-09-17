@@ -36,3 +36,14 @@ def test_install_app_writes_a_launchable_bundle(tmp_path: Path) -> None:
     assert "-m dictum" in launcher.read_text()
     assert (app / "Contents" / "Resources" / info["CFBundleIconFile"]).exists()
     install_app(tmp_path)  # replacing an existing bundle is fine
+
+
+def test_install_app_can_copy_a_built_bundle(tmp_path: Path) -> None:
+    pytest.importorskip("Foundation", reason="macOS only")
+    from dictum.desktop.macos.bundle import install_app
+
+    built = tmp_path / "built" / "Dictum.app"
+    (built / "Contents" / "MacOS").mkdir(parents=True)
+    (built / "Contents" / "MacOS" / "Dictum").write_bytes(b"binary")
+    installed = install_app(tmp_path / "apps", source=built)
+    assert (installed / "Contents" / "MacOS" / "Dictum").read_bytes() == b"binary"
