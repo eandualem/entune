@@ -14,7 +14,7 @@ import rumps
 from dictum.desktop import actions, permissions
 from dictum.desktop.engine import ShortcutEngine
 from dictum.desktop.hotkeys import HotkeyListener
-from dictum.recorder import Recorder, duration_seconds, wav_bytes
+from dictum.recorder import Capture, Recorder
 from dictum.service import Dictum, NoDefaultModel, UnknownModel
 
 IDLE, RECORDING, BUSY = "🎙", "🔴", "⏳"
@@ -105,16 +105,16 @@ class DictumApp(rumps.App):  # type: ignore[misc]
         self._later(lambda: self._set_title(RECORDING))
 
     def stop_recording(self) -> None:
-        pcm = self.recorder.stop()
-        if duration_seconds(pcm) < MIN_CLIP_SECONDS:
+        capture = self.recorder.stop()
+        if capture.seconds < MIN_CLIP_SECONDS:
             self._later(lambda: self._set_title(IDLE))
             return
         self._later(lambda: self._set_title(BUSY))
-        threading.Thread(target=self._transcribe_and_deliver, args=(pcm,), daemon=True).start()
+        threading.Thread(target=self._transcribe_and_deliver, args=(capture,), daemon=True).start()
 
-    def _transcribe_and_deliver(self, pcm: bytes) -> None:
+    def _transcribe_and_deliver(self, capture: Capture) -> None:
         try:
-            recording = self.dictum.record_and_transcribe(wav_bytes(pcm), "audio/wav", None)
+            recording = self.dictum.record_and_transcribe(capture.wav(), "audio/wav", None)
         except (NoDefaultModel, UnknownModel) as exc:
             message = str(exc)
             self._later(lambda: self._set_title(IDLE))

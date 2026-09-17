@@ -1,18 +1,39 @@
-"""Microphone capture to WAV bytes: 16 kHz, mono, 16-bit, what every provider accepts."""
+"""Microphone capture to WAV bytes: mono, 16-bit, at the input device's own sample rate.
+
+Asking the device for a rate it does not run at natively makes Core Audio
+resample, which Bluetooth headsets in particular sometimes refuse mid-switch.
+Providers accept any common rate, so the device's is used as is.
+"""
 
 from __future__ import annotations
 
 import io
 import threading
 import wave
+from dataclasses import dataclass
 from typing import Any
 
-SAMPLE_RATE = 16_000
+FALLBACK_RATE = 16_000
 CHANNELS = 1
 SAMPLE_WIDTH = 2  # bytes per int16 sample
 
 
-def wav_bytes(pcm: bytes, sample_rate: int = SAMPLE_RATE) -> bytes:
+@dataclass(frozen=True)
+class Capture:
+    """Raw int16 mono PCM and the rate it was recorded at."""
+
+    pcm: bytes
+    sample_rate: int
+
+    @property
+    def seconds(self) -> float:
+        return duration_seconds(self.pcm, self.sample_rate)
+
+    def wav(self) -> bytes:
+        return wav_bytes(self.pcm, self.sample_rate)
+
+
+def wav_bytes(pcm: bytes, sample_rate: int = FALLBACK_RATE) -> bytes:
     """Wrap raw int16 mono PCM in a WAV container."""
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as wav:
@@ -23,7 +44,7 @@ def wav_bytes(pcm: bytes, sample_rate: int = SAMPLE_RATE) -> bytes:
     return buffer.getvalue()
 
 
-def duration_seconds(pcm: bytes, sample_rate: int = SAMPLE_RATE) -> float:
+def duration_seconds(pcm: bytes, sample_rate: int = FALLBACK_RATE) -> float:
     return len(pcm) / (SAMPLE_WIDTH * CHANNELS * sample_rate)
 
 
@@ -33,6 +54,7 @@ class Recorder:
     def __init__(self) -> None:
         self._chunks: list[bytes] = []
         self._stream: Any = None
+        self._rate = FALLBACK_RATE
         self._lock = threading.Lock()
 
     @property
@@ -46,23 +68,25 @@ class Recorder:
             if self._stream is not None:
                 return
             self._chunks = []
+            device = sounddevice.query_devices(kind="input")
+            self._rate = int(device["default_samplerate"]) or FALLBACK_RATE
             self._stream = sounddevice.RawInputStream(
-                samplerate=SAMPLE_RATE,
+                samplerate=self._rate,
                 channels=CHANNELS,
                 dtype="int16",
                 callback=self._on_audio,
             )
             self._stream.start()
 
-    def stop(self) -> bytes:
-        """Stop capturing and return the raw PCM recorded since `start`."""
+    def stop(self) -> Capture:
+        """Stop capturing and return what was recorded since `start`."""
         with self._lock:
             stream, self._stream = self._stream, None
             if stream is None:
-                return b""
+                return Capture(b"", self._rate)
             stream.stop()
             stream.close()
-            return b"".join(self._chunks)
+            return Capture(b"".join(self._chunks), self._rate)
 
     def _on_audio(self, indata: Any, frames: int, time: Any, status: Any) -> None:
         self._chunks.append(bytes(indata))
