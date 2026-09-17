@@ -1,6 +1,36 @@
+:root {
+  color-scheme: light dark;
+  --muted: color-mix(in srgb, CanvasText 55%, Canvas);
+  --line: color-mix(in srgb, CanvasText 15%, Canvas);
+  --error-bg: color-mix(in srgb, red 12%, Canvas);
+}
+
 body {
   font-family: system-ui, sans-serif;
   max-width: 48rem;
   margin: 2rem auto;
   padding: 0 1rem;
+  line-height: 1.45;
 }
+
+h1 { margin: 0; }
+header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+header details { flex: 1; text-align: right; }
+header details form { text-align: left; border: 1px solid var(--line); border-radius: 0.5rem; padding: 1rem; margin-top: 0.5rem; }
+header details summary { cursor: pointer; }
+
+.row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+form label, #keys label { display: block; margin-bottom: 0.75rem; }
+input[type="password"] { width: 100%; max-width: 32rem; display: block; }
+.status { color: var(--muted); }
+
+#recorder { margin: 1.5rem 0; }
+#record { font-size: 1.1rem; padding: 0.5rem 1.25rem; }
+
+.recording { border-top: 1px solid var(--line); padding: 1rem 0; }
+.recording time { color: var(--muted); }
+.recording audio { height: 2rem; }
+.recording small { color: var(--muted); display: block; margin-top: 0.5rem; }
+.attempt .text { margin: 0.25rem 0 0.5rem; white-space: pre-wrap; }
+.attempt .error { background: var(--error-bg); padding: 0.75rem; border-radius: 0.5rem; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0.25rem 0 0.5rem; }
+.empty { color: var(--muted); }
