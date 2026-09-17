@@ -20,6 +20,7 @@ a = Analysis(
         *collect_submodules("uvicorn"),
         *collect_submodules("starlette"),
         *collect_submodules("anyio"),
+        "WebKit",
     ],
     noarchive=False,
 )
