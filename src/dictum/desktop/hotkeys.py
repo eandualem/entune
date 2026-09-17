@@ -2,7 +2,8 @@
 
 Two jobs: feed the shortcut engine, and record a shortcut the user presses in
 Settings ("capture"). The Fn key needs special handling: pynput knows no flag
-for it, so it would report every Fn event as a release.
+for it, so it would report every Fn event as a release; and when fn is one of
+the user's shortcuts, Dictum owns the key so a tap does not reach macOS.
 """
 
 from __future__ import annotations
@@ -19,20 +20,56 @@ from dictum.desktop.engine import ShortcutEngine
 
 FN_VK = 63
 FN_FLAG = int(Quartz.kCGEventFlagMaskSecondaryFn)
+TAP_DISABLED = (
+    int(Quartz.kCGEventTapDisabledByTimeout),
+    int(Quartz.kCGEventTapDisabledByUserInput),
+)
 
 _ListenerBase: Any = keyboard.Listener  # pynput's private hooks below are untyped
 
 
-class FnAwareListener(_ListenerBase):  # type: ignore[misc]
-    """pynput's listener, plus press/release for the Fn key from its flag bit.
+def swallow_fn(event_type: int, keycode: int, owns_fn: bool) -> bool:
+    """Whether to drop this event so the system never sees it.
 
-    Relies on pynput's macOS internals (`_handle_message`, `_event_to_key`, `_flags`);
-    the dependency is pinned below 2.0 for that reason.
+    When fn is one of the user's shortcuts, Dictum owns the key: a bare tap must not
+    open Emoji & Symbols (macOS's default for the globe key) or start Apple dictation.
+    Nothing else is ever dropped.
     """
+    return owns_fn and event_type == int(Quartz.kCGEventFlagsChanged) and keycode == FN_VK
+
+
+class FnAwareListener(_ListenerBase):  # type: ignore[misc]
+    """pynput's listener, plus press/release for the Fn key from its flag bit, and the
+    option to own that key.
+
+    Relies on pynput's macOS internals (`_handle_message`, `_event_to_key`, `_flags`,
+    `_create_event_tap`); the dependency is pinned below 2.0 for that reason. With
+    `owns_fn` the tap is active rather than listen-only, so a tap macOS disables for
+    being slow is re-enabled here, which pynput does not do itself.
+    """
+
+    def __init__(self, *args: Any, owns_fn: bool = False, **kwargs: Any) -> None:
+        self.owns_fn = owns_fn
+        self._tap: Any = None
+        if owns_fn:
+            kwargs["darwin_intercept"] = self._intercept
+        super().__init__(*args, **kwargs)
+
+    def _create_event_tap(self) -> Any:
+        self._tap = super()._create_event_tap()
+        return self._tap
+
+    def _intercept(self, event_type: Any, event: Any) -> Any:
+        keycode = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
+        return None if swallow_fn(int(event_type), int(keycode), self.owns_fn) else event
 
     def _handle_message(
         self, proxy: Any, event_type: Any, event: Any, refcon: Any, injected: Any
     ) -> None:
+        if int(event_type) in TAP_DISABLED:
+            if self._tap is not None:
+                Quartz.CGEventTapEnable(self._tap, True)
+            return
         try:
             key = self._event_to_key(event)
         except IndexError:
@@ -82,12 +119,23 @@ class HotkeyListener:
         return self._listener is not None
 
     def start(self, engine: ShortcutEngine | None) -> None:
-        """Run the listener with this engine (None: listen, but drive nothing)."""
+        """Run the listener with this engine (None: listen, but drive nothing).
+
+        When fn is part of the shortcuts the listener owns the key (see `swallow_fn`);
+        the listener is recreated when that changes.
+        """
+        owns_fn = engine is not None and "fn" in {
+            *(engine.shortcuts.hold or ()),
+            *(engine.shortcuts.toggle or ()),
+        }
         with self._lock:
             self._engine = engine
+            if self._listener is not None and self._listener.owns_fn != owns_fn:
+                self._listener.stop()
+                self._listener = None
             if self._listener is None:
                 self._listener = FnAwareListener(
-                    on_press=self._on_press, on_release=self._on_release
+                    on_press=self._on_press, on_release=self._on_release, owns_fn=owns_fn
                 )
                 self._listener.start()
 

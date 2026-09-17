@@ -81,6 +81,12 @@ On release, the clip goes to your default model, the transcript is copied
 to the clipboard and pasted into whatever had focus. A failure shows as a
 notification with the provider's message; the history page has the retry.
 
+When fn is one of your shortcuts, Dictum owns that key while it runs: a
+tap no longer opens Emoji & Symbols or Apple's dictation, and fn does not
+reach other apps as a modifier. Set a different key if you need fn
+elsewhere. The manual alternative is System Settings › Keyboard › "Press
+🌐 key to: Do Nothing".
+
 macOS will ask for three permissions the first time: **Microphone** to
 record, **Input Monitoring** to see the shortcut, **Accessibility** to
 paste. Grant them in System Settings › Privacy & Security. With `uvx
