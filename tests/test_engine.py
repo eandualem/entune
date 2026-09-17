@@ -96,3 +96,15 @@ def test_chord_completed_while_holding_becomes_hands_free() -> None:
     engine.press("fn")  # a plain press of fn stops it
     engine.release("fn")
     assert events == ["start", "stop"] and not engine.recording
+
+
+def test_only_fn_flag_events_are_swallowed_and_only_when_owned() -> None:
+    import Quartz
+
+    from dictum.desktop.hotkeys import FN_VK, swallow_fn
+
+    flags, key_down = int(Quartz.kCGEventFlagsChanged), int(Quartz.kCGEventKeyDown)
+    assert swallow_fn(flags, FN_VK, owns_fn=True)
+    assert not swallow_fn(flags, FN_VK, owns_fn=False)
+    assert not swallow_fn(flags, 55, owns_fn=True)  # cmd passes through
+    assert not swallow_fn(key_down, FN_VK, owns_fn=True)  # only the flag change is fn
