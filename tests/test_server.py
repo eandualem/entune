@@ -292,3 +292,47 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
     client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
     assert stub.terms == ("Soniox",)
+
+
+def test_settings_rejects_bad_json_with_400(client: TestClient) -> None:
+    assert client.put("/api/settings", content="{not json").status_code == 400
+    assert client.put("/api/settings", content="[]").status_code == 400
+
+
+def test_requests_from_other_origins_are_refused(client: TestClient) -> None:
+    foreign = client.post(
+        "/api/recordings",
+        files={"audio": ("clip", WEBM_HEADER, "")},
+        headers={"origin": "http://evil.example"},
+    )
+    assert foreign.status_code == 403
+    own = client.get("/api/settings", headers={"origin": "http://evil.example"})
+    assert own.status_code == 200  # reads are harmless
+    same = client.put("/api/settings", json={"keys": {}}, headers={"origin": "http://testserver"})
+    assert same.status_code == 200
+    huge = client.post("/api/recordings", headers={"content-length": str(10**9)}, content=b"")
+    assert huge.status_code == 413
+
+
+def test_a_clip_missing_from_disk_becomes_a_stored_error(
+    client: TestClient, tmp_path: Path, stub: StubProvider
+) -> None:
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
+    (tmp_path / "audio" / rec["file"]).unlink()
+    retried = client.post(
+        f"/api/recordings/{rec['id']}/transcriptions", json={"model": "stub/good"}
+    )
+    assert retried.status_code == 200
+    attempt = retried.json()["transcriptions"][0]
+    assert attempt["status"] == "error" and "FileNotFoundError" in attempt["error"]
+
+
+def test_a_broken_dictionary_file_does_not_lose_a_transcript(
+    client: TestClient, tmp_path: Path, stub: StubProvider
+) -> None:
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    (tmp_path / "dictionary.json").write_text("{broken", encoding="utf-8")
+    rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
+    attempt = rec["transcriptions"][0]
+    assert attempt["status"] == "error" and "Not valid JSON" in attempt["error"]
