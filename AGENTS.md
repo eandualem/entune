@@ -64,7 +64,7 @@ A failure is data the user reads and acts on; that is the retry feature.
 - Explicit data paths: if a component needs the default model, it reads it
   from settings, it does not infer one. Missing required configuration is
   a visible error, not a default.
-- Python (3.11+), packaged so that `uvx dictum` is the whole install and
+- Python (3.12+), packaged so that `uvx dictum` is the whole install and
   run story. Owner's decision on 2026-09-17 (issue #4): the app is going
   to be open source and Python is where his audience is. Version 1 was
   built in TypeScript on Bun and rewritten the same day while small.

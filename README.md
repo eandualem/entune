@@ -1,13 +1,29 @@
 # Dictum
 
-A personal dictation workbench. Record a clip, transcribe it with the
-speech-to-text model you pick, keep the history, retry with another model
-when one fails, copy the result.
+**Dictate with the speech-to-text engine you choose, on your own API keys.**
 
-Bring your own API keys. Nothing leaves your machine except the audio you
-send to the provider you chose.
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
 
-## Run
+Dictum is a small, local dictation app. Hold a key or press a shortcut,
+speak, and the transcript is pasted where you were typing. You bring your
+own API key for a speech-to-text provider, AssemblyAI, Groq or Soniox, so
+you pick the engine that transcribes you instead of taking whichever one a
+dictation product bundles. Every recording and transcript is kept in a local
+history, with the provider's exact error and a one-click retry with another
+model when a transcription fails.
+
+It is for people who dictate a meaningful share of what they write and want
+control over the engine, the cost and where their words go.
+
+<p align="center">
+  <img src="docs/demo/6-history-light.jpg" width="49%" alt="History in light mode: recordings with audio, transcript, copy and re-transcribe" />
+  <img src="docs/demo/4-settings-dark.jpg" width="49%" alt="Settings in dark mode: API keys, default model, shortcuts" />
+</p>
+
+<!-- TODO: a short recording of hold the key, speak, release, watch the paste land -->
+
+## Install
 
 Requires Python 3.12 or newer. With [uv](https://docs.astral.sh/uv/):
 
@@ -21,130 +37,114 @@ or, from a checkout:
 uv run dictum
 ```
 
-On macOS this puts a microphone icon in the menu bar and opens Dictum's
-window with the history and settings. Closing the window leaves Dictum
-running in the menu bar; "Open Dictum" in its menu brings it back. The
-same page is also served on http://localhost:4187 if you prefer a
-browser. Elsewhere, or with `--no-menu`, it is the page alone, opened in
-your browser. `dictum --help` lists the options: `--port`, `--data DIR`
-for the data directory, `--no-open`, `--no-menu`.
+On macOS this opens Dictum's window (history, dictionary, settings) and
+puts a microphone icon in the menu bar; closing the window leaves it running
+there. Elsewhere, or with `--no-menu`, it is the page alone, opened in your
+browser at `http://localhost:4187`. The page's own Record button, the
+history, retry and the dictionary work wherever Python runs; the global
+shortcut and the automatic paste need the macOS menu-bar app for now.
+`dictum --help` lists `--port`, `--data DIR`, `--no-open` and `--no-menu`.
 
-## Dictating from the menu bar
+## Permissions (macOS)
 
-Set a shortcut once in Settings (Dictum opens its window on Settings the
-first time). Two modes:
+The first time you set a shortcut, macOS asks for three permissions in
+**System Settings › Privacy & Security**:
 
-- **Hold**: one key, for example `alt_r` (the right Option key). Record
-  while it is held, release to stop.
-- **Toggle**: a combination, for example `cmd+shift+space`. Press to
-  start, press again to stop.
+| Permission | Why Dictum needs it |
+|---|---|
+| Microphone | to record the clip |
+| Input Monitoring | to see the shortcut while another app has focus |
+| Accessibility | to paste the transcript into that app |
 
-Settings also has Appearance: match the system, light, or dark.
+With `uvx dictum` they are granted to whatever runs it, your terminal or
+Python, and asked again if that changes. Building `Dictum.app` (below) gives
+macOS a stable app to attach them to.
 
-## Dictionary
+## Dictating
 
-The Dictionary tab holds two lists. **Terms** are words the speech provider
-should expect (names, products, identifiers); they are sent along with
-every clip. **Replacements** fix what it still gets wrong, as heard →
-meant, applied to every transcript as whole words regardless of case. The
-provider's raw text is kept next to the corrected one.
+Set a shortcut once in Settings; Dictum opens there on first run. Click
+"Record shortcut", press the key or combination, let go. Two kinds, and both
+can be set:
 
-Entries you add or pin are yours; a model never changes them. **Build from
-history** sends your recent raw transcripts and the current dictionary to
-a language model of your choice (Anthropic or OpenAI, your key, set under
-Settings › Dictionary model; Claude Fable and GPT-6 Astra are suggested,
-and the call runs at high reasoning effort) and shows what it proposes to add and remove
-before anything is saved. Later builds refine what was learned and leave
-your pinned entries alone. The model is never in the path of a dictation.
+- **Hold to talk**: one key, for example `fn` or the right Option key.
+  Record while held, release to stop.
+- **Hands-free**: a combination, for example `cmd+fn`. Press to start;
+  press again, or press the hold key, to stop.
 
-The whole dictionary is one JSON file, `dictionary.json` in the data
-folder, editable by hand or pasted whole from the tab.
+On stop, the clip goes to your default model, the transcript is copied to
+the clipboard and pasted into whatever had focus. A failure shows as a
+notification with the provider's message; History has the retry.
 
-### For agents
-
-If you dictate to AI agents, they can send corrections after confirming a
-mistranscription with you. They land in the tab's "Added by agents" list,
-count as confirmed, and the model never alters them:
-
-```sh
-curl -s -X POST localhost:4187/api/dictionary/corrections \
-  -H 'content-type: application/json' \
-  -d '{"replacements": {"whisper flow": "Wispr Flow"}, "terms": ["Dictum"], "source": "my-agent"}'
-```
-
-The reply lists what was actually new. A suggested instruction for the
-agents' shared prompt: when a word looks mistranscribed, ask one short
-question to confirm what was meant; once confirmed, post it here; send
-only what the user confirmed, whole words or phrases, never guesses.
-
-On release, the clip goes to your default model, the transcript is copied
-to the clipboard and pasted into whatever had focus. A failure shows as a
-notification with the provider's message; the history page has the retry.
-
-When fn is one of your shortcuts, Dictum owns that key while it runs: a
+When `fn` is one of your shortcuts, Dictum owns that key while it runs: a
 tap no longer opens Emoji & Symbols or Apple's dictation, and fn does not
-reach other apps as a modifier. Set a different key if you need fn
-elsewhere. The manual alternative is System Settings › Keyboard › "Press
-🌐 key to: Do Nothing".
+reach other apps as a modifier. Pick another key if you need fn elsewhere.
 
-macOS will ask for three permissions the first time: **Microphone** to
-record, **Input Monitoring** to see the shortcut, **Accessibility** to
-paste. Grant them in System Settings › Privacy & Security. With `uvx
-dictum` they are granted to whatever runs it (your terminal, or Python)
-and asked again when that changes; with `Dictum.app` below they belong to
-Dictum.
+## Providers and cost
+
+| Provider | Model | How |
+|---|---|---|
+| AssemblyAI | universal-3-5-pro | sync endpoint; clips over two minutes use the long-form endpoint |
+| Groq | whisper-large-v3-turbo | OpenAI-style transcriptions endpoint |
+| Soniox | stt-async-v5 | upload, poll, fetch; the upload is deleted afterwards |
+
+Enter a provider's API key in Settings and its model appears in the model
+list; mark one as the default. You pay each provider directly, per minute
+of audio, at its own published rate:
+[AssemblyAI](https://www.assemblyai.com/pricing),
+[Groq](https://groq.com/pricing),
+[Soniox](https://soniox.com/pricing).
+
+Keys live in the local database, are only ever sent to the provider they
+belong to, and are never shown again beyond a masked hint.
+
+## History
+
+Every recording and every transcription attempt is kept: the audio is
+playable and downloadable, the transcript copies with a click, and any
+recording can be transcribed again with another model. Failures show the
+provider's response verbatim.
+
+## Personal dictionary
+
+The Dictionary tab holds **terms** the provider should expect (names,
+products, identifiers), sent along with every clip, and **replacements**
+(heard → meant) applied to every transcript. Edit it by hand, or click
+**Build from history** to have a language model of your choice, Anthropic
+or OpenAI on your own key, read your recent transcripts and propose
+additions, which you review before anything is saved. Entries you add or
+pin are never changed by the model. If you dictate to AI agents, they can
+post corrections once you have confirmed a mistranscription with them.
+
+Details: [the dictionary file](docs/dictionary.md) and
+[the agents' API](docs/agents-api.md).
 
 ## Dictum.app
 
-To open Dictum from Applications like any other app, build the bundle
-(macOS only):
+To open Dictum from Applications like any other app (macOS only):
 
 ```sh
 uv sync --group build
 uv run --group build python packaging/build_app.py
 ```
 
-That writes `dist/Dictum.app`. Drag it to /Applications and open it: the
-window opens and the microphone icon appears in the menu bar, no Dock icon. Quit it from its
-menu. It is the same program as `dictum`, so the data directory and
-settings are shared. If another Dictum is already running on the same
-port, the new one says so and quits rather than answering the shortcut
-twice.
+That writes `dist/Dictum.app`, with Dictum's icon, sharing the same data and
+settings as `dictum`. See [packaging](docs/packaging.md).
 
-Recordings, transcripts and keys live in `~/Library/Application Support/dictum`
-on macOS and `~/.local/share/dictum` elsewhere, or wherever `DICTUM_DATA`
-or `--data` points.
+## Data and privacy
 
-## Providers
+Recordings, transcripts, settings and keys live in a local SQLite database
+and files at `~/Library/Application Support/dictum` on macOS or
+`~/.local/share/dictum` elsewhere, or wherever `DICTUM_DATA` or `--data`
+points. Nothing leaves your machine except:
 
-| Provider | Model | How |
-|---|---|---|
-| AssemblyAI | universal-3-5-pro | sync endpoint, one request |
-| Groq | whisper-large-v3-turbo | OpenAI-style transcriptions endpoint |
-| Soniox | stt-async-v5 | upload, poll, fetch; the upload is deleted afterwards |
+- the audio clip, sent to the speech-to-text provider you picked for that
+  recording;
+- when you click "Build from history", your recent transcripts, sent to the
+  language-model provider you chose in Settings.
 
-Enter a provider's API key in Settings and its model appears in the model
-list. Mark one as the default; a plain Record uses it. When a transcription
-fails, the recording shows the provider's response verbatim and offers a
-retry with another model. Keys live in the local database and are only
-ever sent to the provider they belong to.
+No telemetry, no accounts, no cloud storage.
 
-## Stack
-
-The smallest stack that meets the constraints in `AGENTS.md`:
-
-- **Python** package, installed and run with `uv`. One process: a
-  Starlette app served by uvicorn, with httpx for the provider calls, and
-  on macOS a `rumps` menu-bar app with `pynput` for the global shortcut
-  and paste and `sounddevice` for the microphone. Language-model calls for
-  the dictionary go through
-  [assistant-runtime](https://github.com/eandualem/assistant-runtime).
-- **SQLite** through the standard library for history and settings, audio
-  clips as files next to it. Everything stays on this machine.
-- The history page is one HTML file, one stylesheet and one plain
-  JavaScript file served as static files. No framework, no build step.
-
-## Develop
+## Development
 
 ```sh
 uv sync                 # environment with dev tools
@@ -154,8 +154,8 @@ uv run ruff format .    # format
 uv run mypy             # types, strict
 ```
 
-Adding a provider is one module in `src/dictum/providers/` implementing
-the `Provider` protocol from `base.py`, plus a line in `default_providers()`.
+See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md)
+and [adding a provider](docs/providers.md).
 
 ## Licence
 
