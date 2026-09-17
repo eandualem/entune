@@ -155,15 +155,10 @@ class DictumApp(rumps.App):  # type: ignore[misc]
         attempt = recording.transcriptions[0]
         if attempt.status == "ok" and attempt.text:
             self._wait_for_keys_up()
-            actions.copy_to_clipboard(attempt.text)
-            if permissions.can_post():
-                actions.paste_into_focused_app()
-            else:
-                permissions.request_post()
-                hint = (
-                    f"Allow Accessibility in {permissions.SETTINGS_HINT} to paste. Cmd+V for now."
-                )
-                self._later(lambda: actions.notify("Dictum: copied, not pasted", hint))
+            # Delivered on the main thread: the paste goes through HIToolbox, which macOS 26
+            # only allows there (see actions.paste_into_focused_app).
+            text = attempt.text
+            self._later(lambda: self._deliver(text))
         elif attempt.status == "ok":
             self._later(lambda: actions.notify("Dictum", "No speech detected."))
         else:
@@ -175,6 +170,15 @@ class DictumApp(rumps.App):  # type: ignore[misc]
                 )
             )
         self._later(lambda: self._set_title(IDLE))
+
+    def _deliver(self, text: str) -> None:
+        actions.copy_to_clipboard(text)
+        if permissions.can_post():
+            actions.paste_into_focused_app()
+        else:
+            permissions.request_post()
+            hint = f"Allow Accessibility in {permissions.SETTINGS_HINT} to paste. Cmd+V for now."
+            actions.notify("Dictum: copied, not pasted", hint)
 
     def _wait_for_keys_up(self) -> None:
         deadline = time.monotonic() + KEYS_UP_WAIT_SECONDS
