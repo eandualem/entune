@@ -28,7 +28,7 @@ class NoCache(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
-        if request.method == "GET" and not request.url.path.startswith("/api/"):
+        if request.method in ("GET", "HEAD") and not request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-cache"
         return response
 
