@@ -6,8 +6,10 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from dictum import dictionary as dictionary_file
 from dictum import shortcuts
 from dictum.audio import sniff_mime
+from dictum.dictionary import Dictionary
 from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, model_id, resolve_model
 from dictum.shortcuts import Shortcuts
 from dictum.store import Recording, Store
@@ -132,6 +134,21 @@ class Dictum:
         self._changed()
         return parsed
 
+    # Dictionary: read from disk each time so a hand edit of the file counts too.
+
+    def dictionary(self) -> Dictionary:
+        return dictionary_file.load(self.store.data_dir)
+
+    def dictionary_text(self) -> str:
+        return dictionary_file.dumps(self.dictionary())
+
+    def set_dictionary(self, text: str) -> Dictionary:
+        """Validate and save the JSON form. Raises ValueError with the reason."""
+        parsed = dictionary_file.parse(text)
+        dictionary_file.save(self.store.data_dir, parsed)
+        self._changed()
+        return parsed
+
     # Shortcut capture: the page asks, the menu-bar app's global listener records the keys.
 
     def on_capture(self, listener: Callable[[], None]) -> None:
@@ -207,16 +224,22 @@ class Dictum:
             if not mime.startswith("audio/"):
                 mime = sniff_mime(data) or mime
             try:
-                result = ref.provider.transcribe(Clip(data, mime), ref.model, api_key)
+                dictionary = self.dictionary()
+                result = ref.provider.transcribe(
+                    Clip(data, mime), ref.model, api_key, terms=dictionary.terms
+                )
             except Exception as exc:
                 result = Failure(f"{type(exc).__name__}: {exc}")
+        raw_text = result.text if isinstance(result, Transcript) else None
+        text = dictionary_file.apply(self.dictionary(), raw_text) if raw_text is not None else None
         self.store.add_transcription(
             recording.id,
             provider=ref.provider.id,
             model=ref.model,
             status="ok" if isinstance(result, Transcript) else "error",
-            text=result.text if isinstance(result, Transcript) else None,
+            text=text,
             error=result.error if isinstance(result, Failure) else None,
+            raw_text=raw_text,
         )
         updated = self.store.get_recording(recording.id)
         assert updated is not None

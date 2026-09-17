@@ -81,6 +81,21 @@
             </div>
           </div>
 
+          <h2 class="section-label">Dictionary</h2>
+          <div class="group">
+            <div class="row top">
+              <div class="lbl"><label for="dictionary">Terms and replacements</label><span class="hint">Terms are sent to the provider so it knows your words. Replacements fix what it still gets wrong: "heard" → "meant", whole words only.</span></div>
+              <div class="field">
+                <textarea class="input dictionary" id="dictionary" spellcheck="false" rows="10"></textarea>
+                <div class="save-row">
+                  <button type="button" class="btn" id="save-dictionary">Save dictionary</button>
+                  <span class="save-status" id="dictionary-status" role="status"></span>
+                </div>
+                <p class="help">Plain JSON you can edit or paste whole; the file is <code>dictionary.json</code> in Dictum's data folder.</p>
+              </div>
+            </div>
+          </div>
+
           <h2 class="section-label">Appearance</h2>
           <div class="group">
             <div class="row">

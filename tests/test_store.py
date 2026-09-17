@@ -30,3 +30,32 @@ def test_clearing_a_setting(tmp_path: Path) -> None:
     store.set_setting("k", "v")
     store.set_setting("k", None)
     assert store.get_setting("k") is None
+
+
+def test_raw_text_column_is_added_to_an_older_database(tmp_path: Path) -> None:
+    import sqlite3
+
+    db = sqlite3.connect(tmp_path / "dictum.db")
+    db.executescript(
+        "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+        "CREATE TABLE recordings (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,"
+        " file TEXT NOT NULL, mime TEXT NOT NULL);"
+        "CREATE TABLE transcriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, recording_id INTEGER"
+        " NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, text TEXT,"
+        " error TEXT, created_at TEXT NOT NULL);"
+    )
+    db.execute("INSERT INTO recordings (created_at, file, mime) VALUES ('t', 'f.wav', 'audio/wav')")
+    db.execute(
+        "INSERT INTO transcriptions"
+        " (recording_id, provider, model, status, text, error, created_at)"
+        " VALUES (1, 'p', 'm', 'ok', 'old text', NULL, 't')"
+    )
+    db.commit()
+    db.close()
+
+    store = Store(tmp_path)
+    old = store.get_recording(1)
+    assert old is not None and old.transcriptions[0].text == "old text"
+    assert old.transcriptions[0].raw_text is None
+    store.add_transcription(1, "p", "m", "ok", "fixed", None, raw_text="raw")
+    assert store.get_recording(1).transcriptions[0].raw_text == "raw"  # type: ignore[union-attr]

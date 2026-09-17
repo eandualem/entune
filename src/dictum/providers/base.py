@@ -52,7 +52,11 @@ class Provider(Protocol):
     name: str
     models: tuple[str, ...]
 
-    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult: ...
+    def transcribe(
+        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
+    ) -> TranscribeResult:
+        """`terms`: the user's vocabulary, passed on in whatever form the provider accepts."""
+        ...
 
 
 def failure_from_response(response: httpx.Response) -> Failure:

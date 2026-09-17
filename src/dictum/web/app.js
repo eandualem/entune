@@ -118,7 +118,7 @@ async function loadSettings() {
   shortcutHold.value = s.shortcuts.hold ?? "";
   shortcutToggle.value = s.shortcuts.toggle ?? "";
   updateEmptyHint();
-  await loadModels();
+  await Promise.all([loadModels(), loadDictionary()]);
 }
 
 function flash(target, message, kind) {
@@ -142,6 +142,28 @@ settingsForm.addEventListener("submit", async (e) => {
     await loadSettings();
   } catch (err) {
     flash(settingsStatus, String(err.message ?? err), "err");
+  }
+});
+
+// ---- Dictionary: JSON the user edits or pastes whole ----
+const dictionaryBox = el("dictionary");
+const dictionaryStatus = el("dictionary-status");
+
+async function loadDictionary() {
+  const res = await fetch("/api/dictionary");
+  const text = await res.text();
+  if (res.ok) dictionaryBox.value = text;
+  else flash(dictionaryStatus, text, "err");
+}
+
+el("save-dictionary").addEventListener("click", async () => {
+  const res = await fetch("/api/dictionary", { method: "PUT", headers: { "content-type": "application/json" }, body: dictionaryBox.value });
+  const text = await res.text();
+  if (res.ok) {
+    dictionaryBox.value = text;
+    flash(dictionaryStatus, "Saved", "ok");
+  } else {
+    flash(dictionaryStatus, text, "err");
   }
 });
 

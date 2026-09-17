@@ -41,7 +41,9 @@ class Soniox:
         self._client = client or httpx.Client(timeout=DEFAULT_TIMEOUT)
         self._sleep = sleep
 
-    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
+    def transcribe(
+        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
+    ) -> TranscribeResult:
         headers = {"Authorization": f"Bearer {api_key}"}
 
         upload = self._client.post(
@@ -54,9 +56,10 @@ class Soniox:
             return failure_from_body(upload.json())
 
         try:
-            created = self._client.post(
-                f"{BASE}/transcriptions", headers=headers, json={"file_id": file_id, "model": model}
-            )
+            request: dict[str, object] = {"file_id": file_id, "model": model}
+            if terms:
+                request["context"] = {"terms": list(terms)}
+            created = self._client.post(f"{BASE}/transcriptions", headers=headers, json=request)
             if created.is_error:
                 return failure_from_response(created)
             job_id = _id_of(created.json())

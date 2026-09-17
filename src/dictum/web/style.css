@@ -172,6 +172,13 @@ kbd { font: inherit; padding: 1px 6px; border: 1px solid var(--line-strong); bor
 }
 .input::placeholder { color: var(--text-faint); }
 .input[readonly] { background: var(--surface-2); }
+textarea.input.dictionary {
+  height: auto; padding: 8px 10px; resize: vertical; min-height: 9rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; line-height: 1.5;
+  white-space: pre; overflow-wrap: normal; overflow-x: auto; tab-size: 2;
+}
+.field .save-row { margin-top: var(--s-2); }
+code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; background: var(--surface-2); padding: 1px 4px; border-radius: 3px; }
 
 /* Content */
 .content { flex: 1; overflow-y: auto; }
