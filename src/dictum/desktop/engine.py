@@ -32,15 +32,19 @@ class ShortcutEngine:
     def press(self, key: str) -> None:
         self.pressed.add(key)
         hold, toggle = self.shortcuts.hold, self.shortcuts.toggle
-        # The chord wins when the hold key is part of it (fn in cmd+fn).
         if toggle and key in toggle and set(toggle) <= self.pressed:
-            if not self._chord_fired:
-                self._chord_fired = True
-                if self.recording:
-                    self._stop()
-                else:
-                    self._held = False
-                    self._start()
+            if self._chord_fired:
+                return
+            self._chord_fired = True
+            if self.recording and self._held:
+                # The hold key is part of the chord and was pressed first (fn, then cmd):
+                # the hold becomes hands-free instead of stopping.
+                self._held = False
+            elif self.recording:
+                self._stop()
+            else:
+                self._held = False
+                self._start()
             return
         if hold and key == hold[0]:
             if not self.recording:

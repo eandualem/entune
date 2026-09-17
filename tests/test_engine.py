@@ -56,12 +56,14 @@ def test_both_shortcuts_share_one_recording() -> None:
     assert events == ["start", "stop"]
     engine.press("alt_r")  # hold starts
     engine.press("cmd")
-    engine.press("d")  # chord while holding: stops
-    assert events == ["start", "stop", "start", "stop"]
+    engine.press("d")  # chord while holding: the hold becomes hands-free
+    assert events == ["start", "stop", "start"] and engine.recording
     engine.release("d")
     engine.release("cmd")
-    engine.release("alt_r")  # nothing left to stop
-    assert events == ["start", "stop", "start", "stop"]
+    engine.release("alt_r")  # releasing the hold key no longer stops it
+    assert events == ["start", "stop", "start"] and engine.recording
+    engine.press("alt_r")  # the hold key alone stops it
+    assert events == ["start", "stop", "start", "stop"] and not engine.recording
 
 
 def test_fn_is_always_the_way_to_stop() -> None:
@@ -80,3 +82,17 @@ def test_fn_is_always_the_way_to_stop() -> None:
     assert events == ["start", "stop", "start", "stop"] and not engine.recording
     engine.release("fn")  # and releasing it afterwards starts nothing
     assert events == ["start", "stop", "start", "stop"]
+
+
+def test_chord_completed_while_holding_becomes_hands_free() -> None:
+    """Elias presses fn first, then cmd: that must start hands-free, not stop."""
+    engine, events = make("fn", "fn+cmd")
+    engine.press("fn")  # a hold begins
+    engine.press("cmd")  # chord complete while fn is down: now hands-free
+    assert events == ["start"] and engine.recording
+    engine.release("cmd")
+    engine.release("fn")  # releasing fn no longer stops it
+    assert events == ["start"] and engine.recording
+    engine.press("fn")  # a plain press of fn stops it
+    engine.release("fn")
+    assert events == ["start", "stop"] and not engine.recording
