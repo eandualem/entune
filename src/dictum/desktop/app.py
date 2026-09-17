@@ -146,10 +146,18 @@ class DictumApp(rumps.App):  # type: ignore[misc]
 
     def _transcribe_and_deliver(self, capture: Capture) -> None:
         try:
+            self._transcribe_and_deliver_inner(capture)
+        except Exception as exc:  # whatever happens, the icon must not stay at ⏳
+            message = f"{type(exc).__name__}: {exc}"
+            self._later(lambda: actions.notify("Dictum: transcription failed", message))
+        finally:
+            self._later(lambda: self._set_title(IDLE))
+
+    def _transcribe_and_deliver_inner(self, capture: Capture) -> None:
+        try:
             recording = self.dictum.record_and_transcribe(capture.wav(), "audio/wav", None)
         except (NoDefaultModel, UnknownModel) as exc:
             message = str(exc)
-            self._later(lambda: self._set_title(IDLE))
             self._later(lambda: actions.notify("Dictum", message))
             return
         attempt = recording.transcriptions[0]
@@ -169,7 +177,6 @@ class DictumApp(rumps.App):  # type: ignore[misc]
                     f"{first_line}. Open history to retry with another model.",
                 )
             )
-        self._later(lambda: self._set_title(IDLE))
 
     def _deliver(self, text: str) -> None:
         actions.copy_to_clipboard(text)

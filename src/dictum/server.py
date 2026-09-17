@@ -23,6 +23,34 @@ from dictum.store import Recording
 WEB_DIR = Path(__file__).parent / "web"
 
 
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # an hour of 16-bit WAV at 24 kHz is about 170 MB
+
+
+class LocalOnly(BaseHTTPMiddleware):
+    """Refuse state-changing requests that a web page from elsewhere could make.
+
+    The server binds to localhost, but any page open in a browser on this machine can
+    still POST here with a form or simple request and, for example, spend the user's
+    provider credit on a recording. Browsers send an Origin header on such requests;
+    curl, the app's own window and the page it serves do not, or send our own origin.
+    """
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        if request.method in ("POST", "PUT", "DELETE"):
+            origin = request.headers.get("origin")
+            if origin is not None and not _same_origin(origin, request):
+                return _bad("Requests from other origins are refused", 403)
+            length = request.headers.get("content-length")
+            if length and length.isdigit() and int(length) > MAX_UPLOAD_BYTES:
+                return _bad("Request too large", 413)
+        return await call_next(request)
+
+
+def _same_origin(origin: str, request: Request) -> bool:
+    host = request.headers.get("host", "")
+    return origin.lower() in (f"http://{host}".lower(), "null") if host else False
+
+
 class NoCache(BaseHTTPMiddleware):
     """The page and its script change with every release; browsers must revalidate them."""
 
@@ -81,8 +109,10 @@ def create_app(app: Dictum) -> Starlette:
         )
 
     async def put_settings(request: Request) -> Response:
-        body = await request.json()
         try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("Body must be a JSON object")
             for provider_id, key in (body.get("keys") or {}).items():
                 app.set_key(provider_id, key if isinstance(key, str) else "")
             if "defaultModel" in body:
@@ -191,7 +221,7 @@ def create_app(app: Dictum) -> Starlette:
         )
 
     return Starlette(
-        middleware=[Middleware(NoCache)],
+        middleware=[Middleware(NoCache), Middleware(LocalOnly)],
         routes=[
             Route("/", index),
             Route("/api/settings", get_settings, methods=["GET"]),
