@@ -5,7 +5,8 @@ lighter but macOS's permission panels may refuse to list it.
 
 ## `dictum install-app`
 
-Writes `~/Applications/Dictum.app` (or `--into DIR`): an Info.plist with
+Writes `/Applications/Dictum.app` when that folder is writable, else
+`~/Applications/Dictum.app` (or `--into DIR`): an Info.plist with
 Dictum's name, bundle id `dev.elias.dictum`, `LSUIElement`, the microphone
 usage string and an icns built from the shipped PNG with `sips` and
 `iconutil`; and an executable that is a two-line shell script running the
