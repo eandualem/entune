@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
     <title>Dictum</title>
     <link rel="stylesheet" href="/static/style.css" />
     <script>
@@ -14,55 +15,90 @@
     </script>
   </head>
   <body>
-    <main>
-      <header>
-        <h1><span class="mark"></span>Dictum</h1>
-        <details id="settings">
-          <summary>Settings</summary>
-        </details>
-      </header>
+    <header class="toolbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>Dictum</div>
 
-      <form id="settings-form" class="card" hidden>
-        <div id="keys"></div>
-        <label>Default model <select id="default-model"></select></label>
-        <fieldset id="shortcut">
-          <legend>Dictation shortcuts</legend>
-          <label>Hold to talk: one key, record while held, release to stop
-            <span class="row shortcut-row">
-              <input id="shortcut-hold" type="text" readonly placeholder="not set" />
-              <button type="button" class="capture" data-target="shortcut-hold">Record shortcut</button>
-              <button type="button" class="clear" data-target="shortcut-hold" title="Remove">Clear</button>
-            </span></label>
-          <label>Hands-free: a combination to start; press again, or press the hold key, to stop
-            <span class="row shortcut-row">
-              <input id="shortcut-toggle" type="text" readonly placeholder="not set" />
-              <button type="button" class="capture" data-target="shortcut-toggle">Record shortcut</button>
-              <button type="button" class="clear" data-target="shortcut-toggle" title="Remove">Clear</button>
-            </span></label>
-          <small>Click "Record shortcut", then press the key or combination you want; it is saved when you let go. Both can be set, for example hold <b>fn</b> and <b>cmd+fn</b> hands-free.</small>
-          <span id="shortcut-status" class="status"></span>
-        </fieldset>
-        <label>Appearance
-          <select id="theme">
-            <option value="system">Match the system</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </label>
-        <div class="row">
-          <button type="submit" class="primary">Save</button>
-          <span id="settings-status" class="status"></span>
+      <div class="recorder">
+        <button class="btn-record" id="record" type="button" aria-pressed="false">
+          <span class="dot" aria-hidden="true"></span><span class="label">Record</span>
+        </button>
+        <span class="rec-timer" id="rec-timer" hidden>0:00</span>
+        <select class="select" id="model" aria-label="Model used when recording here"></select>
+        <span class="status" id="status"></span>
+      </div>
+
+      <div class="spacer"></div>
+
+      <div class="segmented" role="tablist" aria-label="View">
+        <button type="button" role="tab" id="tab-history" aria-selected="true" aria-controls="view-history">History</button>
+        <button type="button" role="tab" id="tab-settings" aria-selected="false" aria-controls="view-settings">Settings</button>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="view" id="view-history" role="tabpanel" data-active>
+        <div class="page">
+          <h2 class="section-label" id="history-label">History</h2>
+          <div id="history"></div>
+          <div class="empty" id="empty" hidden>
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></svg>
+            <h2>Nothing recorded yet</h2>
+            <p id="empty-hint">Press Record above and speak.</p>
+          </div>
         </div>
-      </form>
-
-      <section id="recorder" class="card row">
-        <button id="record" type="button" class="primary">Record</button>
-        <label>Model <select id="model"></select></label>
-        <span id="status" class="status"></span>
       </section>
 
-      <h2>History</h2>
-      <section id="history"></section>
+      <section class="view" id="view-settings" role="tabpanel">
+        <form class="page" id="settings-form">
+          <h2 class="section-label">API keys</h2>
+          <div class="group" id="keys"></div>
+
+          <h2 class="section-label">Dictation</h2>
+          <div class="group">
+            <div class="row">
+              <label for="default-model">Default model</label>
+              <div class="field"><select class="select" id="default-model"></select></div>
+            </div>
+            <div class="row top">
+              <div class="lbl"><label for="shortcut-hold">Hold to talk</label><span class="hint">One key. Records while held, release to stop.</span></div>
+              <div class="field shortcut-field">
+                <input class="input key-input" id="shortcut-hold" type="text" readonly placeholder="Not set" />
+                <button type="button" class="btn capture" data-target="shortcut-hold">Record shortcut</button>
+                <button type="button" class="btn clear" data-target="shortcut-hold">Clear</button>
+              </div>
+            </div>
+            <div class="row top">
+              <div class="lbl"><label for="shortcut-toggle">Hands-free</label><span class="hint">A combination. Press to start; press again, or press the hold key, to stop.</span></div>
+              <div class="field">
+                <div class="shortcut-field">
+                  <input class="input key-input" id="shortcut-toggle" type="text" readonly placeholder="Not set" />
+                  <button type="button" class="btn capture" data-target="shortcut-toggle">Record shortcut</button>
+                  <button type="button" class="btn clear" data-target="shortcut-toggle">Clear</button>
+                </div>
+                <p class="help">Click “Record shortcut”, press the key or combination, let go; it is saved. Both can be set, for example hold <kbd>fn</kbd> and <kbd>cmd+fn</kbd> hands-free.</p>
+                <p class="help" id="shortcut-status" role="status"></p>
+              </div>
+            </div>
+          </div>
+
+          <h2 class="section-label">Appearance</h2>
+          <div class="group">
+            <div class="row">
+              <span class="lbl">Theme</span>
+              <div class="field radios" role="radiogroup" aria-label="Appearance">
+                <label><input type="radio" name="appearance" value="system" checked /> Match the system</label>
+                <label><input type="radio" name="appearance" value="light" /> Light</label>
+                <label><input type="radio" name="appearance" value="dark" /> Dark</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="save-row">
+            <button class="btn primary" type="submit">Save</button>
+            <span class="save-status" id="settings-status" role="status"></span>
+          </div>
+        </form>
+      </section>
     </main>
     <script type="module" src="/static/app.js"></script>
   </body>
