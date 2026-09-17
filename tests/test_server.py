@@ -336,3 +336,17 @@ def test_a_broken_dictionary_file_does_not_lose_a_transcript(
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     attempt = rec["transcriptions"][0]
     assert attempt["status"] == "error" and "Not valid JSON" in attempt["error"]
+
+
+def test_status_and_show_window(client: TestClient, tmp_path: Path, stub: StubProvider) -> None:
+    status = client.get("/api/status").json()
+    assert status["desktop"] is False and "version" in status
+    assert client.post("/api/window").status_code == 409
+
+    dictum = Dictum(Store(tmp_path / "desktop"), [stub])
+    shown: list[bool] = []
+    dictum.on_show_window(lambda: shown.append(True))
+    dictum.report_status(desktop=True, listening=True, canListen=True)
+    desktop = TestClient(create_app(dictum))
+    assert desktop.get("/api/status").json()["listening"] is True
+    assert desktop.post("/api/window").status_code == 200 and shown == [True]
