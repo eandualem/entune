@@ -72,7 +72,7 @@ class DictumApp(rumps.App):  # type: ignore[misc]
         if not self._server_answers() and time.monotonic() - started < SERVER_WAIT_SECONDS:
             AppHelper.callLater(0.2, self._show_window_when_served, started)
             return
-        self.window.show("#settings" if self.dictum.shortcut() is None else "")
+        self.window.show("" if self.dictum.shortcuts() else "#settings")
 
     def _server_answers(self) -> bool:
         host, _, port = self.url.removeprefix("http://").rstrip("/").partition(":")
@@ -89,8 +89,8 @@ class DictumApp(rumps.App):  # type: ignore[misc]
     # Shortcut
 
     def apply_shortcut(self) -> None:
-        shortcut = self.dictum.shortcut()
-        if shortcut is None:
+        shortcuts = self.dictum.shortcuts()
+        if not shortcuts:
             self.engine = None
             self.listener.stop()
             self._listening = False
@@ -103,15 +103,14 @@ class DictumApp(rumps.App):  # type: ignore[misc]
             self.status_item.title = f"Allow Input Monitoring in {permissions.SETTINGS_HINT}"
             permissions.request_listen()
             return
-        self.engine = ShortcutEngine(shortcut, self.start_recording, self.stop_recording)
+        self.engine = ShortcutEngine(shortcuts, self.start_recording, self.stop_recording)
         self.listener.start(self.engine)
         self._listening = True
-        verb = "Hold" if shortcut.mode == "hold" else "Press"
-        self.status_item.title = f"{verb} {'+'.join(shortcut.keys)} to dictate"
+        self.status_item.title = f"Dictate: {shortcuts.describe()}"
 
     def _recheck_permission(self, _: Any = None) -> None:
         """Start listening as soon as Input Monitoring is granted, without a restart."""
-        if not self._listening and self.dictum.shortcut() is not None and permissions.can_listen():
+        if not self._listening and self.dictum.shortcuts() and permissions.can_listen():
             self.apply_shortcut()
 
     # Recording, called from the keyboard listener's thread
