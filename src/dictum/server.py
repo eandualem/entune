@@ -72,6 +72,7 @@ def create_app(app: Dictum) -> Starlette:
                         "name": s.name,
                         "keyHint": s.key_hint,
                         "defaultModel": s.default_model,
+                        "models": [{"id": m.id, "name": m.name} for m in s.models],
                     }
                     for s in app.llm_provider_statuses()
                 ],

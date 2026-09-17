@@ -52,7 +52,8 @@ provider's raw text is kept next to the corrected one.
 Entries you add or pin are yours; a model never changes them. **Build from
 history** sends your recent raw transcripts and the current dictionary to
 a language model of your choice (Anthropic or OpenAI, your key, set under
-Settings › Dictionary model) and shows what it proposes to add and remove
+Settings › Dictionary model; Claude Fable and GPT-6 Astra are suggested,
+and the call runs at high reasoning effort) and shows what it proposes to add and remove
 before anything is saved. Later builds refine what was learned and leave
 your pinned entries alone. The model is never in the path of a dictation.
 
