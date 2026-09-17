@@ -7,10 +7,13 @@ from dictum.dictionary import Dictionary, Entries
 
 
 def test_user_prompt_carries_both_sections_and_bounded_transcripts() -> None:
-    current = Dictionary(pinned=Entries(("Dictum",)), learned=Entries(("Soniox",)))
+    current = Dictionary(
+        pinned=Entries(("Dictum",)), agents=Entries(("Groq",)), learned=Entries(("Soniox",))
+    )
     long = "x" * (llm.MAX_TRANSCRIPT_CHARS - 10)
     prompt = llm.build_user_prompt(current, [" first ", "", long, "never included"])
     assert '"terms": ["Dictum"]' in prompt and '"terms": ["Soniox"]' in prompt
+    assert "Confirmed through the user's agents" in prompt and '"terms": ["Groq"]' in prompt
     assert "- first" in prompt and "never included" not in prompt
     assert "(2)" in prompt
 

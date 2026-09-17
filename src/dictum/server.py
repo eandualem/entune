@@ -111,6 +111,17 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc))
         return PlainTextResponse(app.dictionary_text(), media_type="application/json")
 
+    async def agent_corrections(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except ValueError:
+            return _bad("Body must be JSON")
+        try:
+            added = app.add_agent_corrections(body)
+        except ValueError as exc:
+            return _bad(str(exc))
+        return JSONResponse({"added": added.as_json()})
+
     async def build_dictionary(_: Request) -> Response:
         try:
             proposal = await run_in_threadpool(app.build_dictionary)
@@ -188,6 +199,7 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/dictionary", get_dictionary, methods=["GET"]),
             Route("/api/dictionary", put_dictionary, methods=["PUT"]),
             Route("/api/dictionary/build", build_dictionary, methods=["POST"]),
+            Route("/api/dictionary/corrections", agent_corrections, methods=["POST"]),
             Route("/api/capture", start_capture, methods=["POST"]),
             Route("/api/capture", capture_status, methods=["GET"]),
             Route("/api/capture", cancel_capture, methods=["DELETE"]),
