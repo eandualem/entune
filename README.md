@@ -89,3 +89,7 @@ uv run mypy             # types, strict
 
 Adding a provider is one module in `src/dictum/providers/` implementing
 the `Provider` protocol from `base.py`, plus a line in `default_providers()`.
+
+## Licence
+
+MIT. See `LICENSE`.
