@@ -1,18 +1,14 @@
 """Shortcut definitions: how the user asks the menu-bar app to record.
 
-Two modes. `hold`: one key, record while it is held, release to stop.
-`toggle`: a chord of two or more keys, press to start, press again to stop.
-Keys are named the way pynput names them (`alt_r`, `cmd`, `space`, `f5`,
-or a single character) and written joined with `+`.
+Two shortcuts can be active at once. A **hold** key: record while it is held,
+release to stop. A **toggle** chord of two or more keys: press to start, press
+again to stop. Keys are named the way pynput names them (`alt_r`, `cmd`,
+`space`, `f5`, or a single character) and written joined with `+`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, get_args
-
-Mode = Literal["hold", "toggle"]
-MODES: tuple[str, ...] = get_args(Mode)
 
 NAMED_KEYS = frozenset(
     {
@@ -33,12 +29,22 @@ ALIASES = {
 
 
 @dataclass(frozen=True)
-class Shortcut:
-    mode: Mode
-    keys: tuple[str, ...]
+class Shortcuts:
+    """What is configured. Either may be None; both may be set."""
 
-    def __str__(self) -> str:
-        return f"{self.mode} {format_keys(self.keys)}"
+    hold: tuple[str, ...] | None = None
+    toggle: tuple[str, ...] | None = None
+
+    def __bool__(self) -> bool:
+        return self.hold is not None or self.toggle is not None
+
+    def describe(self) -> str:
+        parts = []
+        if self.hold:
+            parts.append(f"hold {format_keys(self.hold)}")
+        if self.toggle:
+            parts.append(f"press {format_keys(self.toggle)}")
+        return " or ".join(parts) if parts else "no shortcut"
 
 
 def parse_keys(text: str) -> tuple[str, ...]:
@@ -61,12 +67,23 @@ def format_keys(keys: tuple[str, ...]) -> str:
     return "+".join(keys)
 
 
-def parse(mode: str, keys_text: str) -> Shortcut:
-    if mode not in MODES:
-        raise ValueError(f"Unknown mode: {mode!r} (use hold or toggle)")
-    keys = parse_keys(keys_text)
-    if mode == "hold" and len(keys) != 1:
-        raise ValueError("Hold mode takes exactly one key, for example alt_r")
-    if mode == "toggle" and len(keys) < 2:
-        raise ValueError("Toggle mode takes two or more keys, for example cmd+shift+space")
-    return Shortcut("hold" if mode == "hold" else "toggle", keys)
+def parse_hold(text: str) -> tuple[str, ...]:
+    keys = parse_keys(text)
+    if len(keys) != 1:
+        raise ValueError("The hold shortcut is exactly one key, for example alt_r")
+    return keys
+
+
+def parse_toggle(text: str) -> tuple[str, ...]:
+    keys = parse_keys(text)
+    if len(keys) < 2:
+        raise ValueError("The toggle shortcut is two or more keys, for example cmd+shift+space")
+    return keys
+
+
+def parse(hold: str | None, toggle: str | None) -> Shortcuts:
+    """Build a Shortcuts from the two text fields; blank means not set."""
+    return Shortcuts(
+        hold=parse_hold(hold) if hold and hold.strip() else None,
+        toggle=parse_toggle(toggle) if toggle and toggle.strip() else None,
+    )

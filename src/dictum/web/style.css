@@ -232,9 +232,36 @@ h2 {
 .recording audio { height: 2rem; max-width: 18rem; }
 .recording small { color: var(--muted); font-size: 0.82rem; }
 
-.attempt .text { margin: 0; white-space: pre-wrap; font-size: 1.02rem; }
-.attempt .text.empty { color: var(--muted); font-style: italic; }
-.attempt .actions { margin-top: 0.6rem; }
+.transcript {
+  position: relative;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 2.6rem 0.75rem 0.9rem;
+  cursor: copy;
+}
+.transcript:hover { outline: 1px solid var(--line); }
+.transcript.empty { cursor: default; }
+.transcript .text { margin: 0; white-space: pre-wrap; font-size: 1.02rem; }
+.transcript.empty .text { color: var(--muted); font-style: italic; }
+.transcript .copy { position: absolute; top: 0.5rem; right: 0.5rem; }
+.transcript .copy-note { position: absolute; right: 2.6rem; top: 0.7rem; font-size: 0.8rem; color: var(--ok); }
+
+button.icon, a.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  border: 1px solid transparent;
+  background: transparent;
+  text-decoration: none;
+}
+button.icon:hover, a.icon:hover { background: var(--surface); border-color: var(--line); color: var(--text); }
+.transcript .copy:hover { background: var(--bg); }
+.media { gap: 0.35rem; }
 
 .attempt .error {
   margin: 0;
