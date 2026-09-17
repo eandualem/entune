@@ -1,41 +1,259 @@
+/* Dictum: one palette, light and dark, following the system unless the page says otherwise. */
+
 :root {
-  color-scheme: light dark;
-  --muted: color-mix(in srgb, CanvasText 55%, Canvas);
-  --line: color-mix(in srgb, CanvasText 15%, Canvas);
-  --error-bg: color-mix(in srgb, red 12%, Canvas);
+  --bg: #f6f5f2;
+  --surface: #ffffff;
+  --surface-2: #f0efeb;
+  --text: #1c1b18;
+  --muted: #6f6c66;
+  --line: #e4e2dc;
+  --accent: #4f46e5;
+  --accent-text: #ffffff;
+  --accent-soft: #e8e6fb;
+  --danger: #b42318;
+  --danger-bg: #fdecea;
+  --danger-line: #f5c2bd;
+  --ok: #067647;
+  --shadow: 0 1px 2px rgba(20, 18, 12, 0.06), 0 8px 24px -16px rgba(20, 18, 12, 0.25);
+  --radius: 14px;
+  --radius-sm: 9px;
+  color-scheme: light;
 }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161616;
+    --surface: #1f1f1f;
+    --surface-2: #262626;
+    --text: #ececea;
+    --muted: #9a9892;
+    --line: #2e2e2e;
+    --accent: #8b85f5;
+    --accent-text: #0f0e1f;
+    --accent-soft: #2a2852;
+    --danger: #ff8a80;
+    --danger-bg: #2b1a19;
+    --danger-line: #4a2523;
+    --ok: #4ade80;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -16px rgba(0, 0, 0, 0.8);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #161616;
+  --surface: #1f1f1f;
+  --surface-2: #262626;
+  --text: #ececea;
+  --muted: #9a9892;
+  --line: #2e2e2e;
+  --accent: #8b85f5;
+  --accent-text: #0f0e1f;
+  --accent-soft: #2a2852;
+  --danger: #ff8a80;
+  --danger-bg: #2b1a19;
+  --danger-line: #4a2523;
+  --ok: #4ade80;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -16px rgba(0, 0, 0, 0.8);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--bg); }
 
 body {
-  font-family: system-ui, sans-serif;
-  max-width: 48rem;
-  margin: 2rem auto;
-  padding: 0 1rem;
-  line-height: 1.45;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-h1 { margin: 0; }
-header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
-header details { flex: 1; text-align: right; }
-header details form { text-align: left; border: 1px solid var(--line); border-radius: 0.5rem; padding: 1rem; margin-top: 0.5rem; }
-header details summary { cursor: pointer; }
+main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 2rem 1rem 4rem;
+}
+
+/* Top bar */
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+h1 .mark {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 0.45em;
+  vertical-align: -0.02em;
+}
+
+/* Buttons and controls */
+
+button, select, input[type="text"], input[type="password"] {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 0.45rem 0.95rem;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.05s;
+}
+button:hover { background: var(--surface-2); }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+button.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: transparent;
+  font-weight: 600;
+}
+button.primary:hover { filter: brightness(1.06); background: var(--accent); }
+
+button.recording {
+  background: var(--danger);
+  color: #fff;
+  border-color: transparent;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--danger) 25%, transparent); } }
+
+select, input[type="text"], input[type="password"] {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.7rem;
+}
+select { padding-right: 1.6rem; }
+input:focus-visible, select:focus-visible, button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 .row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
-form label, #keys label { display: block; margin-bottom: 0.75rem; }
-input[type="password"] { width: 100%; max-width: 32rem; display: block; }
-fieldset { border: 1px solid var(--line); border-radius: 0.5rem; margin: 0 0 0.75rem; }
-fieldset label { margin-bottom: 0.4rem; }
+.status { color: var(--muted); font-size: 0.92rem; }
+
+/* Cards */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.1rem 1.25rem;
+}
+
+/* Dictate */
+
+#recorder {
+  margin-bottom: 1.75rem;
+  gap: 1rem;
+}
+#record {
+  font-size: 1rem;
+  padding: 0.65rem 1.4rem;
+}
+#recorder label { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); font-size: 0.92rem; }
+#recorder select { color: var(--text); }
+
+/* Settings */
+
+#settings summary {
+  list-style: none;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 0.45rem 0.95rem;
+  user-select: none;
+}
+#settings summary::-webkit-details-marker { display: none; }
+#settings summary:hover { background: var(--surface-2); }
+#settings[open] summary { background: var(--accent-soft); border-color: transparent; }
+
+#settings-form {
+  margin-bottom: 1rem;
+  display: grid;
+  gap: 1rem;
+}
+#settings-form[hidden] { display: none; }
+#settings-form label { display: grid; gap: 0.3rem; font-size: 0.92rem; color: var(--muted); }
+#settings-form label > input, #settings-form label > select { color: var(--text); }
+#settings-form input[type="password"], #shortcut-keys { width: 100%; max-width: 28rem; }
+
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem 1rem;
+  margin: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+legend { padding: 0 0.35rem; color: var(--text); font-weight: 600; font-size: 0.92rem; }
+#settings-form fieldset label.choice { display: flex; align-items: center; gap: 0.5rem; color: var(--text); font-size: 0.95rem; }
+fieldset label.choice input { margin: 0; }
 fieldset small { color: var(--muted); }
-#shortcut-keys { width: 100%; max-width: 20rem; display: block; }
-.status { color: var(--muted); }
 
-#recorder { margin: 1.5rem 0; }
-#record { font-size: 1.1rem; padding: 0.5rem 1.25rem; }
+/* History */
 
-.recording { border-top: 1px solid var(--line); padding: 1rem 0; }
-.recording time { color: var(--muted); }
-.recording audio { height: 2rem; }
-.recording small { color: var(--muted); display: block; margin-top: 0.5rem; }
-.attempt .text { margin: 0.25rem 0 0.5rem; white-space: pre-wrap; }
-.attempt .text.empty { color: var(--muted); }
-.attempt .error { background: var(--error-bg); padding: 0.75rem; border-radius: 0.5rem; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0.25rem 0 0.5rem; }
+#history { display: grid; gap: 0.9rem; }
+h2 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 0.25rem;
+}
+
+.recording { display: grid; gap: 0.6rem; }
+.recording .head { justify-content: space-between; }
+.recording time { color: var(--muted); font-size: 0.88rem; }
+.recording audio { height: 2rem; max-width: 18rem; }
+.recording small { color: var(--muted); font-size: 0.82rem; }
+
+.attempt .text { margin: 0; white-space: pre-wrap; font-size: 1.02rem; }
+.attempt .text.empty { color: var(--muted); font-style: italic; }
+.attempt .actions { margin-top: 0.6rem; }
+
+.attempt .error {
+  margin: 0;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-line);
+  color: var(--danger);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 0.9rem;
+  font: 0.82rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.attempt .error b { display: block; font: 600 0.92rem/1.4 inherit; font-family: inherit; margin-bottom: 0.25rem; }
+
+.retry { margin-top: 0.25rem; }
+.retry .status { flex-basis: 100%; }
+
+.recording details { border-top: 1px solid var(--line); padding-top: 0.6rem; }
+.recording details summary { cursor: pointer; color: var(--muted); font-size: 0.88rem; }
+.recording details .attempt { margin: 0.5rem 0 0.75rem; }
+
 .empty { color: var(--muted); }

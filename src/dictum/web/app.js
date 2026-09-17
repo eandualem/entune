@@ -12,6 +12,25 @@ const defaultSelect = el("default-model");
 const settingsStatus = el("settings-status");
 const shortcutKeys = el("shortcut-keys");
 const shortcutMode = () => settingsForm.querySelector("input[name=shortcut-mode]:checked").value;
+const settingsPanel = el("settings");
+const themeSelect = el("theme");
+
+// The settings panel is a <details> for its toggle button; the form lives outside it so it can be a card.
+settingsPanel.addEventListener("toggle", () => (settingsForm.hidden = !settingsPanel.open));
+
+// Appearance is a per-page preference, kept in this browser (or window) only.
+function applyTheme(theme) {
+  if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+  try {
+    if (theme === "system") localStorage.removeItem("theme");
+    else localStorage.setItem("theme", theme);
+  } catch (e) {}
+}
+try {
+  themeSelect.value = localStorage.getItem("theme") || "system";
+} catch (e) {}
+themeSelect.addEventListener("change", () => applyTheme(themeSelect.value));
 
 let models = [];
 
@@ -108,10 +127,12 @@ recordBtn.addEventListener("click", async () => {
     stream.getTracks().forEach((t) => t.stop());
     recorder = null;
     recordBtn.textContent = "Record";
+    recordBtn.classList.remove("recording");
     upload(new Blob(chunks, { type }));
   });
   recorder.start();
   recordBtn.textContent = "Stop";
+  recordBtn.classList.add("recording");
   status.textContent = "Recording…";
 });
 
@@ -155,6 +176,8 @@ function renderAttempt(t) {
     const p = document.createElement("p");
     p.className = t.text ? "text" : "text empty";
     p.textContent = t.text || "(no speech detected)";
+    const actions = document.createElement("div");
+    actions.className = "row actions";
     const copy = document.createElement("button");
     copy.type = "button";
     copy.textContent = "Copy";
@@ -167,11 +190,14 @@ function renderAttempt(t) {
       }
       setTimeout(() => (copy.textContent = "Copy"), 2500);
     });
-    box.append(p, copy);
+    actions.append(copy);
+    box.append(p, actions);
   } else {
     const pre = document.createElement("pre");
     pre.className = "error";
-    pre.textContent = `${attemptLabel(t)} failed:\n${t.error ?? ""}`;
+    const title = document.createElement("b");
+    title.textContent = `${attemptLabel(t)} failed`;
+    pre.append(title, t.error ?? "");
     box.append(pre);
   }
   return box;
@@ -179,9 +205,9 @@ function renderAttempt(t) {
 
 function renderRecording(r) {
   const card = document.createElement("article");
-  card.className = "recording";
+  card.className = "recording card";
   const head = document.createElement("div");
-  head.className = "row";
+  head.className = "row head";
   const time = document.createElement("time");
   time.dateTime = r.created_at;
   time.textContent = new Date(r.created_at).toLocaleString();
@@ -199,7 +225,7 @@ function renderRecording(r) {
     card.append(meta, renderAttempt(latest));
     if (latest.status === "error") {
       const row = document.createElement("div");
-      row.className = "row";
+      row.className = "row retry";
       const select = document.createElement("select");
       const other = models.find((m) => m.id !== `${latest.provider}/${latest.model}`)?.id ?? models[0]?.id ?? null;
       fillModels(select, other, "No models: add an API key in Settings");
@@ -241,5 +267,5 @@ async function loadHistory() {
 }
 
 await loadSettings();
-if (models.length === 0 || location.hash === "#settings") el("settings").open = true;
+if (models.length === 0 || location.hash === "#settings") settingsPanel.open = true;
 await loadHistory();
