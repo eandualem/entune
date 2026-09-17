@@ -1,5 +1,5 @@
 import index from "./index.html";
-import { Store, extensionFor, type Recording } from "./db.ts";
+import { Store, extensionFor, sniffAudioMime, type Recording } from "./db.ts";
 import { providers, resolveModel, type ModelRef } from "./providers/index.ts";
 
 const port = Number(process.env.PORT ?? 4187);
@@ -36,9 +36,10 @@ async function transcribe(recording: Recording, ref: ModelRef): Promise<Recordin
     result = { ok: false, error: `No API key set for ${ref.provider.name}` };
   } else {
     try {
-      // A WebM clip may arrive labelled video/webm; providers want an audio type.
-      const type = recording.mime.replace(/^video\//, "audio/");
-      const audio = new Blob([await Bun.file(store.audioPath(recording)).arrayBuffer()], { type });
+      const bytes = new Uint8Array(await Bun.file(store.audioPath(recording)).arrayBuffer());
+      // Clips stored before the container was sniffed on upload may carry an unusable label.
+      const type = recording.mime.startsWith("audio/") ? recording.mime : (sniffAudioMime(bytes) ?? recording.mime);
+      const audio = new Blob([bytes], { type });
       result = await ref.provider.transcribe({ audio, filename: `clip.${extensionFor(recording.mime)}`, model: ref.model, apiKey });
     } catch (e) {
       result = { ok: false, error: e instanceof Error ? `${e.name}: ${e.message}` : String(e) };
@@ -96,7 +97,7 @@ const server = Bun.serve({
         if (chosen === null) return bad("No default model is set. Pick one in Settings.");
         const ref = resolveModel(chosen);
         if (!ref) return bad(`Unknown model: ${chosen}`);
-        const recording = await store.createRecording(audio, audio.type || "application/octet-stream");
+        const recording = await store.createRecording(audio);
         return Response.json(await transcribe(recording, ref));
       },
     },

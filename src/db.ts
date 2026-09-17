@@ -32,6 +32,19 @@ const EXT_BY_MIME: Record<string, string> = {
   "audio/flac": "flac",
 };
 
+/** Identify the audio container from its first bytes, or null if it is not one we know. */
+export function sniffAudioMime(bytes: Uint8Array): string | null {
+  const ascii = (start: number, len: number) => String.fromCharCode(...bytes.subarray(start, start + len));
+  if (bytes.length < 12) return null;
+  if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return "audio/webm";
+  if (ascii(0, 4) === "OggS") return "audio/ogg";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 4) === "WAVE") return "audio/wav";
+  if (ascii(4, 4) === "ftyp") return "audio/mp4";
+  if (ascii(0, 4) === "fLaC") return "audio/flac";
+  if (ascii(0, 3) === "ID3" || (bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0)) return "audio/mpeg";
+  return null;
+}
+
 export function extensionFor(mime: string): string {
   const base = mime.split(";")[0]!.trim().toLowerCase();
   return EXT_BY_MIME[base] ?? "audio";
@@ -87,9 +100,12 @@ export class Store {
     return join(this.audioDir, recording.file);
   }
 
-  async createRecording(audio: Blob, mime: string): Promise<Recording> {
+  /** Store a clip. The container is read from the bytes; the label the browser sent is only a fallback. */
+  async createRecording(audio: Blob): Promise<Recording> {
+    const bytes = new Uint8Array(await audio.arrayBuffer());
+    const mime = sniffAudioMime(bytes) ?? (audio.type || "application/octet-stream");
     const file = `${crypto.randomUUID()}.${extensionFor(mime)}`;
-    await Bun.write(join(this.audioDir, file), audio);
+    await Bun.write(join(this.audioDir, file), bytes);
     const created_at = new Date().toISOString();
     const { lastInsertRowid } = this.db.run("INSERT INTO recordings (created_at, file, mime) VALUES (?, ?, ?)", [created_at, file, mime]);
     return { id: Number(lastInsertRowid), created_at, file, mime, transcriptions: [] };
