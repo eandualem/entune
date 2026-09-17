@@ -37,9 +37,15 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     status TEXT NOT NULL CHECK (status IN ('ok', 'error')),
     text TEXT,
     error TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    raw_text TEXT
 );
 """
+
+# Columns added after the first release; applied to databases that predate them.
+MIGRATIONS = [
+    ("transcriptions", "raw_text", "ALTER TABLE transcriptions ADD COLUMN raw_text TEXT"),
+]
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,7 @@ class Transcription:
     text: str | None
     error: str | None
     created_at: str
+    raw_text: str | None = None  # what the provider returned, before the dictionary
 
 
 @dataclass(frozen=True)
@@ -80,6 +87,11 @@ class Store:
         with self._lock:
             self._db.execute("PRAGMA journal_mode = WAL")
             self._db.executescript(SCHEMA)
+            for table, column, statement in MIGRATIONS:
+                columns = {row["name"] for row in self._db.execute(f"PRAGMA table_info({table})")}
+                if column not in columns:
+                    self._db.execute(statement)
+            self._db.commit()
 
     def close(self) -> None:
         self._db.close()
@@ -128,13 +140,14 @@ class Store:
         status: Status,
         text: str | None,
         error: str | None,
+        raw_text: str | None = None,
     ) -> None:
         with self._lock, self._db:
             self._db.execute(
                 "INSERT INTO transcriptions"
-                " (recording_id, provider, model, status, text, error, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (recording_id, provider, model, status, text, error, _now()),
+                " (recording_id, provider, model, status, text, error, created_at, raw_text)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (recording_id, provider, model, status, text, error, _now(), raw_text),
             )
 
     def get_recording(self, recording_id: int) -> Recording | None:
