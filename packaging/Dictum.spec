@@ -15,7 +15,10 @@ PACKAGE_DIR = Path(dictum.__file__).parent
 
 a = Analysis(
     ["launcher.py"],
-    datas=[(str(PACKAGE_DIR / "web"), "dictum/web")],
+    datas=[
+        (str(PACKAGE_DIR / "web"), "dictum/web"),
+        (str(PACKAGE_DIR / "assets"), "dictum/assets"),
+    ],
     hiddenimports=[
         *collect_submodules("uvicorn"),
         *collect_submodules("starlette"),
@@ -37,7 +40,7 @@ coll = COLLECT(exe, a.binaries, a.datas, name="Dictum")
 app = BUNDLE(
     coll,
     name="Dictum.app",
-    icon=None,
+    icon=str(Path(SPECPATH) / "Dictum.icns"),
     bundle_identifier="dev.elias.dictum",
     version=VERSION,
     info_plist={
