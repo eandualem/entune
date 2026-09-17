@@ -1,0 +1,35 @@
+# Contributing
+
+Dictum is deliberately small, and staying small is a feature. Before adding
+something, check that it earns its place in a tool one person opens all day.
+
+## Setup and checks
+
+```sh
+uv sync                 # Python 3.12+, environment with dev tools
+uv run pytest           # tests
+uv run ruff check .     # lint
+uv run ruff format .    # format
+uv run mypy             # types, strict
+```
+
+All four pass before a commit. Commits follow conventional commits
+(`feat:`, `fix:`, `docs:`, `chore:`, `test:`) with a body that says why.
+
+## Where things are
+
+- `src/dictum/providers/`: one module per speech-to-text provider behind one
+  contract. See [adding a provider](docs/providers.md).
+- `src/dictum/service.py`: what the app does, independent of HTTP or UI.
+- `src/dictum/server.py`: the local HTTP API and the page under `web/`.
+- `src/dictum/desktop/`: the macOS menu-bar app, window, shortcuts, paste.
+- `docs/`: [architecture](docs/architecture.md), [dictionary](docs/dictionary.md),
+  [agents' API](docs/agents-api.md), [packaging](docs/packaging.md).
+
+## Constraints
+
+The design constraints that every change keeps are in [AGENTS.md](AGENTS.md):
+one process and one command, keys that never leave the machine except to
+their provider, explicit configuration rather than inferred defaults, and
+adapters that never fall back, retry silently or guess a model. Read it
+before proposing a change; it is short.
