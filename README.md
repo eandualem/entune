@@ -60,6 +60,23 @@ your pinned entries alone. The model is never in the path of a dictation.
 The whole dictionary is one JSON file, `dictionary.json` in the data
 folder, editable by hand or pasted whole from the tab.
 
+### For agents
+
+If you dictate to AI agents, they can send corrections after confirming a
+mistranscription with you. They land in the tab's "Added by agents" list,
+count as confirmed, and the model never alters them:
+
+```sh
+curl -s -X POST localhost:4187/api/dictionary/corrections \
+  -H 'content-type: application/json' \
+  -d '{"replacements": {"whisper flow": "Wispr Flow"}, "terms": ["Dictum"], "source": "my-agent"}'
+```
+
+The reply lists what was actually new. A suggested instruction for the
+agents' shared prompt: when a word looks mistranscribed, ask one short
+question to confirm what was meant; once confirmed, post it here; send
+only what the user confirmed, whole words or phrases, never guesses.
+
 On release, the clip goes to your default model, the transcript is copied
 to the clipboard and pasted into whatever had focus. A failure shows as a
 notification with the provider's message; the history page has the retry.
