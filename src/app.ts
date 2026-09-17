@@ -148,8 +148,8 @@ function renderAttempt(t: Transcription): HTMLElement {
   box.className = `attempt ${t.status}`;
   if (t.status === "ok") {
     const p = document.createElement("p");
-    p.className = "text";
-    p.textContent = t.text ?? "";
+    p.className = t.text ? "text" : "text empty";
+    p.textContent = t.text || "(no speech detected)";
     const copy = document.createElement("button");
     copy.type = "button";
     copy.textContent = "Copy";
