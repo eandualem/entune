@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import socket
 import sys
 import threading
 import webbrowser
@@ -43,8 +44,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def port_is_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    if not port_is_free(args.port):
+        # Most likely another Dictum: two would both answer the shortcut and paste twice.
+        message = f"Port {args.port} is in use. Is Dictum already running? Quit it, or use --port."
+        if sys.platform == "darwin" and not args.no_menu:
+            from dictum.desktop.actions import notify
+
+            notify("Dictum is already running", message)
+        sys.exit(message)
     data_dir = args.data or default_data_dir()
     dictum = Dictum(Store(data_dir), default_providers())
     server = uvicorn.Server(
