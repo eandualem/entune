@@ -9,6 +9,7 @@ from dictum.providers.assemblyai import AssemblyAI
 from dictum.providers.base import Clip, Failure, Transcript
 from dictum.providers.groq import Groq
 from dictum.providers.soniox import Soniox
+from dictum.recorder import wav_bytes
 from tests.conftest import mock_client
 
 
@@ -120,3 +121,60 @@ def test_model_ids_resolve_only_to_known_pairs() -> None:
     )
     assert resolve_model(providers, "groq/nope") is None
     assert resolve_model(providers, "whisper") is None
+
+
+def test_assemblyai_uses_the_long_form_endpoint_past_the_sync_limit() -> None:
+    long_clip = Clip(wav_bytes(b"\x00\x00" * 16_000 * 150), "audio/wav")  # 150 s of silence
+    assert long_clip.seconds == 150.0
+    seen: list[httpx.Request] = []
+    polls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal polls
+        seen.append(request)
+        path = request.url.path
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        if path == "/v2/upload":
+            return httpx.Response(200, json={"upload_url": "https://cdn.assemblyai.com/upload/x"})
+        if path == "/v2/transcript":
+            return httpx.Response(200, json={"id": "t1", "status": "queued"})
+        if path == "/v2/transcript/t1":
+            polls += 1
+            done = polls >= 2
+            return httpx.Response(
+                200,
+                json={
+                    "id": "t1",
+                    "status": "completed" if done else "processing",
+                    "text": "long text" if done else None,
+                },
+            )
+        return httpx.Response(500, content="unexpected")
+
+    slept: list[float] = []
+    result = AssemblyAI(mock_client(handler), sleep=slept.append).transcribe(
+        long_clip, "universal-3-5-pro", "k"
+    )
+    assert result == Transcript("long text")
+    assert seen[0].url.host == "api.assemblyai.com" and seen[0].headers["authorization"] == "k"
+    assert json.loads(seen[1].content) == {
+        "audio_url": "https://cdn.assemblyai.com/upload/x",
+        "speech_models": ["universal-3-5-pro"],
+    }
+    assert slept == [2.0]
+    assert [r.url.path for r in seen if r.method == "DELETE"] == ["/v2/transcript/t1"]
+
+
+def test_assemblyai_short_wav_stays_on_the_sync_endpoint() -> None:
+    short_clip = Clip(wav_bytes(b"\x00\x00" * 16_000 * 5), "audio/wav")
+    client = mock_client(
+        lambda req: (
+            httpx.Response(200, json={"text": "short"})
+            if req.url.host == "sync.assemblyai.com"
+            else httpx.Response(500)
+        )
+    )
+    assert AssemblyAI(client).transcribe(short_clip, "universal-3-5-pro", "k") == Transcript(
+        "short"
+    )
