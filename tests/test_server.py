@@ -22,11 +22,14 @@ class StubProvider:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
 
-    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
+    def transcribe(
+        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
+    ) -> TranscribeResult:
         self.calls.append((clip.mime, model, api_key))
+        self.terms = terms
         if model == "bad":
             return Failure("HTTP 401 Unauthorized\n{}")
-        return Transcript("hello there")
+        return Transcript("hello there, I use cloud code")
 
 
 @pytest.fixture
@@ -90,7 +93,7 @@ def test_record_fail_retry_and_history(client: TestClient, stub: StubProvider) -
         f"/api/recordings/{failed['id']}/transcriptions", json={"model": "stub/good"}
     ).json()
     assert [t["status"] for t in retried["transcriptions"]] == ["ok", "error"]
-    assert retried["transcriptions"][0]["text"] == "hello there"
+    assert retried["transcriptions"][0]["text"] == "hello there, I use cloud code"
     assert stub.calls == [("audio/webm", "bad", "k"), ("audio/webm", "good", "k")]
 
     with_default = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
@@ -164,3 +167,24 @@ def test_capture_needs_the_menu_bar_app_or_hands_over_keys_once(
     dictum.finish_capture(("cmd", "fn"))
     assert app_client.get("/api/capture").json() == {"state": "done", "keys": "cmd+fn"}
     assert app_client.get("/api/capture").json() == {"state": "idle", "keys": None}
+
+
+def test_dictionary_round_trip_terms_reach_the_provider_and_replacements_apply(
+    client: TestClient, stub: StubProvider
+) -> None:
+    assert client.get("/api/dictionary").json() == {"terms": [], "replacements": {}}
+    bad = client.put("/api/dictionary", content='{"terms": "x"}')
+    assert bad.status_code == 400 and "terms must be a list" in bad.text
+    saved = client.put(
+        "/api/dictionary",
+        content='{"terms": ["Claude Code"], "replacements": {"cloud code": "Claude Code"}}',
+    )
+    assert saved.status_code == 200
+    assert saved.json()["terms"] == ["Claude Code"]
+
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
+    attempt = rec["transcriptions"][0]
+    assert stub.terms == ("Claude Code",)
+    assert attempt["raw_text"] == "hello there, I use cloud code"
+    assert attempt["text"] == "hello there, I use Claude Code"

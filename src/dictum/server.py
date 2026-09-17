@@ -73,6 +73,19 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc))
         return JSONResponse({"ok": True})
 
+    async def get_dictionary(_: Request) -> Response:
+        try:
+            return PlainTextResponse(app.dictionary_text(), media_type="application/json")
+        except ValueError as exc:
+            return _bad(f"dictionary.json on disk is not usable: {exc}", 500)
+
+    async def put_dictionary(request: Request) -> Response:
+        try:
+            app.set_dictionary((await request.body()).decode("utf-8"))
+        except ValueError as exc:
+            return _bad(str(exc))
+        return PlainTextResponse(app.dictionary_text(), media_type="application/json")
+
     async def start_capture(_: Request) -> Response:
         if not app.can_capture():
             return _bad("Recording a shortcut needs the menu-bar app; type the keys instead.", 409)
@@ -139,6 +152,8 @@ def create_app(app: Dictum) -> Starlette:
             Route("/", index),
             Route("/api/settings", get_settings, methods=["GET"]),
             Route("/api/settings", put_settings, methods=["PUT"]),
+            Route("/api/dictionary", get_dictionary, methods=["GET"]),
+            Route("/api/dictionary", put_dictionary, methods=["PUT"]),
             Route("/api/capture", start_capture, methods=["POST"]),
             Route("/api/capture", capture_status, methods=["GET"]),
             Route("/api/capture", cancel_capture, methods=["DELETE"]),
