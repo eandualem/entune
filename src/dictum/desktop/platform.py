@@ -1,0 +1,94 @@
+"""What the desktop app needs from an operating system, as small protocols.
+
+The orchestration in `app.py` is written against these and nothing else. Each
+platform implements them under its own package (`desktop/macos/` today); tests use
+fakes. Keep them minimal: a method earns its place only when the orchestration
+calls it.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Literal, Protocol
+
+from dictum.desktop.engine import ShortcutEngine
+from dictum.recorder import Capture
+
+State = Literal["idle", "recording", "busy"]
+
+
+class Tray(Protocol):
+    """The menu-bar or system-tray item."""
+
+    def set_state(self, state: State) -> None: ...
+    def set_status(self, text: str) -> None: ...
+    def set_actions(
+        self,
+        open_window: Callable[[], None],
+        open_settings: Callable[[], None],
+        quit: Callable[[], None],
+    ) -> None: ...
+
+
+class Window(Protocol):
+    def show(self, fragment: str = "") -> None: ...
+
+
+class Hotkeys(Protocol):
+    def start(self, engine: ShortcutEngine | None) -> None: ...
+    def stop(self) -> None: ...
+    def begin_capture(self, done: Callable[[tuple[str, ...]], None]) -> None: ...
+
+
+class Actions(Protocol):
+    def copy_to_clipboard(self, text: str) -> None: ...
+    def paste_into_focused_app(self) -> None: ...
+    def notify(self, title: str, message: str) -> None: ...
+
+
+class Permissions(Protocol):
+    settings_hint: str
+
+    def can_listen(self) -> bool: ...
+    def can_post(self) -> bool: ...
+    def request_listen(self) -> None: ...
+    def request_post(self) -> None: ...
+
+
+class Microphone(Protocol):
+    """What the app needs from a recorder; `recorder.Recorder` is the real one."""
+
+    def start(self) -> None: ...
+    def stop(self) -> Capture: ...
+
+
+class Platform(Protocol):
+    # Read-only on purpose: an implementation may expose a richer concrete type here.
+    @property
+    def tray(self) -> Tray: ...
+    @property
+    def window(self) -> Window: ...
+    @property
+    def hotkeys(self) -> Hotkeys: ...
+    @property
+    def actions(self) -> Actions: ...
+    @property
+    def permissions(self) -> Permissions: ...
+
+    def run_on_ui_thread(self, action: Callable[[], None]) -> None:
+        """Run `action` on the thread that owns the UI, soon."""
+        ...
+
+    def call_later(self, delay: float, action: Callable[[], None]) -> None:
+        """Run `action` on the UI thread after `delay` seconds."""
+        ...
+
+    def every(self, interval: float, action: Callable[[], None]) -> None:
+        """Run `action` on the UI thread every `interval` seconds."""
+        ...
+
+    def run(self) -> None:
+        """Own the main thread until quit."""
+        ...
+
+    def quit(self) -> None: ...

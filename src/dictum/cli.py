@@ -13,23 +13,14 @@ from pathlib import Path
 import uvicorn
 
 from dictum import __version__
+from dictum.desktop import create_platform
+from dictum.paths import default_data_dir
 from dictum.providers import default_providers
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store
 
 DEFAULT_PORT = 4187
-
-
-def default_data_dir() -> Path:
-    """Where recordings, transcripts and keys live unless DICTUM_DATA says otherwise."""
-    override = os.environ.get("DICTUM_DATA")
-    if override:
-        return Path(override)
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "dictum"
-    xdg = os.environ.get("XDG_DATA_HOME")
-    return (Path(xdg) if xdg else Path.home() / ".local" / "share") / "dictum"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-open", action="store_true", help="do not open the window (or browser) at start"
     )
     parser.add_argument(
-        "--no-menu", action="store_true", help="web page only, no menu-bar app (macOS)"
+        "--no-menu", action="store_true", help="web page only, no menu-bar or tray app"
     )
     return parser
 
@@ -62,7 +53,7 @@ def main(argv: list[str] | None = None) -> None:
         # Most likely another Dictum: two would both answer the shortcut and paste twice.
         message = f"Port {args.port} is in use. Is Dictum already running? Quit it, or use --port."
         if sys.platform == "darwin" and not args.no_menu:
-            from dictum.desktop.actions import notify
+            from dictum.desktop.macos.actions import notify
 
             notify("Dictum is already running", message)
         sys.exit(message)
@@ -74,19 +65,19 @@ def main(argv: list[str] | None = None) -> None:
     url = f"http://localhost:{args.port}/"
     print(f"Dictum listening on {url}  (data in {data_dir})", flush=True)
 
-    menu_bar = sys.platform == "darwin" and not args.no_menu
-    if not menu_bar:
+    platform = None if args.no_menu else create_platform(url)
+    if platform is None:
         if not args.no_open:
             threading.Timer(0.5, webbrowser.open, args=(url,)).start()
         server.run()
         return
 
-    # Menu-bar mode: the web server runs in a thread, the app owns the main thread.
+    # Desktop mode: the web server runs in a thread, the app owns the main thread.
     # Dictum's own window opens on launch unless --no-open; first run lands on Settings.
     threading.Thread(target=server.run, daemon=True).start()
     from dictum.desktop.app import DictumApp
 
-    DictumApp(dictum, url, show_window=not args.no_open).run()
+    DictumApp(dictum, platform, url, show_window=not args.no_open).run()
     server.should_exit = True
 
 
