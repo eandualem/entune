@@ -154,9 +154,13 @@ function renderAttempt(t: Transcription): HTMLElement {
     copy.type = "button";
     copy.textContent = "Copy";
     copy.addEventListener("click", async () => {
-      await navigator.clipboard.writeText(t.text ?? "");
-      copy.textContent = "Copied";
-      setTimeout(() => (copy.textContent = "Copy"), 1500);
+      try {
+        await navigator.clipboard.writeText(t.text ?? "");
+        copy.textContent = "Copied";
+      } catch (err) {
+        copy.textContent = `Copy failed: ${err instanceof Error ? err.message : err}`;
+      }
+      setTimeout(() => (copy.textContent = "Copy"), 2500);
     });
     box.append(p, copy);
   } else {
