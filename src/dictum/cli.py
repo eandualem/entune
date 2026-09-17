@@ -40,12 +40,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-menu", action="store_true", help="web page only, no menu-bar or tray app"
     )
-    parser.add_argument(
-        "--shell",
-        choices=["default", "webview"],
-        default=os.environ.get("DICTUM_SHELL", "default"),
-        help="desktop shell: the platform default, or the cross-platform one (experimental)",
-    )
     return parser
 
 
@@ -155,7 +149,7 @@ def main(argv: list[str] | None = None) -> None:
     url = f"http://localhost:{args.port}/"
     print(f"Dictum listening on {url}  (data in {data_dir})", flush=True)
 
-    platform = None if args.no_menu else create_platform(url, args.shell)
+    platform = None if args.no_menu else create_platform(url)
     if platform is None:
         if not args.no_open:
             threading.Timer(0.5, webbrowser.open, args=(url,)).start()

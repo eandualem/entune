@@ -20,9 +20,10 @@ src/dictum/
   desktop/        app.py: the orchestration, written against platform.py's protocols
                   (tray, window, hotkeys, actions, permissions, UI-thread scheduling);
                   engine.py: press/release -> start/stop, pure;
-                  macos/: the macOS implementation: rumps menu bar, WebKit window,
-                  pynput listener with the fn key, pbcopy/osascript, Quartz permissions;
-                  webview/: the cross-platform shell (pywebview + pystray), opt-in
+                  webview/: the shell, window (pywebview) and tray (pystray), one
+                  implementation for every OS on its native web engine;
+                  macos/: what is macOS-specific underneath: pynput listener with
+                  the fn key, pbcopy/osascript, Quartz permissions, the .app bundle
 ```
 
 Data flow for a dictation: the hotkey listener's thread feeds the engine;
