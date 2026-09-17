@@ -1,10 +1,12 @@
 """The personal dictionary: terms the providers should know, and replacements applied to
 every transcript.
 
-Two sections. `pinned` is the user's: entered by hand or approved from a proposal; a
-model never changes it. `learned` is what a model proposed from the history and the
-user accepted; the next build replaces it. Stored as `dictionary.json` in the data
-directory so it can be edited by hand or pasted whole.
+Three sections. `pinned` is the user's: entered by hand or approved from a proposal; a
+model never changes it. `agents` holds corrections the user's agents sent after
+confirming a mistranscription with the user; a model never changes those either.
+`learned` is what a model proposed from the history and the user accepted; the next
+build replaces it. Stored as `dictionary.json` in the data directory so it can be
+edited by hand or pasted whole.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 FILENAME = "dictionary.json"
-SECTIONS = ("pinned", "learned")
+SECTIONS = ("pinned", "agents", "learned")
 
 
 @dataclass(frozen=True)
@@ -34,17 +36,48 @@ class Entries:
 @dataclass(frozen=True)
 class Dictionary:
     pinned: Entries = field(default_factory=Entries)
+    agents: Entries = field(default_factory=Entries)
     learned: Entries = field(default_factory=Entries)
 
     def __bool__(self) -> bool:
-        return bool(self.pinned or self.learned)
+        return bool(self.pinned or self.agents or self.learned)
+
+    @property
+    def confirmed(self) -> Entries:
+        """Pinned and agent entries together: what a model must not change."""
+        return Entries(
+            tuple(dict.fromkeys((*self.pinned.terms, *self.agents.terms))),
+            {**self.agents.replacements, **self.pinned.replacements},
+        )
 
     @property
     def effective(self) -> Entries:
-        """What is applied: both sections, the user's entries winning on a conflict."""
-        terms = tuple(dict.fromkeys((*self.pinned.terms, *self.learned.terms)))
-        replacements = {**self.learned.replacements, **self.pinned.replacements}
+        """What is applied: every section, pinned winning over agents over learned."""
+        terms = tuple(dict.fromkeys((*self.pinned.terms, *self.agents.terms, *self.learned.terms)))
+        replacements = {
+            **self.learned.replacements,
+            **self.agents.replacements,
+            **self.pinned.replacements,
+        }
         return Entries(terms, replacements)
+
+    def with_agent_corrections(self, corrections: Entries) -> tuple[Dictionary, Entries]:
+        """Merge corrections into the agents section; the second value is what was new."""
+        new_terms = tuple(
+            t
+            for t in corrections.terms
+            if t.lower() not in {x.lower() for x in self.confirmed.terms}
+        )
+        new_replacements = {
+            h: m
+            for h, m in corrections.replacements.items()
+            if self.confirmed.replacements.get(h) != m
+        }
+        agents = Entries(
+            tuple(dict.fromkeys((*self.agents.terms, *new_terms))),
+            {**self.agents.replacements, **new_replacements},
+        )
+        return Dictionary(self.pinned, agents, self.learned), Entries(new_terms, new_replacements)
 
 
 EMPTY = Dictionary()
@@ -65,9 +98,10 @@ def parse(text: str) -> Dictionary:
         return Dictionary(pinned=parse_entries(data, "dictionary"))
     unknown = set(data) - set(SECTIONS)
     if unknown:
-        raise ValueError(f"Unknown keys: {', '.join(sorted(unknown))} (use pinned, learned)")
+        raise ValueError(f"Unknown keys: {', '.join(sorted(unknown))} (use {', '.join(SECTIONS)})")
     return Dictionary(
         pinned=parse_entries(data.get("pinned", {}), "pinned"),
+        agents=parse_entries(data.get("agents", {}), "agents"),
         learned=parse_entries(data.get("learned", {}), "learned"),
     )
 
@@ -93,7 +127,11 @@ def parse_entries(data: object, where: str) -> Entries:
 
 def dumps(dictionary: Dictionary) -> str:
     return json.dumps(
-        {"pinned": dictionary.pinned.as_json(), "learned": dictionary.learned.as_json()},
+        {
+            "pinned": dictionary.pinned.as_json(),
+            "agents": dictionary.agents.as_json(),
+            "learned": dictionary.learned.as_json(),
+        },
         indent=2,
         ensure_ascii=False,
     )
@@ -148,9 +186,9 @@ class Proposal:
 
 
 def propose(current: Dictionary, proposed: Entries) -> Proposal:
-    """Drop anything the user already pinned, then diff against the current learned section."""
-    pinned_terms = {t.lower() for t in current.pinned.terms}
-    pinned_heard = {h.lower() for h in current.pinned.replacements}
+    """Drop anything already confirmed (pinned or from agents), then diff against learned."""
+    pinned_terms = {t.lower() for t in current.confirmed.terms}
+    pinned_heard = {h.lower() for h in current.confirmed.replacements}
     learned = Entries(
         tuple(t for t in proposed.terms if t.lower() not in pinned_terms),
         {h: m for h, m in proposed.replacements.items() if h.lower() not in pinned_heard},

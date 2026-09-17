@@ -159,7 +159,7 @@ settingsForm.addEventListener("submit", async (e) => {
 // ---- Dictionary tab ----
 // `dict` mirrors dictionary.json: pinned (the user's, never changed by the model) and
 // learned (the model's last accepted proposal). Every change is saved whole.
-let dict = { pinned: { terms: [], replacements: {} }, learned: { terms: [], replacements: {} } };
+let dict = { pinned: { terms: [], replacements: {} }, agents: { terms: [], replacements: {} }, learned: { terms: [], replacements: {} } };
 let proposal = null;
 const dictionaryBox = el("dictionary");
 const dictionaryStatus = el("dictionary-status");
@@ -206,13 +206,13 @@ function entryRow(section, kind, heard, meant) {
   }
   const actions = document.createElement("span");
   actions.className = "actions";
-  if (section === "learned") {
+  if (section !== "pinned") {
     const pin = document.createElement("button");
     pin.type = "button";
     pin.className = "btn sm";
     pin.textContent = "Pin";
     pin.title = "Keep it: the model will not change it";
-    pin.addEventListener("click", () => moveToPinned(kind, heard, meant));
+    pin.addEventListener("click", () => moveToPinned(section, kind, heard, meant));
     actions.append(pin);
   }
   const remove = document.createElement("button");
@@ -235,6 +235,7 @@ function renderEntries(container, section) {
 
 function renderDictionary(jsonText) {
   renderEntries(el("pinned-entries"), "pinned");
+  renderEntries(el("agents-entries"), "agents");
   renderEntries(el("learned-entries"), "learned");
   const learnedCount = dict.learned.terms.length + Object.keys(dict.learned.replacements).length;
   el("pin-all").hidden = learnedCount === 0;
@@ -263,13 +264,13 @@ async function removeEntry(section, kind, heard) {
   await saveDictionary(next);
 }
 
-async function moveToPinned(kind, heard, meant) {
+async function moveToPinned(section, kind, heard, meant) {
   const next = clone();
   if (kind === "term") {
-    next.learned.terms = next.learned.terms.filter((t) => t !== heard);
+    next[section].terms = next[section].terms.filter((t) => t !== heard);
     if (!next.pinned.terms.includes(heard)) next.pinned.terms.push(heard);
   } else {
-    delete next.learned.replacements[heard];
+    delete next[section].replacements[heard];
     next.pinned.replacements[heard] = meant;
   }
   await saveDictionary(next);
