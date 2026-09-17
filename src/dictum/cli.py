@@ -69,10 +69,17 @@ def install_app(directory: Path, source: Path | None) -> None:
     if sys.platform != "darwin":
         sys.exit("install-app writes a macOS application bundle; nothing to do here.")
     from dictum.desktop.macos.bundle import install_app as write_bundle
+    from dictum.desktop.macos.bundle import signing_identity
 
     app = write_bundle(directory, source)
     what = "a copy of the standalone bundle" if source else "a launcher for this same Dictum"
     print(f"Installed {app}: {what}. Open it from there.", flush=True)
+    if signing_identity() is None:
+        print(
+            "Signed ad hoc: macOS will ask for its permissions again after every rebuild."
+            " A 'Dictum Developer' certificate avoids that: see docs/packaging.md.",
+            flush=True,
+        )
     if source is None:
         print(
             "If System Settings will not list Dictum under Input Monitoring or Accessibility,"

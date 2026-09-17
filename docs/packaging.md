@@ -12,10 +12,24 @@ usage string and an icns built from the shipped PNG with `sips` and
 `iconutil`; and an executable that is a two-line shell script running the
 current Python with `-m dictum`. Nothing is copied, so the app follows the
 installation it was created from: upgrade `dictum` and the app is upgraded.
-It is signed ad hoc. Observed on macOS 26: the unsigned first version was
-not accepted by the Input Monitoring and Accessibility panels; if that
-happens, use the standalone bundle below and `dictum install-app --from
-dist/Dictum.app` to put it in place.
+Observed on macOS 26: the unsigned first version was not accepted by the
+Input Monitoring and Accessibility panels; if that happens, use the
+standalone bundle below and `dictum install-app --from dist/Dictum.app` to
+put it in place.
+
+## Signing, and keeping the permissions
+
+`install-app` signs whatever it installs. Ad hoc by default, which is
+enough for the permission panels but ties the grants to the exact binary:
+after every rebuild macOS forgets Microphone, Input Monitoring and
+Accessibility and asks again (seen 2026-09-18, issue #51).
+
+To keep them across rebuilds, create a certificate once: Keychain Access ›
+Certificate Assistant › Create a Certificate…, name **Dictum Developer**,
+identity type self-signed root, certificate type **Code Signing**. When
+that certificate exists, `install-app` signs with it instead, every build
+has the same identity, and the grants stay. Nothing else changes; this is
+not Developer ID and does not help other Macs.
 
 ## A standalone bundle with PyInstaller
 

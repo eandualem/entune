@@ -24,6 +24,7 @@ from pathlib import Path
 from dictum import __version__
 
 BUNDLE_ID = "dev.elias.dictum"
+SIGNING_IDENTITY = "Dictum Developer"
 ASSETS = Path(__file__).resolve().parents[2] / "assets"
 ICON_SIZES = (16, 32, 64, 128, 256, 512)
 
@@ -39,6 +40,7 @@ def install_app(directory: Path, source: Path | None = None) -> Path:
         shutil.rmtree(app)
     if source is not None:
         shutil.copytree(source, app, symlinks=True)
+        sign(app)
         return app
     contents = app / "Contents"
     (contents / "MacOS").mkdir(parents=True)
@@ -70,12 +72,44 @@ def install_app(directory: Path, source: Path | None = None) -> Path:
         info["CFBundleIconFile"] = icon_file
     with (contents / "Info.plist").open("wb") as f:
         plistlib.dump(info, f)
-    # An ad-hoc signature gives the bundle a code identity; without one, System Settings
-    # would not list it under Input Monitoring or Accessibility when Elias tried.
-    subprocess.run(
-        ["codesign", "--force", "--sign", "-", str(app)], check=False, capture_output=True
-    )
+    sign(app)
     return app
+
+
+def signing_identity() -> str | None:
+    """The "Dictum Developer" code-signing certificate, if the keychain has one.
+
+    Permissions are tied to the app's code identity. Signed ad hoc, that identity is a
+    hash of the exact binary, so macOS forgets Microphone, Input Monitoring and
+    Accessibility on every rebuild. A self-signed certificate (Keychain Access >
+    Certificate Assistant > Create a Certificate, name "Dictum Developer", type Code
+    Signing) gives every build the same identity.
+    """
+    try:
+        found = subprocess.run(
+            ["security", "find-identity", "-v", "-p", "codesigning"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    return SIGNING_IDENTITY if f'"{SIGNING_IDENTITY}"' in found.stdout else None
+
+
+def sign(app: Path) -> str:
+    """Sign the bundle with the stable identity when there is one, ad hoc otherwise.
+
+    Without any signature, System Settings would not list the bundle under Input
+    Monitoring or Accessibility when Elias tried. Returns the identity used.
+    """
+    identity = signing_identity() or "-"
+    subprocess.run(
+        ["codesign", "--force", "--deep", "--sign", identity, str(app)],
+        check=False,
+        capture_output=True,
+    )
+    return identity
 
 
 def _write_icns(resources: Path) -> str | None:

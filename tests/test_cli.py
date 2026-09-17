@@ -53,3 +53,25 @@ def test_applications_folder_prefers_the_system_one_when_writable() -> None:
     folder = applications_folder()
     assert folder.name == "Applications"
     assert folder == Path("/Applications") or folder == Path.home() / "Applications"
+
+
+def test_install_app_signs_with_the_stable_identity_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from dictum.desktop.macos import bundle
+
+    calls: list[list[str]] = []
+    listed = '  1) ABCD "Dictum Developer"\n     1 valid identities found\n'
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        out = listed if cmd[:2] == ["security", "find-identity"] else ""
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert bundle.sign(tmp_path) == "Dictum Developer"
+    assert calls[-1][:5] == ["codesign", "--force", "--deep", "--sign", "Dictum Developer"]
+    listed = "     0 valid identities found\n"
+    assert bundle.sign(tmp_path) == "-"
