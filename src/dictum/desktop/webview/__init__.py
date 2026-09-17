@@ -1,7 +1,8 @@
-"""A cross-platform shell: pywebview for the window, pystray for the tray icon.
+"""The desktop shell: pywebview for the window, pystray for the tray icon.
 
-Opt-in for now (`dictum --shell webview`); the macOS default stays rumps and the
-WebKit window until this one is proven on every platform it is meant for. Issue #35.
+Both run on each operating system's own web engine and tray, so this is the one
+implementation for every platform; only the hotkeys, actions and permissions
+underneath are per OS (macOS today, #36 for the rest). Issue #35.
 """
 
 from __future__ import annotations
@@ -159,6 +160,7 @@ class _Window:
 
             AppKit.NSApp.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
             AppKit.NSApp.activateIgnoringOtherApps_(True)
+            _set_dock_icon()
         self._window.show()
 
     def destroy(self) -> None:
@@ -179,6 +181,15 @@ class _Window:
 
             AppKit.NSApp.setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
         return False
+
+
+def _set_dock_icon() -> None:
+    """Dictum's own icon in the Dock while the window is open, instead of Python's."""
+    import AppKit
+
+    image = AppKit.NSImage.alloc().initWithContentsOfFile_(str(ASSETS / "icon-512.png"))
+    if image is not None:
+        AppKit.NSApp.setApplicationIconImage_(image)
 
 
 def _hotkeys() -> Hotkeys:
