@@ -120,7 +120,9 @@ async function loadSettings() {
   const s = await api("/api/settings");
   keysGroup.replaceChildren(...s.providers.map(keyRow));
   llmKeysGroup.replaceChildren(...s.llmProviders.map(keyRow));
-  dictionaryModels.replaceChildren(...s.llmProviders.map((p) => new Option(p.defaultModel)));
+  dictionaryModels.replaceChildren(
+    ...s.llmProviders.flatMap((p) => p.models.map((m) => new Option(`${m.name}${m.id === p.defaultModel ? " (suggested)" : ""}`, m.id))),
+  );
   dictionaryModelInput.value = s.dictionaryModel ?? "";
   dictionaryModelChip.textContent = s.dictionaryModel ?? "no model set";
   shortcuts = s.shortcuts;
