@@ -32,5 +32,6 @@ input[type="password"] { width: 100%; max-width: 32rem; display: block; }
 .recording audio { height: 2rem; }
 .recording small { color: var(--muted); display: block; margin-top: 0.5rem; }
 .attempt .text { margin: 0.25rem 0 0.5rem; white-space: pre-wrap; }
+.attempt .text.empty { color: var(--muted); }
 .attempt .error { background: var(--error-bg); padding: 0.75rem; border-radius: 0.5rem; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0.25rem 0 0.5rem; }
 .empty { color: var(--muted); }
