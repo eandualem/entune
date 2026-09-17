@@ -28,6 +28,37 @@ class _WindowDelegate(Foundation.NSObject):  # type: ignore[misc]
         AppKit.NSApp.setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
 
 
+def install_main_menu() -> None:
+    """A main menu with the standard Edit items, so Cmd+V and friends work in the window.
+
+    Key equivalents are dispatched through the main menu; without one, a Cocoa app
+    ignores Cmd+C/V/X/A/Z. The items have no target, so they go to the first
+    responder, which is the web view's focused field.
+    """
+    if AppKit.NSApp.mainMenu() is not None:
+        return
+    main = AppKit.NSMenu.alloc().init()
+
+    app_item = main.addItemWithTitle_action_keyEquivalent_("Dictum", None, "")
+    app_menu = AppKit.NSMenu.alloc().initWithTitle_("Dictum")
+    app_menu.addItemWithTitle_action_keyEquivalent_("Close Window", "performClose:", "w")
+    app_menu.addItemWithTitle_action_keyEquivalent_("Quit Dictum", "terminate:", "q")
+    main.setSubmenu_forItem_(app_menu, app_item)
+
+    edit_item = main.addItemWithTitle_action_keyEquivalent_("Edit", None, "")
+    edit = AppKit.NSMenu.alloc().initWithTitle_("Edit")
+    edit.addItemWithTitle_action_keyEquivalent_("Undo", "undo:", "z")
+    edit.addItemWithTitle_action_keyEquivalent_("Redo", "redo:", "Z")
+    edit.addItem_(AppKit.NSMenuItem.separatorItem())
+    edit.addItemWithTitle_action_keyEquivalent_("Cut", "cut:", "x")
+    edit.addItemWithTitle_action_keyEquivalent_("Copy", "copy:", "c")
+    edit.addItemWithTitle_action_keyEquivalent_("Paste", "paste:", "v")
+    edit.addItemWithTitle_action_keyEquivalent_("Select All", "selectAll:", "a")
+    main.setSubmenu_forItem_(edit, edit_item)
+
+    AppKit.NSApp.setMainMenu_(main)
+
+
 class AppWindow:
     def __init__(self, url: str) -> None:
         self.url = url
@@ -38,6 +69,7 @@ class AppWindow:
     def show(self, fragment: str = "") -> None:
         """Bring the window to the front with the keyboard, creating it on first use."""
         if self._window is None:
+            install_main_menu()
             self._create()
             self._load(fragment)
         elif fragment:
