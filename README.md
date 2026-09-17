@@ -62,6 +62,12 @@ With `uvx dictum` they are granted to whatever runs it, your terminal or
 Python, and asked again if that changes. Building `Dictum.app` (below) gives
 macOS a stable app to attach them to.
 
+The order matters. Input Monitoring comes first: until it is granted Dictum
+cannot see the shortcut, so it never records and never asks for the
+microphone. Grant it, quit Dictum from the menu bar and open it again, then
+hold the shortcut: the Microphone prompt appears on that first recording.
+There is no way to add an app to the Microphone list by hand.
+
 ## Dictating
 
 Set a shortcut once in Settings; Dictum opens there on first run. Click
