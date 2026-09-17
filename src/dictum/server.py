@@ -28,6 +28,13 @@ def _recording_json(recording: Recording) -> dict[str, Any]:
     return asdict(recording)
 
 
+def _shortcut_json(app: Dictum) -> dict[str, str] | None:
+    shortcut = app.shortcut()
+    if shortcut is None:
+        return None
+    return {"mode": shortcut.mode, "keys": "+".join(shortcut.keys)}
+
+
 def create_app(app: Dictum) -> Starlette:
     async def index(_: Request) -> Response:
         return FileResponse(WEB_DIR / "index.html")
@@ -40,6 +47,7 @@ def create_app(app: Dictum) -> Starlette:
                     for s in app.provider_statuses()
                 ],
                 "defaultModel": app.default_model(),
+                "shortcut": _shortcut_json(app),
             }
         )
 
@@ -50,6 +58,9 @@ def create_app(app: Dictum) -> Starlette:
                 app.set_key(provider_id, key if isinstance(key, str) else "")
             if "defaultModel" in body:
                 app.set_default_model(body["defaultModel"])
+            shortcut = body.get("shortcut")
+            if isinstance(shortcut, dict):
+                app.set_shortcut(str(shortcut.get("mode", "")), str(shortcut.get("keys", "")))
         except UnknownModel as exc:
             return _bad(f"Unknown model: {exc}")
         except ValueError as exc:
