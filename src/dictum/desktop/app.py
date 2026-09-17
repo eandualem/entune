@@ -43,6 +43,8 @@ class DictumApp:
         platform.every(PERMISSION_POLL_SECONDS, self._recheck_permission)
         dictum.on_change(lambda: platform.run_on_ui_thread(self.apply_shortcut))
         dictum.on_capture(lambda: platform.run_on_ui_thread(self.begin_capture))
+        dictum.on_show_window(lambda: platform.run_on_ui_thread(self.open_window))
+        dictum.report_status(desktop=True, shell=type(platform).__name__)
         self.apply_shortcut()
         if show_window:
             platform.call_later(0.1, lambda: self._show_window_when_served(time.monotonic()))
@@ -86,19 +88,29 @@ class DictumApp:
             self.engine = None
             self.platform.hotkeys.stop()
             self._listening = False
-            self.platform.tray.set_status("No shortcut set. Open Settings.")
+            self._set_status("No shortcut set. Open Settings.")
             return
         if not permissions.can_listen():
             self.engine = None
             self.platform.hotkeys.stop()
             self._listening = False
-            self.platform.tray.set_status(f"Allow Input Monitoring in {permissions.settings_hint}")
+            self._set_status(f"Allow Input Monitoring in {permissions.settings_hint}")
             permissions.request_listen()
             return
         self.engine = ShortcutEngine(shortcuts, self.start_recording, self.stop_recording)
         self.platform.hotkeys.start(self.engine)
         self._listening = True
-        self.platform.tray.set_status(f"Dictate: {shortcuts.describe()}")
+        self._set_status(f"Dictate: {shortcuts.describe()}")
+
+    def _set_status(self, text: str) -> None:
+        self.platform.tray.set_status(text)
+        permissions = self.platform.permissions
+        self.dictum.report_status(
+            status=text,
+            listening=self._listening,
+            canListen=permissions.can_listen(),
+            canPost=permissions.can_post(),
+        )
 
     def begin_capture(self) -> None:
         """Settings asked for a shortcut to be pressed: record it with the global listener."""
@@ -125,10 +137,12 @@ class DictumApp:
             self.recorder.start()
         except Exception as exc:  # the user needs to know why nothing happens
             message = f"{type(exc).__name__}: {exc}"
+            self.dictum.report_status(lastError=message)
             self._later(lambda: self.platform.actions.notify("Dictum: microphone", message))
             if self.engine is not None:
                 self.engine.recording = False
             return
+        self.dictum.report_status(lastRecordingStarted=time.time())
         self._later(lambda: self.platform.tray.set_state("recording"))
 
     def stop_recording(self) -> None:
