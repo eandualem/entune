@@ -21,16 +21,18 @@ or, from a checkout:
 uv run dictum
 ```
 
-On macOS this puts a microphone icon in the menu bar and serves the
-history page on http://localhost:4187 from the same process. Elsewhere,
-or with `--no-menu`, it is the history page alone, opened in your browser.
-`dictum --help` lists the options: `--port`, `--data DIR` for the data
-directory, `--no-open`, `--no-menu`.
+On macOS this puts a microphone icon in the menu bar and opens Dictum's
+window with the history and settings. Closing the window leaves Dictum
+running in the menu bar; "Open Dictum" in its menu brings it back. The
+same page is also served on http://localhost:4187 if you prefer a
+browser. Elsewhere, or with `--no-menu`, it is the page alone, opened in
+your browser. `dictum --help` lists the options: `--port`, `--data DIR`
+for the data directory, `--no-open`, `--no-menu`.
 
 ## Dictating from the menu bar
 
-Set a shortcut once in Settings on the history page (the app opens it for
-you on first run). Two modes:
+Set a shortcut once in Settings (Dictum opens its window on Settings the
+first time). Two modes:
 
 - **Hold**: one key, for example `alt_r` (the right Option key). Record
   while it is held, release to stop.
@@ -59,7 +61,7 @@ uv run --group build python packaging/build_app.py
 ```
 
 That writes `dist/Dictum.app`. Drag it to /Applications and open it: the
-microphone icon appears in the menu bar, no Dock icon. Quit it from its
+window opens and the microphone icon appears in the menu bar, no Dock icon. Quit it from its
 menu. It is the same program as `dictum`, so the data directory and
 settings are shared. If another Dictum is already running on the same
 port, the new one says so and quits rather than answering the shortcut
