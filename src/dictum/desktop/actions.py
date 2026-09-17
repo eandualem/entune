@@ -3,20 +3,32 @@
 from __future__ import annotations
 
 import subprocess
+from typing import Any
 
 
 def copy_to_clipboard(text: str) -> None:
     subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
 
 
+_keyboard: Any = None
+
+
 def paste_into_focused_app() -> None:
-    """Send Cmd+V to whatever has focus. The transcript must already be on the clipboard."""
+    """Send Cmd+V to whatever has focus. The transcript must already be on the clipboard.
+
+    Main thread only. pynput's Controller reads the keyboard layout through HIToolbox
+    (TSMGetInputSourceProperty), and macOS 26 asserts that call is on the main queue:
+    from any other thread it traps and the whole process dies (SIGTRAP in
+    dispatch_assert_queue). The controller is built once and reused.
+    """
+    global _keyboard
     from pynput.keyboard import Controller, Key
 
-    keyboard = Controller()
-    with keyboard.pressed(Key.cmd):
-        keyboard.press("v")
-        keyboard.release("v")
+    if _keyboard is None:
+        _keyboard = Controller()
+    with _keyboard.pressed(Key.cmd):
+        _keyboard.press("v")
+        _keyboard.release("v")
 
 
 def notify(title: str, message: str) -> None:
