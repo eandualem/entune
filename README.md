@@ -124,15 +124,18 @@ Details: [the dictionary file](docs/dictionary.md) and
 
 ## Dictum.app
 
-To open Dictum from Applications like any other app (macOS only):
+A plain `dictum` process shows up as "python3" in the menu bar, the Dock
+and the permission prompts. To have it be Dictum, with its icon, install
+the app once (macOS only):
 
 ```sh
-uv sync --group build
-uv run --group build python packaging/build_app.py
+uvx dictum install-app        # writes ~/Applications/Dictum.app
 ```
 
-That writes `dist/Dictum.app`, with Dictum's icon, sharing the same data and
-settings as `dictum`. See [packaging](docs/packaging.md).
+It is a small bundle whose launcher runs this same installation, so it
+shares the data, settings and updates of `dictum`. Open it from
+Applications; grant the three permissions once to "Dictum". A standalone
+bundle with Python inside can also be built; see [packaging](docs/packaging.md).
 
 ## Data and privacy
 

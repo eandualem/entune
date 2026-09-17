@@ -1,5 +1,19 @@
 # Packaging Dictum.app
 
+Two ways. The first is what most people want.
+
+## `dictum install-app`
+
+Writes `~/Applications/Dictum.app` (or `--into DIR`): an Info.plist with
+Dictum's name, bundle id `dev.elias.dictum`, `LSUIElement`, the microphone
+usage string and an icns built from the shipped PNG with `sips` and
+`iconutil`; and an executable that is a two-line shell script running the
+current Python with `-m dictum`. Nothing is copied, so the app follows the
+installation it was created from: upgrade `dictum` and the app is upgraded.
+macOS attaches the three permissions to this bundle.
+
+## A standalone bundle with PyInstaller
+
 macOS attaches the Microphone, Input Monitoring and Accessibility
 permissions to an application. Run as a plain Python process, that
 application is whichever Python binary launched `dictum`, so the permissions

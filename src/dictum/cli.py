@@ -24,7 +24,11 @@ DEFAULT_PORT = 4187
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="dictum", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="dictum",
+        description=__doc__,
+        epilog="`dictum install-app` writes a Dictum.app (macOS) that runs this installation.",
+    )
     parser.add_argument("--version", action="version", version=f"dictum {__version__}")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", DEFAULT_PORT)))
     parser.add_argument("--data", type=Path, default=None, help="data directory")
@@ -53,7 +57,28 @@ def port_is_free(port: int) -> bool:
     return True
 
 
+def install_app(directory: Path) -> None:
+    if sys.platform != "darwin":
+        sys.exit("install-app writes a macOS application bundle; nothing to do here.")
+    from dictum.desktop.macos.bundle import install_app as write_bundle
+
+    app = write_bundle(directory)
+    print(f"Installed {app}. Open it from there; it runs this same Dictum.", flush=True)
+
+
 def main(argv: list[str] | None = None) -> None:
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv[:1] == ["install-app"]:
+        sub = argparse.ArgumentParser(prog="dictum install-app")
+        sub.add_argument(
+            "--into",
+            type=Path,
+            default=Path.home() / "Applications",
+            help="where to write Dictum.app (default: ~/Applications)",
+        )
+        install_app(sub.parse_args(argv[1:]).into)
+        return
     args = build_parser().parse_args(argv)
     if not port_is_free(args.port):
         # Most likely another Dictum: two would both answer the shortcut and paste twice.
