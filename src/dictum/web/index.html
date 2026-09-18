@@ -23,7 +23,7 @@
           <span class="dot" aria-hidden="true"></span><span class="label">Record</span>
         </button>
         <span class="rec-timer" id="rec-timer" hidden>0:00</span>
-        <select class="select" id="model" aria-label="Model used when recording here"></select>
+        <select class="select" id="model" aria-label="Default model" title="The model every recording uses; picking one here applies at once"></select>
         <span class="status" id="status"></span>
       </div>
 
@@ -122,7 +122,7 @@
           <h2 class="section-label">Dictation</h2>
           <div class="group">
             <div class="row top">
-              <div class="lbl"><label for="default-model">Default model</label><span class="hint">What the shortcut uses. Applies as soon as you pick it.</span></div>
+              <div class="lbl"><label for="default-model">Default model</label><span class="hint">What every recording uses; the toolbar picker is the same setting. Applies as soon as you pick it.</span></div>
               <div class="field"><select class="select" id="default-model"></select></div>
             </div>
             <div class="row top" id="fast-mode-row" hidden>
