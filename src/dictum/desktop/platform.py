@@ -12,7 +12,7 @@ from collections.abc import Callable
 from typing import Literal, Protocol
 
 from dictum.desktop.engine import ShortcutEngine
-from dictum.recorder import Capture
+from dictum.recorder import Capture, SinkFactory
 
 State = Literal["idle", "recording", "busy"]
 
@@ -58,7 +58,7 @@ class Permissions(Protocol):
 class Microphone(Protocol):
     """What the app needs from a recorder; `recorder.Recorder` is the real one."""
 
-    def start(self) -> None: ...
+    def start(self, sink_for_rate: SinkFactory | None = None) -> None: ...
     def stop(self) -> Capture: ...
 
 

@@ -350,3 +350,11 @@ def test_status_and_show_window(client: TestClient, tmp_path: Path, stub: StubPr
     desktop = TestClient(create_app(dictum))
     assert desktop.get("/api/status").json()["listening"] is True
     assert desktop.post("/api/window").status_code == 200 and shown == [True]
+
+
+def test_fast_mode_is_off_by_default_and_round_trips(client: TestClient) -> None:
+    assert client.get("/api/settings").json()["fastMode"] is False
+    assert client.put("/api/settings", json={"fastMode": True}).status_code == 200
+    assert client.get("/api/settings").json()["fastMode"] is True
+    assert client.put("/api/settings", json={"fastMode": False}).status_code == 200
+    assert client.get("/api/settings").json()["fastMode"] is False

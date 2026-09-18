@@ -10,8 +10,13 @@ from __future__ import annotations
 import io
 import threading
 import wave
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+Sink = Callable[[bytes], None]
+SinkFactory = Callable[[int], Sink | None]
+"""Given the sample rate once it is known, a function to hand every PCM chunk to, or None."""
 
 FALLBACK_RATE = 16_000
 CHANNELS = 1
@@ -55,13 +60,16 @@ class Recorder:
         self._chunks: list[bytes] = []
         self._stream: Any = None
         self._rate = FALLBACK_RATE
+        self._sink: Sink | None = None
         self._lock = threading.Lock()
 
     @property
     def recording(self) -> bool:
         return self._stream is not None
 
-    def start(self) -> None:
+    def start(self, sink_for_rate: SinkFactory | None = None) -> None:
+        """Begin capturing; `sink_for_rate` may return a sink that gets every chunk as it
+        is recorded (fast mode streams it to the provider)."""
         import sounddevice  # imported here: needs PortAudio, which tests and Linux may lack
 
         with self._lock:
@@ -70,6 +78,7 @@ class Recorder:
             self._chunks = []
             device = sounddevice.query_devices(kind="input")
             self._rate = int(device["default_samplerate"]) or FALLBACK_RATE
+            self._sink = sink_for_rate(self._rate) if sink_for_rate else None
             self._stream = sounddevice.RawInputStream(
                 samplerate=self._rate,
                 channels=CHANNELS,
@@ -86,7 +95,11 @@ class Recorder:
                 return Capture(b"", self._rate)
             stream.stop()
             stream.close()
+            self._sink = None
             return Capture(b"".join(self._chunks), self._rate)
 
     def _on_audio(self, indata: Any, frames: int, time: Any, status: Any) -> None:
-        self._chunks.append(bytes(indata))
+        chunk = bytes(indata)
+        self._chunks.append(chunk)
+        if self._sink is not None:
+            self._sink(chunk)

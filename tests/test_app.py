@@ -12,7 +12,7 @@ from dictum.desktop.app import DictumApp
 from dictum.desktop.engine import ShortcutEngine
 from dictum.desktop.platform import State
 from dictum.providers.base import Clip, Failure, TranscribeResult, Transcript
-from dictum.recorder import Capture
+from dictum.recorder import Capture, SinkFactory
 from dictum.service import Dictum
 from dictum.store import Store
 
@@ -130,12 +130,35 @@ class FakeRecorder:
         self.capture = capture
         self.recording = False
 
-    def start(self) -> None:
+    def start(self, sink_for_rate: SinkFactory | None = None) -> None:
         self.recording = True
+        sink = sink_for_rate(self.capture.sample_rate) if sink_for_rate else None
+        if sink is not None:
+            sink(self.capture.pcm)
 
     def stop(self) -> Capture:
         self.recording = False
         return self.capture
+
+
+class FakeUpload:
+    provider_id = "stub"
+    error: str | None = None
+
+    def __init__(self) -> None:
+        self.fed: list[bytes] = []
+        self.finished: float | None = None
+        self.aborted = False
+
+    def feed(self, chunk: bytes) -> None:
+        self.fed.append(chunk)
+
+    def finish(self, seconds: float) -> str | None:
+        self.finished = seconds
+        return "stub://uploaded"
+
+    def abort(self) -> None:
+        self.aborted = True
 
 
 class StubProvider:
@@ -143,10 +166,19 @@ class StubProvider:
     name: str = "Stub"
     models: tuple[str, ...] = ("good", "bad")
 
+    def __init__(self) -> None:
+        self.clips: list[Clip] = []
+        self.uploads: list[FakeUpload] = []
+
     def transcribe(
         self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
     ) -> TranscribeResult:
+        self.clips.append(clip)
         return Failure("HTTP 401\n{}") if model == "bad" else Transcript("hello from the fake")
+
+    def begin_upload(self, api_key: str, sample_rate: int) -> FakeUpload:
+        self.uploads.append(FakeUpload())
+        return self.uploads[-1]
 
 
 def make(tmp_path: Path, **kwargs: bool) -> tuple[DictumApp, FakePlatform, Dictum]:
@@ -210,6 +242,31 @@ def test_a_dictation_is_transcribed_copied_and_pasted(tmp_path: Path) -> None:
     assert platform.actions.clipboard == "hello from the fake"
     wait_for(lambda: platform.tray.states[-1] == "idle")
     assert dictum.store.list_recordings()[0].transcriptions[0].text == "hello from the fake"
+
+
+def test_fast_mode_streams_the_recording_and_hands_the_upload_to_the_provider(
+    tmp_path: Path,
+) -> None:
+    app, platform, dictum = make(tmp_path)
+    stub = dictum.providers[0]
+    assert isinstance(stub, StubProvider)
+    dictum.set_key("stub", "k")
+    dictum.set_default_model("stub/good")
+    dictum.set_shortcuts("alt_r", None)
+    app.start_recording()
+    assert stub.uploads == []  # off by default: nothing streamed
+    app.stop_recording()
+    wait_for(lambda: platform.tray.states[-1] == "idle")
+    assert stub.clips[-1].upload_url is None
+
+    dictum.set_fast_mode(True)
+    app.start_recording()
+    (upload,) = stub.uploads
+    assert upload.fed == [app.recorder.capture.pcm]  # type: ignore[attr-defined]
+    app.stop_recording()
+    wait_for(lambda: platform.tray.states[-1] == "idle")
+    assert upload.finished == 1.0 and not upload.aborted
+    assert stub.clips[-1].upload_url == "stub://uploaded"
 
 
 def test_without_accessibility_the_transcript_is_copied_and_explained(tmp_path: Path) -> None:
