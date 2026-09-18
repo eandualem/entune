@@ -101,6 +101,7 @@ class Dictum:
         self._listeners: list[Callable[[], None]] = []
         self._capture_listeners: list[Callable[[], None]] = []
         self._dictionary_lock = threading.Lock()
+        self._warm_lock = threading.Lock()
         self._cancel_listeners: list[Callable[[], None]] = []
         self._show_window_listeners: list[Callable[[], None]] = []
         self._desktop_status: dict[str, object] = {"desktop": False}
@@ -240,16 +241,23 @@ class Dictum:
         """A local default model is loaded ahead of the first dictation (at start and
         whenever the default changes), and every other local model is unloaded: a model
         takes memory only while it is the selected one. Cloud models have nothing to warm."""
-        default = self.default_model()
-        ref = self.resolve(default) if default else None
         locals_ = [p for p in self.providers if isinstance(p, Downloadable)]
 
-        def work() -> None:  # unloading waits for a provider's lock, which an inference holds
-            for provider in locals_:
-                keep = ref.model if ref is not None and ref.provider is provider else None
-                provider.unload(keep=keep)
-            if ref is not None and isinstance(ref.provider, Downloadable):
-                ref.provider.warm(ref.model)
+        def work() -> None:
+            # One reconciliation at a time, each reading the selection as it is now; a
+            # load waits for a provider's lock, which an inference may hold, so this
+            # never runs on a request. A selection changed during a load is caught by
+            # the check after it: the model just loaded is unloaded again.
+            with self._warm_lock:
+                default = self.default_model()
+                ref = self.resolve(default) if default else None
+                for provider in locals_:
+                    keep = ref.model if ref is not None and ref.provider is provider else None
+                    provider.unload(keep=keep)
+                if ref is not None and isinstance(ref.provider, Downloadable):
+                    ref.provider.warm(ref.model)
+                    if self.default_model() != ref.id:
+                        ref.provider.unload(keep=None)
 
         threading.Thread(target=work, daemon=True, name="dictum-warm").start()
 
