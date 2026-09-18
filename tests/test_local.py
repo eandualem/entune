@@ -117,3 +117,27 @@ def test_warm_loads_a_downloaded_model_once_and_ignores_the_rest(tmp_path: Path)
     clip = Clip(wav_bytes(b"\x00\x00" * 16_000), "audio/wav")
     assert local.transcribe(clip, "base.en", "") == Transcript("hello there")
     assert len(loaded) == 1
+
+
+def test_unload_frees_every_model_but_the_kept_one(tmp_path: Path) -> None:
+    loaded: list[str] = []
+
+    def load_model(path: str) -> FakeEngine:
+        loaded.append(path)
+        return FakeEngine()
+
+    local = Local(tmp_path, load_model=load_model)
+    for name in ("base.en", "small.en"):
+        (tmp_path / f"ggml-{name}.bin").write_bytes(b"model")
+    clip = Clip(wav_bytes(b"\x00\x00" * 16_000), "audio/wav")
+    local.transcribe(clip, "base.en", "")
+    local.transcribe(clip, "small.en", "")
+    assert len(loaded) == 2
+    local.unload(keep="small.en")
+    local.transcribe(clip, "small.en", "")  # still loaded
+    assert len(loaded) == 2
+    local.transcribe(clip, "base.en", "")  # was freed: loaded again
+    assert len(loaded) == 3
+    local.unload()
+    local.transcribe(clip, "small.en", "")
+    assert len(loaded) == 4
