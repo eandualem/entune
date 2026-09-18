@@ -10,7 +10,7 @@ from dictum import dictionary as dictionary_file
 from dictum import llm, shortcuts
 from dictum.audio import sniff_mime
 from dictum.dictionary import Dictionary, Entries, Proposal
-from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, model_id, resolve_model
+from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, resolve_model
 from dictum.shortcuts import Shortcuts
 from dictum.store import Recording, Store
 
@@ -18,7 +18,6 @@ DEFAULT_MODEL_KEY = "default_model"
 DICTIONARY_MODEL_KEY = "dictionary_model"
 SHORTCUT_HOLD_KEY = "shortcut_hold"
 SHORTCUT_TOGGLE_KEY = "shortcut_toggle"
-# Before two shortcuts could be active at once, one was stored as a mode plus keys.
 LEGACY_MODE_KEY = "shortcut_mode"
 LEGACY_KEYS_KEY = "shortcut_keys"
 
@@ -162,7 +161,13 @@ class Dictum:
         self._changed()
 
     def shortcuts(self) -> Shortcuts:
-        """The configured shortcuts; empty until the user sets one."""
+        """The configured shortcuts; empty until the user sets one.
+
+        Before two shortcuts could be active at once, the one shortcut was stored as a
+        mode plus keys. That pair is read only while neither new key exists, and
+        `set_shortcuts` deletes it, so the migration finishes the first time the user
+        saves.
+        """
         hold = self.store.get_setting(SHORTCUT_HOLD_KEY)
         toggle = self.store.get_setting(SHORTCUT_TOGGLE_KEY)
         if hold is None and toggle is None:
@@ -361,5 +366,4 @@ __all__ = [
     "NoDefaultModel",
     "ProviderStatus",
     "UnknownModel",
-    "model_id",
 ]

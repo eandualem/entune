@@ -17,7 +17,6 @@ __all__ = [
     "TranscribeResult",
     "Transcript",
     "default_providers",
-    "model_id",
     "resolve_model",
 ]
 
@@ -29,7 +28,7 @@ class ModelRef:
 
     @property
     def id(self) -> str:
-        return model_id(self.provider, self.model)
+        return f"{self.provider.id}/{self.model}"
 
     @property
     def label(self) -> str:
@@ -38,10 +37,6 @@ class ModelRef:
 
 def default_providers() -> list[Provider]:
     return [AssemblyAI(), Groq(), Soniox()]
-
-
-def model_id(provider: Provider, model: str) -> str:
-    return f"{provider.id}/{model}"
 
 
 def resolve_model(providers: list[Provider], ref: str) -> ModelRef | None:
