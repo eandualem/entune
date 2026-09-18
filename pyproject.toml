@@ -13,6 +13,7 @@ dependencies = [
   "pystray>=0.19",
   "python-multipart>=0.0.12",
   "pywebview>=5",
+  "pywhispercpp>=1.5",
   "sounddevice>=0.5 ; sys_platform == 'darwin'",
   "starlette>=0.41",
   "uvicorn>=0.30",

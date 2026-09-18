@@ -54,7 +54,9 @@ class Clip:
 class Provider(Protocol):
     id: str
     name: str
-    models: tuple[str, ...]
+
+    @property
+    def models(self) -> tuple[str, ...]: ...
 
     def transcribe(
         self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
@@ -92,6 +94,26 @@ class Upload(Protocol):
         ...
 
     def abort(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class LocalModelStatus:
+    name: str
+    label: str
+    size_bytes: int
+    note: str
+    state: str  # absent | downloading | ready | error
+    progress: float  # 0..1
+    error: str | None
+
+
+@runtime_checkable
+class Downloadable(Protocol):
+    """A provider whose models are files on this machine, fetched from Settings; no key."""
+
+    def catalogue(self) -> list[LocalModelStatus]: ...
+    def download(self, name: str) -> None: ...
+    def remove(self, name: str) -> None: ...
 
 
 @runtime_checkable

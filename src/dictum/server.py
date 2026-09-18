@@ -90,7 +90,13 @@ def create_app(app: Dictum) -> Starlette:
         return JSONResponse(
             {
                 "providers": [
-                    {"id": s.id, "name": s.name, "keyHint": s.key_hint, "streams": s.streams}
+                    {
+                        "id": s.id,
+                        "name": s.name,
+                        "keyHint": s.key_hint,
+                        "streams": s.streams,
+                        "local": s.local,
+                    }
                     for s in app.provider_statuses()
                 ],
                 "defaultModel": app.default_model(),
@@ -228,6 +234,23 @@ def create_app(app: Dictum) -> Starlette:
         updated = await run_in_threadpool(app.transcribe, recording, ref)
         return JSONResponse(_recording_json(updated))
 
+    async def local_models(_: Request) -> Response:
+        return JSONResponse([asdict(m) for m in app.local_models()])
+
+    async def download_local_model(request: Request) -> Response:
+        try:
+            app.download_local_model(request.path_params["name"])
+        except ValueError as exc:
+            return _bad(str(exc), 404)
+        return JSONResponse({"ok": True})
+
+    async def remove_local_model(request: Request) -> Response:
+        try:
+            app.remove_local_model(request.path_params["name"])
+        except ValueError as exc:
+            return _bad(str(exc), 404)
+        return JSONResponse({"ok": True})
+
     async def metrics(_: Request) -> Response:
         return JSONResponse([asdict(m) for m in app.metrics()])
 
@@ -263,6 +286,9 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/recordings/{id:int}/transcriptions", retry, methods=["POST"]),
             Route("/api/recordings/{id:int}/audio", audio),
             Route("/api/metrics", metrics),
+            Route("/api/local/models", local_models),
+            Route("/api/local/models/{name}/download", download_local_model, methods=["POST"]),
+            Route("/api/local/models/{name}", remove_local_model, methods=["DELETE"]),
             Mount("/static", StaticFiles(directory=WEB_DIR), name="static"),
         ],
     )

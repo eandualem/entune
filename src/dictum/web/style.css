@@ -191,6 +191,11 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; 
   color: var(--text-muted); margin: 0 0 var(--s-2); padding: 0 var(--s-1);
 }
 
+/* Local models: one line per model with its state and a button */
+.local-models { display: flex; flex-direction: column; gap: var(--s-2); }
+.local-model { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: var(--s-3); font-size: var(--fs-body); }
+.local-meta { font-size: var(--fs-small); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
 /* Performance table */
 .metrics { margin-bottom: var(--s-5); }
 .metrics .group { margin-bottom: 0; overflow-x: auto; }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import httpx
 
@@ -112,7 +113,7 @@ def test_soniox_reports_a_failed_job_verbatim(clip: Clip) -> None:
 
 
 def test_model_ids_resolve_only_to_known_pairs() -> None:
-    providers = default_providers()
+    providers = default_providers(Path("/nonexistent"))
     ref = resolve_model(providers, "groq/whisper-large-v3-turbo")
     assert (
         ref is not None

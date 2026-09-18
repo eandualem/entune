@@ -149,9 +149,82 @@ function keyRow(provider) {
   return row;
 }
 
+// A local provider has no key: its models are files, fetched with a button.
+let localPoll = null;
+function localRow(provider) {
+  const row = document.createElement("div");
+  row.className = "row top";
+  const lbl = document.createElement("div");
+  lbl.className = "lbl";
+  lbl.innerHTML = `<label>${provider.name}</label><span class="hint">whisper.cpp on this Mac, no key, nothing leaves the machine. Download a model once; it then appears in the model lists.</span>`;
+  const field = document.createElement("div");
+  field.className = "field local-models";
+  field.id = `local-${provider.id}`;
+  row.append(lbl, field);
+  return row;
+}
+
+async function loadLocalModels() {
+  const field = document.querySelector(".local-models");
+  if (!field) return;
+  const list = await api("/api/local/models");
+  field.replaceChildren(
+    ...list.map((m) => {
+      const line = document.createElement("div");
+      line.className = "local-model";
+      const name = document.createElement("span");
+      name.className = "local-name";
+      name.textContent = m.label;
+      const meta = document.createElement("span");
+      meta.className = "local-meta";
+      const size = `${(m.size_bytes / 1048576).toFixed(0)} MB`;
+      if (m.state === "downloading") meta.textContent = `${Math.round(m.progress * 100)}% of ${size}`;
+      else if (m.state === "ready") meta.textContent = `ready · ${size}`;
+      else if (m.state === "error") meta.textContent = `failed: ${m.error}`;
+      else meta.textContent = `${size} · ${m.note}`;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn sm";
+      button.dataset.model = m.name;
+      if (m.state === "ready") {
+        button.textContent = "Remove";
+        button.dataset.action = "remove";
+      } else {
+        button.textContent = m.state === "downloading" ? "Downloading…" : m.state === "error" ? "Retry" : "Download";
+        button.dataset.action = "download";
+        button.disabled = m.state === "downloading";
+      }
+      line.append(name, meta, button);
+      return line;
+    }),
+  );
+  const busy = list.some((m) => m.state === "downloading");
+  if (busy && !localPoll) localPoll = setInterval(() => loadLocalModels().catch(() => {}), 1500);
+  if (!busy && localPoll) {
+    clearInterval(localPoll);
+    localPoll = null;
+    await loadModels(); // a model that just finished downloading is now offered
+  }
+}
+
+keysGroup.addEventListener("click", async (e) => {
+  const button = e.target.closest("button[data-model]");
+  if (!button) return;
+  const { model, action } = button.dataset;
+  try {
+    if (action === "download") await api(`/api/local/models/${model}/download`, { method: "POST" });
+    else if (action === "remove") await api(`/api/local/models/${model}`, { method: "DELETE" });
+    await loadLocalModels();
+    if (action === "remove") await loadModels();
+  } catch (err) {
+    flash(settingsStatus, String(err.message ?? err), "err");
+  }
+});
+
 async function loadSettings() {
   const s = await api("/api/settings");
-  keysGroup.replaceChildren(...s.providers.map(keyRow));
+  keysGroup.replaceChildren(...s.providers.map((p) => (p.local ? localRow(p) : keyRow(p))));
+  loadLocalModels().catch(() => {});
   llmKeysGroup.replaceChildren(...s.llmProviders.map(keyRow));
   dictionaryModels.replaceChildren(
     ...s.llmProviders.flatMap((p) => p.models.map((m) => new Option(`${m.name}${m.id === p.defaultModel ? " (suggested)" : ""}`, m.id))),
