@@ -12,7 +12,8 @@ from collections.abc import Callable
 
 from dictum.desktop.engine import ShortcutEngine
 from dictum.desktop.platform import Microphone, Platform
-from dictum.recorder import Capture, Recorder
+from dictum.providers.base import Upload
+from dictum.recorder import Capture, Recorder, Sink
 from dictum.service import Dictum, NoDefaultModel, UnknownModel
 
 MIN_CLIP_SECONDS = 0.25  # a tap on the hold key is not a dictation
@@ -37,6 +38,7 @@ class DictumApp:
         self.recorder: Microphone = recorder or Recorder()
         self.engine: ShortcutEngine | None = None
         self._listening = False
+        self._upload: Upload | None = None  # fast mode's stream for the current recording
         self._server_answers = server_answers or self._probe_server
 
         platform.tray.set_actions(self.open_window, self.open_settings, self.quit)
@@ -145,8 +147,9 @@ class DictumApp:
     # Recording, called from the keyboard listener's thread
 
     def start_recording(self) -> None:
+        self._upload = None
         try:
-            self.recorder.start()
+            self.recorder.start(self._begin_upload)
         except Exception as exc:  # the user needs to know why nothing happens
             message = f"{type(exc).__name__}: {exc}"
             self.dictum.report_status(lastError=message)
@@ -157,17 +160,26 @@ class DictumApp:
         self.dictum.report_status(lastRecordingStarted=time.time())
         self._later(lambda: self.platform.tray.set_state("recording"))
 
+    def _begin_upload(self, sample_rate: int) -> Sink | None:
+        self._upload = self.dictum.begin_upload(sample_rate)
+        return self._upload.feed if self._upload is not None else None
+
     def stop_recording(self) -> None:
         capture = self.recorder.stop()
+        upload, self._upload = self._upload, None
         if capture.seconds < MIN_CLIP_SECONDS:
+            if upload is not None:
+                upload.abort()
             self._later(lambda: self.platform.tray.set_state("idle"))
             return
         self._later(lambda: self.platform.tray.set_state("busy"))
-        threading.Thread(target=self._transcribe_and_deliver, args=(capture,), daemon=True).start()
+        threading.Thread(
+            target=self._transcribe_and_deliver, args=(capture, upload), daemon=True
+        ).start()
 
-    def _transcribe_and_deliver(self, capture: Capture) -> None:
+    def _transcribe_and_deliver(self, capture: Capture, upload: Upload | None = None) -> None:
         try:
-            self._transcribe_and_deliver_inner(capture)
+            self._transcribe_and_deliver_inner(capture, upload)
         except Exception as exc:  # whatever happens, the icon must not stay busy
             message = f"{type(exc).__name__}: {exc}"
             self._later(
@@ -176,14 +188,24 @@ class DictumApp:
         finally:
             self._later(lambda: self.platform.tray.set_state("idle"))
 
-    def _transcribe_and_deliver_inner(self, capture: Capture) -> None:
+    def _transcribe_and_deliver_inner(self, capture: Capture, upload: Upload | None) -> None:
+        started = time.monotonic()
         try:
-            recording = self.dictum.record_and_transcribe(capture.wav(), "audio/wav", None)
+            recording = self.dictum.record_and_transcribe(capture.wav(), "audio/wav", None, upload)
         except (NoDefaultModel, UnknownModel) as exc:
             message = str(exc)
             self._later(lambda: self.platform.actions.notify("Dictum", message))
             return
         attempt = recording.transcriptions[0]
+        # Measured so fast mode's worth can be judged from the log (issue #20).
+        how = "fast mode" if upload is not None else "plain"
+        print(
+            f"transcribed {capture.seconds:.0f} s of audio in {time.monotonic() - started:.1f} s"
+            f" ({how}, {attempt.status})",
+            flush=True,
+        )
+        if upload is not None and upload.error:
+            print(f"fast mode: the stream was not used: {upload.error}", flush=True)
         if attempt.status == "ok" and attempt.text:
             self._wait_for_keys_up()
             # Delivered on the UI thread: on macOS the paste goes through HIToolbox, which

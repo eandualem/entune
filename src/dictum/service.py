@@ -11,11 +11,13 @@ from dictum import llm, shortcuts
 from dictum.audio import sniff_mime
 from dictum.dictionary import Dictionary, Entries, Proposal
 from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, resolve_model
+from dictum.providers.base import Streams, Upload
 from dictum.shortcuts import Shortcuts
 from dictum.store import Recording, Store
 
 DEFAULT_MODEL_KEY = "default_model"
 DICTIONARY_MODEL_KEY = "dictionary_model"
+FAST_MODE_KEY = "fast_mode"
 SHORTCUT_HOLD_KEY = "shortcut_hold"
 SHORTCUT_TOGGLE_KEY = "shortcut_toggle"
 LEGACY_MODE_KEY = "shortcut_mode"
@@ -119,6 +121,28 @@ class Dictum:
 
     def default_model(self) -> str | None:
         return self.store.get_setting(DEFAULT_MODEL_KEY)
+
+    def fast_mode(self) -> bool:
+        """Stream the audio to the default model's provider while recording (opt-in)."""
+        return self.store.get_setting(FAST_MODE_KEY) == "1"
+
+    def set_fast_mode(self, on: bool) -> None:
+        self.store.set_setting(FAST_MODE_KEY, "1" if on else None)
+        self._changed()
+
+    def begin_upload(self, sample_rate: int) -> Upload | None:
+        """Fast mode's upload for a recording that starts now, when everything for it is
+        set: the option, a default model whose provider streams, and its key."""
+        if not self.fast_mode():
+            return None
+        try:
+            ref = self.choose_model(None)
+        except (NoDefaultModel, UnknownModel):
+            return None
+        api_key = self.store.get_setting(key_setting(ref.provider.id))
+        if api_key is None or not isinstance(ref.provider, Streams):
+            return None
+        return ref.provider.begin_upload(api_key, sample_rate)
 
     def set_default_model(self, ref: str | None) -> None:
         if ref is not None and self.resolve(ref) is None:
@@ -310,10 +334,13 @@ class Dictum:
             raise UnknownModel(chosen)
         return resolved
 
-    def transcribe(self, recording: Recording, ref: ModelRef) -> Recording:
+    def transcribe(
+        self, recording: Recording, ref: ModelRef, upload: Upload | None = None
+    ) -> Recording:
         """Run one attempt and record it.
 
         Every failure becomes a stored error, never an exception: the user reads it and retries.
+        `upload`: fast mode's stream of this same audio, used when it is the same provider.
         """
         api_key = self.store.get_setting(key_setting(ref.provider.id))
         result: Transcript | Failure
@@ -328,9 +355,8 @@ class Dictum:
                 if not mime.startswith("audio/"):
                     mime = sniff_mime(data) or mime
                 effective = self.dictionary().effective
-                result = ref.provider.transcribe(
-                    Clip(data, mime), ref.model, api_key, terms=effective.terms
-                )
+                clip = Clip(data, mime, upload_url=_finish(upload, ref, Clip(data, mime)))
+                result = ref.provider.transcribe(clip, ref.model, api_key, terms=effective.terms)
             except Exception as exc:
                 result = Failure(f"{type(exc).__name__}: {exc}")
         raw_text = result.text if isinstance(result, Transcript) else None
@@ -353,10 +379,23 @@ class Dictum:
         assert updated is not None
         return updated
 
-    def record_and_transcribe(self, data: bytes, label: str | None, ref: str | None) -> Recording:
+    def record_and_transcribe(
+        self, data: bytes, label: str | None, ref: str | None, upload: Upload | None = None
+    ) -> Recording:
         model = self.choose_model(ref)
         recording = self.store.create_recording(data, label)
-        return self.transcribe(recording, model)
+        return self.transcribe(recording, model, upload)
+
+
+def _finish(upload: Upload | None, ref: ModelRef, clip: Clip) -> str | None:
+    """The fast-mode upload's handle when it belongs to this provider and this clip is
+    long enough for it to matter; otherwise the stream is dropped."""
+    if upload is None:
+        return None
+    if upload.provider_id != ref.provider.id:
+        upload.abort()
+        return None
+    return upload.finish(clip.seconds or 0.0)
 
 
 __all__ = [
