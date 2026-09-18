@@ -411,3 +411,13 @@ def test_a_stopped_clip_is_in_history_before_its_transcription_runs(tmp_path: Pa
     (recording,) = dictum.store.list_recordings()
     wait_for(lambda: len(dictum.store.get_recording(recording.id).transcriptions) == 1)  # type: ignore[union-attr]
     assert "No default model" in (platform.actions.notices[-1][1])
+
+
+def test_quitting_right_after_a_recording_still_saves_it(tmp_path: Path) -> None:
+    app, platform, dictum = make(tmp_path)
+    dictum.set_shortcuts("alt_r", None)
+    app.start_recording()
+    app.stop_recording()
+    app.quit()
+    assert platform.quit_called
+    assert len(dictum.store.list_recordings()) == 1

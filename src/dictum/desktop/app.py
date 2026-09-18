@@ -20,6 +20,7 @@ from dictum.store import Recording
 
 MIN_CLIP_SECONDS = 0.25  # a tap on the hold key is not a dictation
 KEYS_UP_WAIT_SECONDS = 1.0  # let chord keys come up before pasting so Cmd+V is just Cmd+V
+QUIT_FLUSH_SECONDS = 3.0  # bound on waiting for a just-stopped clip to reach disk at quit
 PERMISSION_POLL_SECONDS = 5.0  # permissions are granted in System Settings; notice when they are
 SERVER_WAIT_SECONDS = 10.0  # the page is served from a thread that may still be starting
 
@@ -73,6 +74,13 @@ class DictumApp:
 
     def quit(self) -> None:
         self.platform.hotkeys.stop()
+        if self._recording:
+            self.stop_recording()
+        # A clip stopped a moment ago may still be on its way to disk; it takes
+        # milliseconds, and nothing recorded is lost to a quit. Transcription can wait.
+        deadline = time.monotonic() + QUIT_FLUSH_SECONDS
+        while self._captures.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.02)
         self.platform.quit()
 
     def _show_window_when_served(self, started: float) -> None:
@@ -208,9 +216,13 @@ class DictumApp:
                 recording = self.dictum.store_recording(capture.wav(), "audio/wav")
             except Exception as exc:
                 self._notify_later("Dictum: could not save", f"{type(exc).__name__}: {exc}")
+                if upload is not None:
+                    upload.abort()
                 self._pending -= 1
                 self._later(self._refresh_state)
                 continue
+            finally:
+                self._captures.task_done()
             self._jobs.put((recording, capture.seconds, upload))
 
     def _notify_later(self, title: str, message: str) -> None:
