@@ -37,9 +37,16 @@ class LocalOnly(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        host = request.headers.get("host", "")
+        if not _loopback(host):
+            # A DNS-rebinding page reaches a localhost server with its own Host header;
+            # every route, reads included, is refused unless the host is this machine.
+            return _bad("Requests must be addressed to localhost", 403)
         if request.method in ("POST", "PUT", "DELETE"):
             origin = request.headers.get("origin")
-            if origin is not None and not _same_origin(origin, request):
+            if origin is not None and origin.lower() != f"http://{host}".lower():
+                # "null" (a sandboxed frame, a file: page) is refused too: the window
+                # is served over http and sends its real loopback origin.
                 return _bad("Requests from other origins are refused", 403)
             length = request.headers.get("content-length")
             if length and length.isdigit() and int(length) > MAX_UPLOAD_BYTES:
@@ -47,9 +54,12 @@ class LocalOnly(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-def _same_origin(origin: str, request: Request) -> bool:
-    host = request.headers.get("host", "")
-    return origin.lower() in (f"http://{host}".lower(), "null") if host else False
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+
+
+def _loopback(host: str) -> bool:
+    name = host.rsplit(":", 1)[0] if not host.endswith("]") and ":" in host else host
+    return name.lower() in LOOPBACK_HOSTS
 
 
 class NoCache(BaseHTTPMiddleware):

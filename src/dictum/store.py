@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     elapsed_seconds REAL,
     fast INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS transcriptions_by_recording ON transcriptions(recording_id);
 """
 
 # Columns added after the first release; applied to databases that predate them.
