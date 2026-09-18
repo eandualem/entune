@@ -173,10 +173,10 @@ class Local:
             params: dict[str, Any] = {
                 "language": "en" if model.endswith(".en") else "auto",
                 "print_progress": False,
+                # Always set: the bindings keep parameters between calls, so a prompt
+                # from an earlier call would otherwise outlive deleted terms.
+                "initial_prompt": _prompt(terms),
             }
-            prompt = _prompt(terms)
-            if prompt:
-                params["initial_prompt"] = prompt
             try:
                 segments = engine.transcribe(audio, **params)
             except Exception as exc:

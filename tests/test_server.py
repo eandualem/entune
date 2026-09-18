@@ -42,7 +42,7 @@ def stub() -> StubProvider:
 
 @pytest.fixture
 def client(tmp_path: Path, stub: StubProvider) -> TestClient:
-    return TestClient(create_app(Dictum(Store(tmp_path), [stub])))
+    return TestClient(create_app(Dictum(Store(tmp_path), [stub])), base_url="http://localhost")
 
 
 def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
@@ -79,6 +79,10 @@ def test_recording_without_a_default_model_is_a_visible_error(client: TestClient
     )
     assert res.status_code == 400
     assert "No default model" in res.text
+    # The clip is kept, with the error, so it can be retried once a model is set.
+    (recording,) = client.get("/api/recordings").json()
+    (attempt,) = recording["transcriptions"]
+    assert attempt["status"] == "error" and "No default model" in attempt["error"]
 
 
 def test_record_fail_retry_and_history(client: TestClient, stub: StubProvider) -> None:
@@ -147,7 +151,7 @@ def test_legacy_single_shortcut_is_still_read(tmp_path: Path, stub: StubProvider
     store = Store(tmp_path)
     store.set_setting("shortcut_mode", "toggle")
     store.set_setting("shortcut_keys", "cmd+d")
-    client = TestClient(create_app(Dictum(store, [stub])))
+    client = TestClient(create_app(Dictum(store, [stub])), base_url="http://localhost")
     assert client.get("/api/settings").json()["shortcuts"] == {"hold": None, "toggle": "cmd+d"}
 
 
@@ -167,7 +171,7 @@ def test_capture_needs_the_menu_bar_app_or_hands_over_keys_once(
     dictum = Dictum(Store(tmp_path / "with-app"), [stub])
     asked: list[bool] = []
     dictum.on_capture(lambda: asked.append(True))
-    app_client = TestClient(create_app(dictum))
+    app_client = TestClient(create_app(dictum), base_url="http://localhost")
     assert app_client.post("/api/capture").status_code == 202
     assert asked == [True]
     assert app_client.get("/api/capture").json() == {"state": "listening", "keys": None}
@@ -239,7 +243,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
         return '{"terms": ["Claude Code", "Soniox"], "replacements": {"cloud code": "Claude Code"}}'
 
     dictum = Dictum(Store(tmp_path), [stub], llm_call=fake)
-    client = TestClient(create_app(dictum))
+    client = TestClient(create_app(dictum), base_url="http://localhost")
     res = client.post("/api/dictionary/build")
     assert res.status_code == 400 and "Pick a model" in res.text
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
@@ -313,10 +317,21 @@ def test_requests_from_other_origins_are_refused(client: TestClient) -> None:
     assert foreign.status_code == 403
     own = client.get("/api/settings", headers={"origin": "http://evil.example"})
     assert own.status_code == 200  # reads are harmless
-    same = client.put("/api/settings", json={"keys": {}}, headers={"origin": "http://testserver"})
+    same = client.put("/api/settings", json={"keys": {}}, headers={"origin": "http://localhost"})
     assert same.status_code == 200
     huge = client.post("/api/recordings", headers={"content-length": str(10**9)}, content=b"")
     assert huge.status_code == 413
+    # A DNS-rebinding page arrives with its own Host header: refused on every route.
+    rebound = client.get("/api/recordings", headers={"host": "evil.example"})
+    assert rebound.status_code == 403
+    rebound = client.put(
+        "/api/settings", json={}, headers={"host": "evil.example", "origin": "http://evil.example"}
+    )
+    assert rebound.status_code == 403
+    assert client.get("/api/settings", headers={"host": "127.0.0.1:4187"}).status_code == 200
+    # A sandboxed frame sends an opaque origin: refused too.
+    opaque = client.put("/api/settings", json={"keys": {}}, headers={"origin": "null"})
+    assert opaque.status_code == 403
 
 
 def test_a_clip_missing_from_disk_becomes_a_stored_error(
@@ -352,7 +367,7 @@ def test_status_and_show_window(client: TestClient, tmp_path: Path, stub: StubPr
     shown: list[bool] = []
     dictum.on_show_window(lambda: shown.append(True))
     dictum.report_status(desktop=True, listening=True, canListen=True)
-    desktop = TestClient(create_app(dictum))
+    desktop = TestClient(create_app(dictum), base_url="http://localhost")
     assert desktop.get("/api/status").json()["listening"] is True
     assert desktop.post("/api/window").status_code == 200 and shown == [True]
 
@@ -392,7 +407,7 @@ def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: St
         tmp_path / "models", client=mock_client(lambda req: httpx.Response(200, content=body))
     )
     app = create_app(Dictum(Store(tmp_path), [stub, local]))
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         providers = client.get("/api/settings").json()["providers"]
         assert [(p["id"], p["local"]) for p in providers] == [("stub", False), ("local", True)]
         listed = client.get("/api/local/models").json()
