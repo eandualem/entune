@@ -4,6 +4,36 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-18, late evening: dictionaries per speech model (issue #30)
+
+**What changed.** The `learned` section of `dictionary.json` is now keyed
+by speech model (`provider/model`); pinned and agents entries stay shared
+by every model. Build and Refine read only the default model's transcripts
+from history, and propose a list for that model; the language model is
+told the pinned and agents entries are approved, shared and off limits, and
+to read them as evidence of who the user is. The Dictionary tab shows,
+builds and edits the default model's list ("Learned for …"). A file in the
+old flat form is read under the key `*` and moved under the default model
+the first time the app reads it with one set.
+
+**Elias's decisions, in his words.** "The ones that are pinned by me …
+should stay common across different models. But specific model learned by
+the model … should be specific to the specific speech transcription model
+that's being used. And … the history that should be used when you refine
+and when you generate for the first time should be the stream from the
+model usage." And the prompt should carry the pinned ones "so basically he
+doesn't repeat them … maybe gives it a little bit more hint about the
+character of the user". Derived by dictum: agent corrections are treated
+like pinned (shared), since the user confirmed them; he did not say.
+
+**Verified (observations).** 122 tests, ruff and mypy pass. On a scratch
+data directory: a legacy file moved under the default model once it was
+set; the Dictionary tab rendered the model's list, and Pin moved an entry
+from it to pinned; no console errors. Not yet used on Elias's real data.
+
+**Next.** UI improvements (#77, his list to come); then the documentation
+pass, PyPI and Windows, as below.
+
 ## 2026-09-18, end of the second day
 
 **State.** Version 1 shipped on 2026-09-17. On 2026-09-18 the following
@@ -48,10 +78,8 @@ or call the model directly; whether to split `web/app.js` (921 lines).
 badge and a PyPI release (#38). The README screen recording is the owner's.
 
 **Next, in the owner's order.**
-1. Per-provider dictionaries, issue #30: replacements keyed by the provider
-   they correct, the build scoped to one provider's transcripts, the
-   Dictionary tab showing the selected provider's list. His open question
-   there: terms shared or per provider too.
+1. Per-provider dictionaries, issue #30 (done later the same evening, see
+   the entry above).
 2. UI improvements: not yet specified; issue #77 holds the placeholder for
    his list.
 3. Documentation pass for the public release, PyPI, then the Windows test.

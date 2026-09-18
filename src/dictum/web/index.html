@@ -65,7 +65,7 @@
             <span class="model-chip" id="dictionary-model-chip">no model set</span>
             <span class="save-status" id="build-status" role="status"></span>
           </div>
-          <p class="help dict-note">Building sends your recent transcripts and the current dictionary to the model you chose in Settings, with your key, only when you click. Entries you pin are never changed by it.</p>
+          <p class="help dict-note">Building sends the recent transcripts of the model you dictate with, and the current dictionary, to the language model you chose in Settings, with your key, only when you click. What it learns is kept for that speech model; entries you pin are shared by every model and never changed by it.</p>
 
           <div class="group proposal" id="proposal" hidden>
             <div class="proposal-head">
@@ -97,7 +97,7 @@
             <div class="entries" id="agents-entries"></div>
           </div>
 
-          <h2 class="section-label">Learned by the model <button type="button" class="btn sm inline" id="pin-all" hidden>Pin all</button></h2>
+          <h2 class="section-label">Learned for <span id="learned-model">no default model</span> <button type="button" class="btn sm inline" id="pin-all" hidden>Pin all</button></h2>
           <div class="group">
             <div class="entries" id="learned-entries"></div>
           </div>

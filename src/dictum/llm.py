@@ -1,8 +1,9 @@
 """Building the dictionary with a language model, through assistant-runtime.
 
-The model never touches a transcript on its way to the user. It reads recent raw
-transcripts and the current dictionary and proposes the `learned` section; the user's
-`pinned` entries are handed to it as approved and off limits.
+The model never touches a transcript on its way to the user. It reads one speech
+model's recent raw transcripts and the current dictionary and proposes the `learned`
+section for that speech model; the user's `pinned` entries and the agents' corrections
+are handed to it as approved and off limits, and as evidence of who the user is.
 """
 
 from __future__ import annotations
@@ -66,28 +67,33 @@ def catalog(provider: str) -> list[ModelChoice]:
 
 SYSTEM_PROMPT = """You maintain a personal dictation dictionary for one person.
 
-You receive recent raw speech-to-text transcripts of their dictation, exactly as the
-speech provider returned them, plus the current dictionary. Produce the `learned` section:
-- "terms": words the speech provider should be told to expect: names of people, products,
+You receive recent raw transcripts of their dictation from one speech-to-text model,
+exactly as that model returned them, plus the current dictionary. Produce the `learned`
+section for that speech model:
+- "terms": words the speech model should be told to expect: names of people, products,
   companies, tools, code identifiers, acronyms, and any specialised vocabulary that appears
   in the transcripts. Use the spelling that is evidently intended; when the same name is
   spelled several ways, pick the correct one.
-- "replacements": corrections for phrases the provider consistently mishears, as
+- "replacements": corrections for phrases this speech model consistently mishears, as
   {"heard": "meant"}. Only when the evidence is clear from context and the fix is safe as a
   whole-word, case-insensitive replacement applied to every future transcript. Never map a
   common English word to something else unless the transcripts make the mistake unmistakable.
   Prefer multi-word phrases; keep the list short.
 
 The "pinned" section is the user's own, already approved, and the "agents" section holds
-corrections the user confirmed through their assistants. Do not alter, remove or
-contradict either; do not repeat their entries. Build on top of them.
-The previous "learned" section is included; keep what still holds, drop what does not.
+corrections the user confirmed through their assistants. Both apply to every speech model.
+Do not alter, remove or contradict either; do not repeat their entries. Do read them as
+evidence of who this person is, what they work on and how they speak: a pinned "cloud" to
+"Claude" says they talk about the assistant, not the sky, and that guides which of this
+model's mishearings are worth a rule. Build on top of them.
+The previous "learned" section for this speech model is included; keep what still holds,
+drop what does not.
 
 Reply with one JSON object only, no prose, no code fence:
 {"terms": [...], "replacements": {"heard": "meant"}}"""
 
 
-def build_user_prompt(current: Dictionary, transcripts: Sequence[str]) -> str:
+def build_user_prompt(current: Dictionary, transcripts: Sequence[str], speech_model: str) -> str:
     kept: list[str] = []
     used = 0
     for text in transcripts[:MAX_TRANSCRIPTS]:
@@ -99,13 +105,14 @@ def build_user_prompt(current: Dictionary, transcripts: Sequence[str]) -> str:
         kept.append(snippet)
         used += len(snippet)
     return (
-        "Pinned by the user (approved, do not change):\n"
+        "Pinned by the user (approved, shared by every speech model, do not change):\n"
         f"{json.dumps(current.pinned.as_json(), ensure_ascii=False)}\n\n"
-        "Confirmed through the user's agents (approved, do not change):\n"
+        "Confirmed through the user's agents (approved, shared, do not change):\n"
         f"{json.dumps(current.agents.as_json(), ensure_ascii=False)}\n\n"
-        "Previously learned (revise):\n"
-        f"{json.dumps(current.learned.as_json(), ensure_ascii=False)}\n\n"
-        f"Recent raw transcripts, newest first ({len(kept)}):\n" + "\n".join(f"- {t}" for t in kept)
+        f"Previously learned for {speech_model} (revise):\n"
+        f"{json.dumps(current.learned_for(speech_model).as_json(), ensure_ascii=False)}\n\n"
+        f"Recent raw transcripts from {speech_model}, newest first ({len(kept)}):\n"
+        + "\n".join(f"- {t}" for t in kept)
     )
 
 
@@ -179,13 +186,14 @@ def propose_learned(
     model: str,
     current: Dictionary,
     transcripts: Sequence[str],
+    speech_model: str,
     call: Caller = call_assistant_runtime,
 ) -> Entries:
-    """Ask the model for a new `learned` section.
+    """Ask the model for a new `learned` section for `speech_model`, from its transcripts.
 
     Raises ValueError carrying the provider's or the model's own words when it fails.
     """
-    user_prompt = build_user_prompt(current, transcripts)
+    user_prompt = build_user_prompt(current, transcripts, speech_model)
     try:
         reply = asyncio.run(call(provider, api_key, model, SYSTEM_PROMPT, user_prompt))
     except Exception as exc:
