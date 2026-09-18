@@ -61,3 +61,85 @@ def wav_duration_seconds(data: bytes) -> float | None:
     except (wave.Error, EOFError):
         return None
     return frames / rate if rate else None
+
+
+# Matroska/WebM element ids. A browser's MediaRecorder writes the Segment and every
+# Cluster with an unknown size and no Duration, so the duration has to come from the
+# last block's timestamp.
+_EBML_HEADER = 0x1A45DFA3
+_SEGMENT = 0x18538067
+_INFO = 0x1549A966
+_TIMESTAMP_SCALE = 0x2AD7B1
+_CLUSTER = 0x1F43B675
+_CLUSTER_TIMESTAMP = 0xE7
+_SIMPLE_BLOCK = 0xA3
+_BLOCK_GROUP = 0xA0
+_BLOCK = 0xA1
+_INLINE = {_SEGMENT, _CLUSTER, _BLOCK_GROUP}  # walk their children in place
+_UNKNOWN_SIZE = -1
+
+
+def _vint(data: bytes, pos: int, keep_marker: bool) -> tuple[int, int] | None:
+    """Read an EBML variable-length integer; the element id keeps its length marker."""
+    if pos >= len(data):
+        return None
+    first = data[pos]
+    length = 1
+    while length <= 8 and not first & (0x80 >> (length - 1)):
+        length += 1
+    if length > 8 or pos + length > len(data):
+        return None
+    raw = int.from_bytes(data[pos : pos + length], "big")
+    if keep_marker:
+        return raw, pos + length
+    value = raw & ((1 << (7 * length)) - 1)
+    if value == (1 << (7 * length)) - 1:
+        return _UNKNOWN_SIZE, pos + length
+    return value, pos + length
+
+
+def webm_duration_seconds(data: bytes) -> float | None:
+    """Duration of a WebM clip from its last block, or None when it cannot be read."""
+    if sniff_mime(data) != "audio/webm":
+        return None
+    scale = 1_000_000  # nanoseconds per timestamp unit, the Matroska default
+    cluster = 0
+    last: int | None = None
+    pos = 0
+    while pos < len(data):
+        head = _vint(data, pos, keep_marker=True)
+        if head is None:
+            break
+        element_id, pos = head
+        sized = _vint(data, pos, keep_marker=False)
+        if sized is None:
+            break
+        size, pos = sized
+        if element_id in _INLINE:
+            continue
+        if size == _UNKNOWN_SIZE or pos + size > len(data):
+            break
+        body = data[pos : pos + size]
+        if element_id == _INFO:
+            at = 0
+            while at < len(body):
+                child = _vint(body, at, keep_marker=True)
+                child_size = _vint(body, child[1], keep_marker=False) if child else None
+                if child is None or child_size is None or child_size[0] == _UNKNOWN_SIZE:
+                    break
+                start, end = child_size[1], child_size[1] + child_size[0]
+                if child[0] == _TIMESTAMP_SCALE:
+                    scale = int.from_bytes(body[start:end], "big") or scale
+                at = end
+        elif element_id == _CLUSTER_TIMESTAMP:
+            cluster = int.from_bytes(body, "big")
+        elif element_id in (_SIMPLE_BLOCK, _BLOCK):
+            track = _vint(body, 0, keep_marker=False)
+            if track is not None and track[1] + 2 <= len(body):
+                offset = int.from_bytes(body[track[1] : track[1] + 2], "big", signed=True)
+                stamp = cluster + offset
+                last = stamp if last is None else max(last, stamp)
+        pos += size
+    if last is None:
+        return None
+    return last * scale / 1_000_000_000
