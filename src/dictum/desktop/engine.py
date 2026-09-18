@@ -30,6 +30,8 @@ class ShortcutEngine:
         self._chord_fired = False
 
     def press(self, key: str) -> None:
+        if key in self.pressed:
+            return  # the OS auto-repeats a held key; only a new physical press counts
         self.pressed.add(key)
         hold, toggle = self.shortcuts.hold, self.shortcuts.toggle
         if toggle and key in toggle and set(toggle) <= self.pressed:

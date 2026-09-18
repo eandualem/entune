@@ -400,3 +400,14 @@ def test_clearing_the_shortcuts_mid_recording_finishes_the_clip(tmp_path: Path) 
     dictum.set_shortcuts(None, None)  # the engine goes: the clip is finished, not abandoned
     assert not app.recorder.recording  # type: ignore[attr-defined]
     wait_for(lambda: platform.actions.pasted == 1)
+
+
+def test_a_stopped_clip_is_in_history_before_its_transcription_runs(tmp_path: Path) -> None:
+    app, platform, dictum = make(tmp_path)
+    dictum.set_shortcuts("alt_r", None)  # no model set: transcription cannot even start
+    app.start_recording()
+    app.stop_recording()
+    wait_for(lambda: len(dictum.store.list_recordings()) == 1)
+    (recording,) = dictum.store.list_recordings()
+    wait_for(lambda: len(dictum.store.get_recording(recording.id).transcriptions) == 1)  # type: ignore[union-attr]
+    assert "No default model" in (platform.actions.notices[-1][1])

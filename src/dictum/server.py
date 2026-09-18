@@ -262,14 +262,14 @@ def create_app(app: Dictum) -> Starlette:
 
     async def download_local_model(request: Request) -> Response:
         try:
-            app.download_local_model(request.path_params["name"])
+            await run_in_threadpool(app.download_local_model, request.path_params["name"])
         except ValueError as exc:
             return _bad(str(exc), 404)
         return JSONResponse({"ok": True})
 
     async def remove_local_model(request: Request) -> Response:
         try:
-            app.remove_local_model(request.path_params["name"])
+            await run_in_threadpool(app.remove_local_model, request.path_params["name"])
         except ValueError as exc:
             return _bad(str(exc), 404)
         return JSONResponse({"ok": True})
