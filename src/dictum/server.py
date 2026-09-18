@@ -90,7 +90,7 @@ def create_app(app: Dictum) -> Starlette:
         return JSONResponse(
             {
                 "providers": [
-                    {"id": s.id, "name": s.name, "keyHint": s.key_hint}
+                    {"id": s.id, "name": s.name, "keyHint": s.key_hint, "streams": s.streams}
                     for s in app.provider_statuses()
                 ],
                 "defaultModel": app.default_model(),
@@ -228,6 +228,9 @@ def create_app(app: Dictum) -> Starlette:
         updated = await run_in_threadpool(app.transcribe, recording, ref)
         return JSONResponse(_recording_json(updated))
 
+    async def metrics(_: Request) -> Response:
+        return JSONResponse([asdict(m) for m in app.metrics()])
+
     async def audio(request: Request) -> Response:
         recording = app.store.get_recording(int(request.path_params["id"]))
         if recording is None:
@@ -259,6 +262,7 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/recordings", create_recording, methods=["POST"]),
             Route("/api/recordings/{id:int}/transcriptions", retry, methods=["POST"]),
             Route("/api/recordings/{id:int}/audio", audio),
+            Route("/api/metrics", metrics),
             Mount("/static", StaticFiles(directory=WEB_DIR), name="static"),
         ],
     )

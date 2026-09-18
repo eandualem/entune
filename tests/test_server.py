@@ -8,6 +8,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from dictum.providers.base import Clip, Failure, TranscribeResult, Transcript
+from dictum.recorder import wav_bytes
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store
@@ -44,7 +45,9 @@ def client(tmp_path: Path, stub: StubProvider) -> TestClient:
 
 def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
     settings = client.get("/api/settings").json()
-    assert settings["providers"] == [{"id": "stub", "name": "Stub", "keyHint": None}]
+    assert settings["providers"] == [
+        {"id": "stub", "name": "Stub", "keyHint": None, "streams": False}
+    ]
     assert settings["defaultModel"] is None
     assert settings["shortcuts"] == {"hold": None, "toggle": None}
     assert client.get("/api/models").json() == []
@@ -358,3 +361,21 @@ def test_fast_mode_is_off_by_default_and_round_trips(client: TestClient) -> None
     assert client.get("/api/settings").json()["fastMode"] is True
     assert client.put("/api/settings", json={"fastMode": False}).status_code == 200
     assert client.get("/api/settings").json()["fastMode"] is False
+
+
+def test_metrics_are_computed_from_timed_attempts(client: TestClient) -> None:
+    assert client.get("/api/metrics").json() == []
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    client.post("/api/recordings", files={"audio": ("a.wav", wav_bytes(b"\x00\x00" * 16_000 * 3))})
+    client.post("/api/recordings", files={"audio": ("a.wav", wav_bytes(b"\x00\x00" * 16_000 * 5))})
+    (row,) = client.get("/api/metrics").json()
+    assert (row["provider"], row["model"], row["fast"], row["runs"], row["ok"]) == (
+        "stub",
+        "good",
+        False,
+        2,
+        2,
+    )
+    assert row["audio_seconds"] == 8.0 and row["median_wait"] >= 0 and row["speed"] > 0
+    providers = client.get("/api/settings").json()["providers"]
+    assert [p["streams"] for p in providers] == [False]

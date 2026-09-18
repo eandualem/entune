@@ -15,6 +15,10 @@ const keysGroup = el("keys");
 const llmKeysGroup = el("llm-keys");
 const dictionaryModelInput = el("dictionary-model");
 const fastModeInput = el("fast-mode");
+const fastModeRow = el("fast-mode-row");
+const metricsSection = el("metrics");
+const metricsRows = el("metrics-rows");
+let streamingProviders = new Set();
 const dictionaryModels = el("dictionary-models");
 const dictionaryModelChip = el("dictionary-model-chip");
 const defaultSelect = el("default-model");
@@ -94,6 +98,34 @@ async function loadModels() {
     defaultSelect.prepend(new Option("Not set", "", true, true));
     modelSelect.prepend(new Option("Default (not set)", "", true, true));
   }
+  showFastModeIfSupported();
+}
+
+// Fast mode only means something for a provider that takes the audio while it is recorded.
+function showFastModeIfSupported() {
+  const provider = defaultSelect.value.split("/")[0];
+  fastModeRow.hidden = !streamingProviders.has(provider);
+}
+defaultSelect.addEventListener("change", showFastModeIfSupported);
+
+async function loadMetrics() {
+  const rows = await api("/api/metrics");
+  metricsSection.hidden = rows.length === 0;
+  const cell = (text) => Object.assign(document.createElement("td"), { textContent: text });
+  metricsRows.replaceChildren(
+    ...rows.map((m) => {
+      const tr = document.createElement("tr");
+      tr.append(
+        cell(`${m.provider} / ${m.model}`),
+        cell(m.fast ? "fast" : "plain"),
+        cell(m.ok === m.runs ? String(m.runs) : `${m.ok} of ${m.runs} ok`),
+        cell(`${Math.round(m.audio_seconds / 60)} min`),
+        cell(m.median_wait === null ? "–" : `${m.median_wait.toFixed(1)} s`),
+        cell(m.speed === null ? "–" : `${m.speed.toFixed(0)}× realtime`),
+      );
+      return tr;
+    }),
+  );
 }
 
 // ---- Settings ----
@@ -126,6 +158,7 @@ async function loadSettings() {
   );
   dictionaryModelInput.value = s.dictionaryModel ?? "";
   fastModeInput.checked = Boolean(s.fastMode);
+  streamingProviders = new Set(s.providers.filter((p) => p.streams).map((p) => p.id));
   dictionaryModelChip.textContent = s.dictionaryModel ?? "no model set";
   shortcuts = s.shortcuts;
   shortcutHold.value = s.shortcuts.hold ?? "";
@@ -666,6 +699,7 @@ async function loadHistory(force = false) {
   if (!force && snapshot === historySnapshot) return;
   historySnapshot = snapshot;
   historyList.replaceChildren(...recordings.map(renderCard));
+  loadMetrics().catch(() => {});
   emptyState.hidden = recordings.length > 0;
   historyLabel.hidden = recordings.length === 0;
 }
