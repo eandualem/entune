@@ -92,6 +92,8 @@ function fillModels(select, selected, emptyLabel) {
 async function loadModels() {
   models = await api("/api/models");
   const def = models.find((m) => m.default)?.id ?? null;
+  defaultModel = models.find((m) => m.default) ?? null;
+  renderDictionary(); // the learned section is the default model's
   fillModels(modelSelect, def, "No models: add a key or download one");
   fillModels(defaultSelect, def, "Add a key or download a model first");
   if (def === null && models.length > 0) {
@@ -293,9 +295,12 @@ settingsForm.addEventListener("submit", async (e) => {
 });
 
 // ---- Dictionary tab ----
-// `dict` mirrors dictionary.json: pinned (the user's, never changed by the model) and
-// learned (the model's last accepted proposal). Every change is saved whole.
-let dict = { pinned: { terms: [], replacements: {} }, agents: { terms: [], replacements: {} }, learned: { terms: [], replacements: {} } };
+// `dict` mirrors dictionary.json: pinned (the user's, never changed by the model), agents
+// (corrections they confirmed) and learned (the last accepted proposal, keyed by the speech
+// model it was learned for). The page shows and builds the default model's learned
+// section. Every change is saved whole.
+let dict = { pinned: { terms: [], replacements: {} }, agents: { terms: [], replacements: {} }, learned: {} };
+let defaultModel = null; // {id, label} from /api/models, or null
 let proposal = null;
 const dictionaryBox = el("dictionary");
 const dictionaryStatus = el("dictionary-status");
@@ -376,8 +381,15 @@ function entryRow(section, kind, heard, meant) {
   return row;
 }
 
+// The entries of a section in a document; for learned, the default model's, made if absent.
+function sectionOf(doc, section) {
+  if (section !== "learned") return doc[section];
+  if (!defaultModel) return { terms: [], replacements: {} };
+  return (doc.learned[defaultModel.id] ??= { terms: [], replacements: {} });
+}
+
 function renderEntries(container, section) {
-  const entries = dict[section];
+  const entries = sectionOf(dict, section);
   container.replaceChildren(
     ...entries.terms.map((t) => entryRow(section, "term", t)),
     ...Object.entries(entries.replacements).map(([h, m]) => entryRow(section, "replace", h, m)),
@@ -388,7 +400,9 @@ function renderDictionary(jsonText) {
   renderEntries(el("pinned-entries"), "pinned");
   renderEntries(el("agents-entries"), "agents");
   renderEntries(el("learned-entries"), "learned");
-  const learnedCount = dict.learned.terms.length + Object.keys(dict.learned.replacements).length;
+  el("learned-model").textContent = defaultModel?.label ?? "no default model";
+  const learned = sectionOf(dict, "learned");
+  const learnedCount = learned.terms.length + Object.keys(learned.replacements).length;
   el("pin-all").hidden = learnedCount === 0;
   buildBtn.textContent = learnedCount ? "Refine from history" : "Build from history";
   if (jsonText !== undefined) dictionaryBox.value = jsonText;
@@ -410,18 +424,20 @@ async function addToPinned(kind, heard, meant) {
 
 async function removeEntry(section, kind, heard) {
   const next = clone();
-  if (kind === "term") next[section].terms = next[section].terms.filter((t) => t !== heard);
-  else delete next[section].replacements[heard];
+  const from = sectionOf(next, section);
+  if (kind === "term") from.terms = from.terms.filter((t) => t !== heard);
+  else delete from.replacements[heard];
   await saveDictionary(next);
 }
 
 async function moveToPinned(section, kind, heard, meant) {
   const next = clone();
+  const from = sectionOf(next, section);
   if (kind === "term") {
-    next[section].terms = next[section].terms.filter((t) => t !== heard);
+    from.terms = from.terms.filter((t) => t !== heard);
     if (!next.pinned.terms.includes(heard)) next.pinned.terms.push(heard);
   } else {
-    delete next[section].replacements[heard];
+    delete from.replacements[heard];
     next.pinned.replacements[heard] = meant;
   }
   await saveDictionary(next);
@@ -441,10 +457,12 @@ el("add-replacement-btn").addEventListener("click", async () => {
 });
 el("add-meant").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el("add-replacement-btn").click(); } });
 el("pin-all").addEventListener("click", async () => {
+  if (!defaultModel) return;
   const next = clone();
-  for (const t of next.learned.terms) if (!next.pinned.terms.includes(t)) next.pinned.terms.push(t);
-  Object.assign(next.pinned.replacements, next.learned.replacements);
-  next.learned = { terms: [], replacements: {} };
+  const learned = sectionOf(next, "learned");
+  for (const t of learned.terms) if (!next.pinned.terms.includes(t)) next.pinned.terms.push(t);
+  Object.assign(next.pinned.replacements, learned.replacements);
+  delete next.learned[defaultModel.id];
   await saveDictionary(next);
 });
 
@@ -454,7 +472,8 @@ el("save-dictionary").addEventListener("click", async () => {
   if (await saveDictionary(parsed)) flash(dictionaryStatus, "Saved", "ok");
 });
 
-// Build: the model proposes a learned section; nothing changes until Accept.
+// Build: the model proposes a learned section for the default speech model, from that
+// model's transcripts; nothing changes until Accept.
 function chips(list, cls) {
   const box = document.createElement("div");
   box.className = "chips";
@@ -512,7 +531,7 @@ buildBtn.addEventListener("click", async () => {
 el("accept-proposal").addEventListener("click", async () => {
   if (!proposal) return;
   const next = clone();
-  next.learned = proposal.learned;
+  next.learned[proposal.model] = proposal.learned;
   if (await saveDictionary(next)) {
     proposal = null;
     proposalPanel.hidden = true;
