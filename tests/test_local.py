@@ -99,3 +99,20 @@ def test_pcm16k_mixes_stereo_and_keeps_16k_as_is() -> None:
     assert len(mono) == 16_000 and abs(float(mono[0]) - 0.5) < 0.01
     assert _prompt(()) == ""
     assert len(_prompt(tuple("term" for _ in range(500)))) <= 800
+
+
+def test_warm_loads_a_downloaded_model_once_and_ignores_the_rest(tmp_path: Path) -> None:
+    loaded: list[str] = []
+
+    def load_model(path: str) -> FakeEngine:
+        loaded.append(path)
+        return FakeEngine()
+
+    local = Local(tmp_path, load_model=load_model)
+    local.warm("base.en")  # not downloaded: nothing happens
+    (tmp_path / "ggml-base.en.bin").write_bytes(b"model")
+    local.warm("base.en")
+    wait_until(lambda: loaded == [str(tmp_path / "ggml-base.en.bin")])
+    clip = Clip(wav_bytes(b"\x00\x00" * 16_000), "audio/wav")
+    assert local.transcribe(clip, "base.en", "") == Transcript("hello there")
+    assert len(loaded) == 1
