@@ -50,6 +50,7 @@ POLL_LIMIT_SECONDS = 900.0
 class AssemblyAI:
     id: str = "assemblyai"
     name: str = "AssemblyAI"
+    term_limit: int | None = SYNC_KEYTERMS_MAX  # dictation goes to the sync endpoint
     models: tuple[str, ...] = ("universal-3-5-pro",)
 
     def __init__(
