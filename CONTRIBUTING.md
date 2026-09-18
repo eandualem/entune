@@ -18,7 +18,9 @@ All four pass before a commit. Commits follow conventional commits
 
 Branches: work happens on short-lived branches with pull requests into
 `develop`; `main` only moves by a release pull request from `develop`, after
-a review of everything that accumulated there (since 2026-09-18).
+a review of everything that accumulated there (since 2026-09-18). GitHub
+deletes a merged pull request's head branch here, so `develop` is recreated
+from `main` after each release.
 
 ## Where things are
 
@@ -29,7 +31,8 @@ a review of everything that accumulated there (since 2026-09-18).
 - `src/dictum/desktop/`: the desktop app; `app.py` is the behaviour, `platform.py` the
   protocols it needs, `macos/` the macOS implementation.
 - `docs/`: [architecture](docs/architecture.md), [dictionary](docs/dictionary.md),
-  [agents' API](docs/agents-api.md), [packaging](docs/packaging.md).
+  [agents' API](docs/agents-api.md), [packaging](docs/packaging.md), and
+  [the handoff](docs/handoff.md): where the work stands and what comes next.
 
 ## Constraints
 

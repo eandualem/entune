@@ -43,6 +43,7 @@ first two; add the rest only when an issue asks.
 | OpenAI | gpt-4o-transcribe | ubiquitous |
 | Mistral | Voxtral Transcribe 2 | open weights |
 | Local | whisper.cpp (large-v3-turbo and smaller) | offline, no key; models downloaded from Settings (added 2026-09-18) |
+| Parakeet (local) | parakeet-tdt-0.6b-v3 on MLX | most accurate offline in tests; engine installed by the user with `uv tool install parakeet-mlx`, never bundled (owner's decision 2026-09-18); Apple Silicon only |
 
 Dictation is push-to-talk: a clip of seconds to a minute, transcribed once
 after release. Use each provider's synchronous or file endpoint, never its
@@ -76,8 +77,10 @@ A failure is data the user reads and acts on; that is the retry feature.
   constraints and record the choice in the README.
 - Pull requests go into `develop`; `main` moves only by a release pull
   request from `develop` after a deep review of everything on it (the
-  owner's practice, adopted 2026-09-18). Review evidence lives under the
-  ignored `.backbone/reviews/`, never under `docs/`.
+  owner's practice, adopted 2026-09-18). GitHub deletes the head branch of
+  a merged pull request here, `develop` included: recreate it from `main`
+  after every release. Review evidence lives under the ignored
+  `.backbone/reviews/`, never under `docs/`.
 
 ## Scope
 
@@ -91,6 +94,22 @@ Also in scope since 2026-09-17 (issue #22): a personal dictionary, and a
 language model that builds it from the history on request. The model
 never touches a transcript on its way to the user; that stays out.
 
-Out of scope for now: streaming, LLM cleanup or formatting passes,
-multi-user, authentication, cloud storage, platforms other than macOS.
-Simplicity is a requirement, not a preference.
+In scope since 2026-09-18 (issue #20): fast mode as an opt-in setting that
+streams the recording to the provider while it is made, never changing the
+plain path; local models (whisper.cpp, and Parakeet through a user-installed
+engine) with a Download button, taking memory only while selected; and the
+performance table built from every transcription's timing.
+
+Out of scope for now: streaming endpoints, LLM cleanup or formatting passes,
+multi-user, authentication, cloud storage, platforms other than macOS
+(Windows is the last step before sharing, issue #36). Simplicity is a
+requirement, not a preference.
+
+## Where the work stands
+
+The current state, what was verified, the open decisions and the next
+steps are in `docs/handoff.md`, updated at every handoff. Read it after
+this file at a fresh start. The owner's priorities on 2026-09-18, in his
+words: "I'm changing my priorities now. I want the dictionary, like the
+issue about the dictionary, to be implemented. And I want also UI
+improvements." Not public yet.
