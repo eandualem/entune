@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ LLM_PROVIDERS: dict[str, tuple[str, str]] = {
     "anthropic": ("Anthropic", "anthropic:claude-fable-5-1"),
     "openai": ("OpenAI", "openai:gpt-6-astra"),
 }
+KEY_VARIABLES = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
 # assistant-runtime maps this budget to "high" reasoning effort on both providers.
 THINKING_BUDGET = 32_000
 MAX_TRANSCRIPT_CHARS = 40_000
@@ -129,6 +131,12 @@ async def call_assistant_runtime(
         primary_model=model,
         providers_json=json.dumps([{"provider": provider, "api_key": api_key}]),
     )
+    # The runtime discovers keys through the environment and only exports the configured
+    # one when the variable is absent, and leaves it set afterwards: without this, a key
+    # replaced in Settings (or one inherited from the shell) would not be the one used.
+    variable = KEY_VARIABLES[provider]
+    previous = os.environ.get(variable)
+    os.environ[variable] = api_key
     service = LlmService(config=config)
     await service.start()
     try:
@@ -140,6 +148,10 @@ async def call_assistant_runtime(
         )
     finally:
         await service.stop()
+        if previous is None:
+            os.environ.pop(variable, None)
+        else:
+            os.environ[variable] = previous
     return str(result.content)
 
 

@@ -242,13 +242,16 @@ class Dictum:
         takes memory only while it is the selected one. Cloud models have nothing to warm."""
         default = self.default_model()
         ref = self.resolve(default) if default else None
-        for provider in self.providers:
-            if isinstance(provider, Downloadable):
-                provider.unload(
-                    keep=ref.model if ref is not None and ref.provider is provider else None
-                )
-        if ref is not None and isinstance(ref.provider, Downloadable):
-            ref.provider.warm(ref.model)
+        locals_ = [p for p in self.providers if isinstance(p, Downloadable)]
+
+        def work() -> None:  # unloading waits for a provider's lock, which an inference holds
+            for provider in locals_:
+                keep = ref.model if ref is not None and ref.provider is provider else None
+                provider.unload(keep=keep)
+            if ref is not None and isinstance(ref.provider, Downloadable):
+                ref.provider.warm(ref.model)
+
+        threading.Thread(target=work, daemon=True, name="dictum-warm").start()
 
     def _release_after_use(self, ref: ModelRef) -> None:
         """A local model used for a retry, not the selected one, is unloaded again."""
@@ -496,13 +499,16 @@ class Dictum:
                     mime = sniff_mime(data) or mime
                 effective = self.dictionary().effective
                 started = time.monotonic()  # before the stream is finished: that wait counts
-                clip = Clip(data, mime, upload_url=_finish(upload, ref, Clip(data, mime)))
+                stream, upload = upload, None  # from here the stream is finished or aborted
+                clip = Clip(data, mime, upload_url=_finish(stream, ref, Clip(data, mime)))
                 result = ref.provider.transcribe(clip, ref.model, api_key, terms=effective.terms)
                 timing = Timing(
                     clip.seconds, time.monotonic() - started, clip.upload_url is not None
                 )
             except Exception as exc:
                 result = Failure(f"{type(exc).__name__}: {exc}")
+        if upload is not None:
+            upload.abort()  # never reached _finish: a failure before it, or no key
         raw_text = result.text if isinstance(result, Transcript) else None
         text = None
         if raw_text is not None:
