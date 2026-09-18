@@ -61,14 +61,16 @@ def test_raw_text_column_is_added_to_an_older_database(tmp_path: Path) -> None:
     assert store.get_recording(1).transcriptions[0].raw_text == "raw"  # type: ignore[union-attr]
 
 
-def test_recent_transcripts_prefer_raw_text_newest_first(tmp_path: Path) -> None:
+def test_recent_transcripts_are_one_models_raw_text_newest_first(tmp_path: Path) -> None:
     store = Store(tmp_path)
     rec = store.create_recording(WEBM_HEADER)
     store.add_transcription(rec.id, "p", "m", "error", None, "boom")
     store.add_transcription(rec.id, "p", "m", "ok", "fixed one", None, raw_text="raw one")
+    store.add_transcription(rec.id, "p", "other", "ok", "another model's", None)
     store.add_transcription(rec.id, "p", "m", "ok", "two", None)
-    assert store.recent_transcripts(10) == ["two", "raw one"]
-    assert store.recent_transcripts(1) == ["two"]
+    assert store.recent_transcripts("p", "m", 10) == ["two", "raw one"]
+    assert store.recent_transcripts("p", "m", 1) == ["two"]
+    assert store.recent_transcripts("p", "other", 10) == ["another model's"]
 
 
 def test_timing_columns_persist_and_older_databases_get_them(tmp_path: Path) -> None:

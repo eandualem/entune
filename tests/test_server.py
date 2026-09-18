@@ -187,24 +187,40 @@ def test_dictionary_round_trip_terms_reach_the_provider_and_replacements_apply(
     assert client.get("/api/dictionary").json() == {
         "pinned": empty,
         "agents": empty,
-        "learned": empty,
+        "learned": {},
     }
     bad = client.put("/api/dictionary", content='{"pinned": {"terms": "x"}}')
     assert bad.status_code == 400 and "pinned.terms must be a list" in bad.text
     saved = client.put(
         "/api/dictionary",
         content='{"pinned": {"terms": ["Claude Code"],'
-        ' "replacements": {"cloud code": "Claude Code"}}, "learned": {"terms": ["Soniox"]}}',
+        ' "replacements": {"cloud code": "Claude Code"}},'
+        ' "learned": {"stub/good": {"terms": ["Soniox"]}, "stub/bad": {"terms": ["Elsewhere"]}}}',
     )
     assert saved.status_code == 200
-    assert saved.json()["learned"] == {"terms": ["Soniox"], "replacements": {}}
+    assert saved.json()["learned"]["stub/good"] == {"terms": ["Soniox"], "replacements": {}}
 
     client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     attempt = rec["transcriptions"][0]
-    assert stub.terms == ("Claude Code", "Soniox")
+    assert stub.terms == ("Claude Code", "Soniox")  # this model's learned terms, not stub/bad's
     assert attempt["raw_text"] == "hello there, I use cloud code"
     assert attempt["text"] == "hello there, I use Claude Code"
+
+
+def test_a_flat_learned_section_moves_under_the_default_model_once(
+    client: TestClient, tmp_path: Path
+) -> None:
+    legacy = '{"pinned": {"terms": ["Dictum"]}, "learned": {"terms": ["Soniox"]}}'
+    (tmp_path / "dictionary.json").write_text(legacy, encoding="utf-8")
+    assert client.get("/api/dictionary").json()["learned"] == {
+        "*": {"terms": ["Soniox"], "replacements": {}}
+    }  # no default model yet: kept as it is, applied to nothing
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    moved = client.get("/api/dictionary").json()
+    assert moved["learned"] == {"stub/good": {"terms": ["Soniox"], "replacements": {}}}
+    assert moved["pinned"]["terms"] == ["Dictum"]
+    assert '"stub/good"' in (tmp_path / "dictionary.json").read_text(encoding="utf-8")
 
 
 def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
@@ -240,6 +256,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     async def fake(provider: str, api_key: str, model: str, system: str, user: str) -> str:
         calls.append((model, api_key))
         assert "hello there, I use cloud code" in user
+        assert "from another model" not in user  # only the default model's transcripts
         return '{"terms": ["Claude Code", "Soniox"], "replacements": {"cloud code": "Claude Code"}}'
 
     dictum = Dictum(Store(tmp_path), [stub], llm_call=fake)
@@ -249,11 +266,16 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
     res = client.post("/api/dictionary/build")
     assert res.status_code == 400 and "No API key set for OpenAI" in res.text
-    client.put(
-        "/api/settings", json={"keys": {"openai": "sk-1", "stub": "k"}, "defaultModel": "stub/good"}
-    )
+    client.put("/api/settings", json={"keys": {"openai": "sk-1", "stub": "k"}})
     res = client.post("/api/dictionary/build")
-    assert res.status_code == 400 and "Nothing to learn from yet" in res.text
+    assert res.status_code == 400 and "Pick a default model first" in res.text
+    client.put("/api/settings", json={"defaultModel": "stub/good"})
+    rec = client.post(
+        "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}, data={"model": "stub/bad"}
+    ).json()
+    dictum.store.add_transcription(rec["id"], "stub", "other", "ok", "from another model", None)
+    res = client.post("/api/dictionary/build")
+    assert res.status_code == 400 and "no transcripts from Stub / good" in res.text
 
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
     client.put("/api/dictionary", content='{"pinned": {"terms": ["Claude Code"]}}')
@@ -261,13 +283,14 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     assert res.status_code == 200, res.text
     proposal = res.json()
     assert calls == [("openai:gpt-6-astra", "sk-1")]
+    assert proposal["model"] == "stub/good"
     assert proposal["learned"] == {
         "terms": ["Soniox"],
         "replacements": {"cloud code": "Claude Code"},
     }
     assert proposal["added"]["terms"] == ["Soniox"]
     # Nothing is saved until the page accepts.
-    assert client.get("/api/dictionary").json()["learned"] == {"terms": [], "replacements": {}}
+    assert client.get("/api/dictionary").json()["learned"] == {}
 
 
 def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvider) -> None:
