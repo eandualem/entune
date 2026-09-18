@@ -7,11 +7,13 @@
 
 Dictum is a small, local dictation app. Hold a key or press a shortcut,
 speak, and the transcript is pasted where you were typing. You bring your
-own API key for a speech-to-text provider, AssemblyAI, Groq or Soniox, so
-you pick the engine that transcribes you instead of taking whichever one a
-dictation product bundles. Every recording and transcript is kept in a local
-history, with the provider's exact error and a one-click retry with another
-model when a transcription fails.
+own API key for a speech-to-text provider, AssemblyAI, Groq or Soniox, or
+download a model that runs on your own Mac, so you pick the engine that
+transcribes you instead of taking whichever one a dictation product bundles.
+Every recording and transcript is kept in a local history, with the
+provider's exact error and a one-click retry with another model when a
+transcription fails, and a performance table by model built from your own
+use.
 
 It is for people who dictate a meaningful share of what they write and want
 control over the engine, the cost and where their words go.
@@ -81,9 +83,16 @@ can be set:
 
 While you record, a small "Recording" pill sits in the bottom-left corner
 of the screen your pointer is on; it says "Transcribing…" until the text
-lands, and never takes focus. On stop, the clip goes to your default model,
-the transcript is copied to the clipboard and pasted into whatever had focus. A failure shows as a
-notification with the provider's message; History has the retry.
+lands, and never takes focus. On stop, the clip is saved to history at once
+and goes to your default model; the transcript is copied to the clipboard
+and pasted into whatever had focus. Two dictations in a row land in the
+order you spoke them. A failure shows as a notification with the provider's
+message; History has the retry.
+
+The default model is the picker next to the Record button, the same one as
+in Settings; picking a model applies at once, no Save. The Record button in
+the window records the same WAV the shortcut does, so every model, cloud or
+local, takes it.
 
 **Fast mode** (Settings, off by default) uploads the audio while you record,
 so a dictation over two minutes is transcribed as soon as you stop instead of
@@ -113,7 +122,7 @@ reach other apps as a modifier. Pick another key if you need fn elsewhere.
 | Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
 
 Enter a provider's API key in Settings and its model appears in the model
-list; mark one as the default. You pay each provider directly, per minute
+list; pick one as the default. You pay each provider directly, per minute
 of audio, at its own published rate:
 [AssemblyAI](https://www.assemblyai.com/pricing),
 [Groq](https://groq.com/pricing),
@@ -210,8 +219,11 @@ uv run ruff format .    # format
 uv run mypy             # types, strict
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md)
-and [adding a provider](docs/providers.md).
+Pull requests go into `develop`; `main` moves by a release pull request
+after a review of everything on `develop`. See
+[CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md),
+[adding a provider](docs/providers.md) and, for where the work stands,
+[the handoff](docs/handoff.md).
 
 ## Licence
 

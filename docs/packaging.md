@@ -75,8 +75,13 @@ uv run --group build python packaging/build_app.py
 
 `packaging/Dictum.spec` is the PyInstaller spec: a menu-bar-only bundle
 (`LSUIElement`), bundle id `dev.elias.dictum`, version from the package, the
-microphone usage string, the web page and assets inside, `Dictum.icns` as
-the icon. The build writes `dist/Dictum.app`; drag it to /Applications.
+microphone usage string, the web page and assets, the Parakeet helper
+script, and the whisper.cpp libraries (collected with the bindings) inside,
+`Dictum.icns` as the icon. The bundle is about 110 MB. The Parakeet engine
+itself (MLX, about 480 MB) is deliberately not bundled; it is installed
+with `uv tool install parakeet-mlx` and found at run time. The build writes
+`dist/Dictum.app`; `dictum install-app --from dist/Dictum.app` copies and
+signs it.
 
 It is the same program as `dictum`: same entry point, same data directory.
 If another Dictum is already running on the port, the new one says so and
