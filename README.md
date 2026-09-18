@@ -62,7 +62,9 @@ macOS a stable app to attach them to.
 
 The order matters. Input Monitoring comes first: until it is granted Dictum
 cannot see the shortcut, so it never records and never asks for the
-microphone. Grant it, quit Dictum from the menu bar and open it again, then
+microphone. A shortcut that uses fn also needs Accessibility before it
+listens, because owning that key takes an active event tap; Dictum asks.
+Grant them, quit Dictum from the menu bar and open it again, then
 hold the shortcut: the Microphone prompt appears on that first recording.
 There is no way to add an app to the Microphone list by hand.
 

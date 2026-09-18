@@ -185,6 +185,19 @@ def test_shortcut_without_permission_asks_for_it_then_listens_once_granted(tmp_p
     assert status["desktop"] is True and status["listening"] is True and status["canListen"]
 
 
+def test_a_shortcut_with_fn_also_needs_accessibility(tmp_path: Path) -> None:
+    app, platform, dictum = make(tmp_path, post=False)
+    dictum.set_shortcuts("fn", None)
+    assert not platform.hotkeys.running
+    assert platform.permissions.requested == ["post"]
+    assert "Accessibility" in platform.tray.status
+    app._recheck_permission()
+    assert not platform.hotkeys.running
+    platform.permissions.post = True
+    app._recheck_permission()
+    assert platform.hotkeys.running and platform.tray.status == "Dictate: hold fn"
+
+
 def test_a_dictation_is_transcribed_copied_and_pasted(tmp_path: Path) -> None:
     app, platform, dictum = make(tmp_path)
     dictum.set_key("stub", "k")
