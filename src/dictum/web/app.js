@@ -9,14 +9,17 @@ const status = el("status");
 const historyList = el("history");
 const historyLabel = el("history-label");
 const emptyState = el("empty");
-const emptyHint = el("empty-hint");
+const stepsList = el("steps");
 const settingsForm = el("settings-form");
 const keysGroup = el("keys");
 const llmKeysGroup = el("llm-keys");
 const dictionaryModelInput = el("dictionary-model");
 const fastModeInput = el("fast-mode");
 const fastModeRow = el("fast-mode-row");
-const metricsSection = el("metrics");
+const fastModeStatus = el("fast-mode-status");
+const dictionaryModelStatus = el("dictionary-model-status");
+const metricsPopover = el("metrics");
+const metricsToggle = el("metrics-toggle");
 const metricsRows = el("metrics-rows");
 let streamingProviders = new Set();
 const dictionaryModels = el("dictionary-models");
@@ -37,6 +40,7 @@ const ICON = {
 
 let models = [];
 let shortcuts = { hold: null, toggle: null };
+let recordingsCount = 0;
 
 async function api(path, init) {
   const res = await fetch(path, init);
@@ -61,6 +65,34 @@ function applyTheme(theme) {
     radio.addEventListener("change", () => applyTheme(radio.value));
   }
 }
+
+// ---- Text size: one root size every component is relative to, so it all scales together ----
+const SCALES = ["small", "default", "large", "larger"];
+function applyScale(scale) {
+  if (scale === "default") delete document.documentElement.dataset.scale;
+  else document.documentElement.dataset.scale = scale;
+  try {
+    if (scale === "default") localStorage.removeItem("scale");
+    else localStorage.setItem("scale", scale);
+  } catch (e) {}
+  for (const radio of settingsForm.querySelectorAll("input[name=scale]")) radio.checked = radio.value === scale;
+}
+function currentScale() {
+  return document.documentElement.dataset.scale ?? "default";
+}
+for (const radio of settingsForm.querySelectorAll("input[name=scale]")) {
+  radio.checked = radio.value === currentScale();
+  radio.addEventListener("change", () => applyScale(radio.value));
+}
+// cmd/ctrl with + - 0, like a browser's zoom, in the app window where there is no browser.
+document.addEventListener("keydown", (e) => {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+  const step = e.key === "=" || e.key === "+" ? 1 : e.key === "-" ? -1 : e.key === "0" ? 0 : null;
+  if (step === null) return;
+  e.preventDefault();
+  const at = SCALES.indexOf(currentScale());
+  applyScale(step === 0 ? "default" : SCALES[Math.max(0, Math.min(SCALES.length - 1, at + step))]);
+});
 
 // ---- Tabs ----
 const tabs = { history: el("tab-history"), dictionary: el("tab-dictionary"), settings: el("tab-settings") };
@@ -101,6 +133,7 @@ async function loadModels() {
     modelSelect.prepend(new Option("Pick a model", "", true, true));
   }
   showFastModeIfSupported();
+  renderStart();
   loadHistory(true).catch(() => {}); // the cards' retry pickers list these models too
 }
 
@@ -128,9 +161,23 @@ async function chooseDefaultModel(select, statusTarget) {
 defaultSelect.addEventListener("change", () => chooseDefaultModel(defaultSelect, settingsStatus));
 modelSelect.addEventListener("change", () => chooseDefaultModel(modelSelect, status));
 
+// The performance table lives behind the chart button next to the model picker: it is
+// what you look at when choosing a model, not a page of its own.
+function showMetrics(open) {
+  metricsPopover.hidden = !open;
+  metricsToggle.setAttribute("aria-expanded", String(open));
+  if (open) metricsPopover.style.left = `${metricsToggle.offsetLeft}px`;
+}
+metricsToggle.addEventListener("click", () => showMetrics(metricsPopover.hidden));
+document.addEventListener("click", (e) => {
+  if (!metricsPopover.hidden && !metricsPopover.contains(e.target) && !metricsToggle.contains(e.target)) showMetrics(false);
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !metricsPopover.hidden) showMetrics(false); });
+
 async function loadMetrics() {
   const rows = await api("/api/metrics");
-  metricsSection.hidden = rows.length === 0;
+  metricsToggle.hidden = rows.length === 0;
+  if (rows.length === 0) showMetrics(false);
   const cell = (text) => Object.assign(document.createElement("td"), { textContent: text });
   metricsRows.replaceChildren(
     ...rows.map((m) => {
@@ -149,6 +196,20 @@ async function loadMetrics() {
 }
 
 // ---- Settings ----
+// Keys are the one thing saved with a button: a half-typed key must not be sent.
+function saveKeysRow() {
+  const row = document.createElement("div");
+  row.className = "save-row";
+  const button = document.createElement("button");
+  button.type = "submit";
+  button.className = "btn primary";
+  button.textContent = "Save keys";
+  const status = document.createElement("span");
+  status.className = "save-status";
+  row.append(button, status);
+  return row;
+}
+
 function keyRow(provider) {
   const row = document.createElement("div");
   row.className = "row";
@@ -254,9 +315,9 @@ keysGroup.addEventListener("click", async (e) => {
 
 async function loadSettings() {
   const s = await api("/api/settings");
-  keysGroup.replaceChildren(...s.providers.map((p) => (p.local ? localRow(p) : keyRow(p))));
+  keysGroup.replaceChildren(...s.providers.map((p) => (p.local ? localRow(p) : keyRow(p))), saveKeysRow());
   loadLocalModels().catch(() => {});
-  llmKeysGroup.replaceChildren(...s.llmProviders.map(keyRow));
+  llmKeysGroup.replaceChildren(...s.llmProviders.map(keyRow), saveKeysRow());
   dictionaryModels.replaceChildren(
     ...s.llmProviders.flatMap((p) => p.models.map((m) => new Option(`${m.name}${m.id === p.defaultModel ? " (suggested)" : ""}`, m.id))),
   );
@@ -267,9 +328,30 @@ async function loadSettings() {
   shortcuts = s.shortcuts;
   shortcutHold.value = s.shortcuts.hold ?? "";
   shortcutToggle.value = s.shortcuts.toggle ?? "";
-  updateEmptyHint();
+  loadMetrics().catch(() => {});
   await Promise.all([loadModels(), loadDictionary()]);
 }
+
+// Everything but the keys applies as soon as it changes.
+async function saveSetting(body, statusTarget) {
+  try {
+    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: {}, ...body }) });
+    flash(statusTarget, "Saved", "ok");
+    return true;
+  } catch (err) {
+    flash(statusTarget, String(err.message ?? err), "err");
+    return false;
+  }
+}
+fastModeInput.addEventListener("change", () => saveSetting({ fastMode: fastModeInput.checked }, fastModeStatus));
+dictionaryModelInput.addEventListener("change", async () => {
+  const chosen = dictionaryModelInput.value.trim() || null;
+  if (await saveSetting({ dictionaryModel: chosen }, dictionaryModelStatus)) {
+    const s = await api("/api/settings");
+    dictionaryModelInput.value = s.dictionaryModel ?? "";
+    dictionaryModelChip.textContent = s.dictionaryModel ?? "no model set";
+  }
+});
 
 function flash(target, message, kind) {
   target.textContent = message;
@@ -284,13 +366,13 @@ settingsForm.addEventListener("submit", async (e) => {
   for (const input of settingsForm.querySelectorAll("input[type=password]")) {
     if (input.value.trim()) keys[input.name.slice("key:".length)] = input.value.trim();
   }
-  const body = { keys, dictionaryModel: dictionaryModelInput.value.trim() || null, fastMode: fastModeInput.checked };
+  const statusTarget = e.submitter?.closest(".save-row")?.querySelector(".save-status") ?? settingsStatus;
   try {
-    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    flash(settingsStatus, "Saved", "ok");
+    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys }) });
     await loadSettings();
+    flash(e.submitter?.closest(".group")?.querySelector(".save-status") ?? settingsStatus, Object.keys(keys).length ? "Saved" : "Nothing to save", "ok");
   } catch (err) {
-    flash(settingsStatus, String(err.message ?? err), "err");
+    flash(statusTarget, String(err.message ?? err), "err");
   }
 });
 
@@ -574,7 +656,7 @@ async function saveShortcuts() {
     await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     shortcutStatus.textContent = "Saved.";
     shortcuts = { hold: shortcutHold.value.trim() || null, toggle: shortcutToggle.value.trim() || null };
-    updateEmptyHint();
+    renderStart();
   } catch (err) {
     shortcutStatus.textContent = String(err.message ?? err);
   }
@@ -648,23 +730,53 @@ for (const button of settingsForm.querySelectorAll("button.clear")) {
   button.addEventListener("click", async () => { el(button.dataset.target).value = ""; await saveShortcuts(); });
 }
 
-function updateEmptyHint() {
-  const parts = [];
-  if (shortcuts.hold) parts.push(`hold ${shortcuts.hold}`);
-  if (shortcuts.toggle) parts.push(`press ${shortcuts.toggle}`);
-  emptyHint.replaceChildren();
-  if (parts.length) {
-    emptyHint.append("Anywhere, ");
-    parts.forEach((p, i) => {
-      const [verb, keys] = p.split(" ");
-      const kbd = document.createElement("kbd");
-      kbd.textContent = keys;
-      emptyHint.append(`${i ? " or " : ""}${verb} `, kbd);
-    });
-    emptyHint.append(" and speak. Or press Record above.");
-  } else {
-    emptyHint.textContent = "Press Record above and speak, or set a shortcut in Settings.";
+// ---- Getting started: the empty history is a checklist that ticks itself off ----
+function step(n, done, what, how, action) {
+  const li = document.createElement("li");
+  li.className = done ? "step done" : "step";
+  const mark = document.createElement("span");
+  mark.className = "mark";
+  mark.innerHTML = done ? ICON.check : String(n);
+  const text = document.createElement("span");
+  text.className = "what";
+  text.append(what);
+  const hint = document.createElement("span");
+  hint.className = "how";
+  hint.append(...how);
+  text.append(hint);
+  li.append(mark, text);
+  if (action && !done) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn sm";
+    button.textContent = action;
+    button.addEventListener("click", () => show("settings"));
+    li.append(button);
   }
+  return li;
+}
+
+function renderStart() {
+  if (!stepsList) return;
+  const kbd = (keys) => Object.assign(document.createElement("kbd"), { textContent: keys });
+  const haveModel = models.length > 0;
+  const haveDefault = Boolean(defaultModel);
+  const haveShortcut = Boolean(shortcuts.hold || shortcuts.toggle);
+  const dictate = [];
+  if (haveShortcut) {
+    dictate.push("Anywhere, ");
+    if (shortcuts.hold) dictate.push("hold ", kbd(shortcuts.hold));
+    if (shortcuts.hold && shortcuts.toggle) dictate.push(" or ");
+    if (shortcuts.toggle) dictate.push("press ", kbd(shortcuts.toggle));
+    dictate.push(" and speak; the text is typed where you are and copied. Or press Record above.");
+  } else {
+    dictate.push("Press Record above and speak. A shortcut in Settings lets you dictate into any app.");
+  }
+  stepsList.replaceChildren(
+    step(1, haveModel, "Add a provider", ["An API key for AssemblyAI, Soniox or Groq, or a local model downloaded once, in Settings."], "Open Settings"),
+    step(2, haveDefault, "Pick the model to dictate with", ["The picker in the toolbar, or Default model in Settings. It applies at once."], haveModel ? "Open Settings" : null),
+    step(3, recordingsCount > 0, "Dictate", dictate, null),
+  );
 }
 
 // ---- Recording from this window ----
@@ -901,8 +1013,10 @@ async function loadHistory(force = false) {
   historySnapshot = snapshot;
   historyList.replaceChildren(...recordings.map(renderCard));
   loadMetrics().catch(() => {});
+  recordingsCount = recordings.length;
   emptyState.hidden = recordings.length > 0;
   historyLabel.hidden = recordings.length === 0;
+  if (recordings.length === 0) renderStart();
 }
 
 setInterval(() => {
@@ -956,6 +1070,6 @@ historyList.addEventListener("click", async (e) => {
 
 // ---- Start ----
 await loadSettings();
-if (models.length === 0 || location.hash === "#settings") show("settings");
+if (location.hash === "#settings") show("settings");
 else if (location.hash === "#dictionary") show("dictionary");
 await loadHistory(true);
