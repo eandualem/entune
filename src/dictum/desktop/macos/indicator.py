@@ -81,15 +81,18 @@ class Indicator:
         )
         content = panel.contentView()
         content.setWantsLayer_(True)
+        # The window's tokens (tokens.css): --control on a dark ground, --recording dot.
         content.layer().setBackgroundColor_(
-            AppKit.NSColor.colorWithCalibratedWhite_alpha_(0.12, 0.92).CGColor()
+            AppKit.NSColor.colorWithSRGBRed_green_blue_alpha_(0.149, 0.149, 0.169, 0.94).CGColor()
         )
         content.layer().setCornerRadius_(HEIGHT / 2)
         content.setAutoresizesSubviews_(False)
 
         dot = AppKit.NSView.alloc().initWithFrame_(((PAD, (HEIGHT - DOT) / 2), (DOT, DOT)))
         dot.setWantsLayer_(True)
-        dot.layer().setBackgroundColor_(AppKit.NSColor.systemRedColor().CGColor())
+        dot.layer().setBackgroundColor_(
+            AppKit.NSColor.colorWithSRGBRed_green_blue_alpha_(0.898, 0.396, 0.373, 1.0).CGColor()
+        )
         dot.layer().setCornerRadius_(DOT / 2)
         content.addSubview_(dot)
 

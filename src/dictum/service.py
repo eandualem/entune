@@ -401,6 +401,10 @@ class Dictum:
             if added:
                 dictionary_file.save(self.store.data_dir, updated)
         if added:
+            source = data.get("source")
+            self.store.add_corrections(
+                added.terms, added.replacements, source if isinstance(source, str) else None
+            )
             self._changed()
         return added
 
