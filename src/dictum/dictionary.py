@@ -156,11 +156,19 @@ def apply(entries: Entries, text: str) -> str:
         return text
     # One pass over the original text: a phrase inserted by one rule is never matched
     # by another, so "cloud code -> Claude Code" and "code -> Codex" cannot compound.
-    meant_by_heard = {_key(heard): meant for heard, meant in entries.replacements.items()}
     phrases = sorted(entries.replacements, key=len, reverse=True)
-    alternatives = "|".join(r"\s+".join(map(re.escape, heard.split())) for heard in phrases)
+    # One capturing group per rule: which group matched says which rule applies, so the
+    # answer never depends on lowercasing the matched text (Unicode case folding is not
+    # what the regex engine does, "İstanbul" being the classic case).
+    alternatives = "|".join(
+        "(" + r"\s+".join(map(re.escape, heard.split())) + ")" for heard in phrases
+    )
     pattern = r"(?<!\w)(?:" + alternatives + r")(?!\w)"
-    return re.sub(pattern, lambda m: meant_by_heard[_key(m.group(0))], text, flags=re.IGNORECASE)
+
+    def meant(match: re.Match[str]) -> str:
+        return entries.replacements[phrases[(match.lastindex or 1) - 1]]
+
+    return re.sub(pattern, meant, text, flags=re.IGNORECASE)
 
 
 def _key(phrase: str) -> str:
