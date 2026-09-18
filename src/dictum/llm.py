@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dictum import dictionary as dictionary_file
-from dictum.dictionary import Dictionary, Entries
+from dictum.dictionary import Dictionary, Entries, TermBudget
 
 # Providers we route to, with the model suggested first. The dictionary is built rarely
 # and its mistakes compound, so the strongest model of each provider is the default.
@@ -73,7 +73,10 @@ section for that speech model:
 - "terms": words the speech model should be told to expect: names of people, products,
   companies, tools, code identifiers, acronyms, and any specialised vocabulary that appears
   in the transcripts. Use the spelling that is evidently intended; when the same name is
-  spelled several ways, pick the correct one.
+  spelled several ways, pick the correct one. The speech model takes a limited number of
+  terms and the user's pinned ones already use part of it; the message says how many
+  more fit. Propose at most that many, the most valuable first, and none when it says the
+  model takes no terms: then only replacements help.
 - "replacements": corrections for phrases this speech model consistently mishears, as
   {"heard": "meant"}. Only when the evidence is clear from context and the fix is safe as a
   whole-word, case-insensitive replacement applied to every future transcript. Never map a
@@ -93,7 +96,9 @@ Reply with one JSON object only, no prose, no code fence:
 {"terms": [...], "replacements": {"heard": "meant"}}"""
 
 
-def build_user_prompt(current: Dictionary, transcripts: Sequence[str], speech_model: str) -> str:
+def build_user_prompt(
+    current: Dictionary, transcripts: Sequence[str], speech_model: str, budget: TermBudget
+) -> str:
     kept: list[str] = []
     used = 0
     for text in transcripts[:MAX_TRANSCRIPTS]:
@@ -104,7 +109,15 @@ def build_user_prompt(current: Dictionary, transcripts: Sequence[str], speech_mo
             break
         kept.append(snippet)
         used += len(snippet)
+    if budget.limit is None:
+        room = f"{speech_model} takes no terms: propose none, only replacements."
+    else:
+        room = (
+            f"{speech_model} takes at most {budget.limit} terms; {budget.pinned} are pinned"
+            f" already, so propose at most {budget.room}, the most valuable first."
+        )
     return (
+        f"Term budget: {room}\n\n"
         "Pinned by the user (approved, shared by every speech model, do not change):\n"
         f"{json.dumps(current.pinned.as_json(), ensure_ascii=False)}\n\n"
         f"Previously learned for {speech_model} (revise):\n"
@@ -185,13 +198,14 @@ def propose_learned(
     current: Dictionary,
     transcripts: Sequence[str],
     speech_model: str,
+    budget: TermBudget,
     call: Caller = call_assistant_runtime,
 ) -> Entries:
     """Ask the model for a new `learned` section for `speech_model`, from its transcripts.
 
     Raises ValueError carrying the provider's or the model's own words when it fails.
     """
-    user_prompt = build_user_prompt(current, transcripts, speech_model)
+    user_prompt = build_user_prompt(current, transcripts, speech_model, budget)
     try:
         reply = asyncio.run(call(provider, api_key, model, SYSTEM_PROMPT, user_prompt))
     except Exception as exc:

@@ -3,7 +3,9 @@ from pathlib import Path
 import pytest
 
 from dictum import dictionary
-from dictum.dictionary import Dictionary, Entries
+from dictum.dictionary import Dictionary, Entries, TermBudget
+
+PLENTY = TermBudget(100, 0)
 
 
 def test_parse_dumps_and_roundtrip(tmp_path: Path) -> None:
@@ -108,12 +110,24 @@ def test_propose_respects_pinned_and_diffs_against_learned() -> None:
     proposed = Entries(
         ("dictum", "Soniox", "AssemblyAI"), {"Whisper Flow": "Whisper", "grok": "Groq"}
     )
-    p = dictionary.propose(current, proposed, "stub/good")
+    p = dictionary.propose(current, proposed, "stub/good", PLENTY)
     assert p.learned == Entries(("Soniox", "AssemblyAI"), {"grok": "Groq"})  # pinned ones dropped
     assert p.added == Entries(("AssemblyAI",), {})
     assert p.removed == Entries(("Old Term",), {})  # the other model's list is not compared
     assert p.as_json()["added"] == {"terms": ["AssemblyAI"], "replacements": {}}
-    assert p.as_json()["model"] == "stub/good"
+    assert p.as_json()["model"] == "stub/good" and p.dropped_terms == 0
+
+
+def test_a_proposal_is_cut_to_the_models_term_budget() -> None:
+    current = Dictionary(pinned=Entries(("Dictum", "Wispr Flow")))
+    proposed = Entries(("Soniox", "dictum", "Groq", "Deepgram"), {"grok": "Groq"})
+    tight = dictionary.propose(current, proposed, "m", TermBudget(3, 2))
+    assert tight.learned == Entries(("Soniox",), {"grok": "Groq"}) and tight.dropped_terms == 2
+    full = dictionary.propose(current, proposed, "m", TermBudget(2, 2))
+    assert full.learned.terms == () and full.dropped_terms == 3
+    none = dictionary.propose(current, proposed, "m", TermBudget(None, 2))
+    assert none.learned == Entries((), {"grok": "Groq"}) and none.budget.room == 0
+    assert none.as_json()["budget"] == {"limit": None, "pinned": 2, "room": 0}
 
 
 def test_agent_corrections_are_pinned() -> None:
@@ -128,7 +142,7 @@ def test_agent_corrections_are_pinned() -> None:
     assert updated.pinned.terms == ("Soniox", "Dictum")
     assert updated.pinned.replacements == {"A": "x", "d": "agents"}  # one rule per phrase
     assert updated.effective("m").replacements == {"b": "learned", "A": "x", "d": "agents"}
-    p = dictionary.propose(updated, Entries(("Dictum", "New"), {"d": "learned again"}), "m")
+    p = dictionary.propose(updated, Entries(("Dictum", "New"), {"d": "learned again"}), "m", PLENTY)
     assert p.learned == Entries(("New",), {})  # pinned entries are not re-learned
     assert dictionary.parse(dictionary.dumps(updated)) == updated
 
