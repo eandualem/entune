@@ -385,6 +385,7 @@ def test_metrics_are_computed_from_timed_attempts(client: TestClient) -> None:
 
 def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: StubProvider) -> None:
     from dictum.providers.local import Local
+    from tests.test_local import FakeEngine
 
     body = b"m" * 10
     local = Local(
@@ -402,5 +403,19 @@ def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: St
         while time.monotonic() < deadline and local.models != ("base.en",):
             time.sleep(0.01)
         assert "local/base.en" in [m["id"] for m in client.get("/api/models").json()]
+        loaded: list[str] = []
+
+        def load_model(path: str) -> FakeEngine:
+            loaded.append(path)
+            return FakeEngine()
+
+        local._load_model = load_model
+        assert (
+            client.put("/api/settings", json={"defaultModel": "local/base.en"}).status_code == 200
+        )
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and not loaded:
+            time.sleep(0.01)
+        assert loaded == [str(tmp_path / "models" / "ggml-base.en.bin")]  # warmed on choosing
         assert client.delete("/api/local/models/base.en").status_code == 200
         assert local.models == ()

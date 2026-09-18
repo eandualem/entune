@@ -198,7 +198,7 @@ class DictumApp:
             return
         attempt = recording.transcriptions[0]
         # Measured so fast mode's worth can be judged from the log (issue #20).
-        how = "fast mode" if upload is not None else "plain"
+        how = "fast mode" if attempt.fast else "plain"
         print(
             f"transcribed {capture.seconds:.0f} s of audio in {time.monotonic() - started:.1f} s"
             f" ({how}, {attempt.status})",

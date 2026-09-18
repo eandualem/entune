@@ -106,7 +106,19 @@ function showFastModeIfSupported() {
   const provider = defaultSelect.value.split("/")[0];
   fastModeRow.hidden = !streamingProviders.has(provider);
 }
-defaultSelect.addEventListener("change", showFastModeIfSupported);
+// Picking a default model applies at once; Save is for the rest of the form and never touches it.
+defaultSelect.addEventListener("change", async () => {
+  showFastModeIfSupported();
+  const chosen = defaultSelect.value || null;
+  try {
+    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ defaultModel: chosen }) });
+    flash(settingsStatus, chosen ? `Default model: ${defaultSelect.selectedOptions[0]?.textContent ?? chosen}` : "No default model", "ok");
+    await loadModels();
+  } catch (err) {
+    flash(settingsStatus, String(err.message ?? err), "err");
+    await loadModels();
+  }
+});
 
 async function loadMetrics() {
   const rows = await api("/api/metrics");
@@ -254,7 +266,6 @@ settingsForm.addEventListener("submit", async (e) => {
     if (input.value.trim()) keys[input.name.slice("key:".length)] = input.value.trim();
   }
   const body = { keys, dictionaryModel: dictionaryModelInput.value.trim() || null, fastMode: fastModeInput.checked };
-  if (!defaultSelect.disabled) body.defaultModel = defaultSelect.value || null;
   try {
     await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     flash(settingsStatus, "Saved", "ok");

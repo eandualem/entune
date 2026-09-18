@@ -150,6 +150,7 @@ def main(argv: list[str] | None = None) -> None:
             notify("Dictum is already running", message)
         sys.exit(message)
     dictum = Dictum(Store(data_dir), default_providers(data_dir / "models"))
+    dictum.warm_default_model()
     server = uvicorn.Server(
         uvicorn.Config(create_app(dictum), host="127.0.0.1", port=args.port, log_level="warning")
     )
