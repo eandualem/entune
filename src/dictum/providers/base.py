@@ -12,7 +12,7 @@ from typing import Protocol
 
 import httpx
 
-from dictum.audio import extension_for, wav_duration_seconds
+from dictum.audio import extension_for, wav_duration_seconds, webm_duration_seconds
 
 DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 
@@ -43,8 +43,9 @@ class Clip:
 
     @property
     def seconds(self) -> float | None:
-        """Duration when the container tells us (WAV, what the menu-bar app records); else None."""
-        return wav_duration_seconds(self.data)
+        """Duration when the container tells us: WAV (what the shortcut records) or WebM
+        (what the window's recorder produces); else None."""
+        return wav_duration_seconds(self.data) or webm_duration_seconds(self.data)
 
 
 class Provider(Protocol):
