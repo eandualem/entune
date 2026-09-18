@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from dictum import dictionary as dictionary_file
 from dictum import llm, shortcuts
 from dictum.audio import sniff_mime
-from dictum.dictionary import Dictionary, Entries, Proposal
+from dictum.dictionary import Dictionary, Entries, Proposal, TermBudget
 from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, resolve_model
 from dictum.providers.base import Downloadable, LocalModelStatus, Streams, Upload
 from dictum.shortcuts import Shortcuts
@@ -41,6 +41,7 @@ class ModelOption:
     id: str
     label: str
     default: bool
+    term_limit: int | None  # how many dictionary terms this model takes; None: none
 
 
 @dataclass(frozen=True)
@@ -429,10 +430,11 @@ class Dictum:
             raise ValueError(
                 f"Nothing to learn from yet: the history has no transcripts from {ref.label}."
             )
+        budget = TermBudget(ref.provider.term_limit, len(current.pinned.terms))
         learned = llm.propose_learned(
-            provider, api_key, model, current, transcripts, ref.id, call=self._llm_call
+            provider, api_key, model, current, transcripts, ref.id, budget, call=self._llm_call
         )
-        return dictionary_file.propose(current, learned, ref.id)
+        return dictionary_file.propose(current, learned, ref.id, budget)
 
     # Shortcut capture: the page asks, the menu-bar app's global listener records the keys.
 
@@ -487,7 +489,9 @@ class Dictum:
                 continue
             for model in provider.models:
                 ref = ModelRef(provider, model)
-                options.append(ModelOption(ref.id, ref.label, ref.id == default))
+                options.append(
+                    ModelOption(ref.id, ref.label, ref.id == default, provider.term_limit)
+                )
         return options
 
     # Transcription

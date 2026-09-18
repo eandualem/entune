@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from dictum import llm
-from dictum.dictionary import Dictionary, Entries
+from dictum.dictionary import Dictionary, Entries, TermBudget
 
 
 def test_user_prompt_carries_pinned_and_one_models_learned_list() -> None:
@@ -12,12 +12,17 @@ def test_user_prompt_carries_pinned_and_one_models_learned_list() -> None:
         learned={"stub/good": Entries(("Soniox",)), "local/small.en": Entries(("Elsewhere",))},
     )
     long = "x" * (llm.MAX_TRANSCRIPT_CHARS - 10)
-    prompt = llm.build_user_prompt(current, [" first ", "", long, "never included"], "stub/good")
+    prompt = llm.build_user_prompt(
+        current, [" first ", "", long, "never included"], "stub/good", TermBudget(100, 1)
+    )
+    assert "takes at most 100 terms; 1 are pinned already, so propose at most 99" in prompt
     assert '"terms": ["Dictum"]' in prompt and '"terms": ["Soniox"]' in prompt
     assert "Previously learned for stub/good" in prompt and "Elsewhere" not in prompt
     assert "transcripts from stub/good" in prompt
     assert "- first" in prompt and "never included" not in prompt
     assert "(2)" in prompt
+    none = llm.build_user_prompt(current, ["x"], "parakeet/p", TermBudget(None, 1))
+    assert "parakeet/p takes no terms: propose none, only replacements." in none
 
 
 @pytest.mark.parametrize(
@@ -49,7 +54,14 @@ def test_propose_learned_calls_the_model_with_the_prompts() -> None:
         return '{"terms": ["AssemblyAI"], "replacements": {}}'
 
     learned = llm.propose_learned(
-        "anthropic", "k", "anthropic:claude-fable-5-1", Dictionary(), ["hello"], "s/m", call=fake
+        "anthropic",
+        "k",
+        "anthropic:claude-fable-5-1",
+        Dictionary(),
+        ["hello"],
+        "s/m",
+        TermBudget(10, 0),
+        call=fake,
     )
     assert learned == Entries(("AssemblyAI",), {})
     assert seen["provider"] == "anthropic" and seen["model"] == "anthropic:claude-fable-5-1"
@@ -62,7 +74,14 @@ def test_provider_failures_surface_verbatim() -> None:
 
     with pytest.raises(ValueError, match="RuntimeError: status_code: 401"):
         llm.propose_learned(
-            "openai", "k", "openai:gpt-5.6-terra", Dictionary(), ["x"], "s/m", call=failing
+            "openai",
+            "k",
+            "openai:gpt-5.6-terra",
+            Dictionary(),
+            ["x"],
+            "s/m",
+            TermBudget(10, 0),
+            call=failing,
         )
 
 

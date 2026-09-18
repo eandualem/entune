@@ -20,7 +20,9 @@ class Provider(Protocol):
 `Clip` carries the audio bytes, its MIME type and a filename, and
 `upload_url` when fast mode already streamed the same audio to this
 provider; `terms` is the user's dictionary vocabulary, to be passed on in
-whatever form the provider accepts. The result is either `Transcript(text)`
+whatever form the provider accepts; `term_limit` says how many the
+provider takes (the dictionary build never proposes more than fit beside
+the pinned ones), or `None` when it takes none, as Parakeet does. The result is either `Transcript(text)`
 or `Failure(error)`.
 
 Two optional protocols in `base.py`:

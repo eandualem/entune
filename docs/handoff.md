@@ -33,6 +33,17 @@ Elias's instruction ("there should be a default model"). He also noticed
 cause, not verified: selecting a local model in the toolbar loads it into
 memory, which takes seconds; the log shows normal transcription times.
 
+**Term budget (issue #83, PR pending).** After testing both builds Elias
+made the sizes hard rules: every provider declares `term_limit` (AssemblyAI
+100, Soniox 100, local Whisper 60, Groq 50, Parakeet none); the build tells
+the language model how many terms still fit beside the pinned ones and asks
+for the most valuable first, the proposal is cut to that number, Parakeet's
+build asks for replacements only, and the Dictionary tab shows "N of M
+terms in use" with a note to remove some when pinned terms fill the limit.
+His words: "we should not be holding words for which there is no value."
+Both builds he ran were checked by reconstructing the prompts from his
+data: each carried only its own model's transcripts and learned list.
+
 **Rule since this evening.** The installed Dictum.app is a frozen bundle:
 after every merge into `develop`, rebuild it and install it
 (`uv run --group build python packaging/build_app.py`, then `uv run dictum
