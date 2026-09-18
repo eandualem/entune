@@ -100,3 +100,23 @@ def test_agents_section_is_confirmed_and_ranks_between_pinned_and_learned() -> N
     assert p.learned == Entries(("New",), {})  # confirmed entries are not re-learned
     text = dictionary.dumps(updated)
     assert dictionary.parse(text) == updated
+
+
+def test_pinned_wins_regardless_of_capitalisation() -> None:
+    d = Dictionary(
+        pinned=Entries((), {"grok": "Groq"}),
+        agents=Entries((), {"Grok": "Glock"}),
+        learned=Entries((), {"GROK": "Grokk"}),
+    )
+    assert d.effective.replacements == {"grok": "Groq"}
+    assert dictionary.apply(d.effective, "Grok is fast") == "Groq is fast"
+
+
+def test_a_replacement_is_never_rewritten_by_another_rule() -> None:
+    e = Entries(replacements={"cloud code": "Claude Code", "code": "Codex"})
+    assert dictionary.apply(e, "cloud code and code") == "Claude Code and Codex"
+
+
+def test_the_matched_rule_decides_even_when_lowercasing_disagrees_with_the_regex() -> None:
+    e = Entries(replacements={"istanbul": "Istanbul"})
+    assert dictionary.apply(e, "in İstanbul today") == "in Istanbul today"

@@ -8,6 +8,7 @@ on Apple Silicon and on the CPU elsewhere; nothing leaves the machine.
 
 from __future__ import annotations
 
+import gc
 import io
 import shutil
 import subprocess
@@ -132,14 +133,18 @@ class Local:
                 path.unlink(missing_ok=True)
 
     def warm(self, name: str) -> None:
-        """Load the model on a thread now, so the first dictation does not pay for it.
-
-        Loading and the first Metal library compile took 11 s on an M5; the runs
-        after that take a fraction of a second.
+        """Load the model now (the caller is off the UI and request paths), so the first
+        dictation does not pay for it: loading and the first Metal library compile took
+        11 s on an M5; the runs after that take a fraction of a second.
         """
-        if name not in self.models:
-            return
-        threading.Thread(target=self._engine, args=(name,), daemon=True, name="dictum-warm").start()
+        if name in self.models:
+            self._engine(name)
+
+    def unload(self, keep: str | None = None) -> None:
+        with self._lock:
+            for name in [n for n in self._models if n != keep]:
+                del self._models[name]  # the bindings free the context with the object
+        gc.collect()
 
     def _engine(self, name: str) -> Any:
         with self._lock:
@@ -173,10 +178,10 @@ class Local:
             params: dict[str, Any] = {
                 "language": "en" if model.endswith(".en") else "auto",
                 "print_progress": False,
+                # Always set: the bindings keep parameters between calls, so a prompt
+                # from an earlier call would otherwise outlive deleted terms.
+                "initial_prompt": _prompt(terms),
             }
-            prompt = _prompt(terms)
-            if prompt:
-                params["initial_prompt"] = prompt
             try:
                 segments = engine.transcribe(audio, **params)
             except Exception as exc:

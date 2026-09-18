@@ -16,6 +16,10 @@ uv run mypy             # types, strict
 All four pass before a commit. Commits follow conventional commits
 (`feat:`, `fix:`, `docs:`, `chore:`, `test:`) with a body that says why.
 
+Branches: work happens on short-lived branches with pull requests into
+`develop`; `main` only moves by a release pull request from `develop`, after
+a review of everything that accumulated there (since 2026-09-18).
+
 ## Where things are
 
 - `src/dictum/providers/`: one module per speech-to-text provider behind one

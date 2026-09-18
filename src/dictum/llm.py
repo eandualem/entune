@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
@@ -23,6 +24,21 @@ LLM_PROVIDERS: dict[str, tuple[str, str]] = {
     "anthropic": ("Anthropic", "anthropic:claude-fable-5-1"),
     "openai": ("OpenAI", "openai:gpt-6-astra"),
 }
+KEY_VARIABLES = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+ENDPOINTS = {
+    "anthropic": {"ANTHROPIC_BASE_URL": "https://api.anthropic.com"},
+    "openai": {"OPENAI_BASE_URL": "https://api.openai.com/v1"},
+}
+_build_lock: asyncio.Lock | None = None
+
+
+def _one_build_at_a_time() -> asyncio.Lock:
+    global _build_lock
+    if _build_lock is None:
+        _build_lock = asyncio.Lock()
+    return _build_lock
+
+
 # assistant-runtime maps this budget to "high" reasoning effort on both providers.
 THINKING_BUDGET = 32_000
 MAX_TRANSCRIPT_CHARS = 40_000
@@ -129,17 +145,31 @@ async def call_assistant_runtime(
         primary_model=model,
         providers_json=json.dumps([{"provider": provider, "api_key": api_key}]),
     )
-    service = LlmService(config=config)
-    await service.start()
-    try:
-        result = await service.execute_llm_call(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            model=model,
-            thinking_budget=THINKING_BUDGET,
-        )
-    finally:
-        await service.stop()
+    # The runtime's SDK clients take their key and endpoint from the environment: the
+    # key is set to the saved one for the call (a key replaced in Settings, or one in the
+    # shell, would not be used otherwise) and the endpoint pinned to the provider's own
+    # (a base-URL variable in the shell would otherwise route the key and the user's
+    # transcripts elsewhere). The environment is process-wide, so one build at a time.
+    async with _one_build_at_a_time():
+        pinned = {KEY_VARIABLES[provider]: api_key, **ENDPOINTS[provider]}
+        previous = {name: os.environ.get(name) for name in pinned}
+        os.environ.update(pinned)
+        service = LlmService(config=config)
+        await service.start()
+        try:
+            result = await service.execute_llm_call(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                model=model,
+                thinking_budget=THINKING_BUDGET,
+            )
+        finally:
+            await service.stop()
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
     return str(result.content)
 
 
