@@ -8,16 +8,33 @@ in `providers/__init__.py`.
 class Provider(Protocol):
     id: str  # "assemblyai": used in settings keys and model ids
     name: str  # "AssemblyAI": shown in the UI
-    models: tuple[str, ...]  # the model ids offered for this provider
+
+    @property
+    def models(self) -> tuple[str, ...]: ...  # the model ids offered right now
 
     def transcribe(
         self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
     ) -> TranscribeResult: ...
 ```
 
-`Clip` carries the audio bytes, its MIME type and a filename; `terms` is the
-user's dictionary vocabulary, to be passed on in whatever form the provider
-accepts. The result is either `Transcript(text)` or `Failure(error)`.
+`Clip` carries the audio bytes, its MIME type and a filename, and
+`upload_url` when fast mode already streamed the same audio to this
+provider; `terms` is the user's dictionary vocabulary, to be passed on in
+whatever form the provider accepts. The result is either `Transcript(text)`
+or `Failure(error)`.
+
+Two optional protocols in `base.py`:
+
+- `Streams`: `begin_upload(api_key, sample_rate)` returns an `Upload` that
+  is fed the audio as it is recorded (fast mode). AssemblyAI implements it;
+  the sync endpoint takes no URL, so only clips past the two-minute limit
+  use the stream.
+- `Downloadable`: `catalogue()`, `download(name)`, `remove(name)`,
+  `warm(name)`, `unload(keep)`. A provider whose models are files on this
+  machine, fetched with a button, no key. `local.py` (whisper.cpp through
+  pywhispercpp, in-process) and `parakeet.py` (a helper process inside the
+  `parakeet-mlx` tool installation, Apple Silicon) implement it. `models`
+  lists only the downloaded ones.
 
 The contract, from AGENTS.md: audio in, either a transcript or the
 provider's error verbatim. `failure_from_response()` formats an HTTP error
