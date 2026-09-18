@@ -225,6 +225,15 @@ class Dictum:
             raise UnknownModel(ref)
         self.store.set_setting(DEFAULT_MODEL_KEY, ref)
         self._changed()
+        self.warm_default_model()
+
+    def warm_default_model(self) -> None:
+        """A local default model is loaded ahead of the first dictation (at start and
+        whenever the default changes); cloud models have nothing to warm."""
+        default = self.default_model()
+        ref = self.resolve(default) if default else None
+        if ref is not None and isinstance(ref.provider, Downloadable):
+            ref.provider.warm(ref.model)
 
     def llm_provider_statuses(self) -> list[ProviderStatus]:
         statuses = []

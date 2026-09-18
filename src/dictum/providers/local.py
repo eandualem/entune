@@ -123,6 +123,23 @@ class Local:
             for path in (self._path(name), self._part(name)):
                 path.unlink(missing_ok=True)
 
+    def warm(self, name: str) -> None:
+        """Load the model on a thread now, so the first dictation does not pay for it.
+
+        Loading and the first Metal library compile took 11 s on an M5; the runs
+        after that take a fraction of a second.
+        """
+        if name not in self.models:
+            return
+        threading.Thread(target=self._engine, args=(name,), daemon=True, name="dictum-warm").start()
+
+    def _engine(self, name: str) -> Any:
+        with self._lock:
+            engine = self._models.get(name)
+            if engine is None:
+                engine = self._models[name] = self._load_model(str(self._path(name)))
+            return engine
+
     def _path(self, name: str) -> Path:
         return self.models_dir / f"ggml-{name}.bin"
 
@@ -140,13 +157,11 @@ class Local:
             audio = pcm16k(clip)
         except Exception as exc:
             return Failure(f"Could not decode the clip: {type(exc).__name__}: {exc}")
+        try:
+            engine = self._engine(model)
+        except Exception as exc:
+            return Failure(f"Could not load {model}: {type(exc).__name__}: {exc}")
         with self._lock:
-            engine = self._models.get(model)
-            if engine is None:
-                try:
-                    engine = self._models[model] = self._load_model(str(self._path(model)))
-                except Exception as exc:
-                    return Failure(f"Could not load {model}: {type(exc).__name__}: {exc}")
             params: dict[str, Any] = {
                 "language": "en" if model.endswith(".en") else "auto",
                 "print_progress": False,
