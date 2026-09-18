@@ -42,6 +42,7 @@ first two; add the rest only when an issue asks.
 | Deepgram | Nova-3 | fastest streaming, weaker accuracy |
 | OpenAI | gpt-4o-transcribe | ubiquitous |
 | Mistral | Voxtral Transcribe 2 | open weights |
+| Local | whisper.cpp (large-v3-turbo and smaller) | offline, no key; models downloaded from Settings (added 2026-09-18) |
 
 Dictation is push-to-talk: a clip of seconds to a minute, transcribed once
 after release. Use each provider's synchronous or file endpoint, never its

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
+import httpx
 import pytest
 from starlette.testclient import TestClient
 
@@ -12,7 +14,7 @@ from dictum.recorder import wav_bytes
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store
-from tests.conftest import WEBM_HEADER
+from tests.conftest import WEBM_HEADER, mock_client
 
 
 class StubProvider:
@@ -46,7 +48,7 @@ def client(tmp_path: Path, stub: StubProvider) -> TestClient:
 def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
     settings = client.get("/api/settings").json()
     assert settings["providers"] == [
-        {"id": "stub", "name": "Stub", "keyHint": None, "streams": False}
+        {"id": "stub", "name": "Stub", "keyHint": None, "streams": False, "local": False}
     ]
     assert settings["defaultModel"] is None
     assert settings["shortcuts"] == {"hold": None, "toggle": None}
@@ -379,3 +381,26 @@ def test_metrics_are_computed_from_timed_attempts(client: TestClient) -> None:
     assert row["audio_seconds"] == 8.0 and row["median_wait"] >= 0 and row["speed"] > 0
     providers = client.get("/api/settings").json()["providers"]
     assert [p["streams"] for p in providers] == [False]
+
+
+def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: StubProvider) -> None:
+    from dictum.providers.local import Local
+
+    body = b"m" * 10
+    local = Local(
+        tmp_path / "models", client=mock_client(lambda req: httpx.Response(200, content=body))
+    )
+    app = create_app(Dictum(Store(tmp_path), [stub, local]))
+    with TestClient(app) as client:
+        providers = client.get("/api/settings").json()["providers"]
+        assert [(p["id"], p["local"]) for p in providers] == [("stub", False), ("local", True)]
+        listed = client.get("/api/local/models").json()
+        assert listed[0]["state"] == "absent" and listed[0]["size_bytes"] > 0
+        assert client.post("/api/local/models/base.en/download").status_code == 200
+        assert client.post("/api/local/models/nope/download").status_code == 404
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and local.models != ("base.en",):
+            time.sleep(0.01)
+        assert "local/base.en" in [m["id"] for m in client.get("/api/models").json()]
+        assert client.delete("/api/local/models/base.en").status_code == 200
+        assert local.models == ()
