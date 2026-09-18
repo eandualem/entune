@@ -103,6 +103,7 @@ a { color: var(--accent-text); text-decoration: none; }
 .toolbar .select { max-width: 17.5rem; }
 .fast { display: inline-flex; align-items: center; gap: var(--sp-6); height: var(--h-28); padding: 0 var(--sp-8); border-radius: var(--r-7); background: var(--control); border: 1px solid var(--line); color: var(--text-faint); }
 .fast:has(input:checked) { color: var(--accent-text); }
+.fast.off { opacity: 0.45; }
 .fast:hover { color: var(--text); }
 .fast input { accent-color: var(--accent); margin: 0; width: var(--i-13); height: var(--i-13); }
 kbd {
@@ -225,6 +226,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .entry-row .source.learned { color: var(--accent-text); }
 .entry-row .actions { display: flex; justify-content: flex-end; gap: var(--sp-2); }
 .entry-row.none { display: block; padding: var(--sp-12) var(--sp-14); color: var(--text-faint); font-size: var(--fs-12-5); }
+.entry-row.foot { display: block; min-height: 0; padding: var(--sp-8) var(--sp-14); border-top: 1px solid var(--line); }
 
 /* Settings */
 .settings { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); min-height: 100%; }
