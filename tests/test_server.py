@@ -432,6 +432,15 @@ def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: St
         while time.monotonic() < deadline and not loaded:
             time.sleep(0.01)
         assert loaded == [str(tmp_path / "models" / "ggml-base.en.bin")]  # warmed on choosing
+        # Selecting a cloud model again frees the local one; a retry with it loads it
+        # for that one transcription and frees it afterwards.
+        client.put("/api/settings", json={"defaultModel": "stub/good"})
+        assert local._models == {}
+        rec = client.post(
+            "/api/recordings", files={"audio": ("a.wav", wav_bytes(b"\x00\x00" * 16_000 * 3))}
+        ).json()
+        client.post(f"/api/recordings/{rec['id']}/transcriptions", json={"model": "local/base.en"})
+        assert len(loaded) == 2 and local._models == {}
         assert client.delete("/api/local/models/base.en").status_code == 200
         assert local.models == ()
 

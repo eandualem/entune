@@ -116,6 +116,11 @@ class Parakeet:
             self._download = None
             shutil.rmtree(self._dir(), ignore_errors=True)
 
+    def unload(self, keep: str | None = None) -> None:
+        if keep != MODEL:
+            with self._lock:
+                self._stop_helper()  # the whole helper process, and its memory, goes
+
     def warm(self, name: str) -> None:
         _check(name)
         if self._ready() and self.engine() is not None:
