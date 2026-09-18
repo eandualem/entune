@@ -152,7 +152,7 @@
           <div class="group" id="llm-keys"></div>
           <div class="group">
             <div class="row top">
-              <div class="lbl"><label for="dictionary-model">Model</label><span class="hint">Used only to build the dictionary from your history, never on a transcript. Runs at high reasoning effort; pick the strongest model you have.</span></div>
+              <div class="lbl"><label for="dictionary-model">Model</label><span class="hint">Used only to build the dictionary from your history, never on a transcript. Runs at high reasoning effort. Empty means the suggested model of the first provider with a key.</span></div>
               <div class="field">
                 <input class="input key-input" id="dictionary-model" type="text" list="dictionary-models" placeholder="provider:model, e.g. anthropic:claude-fable-5-1" spellcheck="false" autocomplete="off" />
                 <datalist id="dictionary-models"></datalist>

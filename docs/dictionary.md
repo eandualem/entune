@@ -51,6 +51,7 @@ default model, which the app needs set to read such a file (issue #30).
 transcripts (at most 300, or 40,000 characters), the pinned section as
 approved and as evidence of who the user is and what they talk about, and
 that model's previous learned list to revise, to the language
-model chosen in Settings, at high reasoning effort. The reply becomes a
+model chosen in Settings (with no choice, the suggested model of the first
+provider with a key), at high reasoning effort. The reply becomes a
 proposal for that speech model, shown as added and removed entries; nothing
 is saved until Accept.
