@@ -89,8 +89,14 @@ notification with the provider's message; History has the retry.
 so a dictation over two minutes is transcribed as soon as you stop instead of
 after the whole file has gone up. AssemblyAI only, since only its long-form
 endpoint takes an upload; shorter clips use the sync endpoint as before and
-are unchanged. The log line `transcribed N s of audio in X s` says what it
-saved you.
+are unchanged.
+
+**Performance.** Every transcription records how long the clip was, how long
+the provider took, and whether fast mode was used. History shows the table
+by model: runs, minutes of audio, median wait, and speed as seconds of audio
+per second waited. Measured on 2026-09-18 with a 172-second dictation over
+AssemblyAI Universal-3.5 Pro: 7.0 s with fast mode, 14.8 s without, of which
+the upload alone was 6 to 7 s. Your own table is the one to trust.
 
 When `fn` is one of your shortcuts, Dictum owns that key while it runs: a
 tap no longer opens Emoji & Symbols or Apple's dictation, and fn does not

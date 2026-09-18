@@ -39,6 +39,15 @@
     <main class="content">
       <section class="view" id="view-history" role="tabpanel" data-active>
         <div class="page">
+          <section class="metrics" id="metrics" hidden>
+            <h2 class="section-label">Performance by model</h2>
+            <div class="group">
+              <table>
+                <thead><tr><th>Model</th><th>Mode</th><th>Runs</th><th>Audio</th><th>Median wait</th><th>Speed</th></tr></thead>
+                <tbody id="metrics-rows"></tbody>
+              </table>
+            </div>
+          </section>
           <h2 class="section-label" id="history-label">History</h2>
           <div id="history"></div>
           <div class="empty" id="empty" hidden>
@@ -116,7 +125,7 @@
               <label for="default-model">Default model</label>
               <div class="field"><select class="select" id="default-model"></select></div>
             </div>
-            <div class="row top">
+            <div class="row top" id="fast-mode-row" hidden>
               <div class="lbl"><label for="fast-mode">Fast mode</label><span class="hint">Uploads while you record, so a dictation over two minutes is transcribed as soon as you stop. AssemblyAI only; shorter clips are unchanged.</span></div>
               <div class="field radios">
                 <label><input type="checkbox" id="fast-mode" /> Upload while recording</label>
