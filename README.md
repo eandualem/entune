@@ -81,9 +81,10 @@ can be set:
 - **Hands-free**: a combination, for example `cmd+fn`. Press to start;
   press again, or press the hold key, to stop.
 
-While you record, a small "Recording" pill sits in the bottom-left corner
-of the screen your pointer is on; it says "Transcribing…" until the text
-lands, and never takes focus. On stop, the clip is saved to history at once
+While you record, a small "Recording" pill appears, in the bottom-left
+corner of the screen your pointer is on until you drag it somewhere else;
+it stays where you drop it. It says "Transcribing…" until the text lands,
+and never takes focus. On stop, the clip is saved to history at once
 and goes to your default model; the transcript is copied to the clipboard
 and pasted into whatever had focus. Two dictations in a row land in the
 order you spoke them. A failure shows as a notification with the provider's
@@ -101,9 +102,9 @@ endpoint takes an upload; shorter clips use the sync endpoint as before and
 are unchanged.
 
 **Performance.** Every transcription records how long the clip was, how long
-the provider took, and whether fast mode was used. History shows the table
-by model: runs, minutes of audio, median wait, and speed as seconds of audio
-per second waited. Measured on 2026-09-18 with a 172-second dictation over
+the provider took, and whether fast mode was used. The chart button next
+to the model picker opens the table by model: runs, minutes of audio,
+median wait, and speed as seconds of audio per second waited. Measured on 2026-09-18 with a 172-second dictation over
 AssemblyAI Universal-3.5 Pro: 7.0 s with fast mode, 14.8 s without, of which
 the upload alone was 6 to 7 s. Your own table is the one to trust.
 

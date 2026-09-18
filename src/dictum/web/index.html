@@ -7,10 +7,12 @@
     <title>Dictum</title>
     <link rel="stylesheet" href="/static/style.css" />
     <script>
-      // Apply the saved appearance before first paint so the page never flashes.
+      // Apply the saved appearance and text size before first paint so the page never flashes.
       try {
         const theme = localStorage.getItem("theme");
         if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+        const scale = localStorage.getItem("scale");
+        if (scale === "small" || scale === "large" || scale === "larger") document.documentElement.dataset.scale = scale;
       } catch (e) {}
     </script>
   </head>
@@ -24,7 +26,17 @@
         </button>
         <span class="rec-timer" id="rec-timer" hidden>0:00</span>
         <select class="select" id="model" aria-label="Default model" title="The model every recording uses; picking one here applies at once"></select>
+        <button type="button" class="btn-icon" id="metrics-toggle" title="Performance by model" aria-label="Performance by model" aria-expanded="false" aria-controls="metrics" hidden>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 13.5h11M4 11V7M8 11V3.5M12 11V8.5"/></svg>
+        </button>
         <span class="status" id="status"></span>
+      </div>
+      <div class="popover" id="metrics" hidden>
+        <div class="popover-head">Performance by model <span class="hint">from every transcription's timing</span></div>
+        <table>
+          <thead><tr><th>Model</th><th>Mode</th><th>Runs</th><th>Audio</th><th>Median wait</th><th>Speed</th></tr></thead>
+          <tbody id="metrics-rows"></tbody>
+        </table>
       </div>
 
       <div class="spacer"></div>
@@ -39,21 +51,12 @@
     <main class="content">
       <section class="view" id="view-history" role="tabpanel" data-active>
         <div class="page">
-          <section class="metrics" id="metrics" hidden>
-            <h2 class="section-label">Performance by model</h2>
-            <div class="group">
-              <table>
-                <thead><tr><th>Model</th><th>Mode</th><th>Runs</th><th>Audio</th><th>Median wait</th><th>Speed</th></tr></thead>
-                <tbody id="metrics-rows"></tbody>
-              </table>
-            </div>
-          </section>
           <h2 class="section-label" id="history-label">History</h2>
           <div id="history"></div>
-          <div class="empty" id="empty" hidden>
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></svg>
-            <h2>Nothing recorded yet</h2>
-            <p id="empty-hint">Press Record above and speak.</p>
+          <div class="start" id="empty" hidden>
+            <h2>Get started</h2>
+            <p>Three steps, and every dictation lands here as text you can copy.</p>
+            <ol class="steps group" id="steps"></ol>
           </div>
         </div>
       </section>
@@ -112,7 +115,8 @@
 
       <section class="view" id="view-settings" role="tabpanel">
         <form class="page" id="settings-form">
-          <h2 class="section-label">API keys</h2>
+          <h2 class="section-label">Providers</h2>
+          <p class="help section-intro">A key for a cloud provider, or a local model downloaded once. Everything else on this page applies as soon as you change it.</p>
           <div class="group" id="keys"></div>
 
           <h2 class="section-label">Dictation</h2>
@@ -125,6 +129,7 @@
               <div class="lbl"><label for="fast-mode">Fast mode</label><span class="hint">Uploads while you record, so a dictation over two minutes is transcribed as soon as you stop. AssemblyAI only; shorter clips are unchanged.</span></div>
               <div class="field radios">
                 <label><input type="checkbox" id="fast-mode" /> Upload while recording</label>
+                <span class="save-status" id="fast-mode-status" role="status"></span>
               </div>
             </div>
             <div class="row top">
@@ -150,13 +155,15 @@
           </div>
 
           <h2 class="section-label">Dictionary model</h2>
+          <p class="help section-intro">Only used when you click Build on the Dictionary tab; never on a transcript.</p>
           <div class="group" id="llm-keys"></div>
           <div class="group">
             <div class="row top">
-              <div class="lbl"><label for="dictionary-model">Model</label><span class="hint">Used only to build the dictionary from your history, never on a transcript. Runs at high reasoning effort. Empty means the suggested model of the first provider with a key.</span></div>
+              <div class="lbl"><label for="dictionary-model">Model</label><span class="hint">Runs at high reasoning effort. Empty means the suggested model of the first provider with a key.</span></div>
               <div class="field">
                 <input class="input key-input" id="dictionary-model" type="text" list="dictionary-models" placeholder="provider:model, e.g. anthropic:claude-fable-5-1" spellcheck="false" autocomplete="off" />
                 <datalist id="dictionary-models"></datalist>
+                <p class="help save-status" id="dictionary-model-status" role="status"></p>
               </div>
             </div>
           </div>
@@ -171,12 +178,17 @@
                 <label><input type="radio" name="appearance" value="dark" /> Dark</label>
               </div>
             </div>
+            <div class="row top">
+              <div class="lbl"><span>Text size</span><span class="hint">Scales the whole window. <kbd>cmd</kbd>+<kbd>+</kbd> and <kbd>cmd</kbd>+<kbd>−</kbd> step it, <kbd>cmd</kbd>+<kbd>0</kbd> resets.</span></div>
+              <div class="field radios" role="radiogroup" aria-label="Text size">
+                <label><input type="radio" name="scale" value="small" /> Small</label>
+                <label><input type="radio" name="scale" value="default" checked /> Default</label>
+                <label><input type="radio" name="scale" value="large" /> Large</label>
+                <label><input type="radio" name="scale" value="larger" /> Larger</label>
+              </div>
+            </div>
           </div>
-
-          <div class="save-row">
-            <button class="btn primary" type="submit">Save</button>
-            <span class="save-status" id="settings-status" role="status"></span>
-          </div>
+          <span class="save-status" id="settings-status" role="status"></span>
         </form>
       </section>
     </main>
