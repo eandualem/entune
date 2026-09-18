@@ -434,3 +434,27 @@ def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: St
         assert loaded == [str(tmp_path / "models" / "ggml-base.en.bin")]  # warmed on choosing
         assert client.delete("/api/local/models/base.en").status_code == 200
         assert local.models == ()
+
+
+def test_a_stale_dictionary_save_is_refused_and_a_fresh_one_accepted(client: TestClient) -> None:
+    first = client.get("/api/dictionary")
+    version = first.headers["etag"]
+    # An agent adds a correction after the page loaded its copy.
+    client.post("/api/dictionary/corrections", json={"terms": ["Soniox"], "source": "agent"})
+    stale = client.put(
+        "/api/dictionary",
+        content='{"pinned": {"terms": ["Dictum"]}}',
+        headers={"if-match": version},
+    )
+    assert stale.status_code == 409 and "changed" in stale.text
+    assert "Soniox" in client.get("/api/dictionary").json()["agents"]["terms"]
+    fresh_version = client.get("/api/dictionary").headers["etag"]
+    assert fresh_version != version
+    ok = client.put(
+        "/api/dictionary",
+        content='{"pinned": {"terms": ["Dictum"]}, "agents": {"terms": ["Soniox"]}}',
+        headers={"if-match": fresh_version},
+    )
+    assert ok.status_code == 200 and ok.headers["etag"] != fresh_version
+    # Without a version (curl, or a page repairing a broken file) the write goes through.
+    assert client.put("/api/dictionary", content='{"pinned": {"terms": []}}').status_code == 200

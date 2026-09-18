@@ -18,7 +18,7 @@ from starlette.staticfiles import StaticFiles
 
 from dictum import __version__
 from dictum.audio import extension_for
-from dictum.service import Dictum, NoDefaultModel, UnknownModel
+from dictum.service import DictionaryChanged, Dictum, NoDefaultModel, UnknownModel
 from dictum.store import Recording
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -148,18 +148,31 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc))
         return JSONResponse({"ok": True})
 
+    def _dictionary_response(app: Dictum) -> Response:
+        return PlainTextResponse(
+            app.dictionary_text(),
+            media_type="application/json",
+            headers={"ETag": f'"{app.dictionary_version()}"'},
+        )
+
     async def get_dictionary(_: Request) -> Response:
         try:
-            return PlainTextResponse(app.dictionary_text(), media_type="application/json")
+            return _dictionary_response(app)
         except ValueError as exc:
             return _bad(f"dictionary.json on disk is not usable: {exc}", 500)
 
     async def put_dictionary(request: Request) -> Response:
+        expected = request.headers.get("if-match")
         try:
-            app.set_dictionary((await request.body()).decode("utf-8"))
+            app.set_dictionary(
+                (await request.body()).decode("utf-8"),
+                expected.strip('"') if expected else None,
+            )
+        except DictionaryChanged as exc:
+            return _bad(str(exc), 409)
         except ValueError as exc:
             return _bad(str(exc))
-        return PlainTextResponse(app.dictionary_text(), media_type="application/json")
+        return _dictionary_response(app)
 
     async def agent_corrections(request: Request) -> Response:
         try:

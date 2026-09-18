@@ -304,34 +304,34 @@ const buildBtn = el("build-dictionary");
 const proposalPanel = el("proposal");
 const proposalBody = el("proposal-body");
 
-let dictLoadedText = null; // the document as last read, to notice edits made elsewhere
+let dictVersion = null; // the server's ETag for the document we edit; null after a failed load
 
 async function loadDictionary() {
   const res = await fetch("/api/dictionary");
   const text = await res.text();
-  if (!res.ok) { flash(dictionaryStatus, text, "err"); return; }
+  if (!res.ok) { dictVersion = null; flash(dictionaryStatus, text, "err"); return; }
   dict = JSON.parse(text);
-  dictLoadedText = text;
+  dictVersion = res.headers.get("etag");
   renderDictionary(text);
 }
 
-// Every edit sends the whole document, so an edit on top of a stale copy would silently
-// drop what an agent or a hand edit added meanwhile: such a save is refused and the
-// fresh document shown instead.
+// Every edit sends the whole document, named with the version it was made on. The
+// server refuses a save on a stale version (an agent or a hand edit got there first)
+// and the fresh document is shown instead. After a failed load there is no version:
+// the JSON editor can then repair a broken file.
 async function saveDictionary(next) {
-  const current = await (await fetch("/api/dictionary")).text();
-  if (dictLoadedText !== null && current !== dictLoadedText) {
-    dict = JSON.parse(current);
-    dictLoadedText = current;
-    renderDictionary(current);
-    flash(dictionaryStatus, "The dictionary changed meanwhile (an agent or a hand edit); reloaded, please redo that change", "err");
+  const headers = { "content-type": "application/json" };
+  if (dictVersion) headers["if-match"] = dictVersion;
+  const res = await fetch("/api/dictionary", { method: "PUT", headers, body: JSON.stringify(next) });
+  const text = await res.text();
+  if (res.status === 409) {
+    await loadDictionary();
+    flash(dictionaryStatus, `${text} Reloaded; please redo that change.`, "err");
     return false;
   }
-  const res = await fetch("/api/dictionary", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(next) });
-  const text = await res.text();
   if (!res.ok) { flash(dictionaryStatus, text, "err"); flash(buildStatus, text, "err"); return false; }
   dict = JSON.parse(text);
-  dictLoadedText = text;
+  dictVersion = res.headers.get("etag");
   renderDictionary(text);
   return true;
 }
@@ -650,18 +650,24 @@ function setRecording(on) {
 // recording is one container that every provider, cloud or local, takes without
 // a decoder. (MediaRecorder would give WebM, which the local engines cannot read
 // without ffmpeg.)
+let starting = false; // between the click and the microphone answering
+
 recordBtn.addEventListener("click", async () => {
   if (recorder) {
     recorder.stop();
     return;
   }
+  if (starting) return; // a second click before permission resolves would open a second mic
+  starting = true;
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
+    starting = false;
     status.textContent = `Microphone unavailable: ${err.message ?? err}`;
     return;
   }
+  starting = false;
   const context = new AudioContext();
   const source = context.createMediaStreamSource(stream);
   const tap = context.createScriptProcessor(4096, 1, 1);
