@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import statistics
 import threading
 import time
@@ -73,6 +74,10 @@ class CaptureStatus:
     keys: str | None
 
 
+class DictionaryChanged(Exception):
+    """A dictionary write named a version that is no longer the one on disk."""
+
+
 class NoDefaultModel(Exception):
     """Transcription was asked for without a model and none is set as default."""
 
@@ -95,6 +100,9 @@ class Dictum:
         self._llm_call = llm_call
         self._listeners: list[Callable[[], None]] = []
         self._capture_listeners: list[Callable[[], None]] = []
+        self._dictionary_lock = threading.Lock()
+        self._warm_lock = threading.Lock()
+        self._cancel_listeners: list[Callable[[], None]] = []
         self._show_window_listeners: list[Callable[[], None]] = []
         self._desktop_status: dict[str, object] = {"desktop": False}
         self._capture_lock = threading.Lock()
@@ -231,11 +239,41 @@ class Dictum:
 
     def warm_default_model(self) -> None:
         """A local default model is loaded ahead of the first dictation (at start and
-        whenever the default changes); cloud models have nothing to warm."""
+        whenever the default changes), and every other local model is unloaded: a model
+        takes memory only while it is the selected one. Cloud models have nothing to warm."""
+        locals_ = [p for p in self.providers if isinstance(p, Downloadable)]
+
+        def work() -> None:
+            # One reconciliation at a time, each reading the selection as it is now; a
+            # load waits for a provider's lock, which an inference may hold, so this
+            # never runs on a request. A selection changed during a load is caught by
+            # the check after it: the model just loaded is unloaded again.
+            with self._warm_lock:
+                default = self.default_model()
+                ref = self.resolve(default) if default else None
+                for provider in locals_:
+                    keep = ref.model if ref is not None and ref.provider is provider else None
+                    provider.unload(keep=keep)
+                if ref is not None and isinstance(ref.provider, Downloadable):
+                    ref.provider.warm(ref.model)
+                    if self.default_model() != ref.id:
+                        ref.provider.unload(keep=None)
+
+        threading.Thread(target=work, daemon=True, name="dictum-warm").start()
+
+    def _release_after_use(self, ref: ModelRef) -> None:
+        """A local model used for a retry, not the selected one, is unloaded again."""
+        if not isinstance(ref.provider, Downloadable):
+            return
         default = self.default_model()
-        ref = self.resolve(default) if default else None
-        if ref is not None and isinstance(ref.provider, Downloadable):
-            ref.provider.warm(ref.model)
+        if default != ref.id:
+            selected = self.resolve(default) if default else None
+            keep = (
+                selected.model
+                if selected is not None and selected.provider is ref.provider
+                else None
+            )
+            ref.provider.unload(keep=keep)
 
     def llm_provider_statuses(self) -> list[ProviderStatus]:
         statuses = []
@@ -312,10 +350,24 @@ class Dictum:
     def dictionary_text(self) -> str:
         return dictionary_file.dumps(self.dictionary())
 
-    def set_dictionary(self, text: str) -> Dictionary:
-        """Validate and save the JSON form. Raises ValueError with the reason."""
+    def dictionary_version(self) -> str:
+        """A hash of the file as it is on disk; a writer names the version it edited."""
+        path = self.store.data_dir / dictionary_file.FILENAME
+        raw = path.read_bytes() if path.exists() else b""
+        return str(hashlib.sha256(raw).hexdigest()[:16])
+
+    def set_dictionary(self, text: str, expected_version: str | None = None) -> Dictionary:
+        """Validate and save the JSON form. Raises ValueError with the reason, and
+        DictionaryChanged when `expected_version` is given and the file moved on since:
+        an edit made on a stale copy would silently drop what was added meanwhile."""
         parsed = dictionary_file.parse(text)
-        dictionary_file.save(self.store.data_dir, parsed)
+        with self._dictionary_lock:
+            if expected_version is not None and expected_version != self.dictionary_version():
+                raise DictionaryChanged(
+                    "The dictionary changed since it was loaded (an agent or a hand edit);"
+                    " reload it and redo the change."
+                )
+            dictionary_file.save(self.store.data_dir, parsed)
         self._changed()
         return parsed
 
@@ -331,10 +383,12 @@ class Dictum:
         corrections = dictionary_file.parse_entries(body, "corrections")
         if not corrections:
             raise ValueError("Nothing to add: give terms and/or replacements")
-        current = self.dictionary()
-        updated, added = current.with_agent_corrections(corrections)
+        with self._dictionary_lock:
+            current = self.dictionary()
+            updated, added = current.with_agent_corrections(corrections)
+            if added:
+                dictionary_file.save(self.store.data_dir, updated)
         if added:
-            dictionary_file.save(self.store.data_dir, updated)
             self._changed()
         return added
 
@@ -381,9 +435,15 @@ class Dictum:
             if self._capture.state == "listening":
                 self._capture = CaptureStatus("done", shortcuts.format_keys(keys))
 
+    def on_cancel_capture(self, listener: Callable[[], None]) -> None:
+        """Called when a capture is cancelled, so the listener stops waiting for keys."""
+        self._cancel_listeners.append(listener)
+
     def cancel_capture(self) -> None:
         with self._capture_lock:
             self._capture = CaptureStatus("idle", None)
+        for listener in self._cancel_listeners:
+            listener()
 
     def capture_status(self) -> CaptureStatus:
         with self._capture_lock:
@@ -446,21 +506,24 @@ class Dictum:
                 if not mime.startswith("audio/"):
                     mime = sniff_mime(data) or mime
                 effective = self.dictionary().effective
-                clip = Clip(data, mime, upload_url=_finish(upload, ref, Clip(data, mime)))
-                started = time.monotonic()
+                started = time.monotonic()  # before the stream is finished: that wait counts
+                stream, upload = upload, None  # from here the stream is finished or aborted
+                clip = Clip(data, mime, upload_url=_finish(stream, ref, Clip(data, mime)))
                 result = ref.provider.transcribe(clip, ref.model, api_key, terms=effective.terms)
                 timing = Timing(
                     clip.seconds, time.monotonic() - started, clip.upload_url is not None
                 )
             except Exception as exc:
                 result = Failure(f"{type(exc).__name__}: {exc}")
+        if upload is not None:
+            upload.abort()  # never reached _finish: a failure before it, or no key
         raw_text = result.text if isinstance(result, Transcript) else None
         text = None
         if raw_text is not None:
             try:
                 text = dictionary_file.apply(self.dictionary().effective, raw_text)
-            except ValueError:
-                text = raw_text  # a dictionary that no longer parses must not lose a transcript
+            except Exception:  # a dictionary that fails, however, must not lose a transcript
+                text = raw_text
         self.store.add_transcription(
             recording.id,
             provider=ref.provider.id,
@@ -473,6 +536,7 @@ class Dictum:
             elapsed_seconds=timing.elapsed_seconds,
             fast=timing.fast,
         )
+        self._release_after_use(ref)
         updated = self.store.get_recording(recording.id)
         assert updated is not None
         return updated
@@ -480,8 +544,30 @@ class Dictum:
     def record_and_transcribe(
         self, data: bytes, label: str | None, ref: str | None, upload: Upload | None = None
     ) -> Recording:
-        model = self.choose_model(ref)
-        recording = self.store.create_recording(data, label)
+        return self.transcribe_recording(self.store_recording(data, label), ref, upload)
+
+    def store_recording(self, data: bytes, label: str | None) -> Recording:
+        """The clip is on disk and in history from this moment, whatever happens next."""
+        return self.store.create_recording(data, label)
+
+    def transcribe_recording(
+        self, recording: Recording, ref: str | None, upload: Upload | None = None
+    ) -> Recording:
+        try:
+            model = self.choose_model(ref)
+        except (NoDefaultModel, UnknownModel) as exc:
+            # The clip is kept with the error, so it can be retried once a model is set.
+            if upload is not None:
+                upload.abort()
+            self.store.add_transcription(
+                recording.id,
+                provider="none",
+                model="not set",
+                status="error",
+                text=None,
+                error=str(exc),
+            )
+            raise
         return self.transcribe(recording, model, upload)
 
 
@@ -505,6 +591,7 @@ def _finish(upload: Upload | None, ref: ModelRef, clip: Clip) -> str | None:
 
 __all__ = [
     "CaptureStatus",
+    "DictionaryChanged",
     "Dictum",
     "ModelMetrics",
     "ModelOption",

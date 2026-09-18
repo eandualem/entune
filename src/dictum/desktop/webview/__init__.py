@@ -82,8 +82,9 @@ class WebviewPlatform:
         webview.settings["ALLOW_DOWNLOADS"] = True  # the history's download button, to ~/Downloads
         if sys.platform == "darwin":
             _grant_media_capture()
+            _terminate_through(self.quit)
         window.create()
-        webview.start()
+        webview.start(private_mode=False)  # the page keeps its appearance choice
 
     def quit(self) -> None:
         self._quitting = True
@@ -272,6 +273,29 @@ def _grant_media_capture() -> None:
                 decide,
                 selector=b"webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:",
                 signature=b"v@:@@@q@?",
+            )
+        ],
+    )
+
+
+def _terminate_through(quit_app: Callable[[], None]) -> None:
+    """pywebview answers the application's terminate request by asking each window's
+    closing handlers, and ours hides the window (the tray keeps Dictum alive), which
+    turned Cmd+Q, the Quit menu item and a logout into a hidden window. Termination
+    now runs the real quit path instead.
+    """
+    import objc
+    from webview.platforms.cocoa import BrowserView
+
+    def should_terminate(self: Any, app: Any) -> int:
+        quit_app()
+        return 1  # NSTerminateNow
+
+    objc.classAddMethods(
+        BrowserView.AppDelegate,
+        [
+            objc.selector(
+                should_terminate, selector=b"applicationShouldTerminate:", signature=b"I@:@"
             )
         ],
     )

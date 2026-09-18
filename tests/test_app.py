@@ -60,6 +60,9 @@ class FakeHotkeys:
     def begin_capture(self, done: Callable[[tuple[str, ...]], None]) -> None:
         self.capturing = done
 
+    def cancel_capture(self) -> None:
+        self.capturing = None
+
 
 class FakeActions:
     def __init__(self) -> None:
@@ -347,3 +350,74 @@ def test_the_window_opens_on_settings_only_until_a_shortcut_exists(
     action()  # the deferred first show
     assert platform.window.shown == ["" if configured else "#settings"]
     assert app.engine is not None if configured else app.engine is None
+
+
+def test_an_unrelated_change_keeps_the_engine_mid_recording(tmp_path: Path) -> None:
+    app, _platform, dictum = make(tmp_path)
+    dictum.set_shortcuts("alt_r", None)
+    engine = app.engine
+    assert engine is not None
+    engine.press("alt_r")  # recording, key held
+    assert engine.recording
+    dictum.set_fast_mode(True)  # any settings change used to rebuild the engine
+    assert app.engine is engine and engine.recording
+    dictum.set_shortcuts("alt_r", "cmd+alt_r")  # a real shortcut change still replaces it
+    assert app.engine is not engine
+
+
+def test_cancelling_a_capture_reaches_the_listener(tmp_path: Path) -> None:
+    _app, platform, dictum = make(tmp_path)
+    dictum.start_capture()
+    assert platform.hotkeys.capturing is not None
+    dictum.cancel_capture()
+    assert platform.hotkeys.capturing is None
+
+
+def test_the_tray_shows_recording_while_an_older_transcription_finishes(tmp_path: Path) -> None:
+    app, platform, dictum = make(tmp_path)
+    dictum.set_key("stub", "k")
+    dictum.set_default_model("stub/good")
+    dictum.set_shortcuts("alt_r", None)
+    app.start_recording()
+    app.stop_recording()  # a transcription is now running
+    app.start_recording()  # and a new recording begins
+    wait_for(lambda: app._pending == 0)
+    assert platform.tray.states[-1] == "recording"
+    app.stop_recording()
+    wait_for(lambda: platform.tray.states[-1] == "idle")
+
+
+def test_clearing_the_shortcuts_mid_recording_finishes_the_clip(tmp_path: Path) -> None:
+    app, platform, dictum = make(tmp_path)
+    dictum.set_key("stub", "k")
+    dictum.set_default_model("stub/good")
+    dictum.set_shortcuts(None, "cmd+alt_r")
+    engine = app.engine
+    assert engine is not None
+    engine.press("cmd")
+    engine.press("alt_r")  # hands-free recording
+    assert app.recorder.recording  # type: ignore[attr-defined]
+    dictum.set_shortcuts(None, None)  # the engine goes: the clip is finished, not abandoned
+    assert not app.recorder.recording  # type: ignore[attr-defined]
+    wait_for(lambda: platform.actions.pasted == 1)
+
+
+def test_a_stopped_clip_is_in_history_before_its_transcription_runs(tmp_path: Path) -> None:
+    app, platform, dictum = make(tmp_path)
+    dictum.set_shortcuts("alt_r", None)  # no model set: transcription cannot even start
+    app.start_recording()
+    app.stop_recording()
+    wait_for(lambda: len(dictum.store.list_recordings()) == 1)
+    (recording,) = dictum.store.list_recordings()
+    wait_for(lambda: len(dictum.store.get_recording(recording.id).transcriptions) == 1)  # type: ignore[union-attr]
+    assert "No default model" in (platform.actions.notices[-1][1])
+
+
+def test_quitting_right_after_a_recording_still_saves_it(tmp_path: Path) -> None:
+    app, platform, dictum = make(tmp_path)
+    dictum.set_shortcuts("alt_r", None)
+    app.start_recording()
+    app.stop_recording()
+    app.quit()
+    assert platform.quit_called
+    assert len(dictum.store.list_recordings()) == 1

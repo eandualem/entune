@@ -116,3 +116,54 @@ def test_only_fn_flag_events_are_swallowed_and_only_when_owned() -> None:
     assert swallow_fn(key_up, GLOBE_VK, owns_fn=True)
     assert not swallow_fn(key_down, GLOBE_VK, owns_fn=False)
     assert not swallow_fn(key_down, 9, owns_fn=True)  # v passes through
+
+
+def test_the_hold_key_that_stops_a_hands_free_recording_does_not_restart_it() -> None:
+    events: list[str] = []
+    engine = ShortcutEngine(
+        shortcuts.Shortcuts(hold=("fn",), toggle=("cmd", "fn")),
+        lambda: events.append("start"),
+        lambda: events.append("stop"),
+    )
+    engine.press("cmd")
+    engine.press("fn")  # chord: hands-free
+    engine.release("fn")
+    engine.release("cmd")
+    assert events == ["start"]
+    engine.press("fn")  # the hold key stops it
+    engine.press("cmd")  # completing the chord must not start again
+    engine.release("fn")
+    engine.release("cmd")
+    assert events == ["start", "stop"] and not engine.recording
+
+
+def test_autorepeat_of_the_hold_key_that_stopped_hands_free_starts_nothing() -> None:
+    engine, events = make("space", "cmd+d")
+    engine.press("cmd")
+    engine.press("d")  # hands-free
+    engine.release("d")
+    engine.release("cmd")
+    engine.press("space")  # stops it
+    engine.press("space")  # the OS repeating the held key
+    engine.press("space")
+    assert events == ["start", "stop"] and not engine.recording
+    engine.release("space")
+    assert events == ["start", "stop"]
+
+
+def test_injected_keys_such_as_our_own_paste_never_reach_the_engine() -> None:
+    pytest.importorskip("Quartz", reason="macOS only")
+    from pynput.keyboard import Key
+
+    from dictum.desktop.macos.hotkeys import HotkeyListener
+
+    listener = HotkeyListener()
+    engine, events = make("alt_r", "cmd+alt_r")
+    listener._engine = engine
+    listener._on_press(Key.alt_r)  # the user: hold to talk
+    assert events == ["start"] and engine.recording
+    listener._on_press(Key.cmd, injected=True)  # Dictum pasting the previous transcript
+    listener._on_release(Key.cmd, injected=True)
+    assert events == ["start"] and engine.recording  # not turned hands-free
+    listener._on_release(Key.alt_r)
+    assert events == ["start", "stop"] and not engine.recording

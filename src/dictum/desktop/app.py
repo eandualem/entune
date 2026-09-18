@@ -5,6 +5,7 @@ Written against `platform.Platform` only; no operating-system code lives here.
 
 from __future__ import annotations
 
+import queue
 import socket
 import threading
 import time
@@ -15,9 +16,11 @@ from dictum.desktop.platform import Microphone, Platform
 from dictum.providers.base import Upload
 from dictum.recorder import Capture, Recorder, Sink
 from dictum.service import Dictum, NoDefaultModel, UnknownModel
+from dictum.store import Recording
 
 MIN_CLIP_SECONDS = 0.25  # a tap on the hold key is not a dictation
 KEYS_UP_WAIT_SECONDS = 1.0  # let chord keys come up before pasting so Cmd+V is just Cmd+V
+QUIT_FLUSH_SECONDS = 3.0  # bound on waiting for a just-stopped clip to reach disk at quit
 PERMISSION_POLL_SECONDS = 5.0  # permissions are granted in System Settings; notice when they are
 SERVER_WAIT_SECONDS = 10.0  # the page is served from a thread that may still be starting
 
@@ -39,12 +42,19 @@ class DictumApp:
         self.engine: ShortcutEngine | None = None
         self._listening = False
         self._upload: Upload | None = None  # fast mode's stream for the current recording
+        self._recording = False
+        self._pending = 0  # transcriptions still running; the tray state is derived
+        self._captures: queue.Queue[tuple[Capture, Upload | None]] = queue.Queue()
+        self._jobs: queue.Queue[tuple[Recording, float, Upload | None]] = queue.Queue()
+        threading.Thread(target=self._persist, daemon=True, name="dictum-persist").start()
+        threading.Thread(target=self._work, daemon=True, name="dictum-transcribe").start()
         self._server_answers = server_answers or self._probe_server
 
         platform.tray.set_actions(self.open_window, self.open_settings, self.quit)
         platform.every(PERMISSION_POLL_SECONDS, self._recheck_permission)
         dictum.on_change(lambda: platform.run_on_ui_thread(self.apply_shortcut))
         dictum.on_capture(lambda: platform.run_on_ui_thread(self.begin_capture))
+        dictum.on_cancel_capture(lambda: platform.run_on_ui_thread(platform.hotkeys.cancel_capture))
         dictum.on_show_window(lambda: platform.run_on_ui_thread(self.open_window))
         dictum.report_status(desktop=True, shell=type(platform).__name__)
         self.apply_shortcut()
@@ -64,6 +74,13 @@ class DictumApp:
 
     def quit(self) -> None:
         self.platform.hotkeys.stop()
+        if self._recording:
+            self.stop_recording()
+        # A clip stopped a moment ago may still be on its way to disk; it takes
+        # milliseconds, and nothing recorded is lost to a quit. Transcription can wait.
+        deadline = time.monotonic() + QUIT_FLUSH_SECONDS
+        while self._captures.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.02)
         self.platform.quit()
 
     def _show_window_when_served(self, started: float) -> None:
@@ -86,6 +103,11 @@ class DictumApp:
     def apply_shortcut(self) -> None:
         shortcuts = self.dictum.shortcuts()
         permissions = self.platform.permissions
+        unchanged = self.engine is not None and self.engine.shortcuts == shortcuts
+        if self._recording and not unchanged:
+            # The engine that started this recording is about to go (shortcuts cleared or
+            # rebound mid-dictation): finish the clip now rather than leave the mic open.
+            self.stop_recording()
         if not shortcuts:
             self.engine = None
             self.platform.hotkeys.stop()
@@ -107,6 +129,10 @@ class DictumApp:
             self._listening = False
             self._set_status(f"Allow Accessibility in {permissions.settings_hint}")
             permissions.request_post()
+            return
+        if self._listening and self.engine is not None and self.engine.shortcuts == shortcuts:
+            # Any settings or dictionary change lands here, including an agent's
+            # corrections mid-dictation; a new engine would forget that a key is held.
             return
         self.engine = ShortcutEngine(shortcuts, self.start_recording, self.stop_recording)
         self.platform.hotkeys.start(self.engine)
@@ -156,9 +182,13 @@ class DictumApp:
             self._later(lambda: self.platform.actions.notify("Dictum: microphone", message))
             if self.engine is not None:
                 self.engine.recording = False
+            if self._upload is not None:  # begun before the microphone refused
+                self._upload.abort()
+                self._upload = None
             return
         self.dictum.report_status(lastRecordingStarted=time.time())
-        self._later(lambda: self.platform.tray.set_state("recording"))
+        self._recording = True
+        self._later(self._refresh_state)
 
     def _begin_upload(self, sample_rate: int) -> Sink | None:
         self._upload = self.dictum.begin_upload(sample_rate)
@@ -167,31 +197,74 @@ class DictumApp:
     def stop_recording(self) -> None:
         capture = self.recorder.stop()
         upload, self._upload = self._upload, None
+        self._recording = False
         if capture.seconds < MIN_CLIP_SECONDS:
             if upload is not None:
                 upload.abort()
-            self._later(lambda: self.platform.tray.set_state("idle"))
+            self._later(self._refresh_state)
             return
-        self._later(lambda: self.platform.tray.set_state("busy"))
-        threading.Thread(
-            target=self._transcribe_and_deliver, args=(capture, upload), daemon=True
-        ).start()
+        self._pending += 1
+        self._later(self._refresh_state)
+        self._captures.put((capture, upload))
 
-    def _transcribe_and_deliver(self, capture: Capture, upload: Upload | None = None) -> None:
+    def _persist(self) -> None:
+        """Every stopped clip is written to disk and history at once, in order, so a quit
+        during a slow provider call loses nothing; only the transcription waits."""
+        while True:
+            capture, upload = self._captures.get()
+            try:
+                recording = self.dictum.store_recording(capture.wav(), "audio/wav")
+            except Exception as exc:
+                self._notify_later("Dictum: could not save", f"{type(exc).__name__}: {exc}")
+                if upload is not None:
+                    upload.abort()
+                self._pending -= 1
+                self._later(self._refresh_state)
+                continue
+            finally:
+                self._captures.task_done()
+            self._jobs.put((recording, capture.seconds, upload))
+
+    def _notify_later(self, title: str, message: str) -> None:
+        self._later(lambda: self.platform.actions.notify(title, message))
+
+    def _work(self) -> None:
+        """One worker, so two dictations in a row are transcribed and pasted in the order
+        they were spoken, whichever provider answers first."""
+        while True:
+            recording, seconds, upload = self._jobs.get()
+            self._transcribe_and_deliver(recording, seconds, upload)
+
+    def _refresh_state(self) -> None:
+        """The tray and the pill follow what is really going on: a recording in progress
+        beats a transcription still running, which beats idle."""
+        if self._recording:
+            self.platform.tray.set_state("recording")
+        elif self._pending > 0:
+            self.platform.tray.set_state("busy")
+        else:
+            self.platform.tray.set_state("idle")
+
+    def _transcribe_and_deliver(
+        self, recording: Recording, seconds: float, upload: Upload | None = None
+    ) -> None:
         try:
-            self._transcribe_and_deliver_inner(capture, upload)
+            self._transcribe_and_deliver_inner(recording, seconds, upload)
         except Exception as exc:  # whatever happens, the icon must not stay busy
             message = f"{type(exc).__name__}: {exc}"
             self._later(
                 lambda: self.platform.actions.notify("Dictum: transcription failed", message)
             )
         finally:
-            self._later(lambda: self.platform.tray.set_state("idle"))
+            self._pending -= 1
+            self._later(self._refresh_state)
 
-    def _transcribe_and_deliver_inner(self, capture: Capture, upload: Upload | None) -> None:
+    def _transcribe_and_deliver_inner(
+        self, recording: Recording, seconds: float, upload: Upload | None
+    ) -> None:
         started = time.monotonic()
         try:
-            recording = self.dictum.record_and_transcribe(capture.wav(), "audio/wav", None, upload)
+            recording = self.dictum.transcribe_recording(recording, None, upload)
         except (NoDefaultModel, UnknownModel) as exc:
             message = str(exc)
             self._later(lambda: self.platform.actions.notify("Dictum", message))
@@ -200,7 +273,7 @@ class DictumApp:
         # Measured so fast mode's worth can be judged from the log (issue #20).
         how = "fast mode" if attempt.fast else "plain"
         print(
-            f"transcribed {capture.seconds:.0f} s of audio in {time.monotonic() - started:.1f} s"
+            f"transcribed {seconds:.0f} s of audio in {time.monotonic() - started:.1f} s"
             f" ({how}, {attempt.status})",
             flush=True,
         )
