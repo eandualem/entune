@@ -186,7 +186,6 @@ def test_dictionary_round_trip_terms_reach_the_provider_and_replacements_apply(
     empty: dict[str, object] = {"terms": [], "replacements": {}}
     assert client.get("/api/dictionary").json() == {
         "pinned": empty,
-        "agents": empty,
         "learned": {},
     }
     bad = client.put("/api/dictionary", content='{"pinned": {"terms": "x"}}')
@@ -208,14 +207,13 @@ def test_dictionary_round_trip_terms_reach_the_provider_and_replacements_apply(
     assert attempt["text"] == "hello there, I use Claude Code"
 
 
-def test_a_flat_learned_section_moves_under_the_default_model_once(
+def test_a_single_learned_list_moves_under_the_default_model_once(
     client: TestClient, tmp_path: Path
 ) -> None:
     legacy = '{"pinned": {"terms": ["Dictum"]}, "learned": {"terms": ["Soniox"]}}'
     (tmp_path / "dictionary.json").write_text(legacy, encoding="utf-8")
-    assert client.get("/api/dictionary").json()["learned"] == {
-        "*": {"terms": ["Soniox"], "replacements": {}}
-    }  # no default model yet: kept as it is, applied to nothing
+    unusable = client.get("/api/dictionary")
+    assert unusable.status_code == 500 and "set a default model" in unusable.text
     client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
     moved = client.get("/api/dictionary").json()
     assert moved["learned"] == {"stub/good": {"terms": ["Soniox"], "replacements": {}}}
@@ -311,13 +309,15 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
         },
     )
     assert res.status_code == 200
-    # What the user already pinned is not added again; the rest lands in the agents section.
+    # What the user already pinned is not added again; the rest is pinned.
     assert res.json() == {
         "added": {"terms": ["Soniox"], "replacements": {"whisper flow": "Wispr Flow"}}
     }
     stored = client.get("/api/dictionary").json()
-    assert stored["agents"] == {"terms": ["Soniox"], "replacements": {"whisper flow": "Wispr Flow"}}
-    assert stored["pinned"]["replacements"] == {"cloud code": "Claude Code"}
+    assert stored["pinned"] == {
+        "terms": ["Soniox"],
+        "replacements": {"cloud code": "Claude Code", "whisper flow": "Wispr Flow"},
+    }
     again = client.post("/api/dictionary/corrections", json={"terms": ["soniox"]})
     assert again.json() == {"added": {"terms": [], "replacements": {}}}
 
@@ -482,14 +482,15 @@ def test_a_stale_dictionary_save_is_refused_and_a_fresh_one_accepted(client: Tes
         headers={"if-match": version},
     )
     assert stale.status_code == 409 and "changed" in stale.text
-    assert "Soniox" in client.get("/api/dictionary").json()["agents"]["terms"]
+    assert "Soniox" in client.get("/api/dictionary").json()["pinned"]["terms"]
     fresh_version = client.get("/api/dictionary").headers["etag"]
     assert fresh_version != version
     ok = client.put(
         "/api/dictionary",
         content='{"pinned": {"terms": ["Dictum"]}, "agents": {"terms": ["Soniox"]}}',
         headers={"if-match": fresh_version},
-    )
+    )  # an agents section, from the earlier form, is folded into pinned
     assert ok.status_code == 200 and ok.headers["etag"] != fresh_version
+    assert ok.json()["pinned"]["terms"] == ["Dictum", "Soniox"] and "agents" not in ok.json()
     # Without a version (curl, or a page repairing a broken file) the write goes through.
     assert client.put("/api/dictionary", content='{"pinned": {"terms": []}}').status_code == 200
