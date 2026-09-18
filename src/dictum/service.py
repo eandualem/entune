@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import statistics
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -13,7 +15,7 @@ from dictum.dictionary import Dictionary, Entries, Proposal
 from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, resolve_model
 from dictum.providers.base import Streams, Upload
 from dictum.shortcuts import Shortcuts
-from dictum.store import Recording, Store
+from dictum.store import Recording, Store, Transcription
 
 DEFAULT_MODEL_KEY = "default_model"
 DICTIONARY_MODEL_KEY = "dictionary_model"
@@ -41,12 +43,25 @@ class ModelOption:
 
 
 @dataclass(frozen=True)
+class ModelMetrics:
+    provider: str
+    model: str
+    fast: bool
+    runs: int
+    ok: int
+    audio_seconds: float
+    median_wait: float | None
+    speed: float | None  # seconds of audio per second waited
+
+
+@dataclass(frozen=True)
 class ProviderStatus:
     id: str
     name: str
     key_hint: str | None
     default_model: str | None = None  # language-model providers only
     models: tuple[llm.ModelChoice, ...] = ()  # language-model providers only
+    streams: bool = False  # can take the audio while it is recorded (fast mode)
 
 
 @dataclass(frozen=True)
@@ -116,8 +131,41 @@ class Dictum:
         for provider in self.providers:
             key = self.store.get_setting(key_setting(provider.id))
             hint = None if key is None else mask_key(key)
-            statuses.append(ProviderStatus(provider.id, provider.name, hint))
+            statuses.append(
+                ProviderStatus(
+                    provider.id, provider.name, hint, streams=isinstance(provider, Streams)
+                )
+            )
         return statuses
+
+    def metrics(self) -> list[ModelMetrics]:
+        """How each model has performed in real use, fast mode apart, newest data included.
+
+        Speed is audio seconds per second of waiting over the successful runs; the
+        median wait is what a dictation felt like. The numbers a README can quote.
+        """
+        groups: dict[tuple[str, str, bool], list[Transcription]] = {}
+        for attempt in self.store.timed_transcriptions():
+            groups.setdefault((attempt.provider, attempt.model, attempt.fast), []).append(attempt)
+        table = []
+        for (provider, model, fast), attempts in sorted(groups.items()):
+            ok = [a for a in attempts if a.status == "ok" and a.elapsed_seconds is not None]
+            waits = sorted(a.elapsed_seconds for a in ok if a.elapsed_seconds is not None)
+            audio = sum(a.audio_seconds or 0.0 for a in ok)
+            waited = sum(waits)
+            table.append(
+                ModelMetrics(
+                    provider=provider,
+                    model=model,
+                    fast=fast,
+                    runs=len(attempts),
+                    ok=len(ok),
+                    audio_seconds=audio,
+                    median_wait=statistics.median(waits) if waits else None,
+                    speed=audio / waited if waited else None,
+                )
+            )
+        return table
 
     def default_model(self) -> str | None:
         return self.store.get_setting(DEFAULT_MODEL_KEY)
@@ -344,6 +392,7 @@ class Dictum:
         """
         api_key = self.store.get_setting(key_setting(ref.provider.id))
         result: Transcript | Failure
+        timing = Timing(None, None, False)
         if api_key is None:
             result = Failure(f"No API key set for {ref.provider.name}")
         else:
@@ -356,7 +405,11 @@ class Dictum:
                     mime = sniff_mime(data) or mime
                 effective = self.dictionary().effective
                 clip = Clip(data, mime, upload_url=_finish(upload, ref, Clip(data, mime)))
+                started = time.monotonic()
                 result = ref.provider.transcribe(clip, ref.model, api_key, terms=effective.terms)
+                timing = Timing(
+                    clip.seconds, time.monotonic() - started, clip.upload_url is not None
+                )
             except Exception as exc:
                 result = Failure(f"{type(exc).__name__}: {exc}")
         raw_text = result.text if isinstance(result, Transcript) else None
@@ -374,6 +427,9 @@ class Dictum:
             text=text,
             error=result.error if isinstance(result, Failure) else None,
             raw_text=raw_text,
+            audio_seconds=timing.audio_seconds,
+            elapsed_seconds=timing.elapsed_seconds,
+            fast=timing.fast,
         )
         updated = self.store.get_recording(recording.id)
         assert updated is not None
@@ -385,6 +441,13 @@ class Dictum:
         model = self.choose_model(ref)
         recording = self.store.create_recording(data, label)
         return self.transcribe(recording, model, upload)
+
+
+@dataclass(frozen=True)
+class Timing:
+    audio_seconds: float | None
+    elapsed_seconds: float | None
+    fast: bool
 
 
 def _finish(upload: Upload | None, ref: ModelRef, clip: Clip) -> str | None:
@@ -401,6 +464,7 @@ def _finish(upload: Upload | None, ref: ModelRef, clip: Clip) -> str | None:
 __all__ = [
     "CaptureStatus",
     "Dictum",
+    "ModelMetrics",
     "ModelOption",
     "NoDefaultModel",
     "ProviderStatus",

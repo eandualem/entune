@@ -191,6 +191,13 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; 
   color: var(--text-muted); margin: 0 0 var(--s-2); padding: 0 var(--s-1);
 }
 
+/* Performance table */
+.metrics { margin-bottom: var(--s-5); }
+.metrics .group { margin-bottom: 0; overflow-x: auto; }
+.metrics table { width: 100%; border-collapse: collapse; font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
+.metrics th, .metrics td { text-align: left; padding: var(--s-2) var(--s-3); border-top: 1px solid var(--border); white-space: nowrap; }
+.metrics th { border-top: 0; color: var(--text-muted); font-weight: 600; }
+
 /* Recording card */
 .card {
   background: var(--surface); border-radius: var(--r-md); box-shadow: var(--shadow);
