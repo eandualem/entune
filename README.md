@@ -85,6 +85,13 @@ lands, and never takes focus. On stop, the clip goes to your default model,
 the transcript is copied to the clipboard and pasted into whatever had focus. A failure shows as a
 notification with the provider's message; History has the retry.
 
+**Fast mode** (Settings, off by default) uploads the audio while you record,
+so a dictation over two minutes is transcribed as soon as you stop instead of
+after the whole file has gone up. AssemblyAI only, since only its long-form
+endpoint takes an upload; shorter clips use the sync endpoint as before and
+are unchanged. The log line `transcribed N s of audio in X s` says what it
+saved you.
+
 When `fn` is one of your shortcuts, Dictum owns that key while it runs: a
 tap no longer opens Emoji & Symbols or Apple's dictation, and fn does not
 reach other apps as a modifier. Pick another key if you need fn elsewhere.

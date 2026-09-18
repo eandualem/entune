@@ -207,3 +207,45 @@ def test_terms_are_passed_in_each_providers_own_shape(clip: Clip) -> None:
     Soniox(mock_client(handler)).transcribe(clip, "stt-async-v5", "k", terms)
     create = next(r for r in seen if r.url.path == "/v1/transcriptions" and r.method == "POST")
     assert json.loads(create.content)["context"] == {"terms": ["Dictum", "Wispr Flow"]}
+
+
+def test_assemblyai_streaming_upload_is_used_only_past_the_sync_limit() -> None:
+    from dictum.providers.assemblyai import StreamingUpload
+
+    uploads: list[bytes] = []
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/v2/upload":
+            uploads.append(request.read())
+            return httpx.Response(200, json={"upload_url": "https://cdn.assemblyai.com/upload/s"})
+        if request.url.path == "/v2/transcript":
+            assert json.loads(request.content)["audio_url"] == "https://cdn.assemblyai.com/upload/s"
+            return httpx.Response(200, json={"id": "t2", "status": "queued"})
+        if request.url.path == "/v2/transcript/t2":
+            return httpx.Response(200, json={"id": "t2", "status": "completed", "text": "streamed"})
+        return httpx.Response(200)
+
+    client = mock_client(handler)
+    provider = AssemblyAI(client, sleep=lambda _: None)
+
+    upload = StreamingUpload(client, "k", 16_000)
+    upload.feed(b"\x01\x02")
+    upload.feed(b"\x03")
+    assert upload.finish(150.0) == "https://cdn.assemblyai.com/upload/s"
+    assert uploads[0][:4] == b"RIFF" and uploads[0][40:44] == b"\xff\xff\xff\xff"
+    assert uploads[0].endswith(b"\x01\x02\x03")
+
+    # A clip with the upload already there skips the upload and goes straight to the job.
+    long_clip = Clip(wav_bytes(b"\x00\x00" * 16_000 * 150), "audio/wav", upload_url=upload.url)
+    seen.clear()
+    assert provider.transcribe(long_clip, "universal-3-5-pro", "k") == Transcript("streamed")
+    assert "/v2/upload" not in seen
+
+    # Short clips gain nothing from it: the stream is dropped, the sync endpoint is used.
+    short = StreamingUpload(client, "k", 16_000)
+    short.feed(b"\x00")
+    assert short.finish(5.0) is None
+    short._thread.join(2.0)
+    assert len(uploads) == 1
