@@ -1,8 +1,10 @@
-"""A small pill in the bottom-left corner of the screen the pointer is on, shown while
-Dictum records and while it transcribes. The Dictum window is normally closed and the
-menu bar may be hidden, so this is the one place that says a recording is running.
+"""A small pill shown while Dictum records and while it transcribes. The Dictum window
+is normally closed and the menu bar may be hidden, so this is the one place that says a
+recording is running.
 
-A non-activating panel that ignores the mouse: it never takes focus from the app the
+It starts in the bottom-left corner of the screen the pointer is on, and can be dragged
+anywhere; the place it is dropped is kept in the app's defaults and used from then on,
+across restarts. A non-activating panel: dragging it never takes focus from the app the
 transcript is going to be pasted into. Main thread only, like all of AppKit.
 """
 
@@ -17,6 +19,7 @@ MARGIN = 16.0
 DOT = 10.0
 PAD = 14.0
 GAP = 8.0
+ORIGIN_KEY = "indicatorOrigin"  # NSUserDefaults: [x, y] of the bottom-left corner
 
 
 class Indicator:
@@ -24,6 +27,7 @@ class Indicator:
         self._panel: Any = None
         self._label: Any = None
         self._dot: Any = None
+        self._placed: tuple[float, float] | None = None  # where show() put it last
 
     def show(self, text: str) -> None:
         if self._panel is None:
@@ -33,13 +37,32 @@ class Indicator:
         width = PAD + DOT + GAP + self._label.frame().size.width + PAD
         text_height = self._label.frame().size.height
         self._label.setFrameOrigin_((PAD + DOT + GAP, (HEIGHT - text_height) / 2))
-        origin = self._corner()
+        origin = self._saved_origin() or self._corner()
         self._panel.setFrame_display_(((origin[0], origin[1]), (width, HEIGHT)), True)
+        self._placed = origin
         self._panel.orderFrontRegardless()
 
     def hide(self) -> None:
-        if self._panel is not None:
-            self._panel.orderOut_(None)
+        if self._panel is None:
+            return
+        # The only way it moves between show and hide is the user dragging it: keep that.
+        origin = self._panel.frame().origin
+        if (origin.x, origin.y) != self._placed:
+            AppKit.NSUserDefaults.standardUserDefaults().setObject_forKey_(
+                [float(origin.x), float(origin.y)], ORIGIN_KEY
+            )
+        self._panel.orderOut_(None)
+
+    def _saved_origin(self) -> tuple[float, float] | None:
+        """Where the user dropped it last, if that point is still on some screen."""
+        saved = AppKit.NSUserDefaults.standardUserDefaults().arrayForKey_(ORIGIN_KEY)
+        if saved is None or len(saved) != 2:
+            return None
+        x, y = float(saved[0]), float(saved[1])
+        for screen in AppKit.NSScreen.screens():
+            if AppKit.NSPointInRect((x + 1, y + 1), screen.visibleFrame()):
+                return x, y
+        return None
 
     def _build(self) -> None:
         mask = AppKit.NSWindowStyleMaskBorderless | AppKit.NSWindowStyleMaskNonactivatingPanel
@@ -49,7 +72,7 @@ class Indicator:
         panel.setLevel_(AppKit.NSStatusWindowLevel)
         panel.setOpaque_(False)
         panel.setBackgroundColor_(AppKit.NSColor.clearColor())
-        panel.setIgnoresMouseEvents_(True)
+        panel.setMovableByWindowBackground_(True)  # drag it anywhere; the drop point is kept
         panel.setHidesOnDeactivate_(False)
         panel.setCollectionBehavior_(
             AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
