@@ -17,8 +17,9 @@ curl -s -X POST localhost:4187/api/dictionary/corrections \
   -d '{"replacements": {"cloud code": "Claude Code"}, "terms": ["Dictum"], "source": "my-agent"}'
 ```
 
-Entries land in the dictionary's `agents` section. Anything already pinned,
-or already sent, is not added again; the reply lists what was new:
+Entries are pinned: they apply to every speech model and a build never
+changes them. Anything already pinned is not added again; the reply lists
+what was new:
 
 ```json
 {"added": {"terms": ["Dictum"], "replacements": {"cloud code": "Claude Code"}}}

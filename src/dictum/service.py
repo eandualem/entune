@@ -345,20 +345,10 @@ class Dictum:
     # Dictionary: read from disk each time so a hand edit of the file counts too.
 
     def dictionary(self) -> Dictionary:
-        loaded = dictionary_file.load(self.store.data_dir)
-        unscoped = loaded.learned.get(dictionary_file.UNSCOPED)
-        default = self.default_model()
-        if unscoped is None or default is None:
-            return loaded
-        # A file from before learned entries were kept per model: that section was built
-        # from every model's history, so it goes under the default model, once; the next
-        # build for that model replaces it with what its own transcripts teach.
-        learned = {m: e for m, e in loaded.learned.items() if m != dictionary_file.UNSCOPED}
-        learned.setdefault(default, unscoped)
-        migrated = Dictionary(loaded.pinned, loaded.agents, learned)
+        # A file from before learned lists were kept per model goes under the default
+        # model (load rewrites it once); the next build for that model replaces it.
         with self._dictionary_lock:
-            dictionary_file.save(self.store.data_dir, migrated)
-        return migrated
+            return dictionary_file.load(self.store.data_dir, self.default_model())
 
     def dictionary_text(self) -> str:
         return dictionary_file.dumps(self.dictionary())
@@ -385,7 +375,7 @@ class Dictum:
         return parsed
 
     def add_agent_corrections(self, data: object) -> Entries:
-        """Merge corrections an agent sent (after confirming with the user) into the agents section.
+        """Pin corrections an agent sent after confirming them with the user.
 
         `data` is the request body: terms and replacements, plus an optional `source`.
         Returns what was actually new. Raises ValueError with the reason on bad input.

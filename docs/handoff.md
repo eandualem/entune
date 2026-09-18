@@ -7,14 +7,27 @@ is what the code and the issues say.
 ## 2026-09-18, late evening: dictionaries per speech model (issue #30)
 
 **What changed.** The `learned` section of `dictionary.json` is now keyed
-by speech model (`provider/model`); pinned and agents entries stay shared
-by every model. Build and Refine read only the default model's transcripts
-from history, and propose a list for that model; the language model is
-told the pinned and agents entries are approved, shared and off limits, and
-to read them as evidence of who the user is. The Dictionary tab shows,
-builds and edits the default model's list ("Learned for …"). A file in the
-old flat form is read under the key `*` and moved under the default model
-the first time the app reads it with one set.
+by speech model (`provider/model`); pinned entries are shared by every
+model, and there is no other list for all models: "All model means pin"
+(Elias). Corrections an agent sends are pinned directly; the `agents`
+section is gone, and a file that has one is folded into pinned on first
+read. Build and Refine read only the default model's transcripts from
+history, and propose a list for that model; the language model is told the
+pinned entries are approved, shared and off limits, and to read them as
+evidence of who the user is. The Dictionary tab shows, builds and edits the
+default model's list ("Learned for …"). A file whose learned section was
+one list moves under the default model the first time the app reads it with
+one set; without one, reading it is a visible error saying to set one.
+Elias's existing list was built with AssemblyAI, which is his default, so
+it lands under `assemblyai/universal-3-5-pro`.
+
+**Rule since this evening.** The installed Dictum.app is a frozen bundle:
+after every merge into `develop`, rebuild it and install it
+(`uv run --group build python packaging/build_app.py`, then `uv run dictum
+install-app --from dist/Dictum.app`) so Elias can quit the tray app, reopen
+it and test the change. Until the app is public there is no reviewer on
+pull requests: review the diff yourself, merge into `develop`, and the ultra
+review runs on the release pull request from `develop` to `main`.
 
 **Elias's decisions, in his words.** "The ones that are pinned by me …
 should stay common across different models. But specific model learned by
@@ -27,9 +40,10 @@ character of the user". Derived by dictum: agent corrections are treated
 like pinned (shared), since the user confirmed them; he did not say.
 
 **Verified (observations).** 122 tests, ruff and mypy pass. On a scratch
-data directory: a legacy file moved under the default model once it was
-set; the Dictionary tab rendered the model's list, and Pin moved an entry
-from it to pinned; no console errors. Not yet used on Elias's real data.
+data directory (before the agents section was folded): a legacy file moved
+under the default model once it was set; the Dictionary tab rendered the
+model's list, and Pin moved an entry from it to pinned; no console errors.
+The rebuilt app on Elias's real data is his to observe.
 
 **Next.** UI improvements (#77, his list to come); then the documentation
 pass, PyPI and Windows, as below.
