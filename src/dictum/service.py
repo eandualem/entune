@@ -100,7 +100,7 @@ class Dictum:
         self._llm_call = llm_call
         self._listeners: list[Callable[[], None]] = []
         self._capture_listeners: list[Callable[[], None]] = []
-        self._dictionary_lock = threading.Lock()
+        self._dictionary_lock = threading.RLock()  # dictionary() may save inside a write
         self._warm_lock = threading.Lock()
         self._cancel_listeners: list[Callable[[], None]] = []
         self._show_window_listeners: list[Callable[[], None]] = []
@@ -345,7 +345,20 @@ class Dictum:
     # Dictionary: read from disk each time so a hand edit of the file counts too.
 
     def dictionary(self) -> Dictionary:
-        return dictionary_file.load(self.store.data_dir)
+        loaded = dictionary_file.load(self.store.data_dir)
+        unscoped = loaded.learned.get(dictionary_file.UNSCOPED)
+        default = self.default_model()
+        if unscoped is None or default is None:
+            return loaded
+        # A file from before learned entries were kept per model: that section was built
+        # from every model's history, so it goes under the default model, once; the next
+        # build for that model replaces it with what its own transcripts teach.
+        learned = {m: e for m, e in loaded.learned.items() if m != dictionary_file.UNSCOPED}
+        learned.setdefault(default, unscoped)
+        migrated = Dictionary(loaded.pinned, loaded.agents, learned)
+        with self._dictionary_lock:
+            dictionary_file.save(self.store.data_dir, migrated)
+        return migrated
 
     def dictionary_text(self) -> str:
         return dictionary_file.dumps(self.dictionary())
@@ -393,7 +406,8 @@ class Dictum:
         return added
 
     def build_dictionary(self) -> Proposal:
-        """Ask the configured language model for a new learned section. Nothing is saved.
+        """Ask the configured language model for a new learned section for the default
+        speech model, from that model's transcripts only. Nothing is saved.
 
         Raises ValueError with the reason when unconfigured, or with the provider's or
         model's own words when the call or its reply fails.
@@ -405,14 +419,22 @@ class Dictum:
         api_key = self.store.get_setting(key_setting(provider))
         if api_key is None:
             raise ValueError(f"No API key set for {llm.LLM_PROVIDERS[provider][0]}.")
+        try:
+            ref = self.choose_model(None)
+        except NoDefaultModel:
+            raise ValueError(
+                "Pick a default model first: the dictionary is learned per speech model."
+            ) from None
         current = self.dictionary()
-        transcripts = self.store.recent_transcripts(llm.MAX_TRANSCRIPTS)
+        transcripts = self.store.recent_transcripts(ref.provider.id, ref.model, llm.MAX_TRANSCRIPTS)
         if not transcripts:
-            raise ValueError("Nothing to learn from yet: the history has no transcripts.")
+            raise ValueError(
+                f"Nothing to learn from yet: the history has no transcripts from {ref.label}."
+            )
         learned = llm.propose_learned(
-            provider, api_key, model, current, transcripts, call=self._llm_call
+            provider, api_key, model, current, transcripts, ref.id, call=self._llm_call
         )
-        return dictionary_file.propose(current, learned)
+        return dictionary_file.propose(current, learned, ref.id)
 
     # Shortcut capture: the page asks, the menu-bar app's global listener records the keys.
 
@@ -505,7 +527,7 @@ class Dictum:
                 mime = recording.mime
                 if not mime.startswith("audio/"):
                     mime = sniff_mime(data) or mime
-                effective = self.dictionary().effective
+                effective = self.dictionary().effective(ref.id)
                 started = time.monotonic()  # before the stream is finished: that wait counts
                 stream, upload = upload, None  # from here the stream is finished or aborted
                 clip = Clip(data, mime, upload_url=_finish(stream, ref, Clip(data, mime)))
@@ -521,7 +543,7 @@ class Dictum:
         text = None
         if raw_text is not None:
             try:
-                text = dictionary_file.apply(self.dictionary().effective, raw_text)
+                text = dictionary_file.apply(self.dictionary().effective(ref.id), raw_text)
             except Exception:  # a dictionary that fails, however, must not lose a transcript
                 text = raw_text
         self.store.add_transcription(

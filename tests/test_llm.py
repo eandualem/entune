@@ -6,14 +6,18 @@ from dictum import llm
 from dictum.dictionary import Dictionary, Entries
 
 
-def test_user_prompt_carries_both_sections_and_bounded_transcripts() -> None:
+def test_user_prompt_carries_the_shared_sections_and_one_models_learned_list() -> None:
     current = Dictionary(
-        pinned=Entries(("Dictum",)), agents=Entries(("Groq",)), learned=Entries(("Soniox",))
+        pinned=Entries(("Dictum",)),
+        agents=Entries(("Groq",)),
+        learned={"stub/good": Entries(("Soniox",)), "local/small.en": Entries(("Elsewhere",))},
     )
     long = "x" * (llm.MAX_TRANSCRIPT_CHARS - 10)
-    prompt = llm.build_user_prompt(current, [" first ", "", long, "never included"])
+    prompt = llm.build_user_prompt(current, [" first ", "", long, "never included"], "stub/good")
     assert '"terms": ["Dictum"]' in prompt and '"terms": ["Soniox"]' in prompt
     assert "Confirmed through the user's agents" in prompt and '"terms": ["Groq"]' in prompt
+    assert "Previously learned for stub/good" in prompt and "Elsewhere" not in prompt
+    assert "transcripts from stub/good" in prompt
     assert "- first" in prompt and "never included" not in prompt
     assert "(2)" in prompt
 
@@ -47,7 +51,7 @@ def test_propose_learned_calls_the_model_with_the_prompts() -> None:
         return '{"terms": ["AssemblyAI"], "replacements": {}}'
 
     learned = llm.propose_learned(
-        "anthropic", "k", "anthropic:claude-fable-5-1", Dictionary(), ["hello"], call=fake
+        "anthropic", "k", "anthropic:claude-fable-5-1", Dictionary(), ["hello"], "s/m", call=fake
     )
     assert learned == Entries(("AssemblyAI",), {})
     assert seen["provider"] == "anthropic" and seen["model"] == "anthropic:claude-fable-5-1"
@@ -60,7 +64,7 @@ def test_provider_failures_surface_verbatim() -> None:
 
     with pytest.raises(ValueError, match="RuntimeError: status_code: 401"):
         llm.propose_learned(
-            "openai", "k", "openai:gpt-5.6-terra", Dictionary(), ["x"], call=failing
+            "openai", "k", "openai:gpt-5.6-terra", Dictionary(), ["x"], "s/m", call=failing
         )
 
 
