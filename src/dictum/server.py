@@ -174,6 +174,9 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc))
         return _dictionary_response(app)
 
+    async def received_corrections(_: Request) -> Response:
+        return JSONResponse([asdict(c) for c in app.store.list_corrections()])
+
     async def agent_corrections(request: Request) -> Response:
         try:
             body = await request.json()
@@ -298,6 +301,7 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/dictionary", put_dictionary, methods=["PUT"]),
             Route("/api/dictionary/build", build_dictionary, methods=["POST"]),
             Route("/api/dictionary/corrections", agent_corrections, methods=["POST"]),
+            Route("/api/dictionary/corrections", received_corrections, methods=["GET"]),
             Route("/api/capture", start_capture, methods=["POST"]),
             Route("/api/capture", capture_status, methods=["GET"]),
             Route("/api/capture", cancel_capture, methods=["DELETE"]),

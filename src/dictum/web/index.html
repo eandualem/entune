@@ -3,193 +3,252 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="color-scheme" content="dark light" />
     <title>Dictum</title>
+    <link rel="stylesheet" href="/static/tokens.css" />
     <link rel="stylesheet" href="/static/style.css" />
     <script>
-      // Apply the saved appearance and text size before first paint so the page never flashes.
+      // Apply the saved appearance, text size and hints preference before first paint.
       try {
         const theme = localStorage.getItem("theme");
         if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
         const scale = localStorage.getItem("scale");
         if (scale === "small" || scale === "large" || scale === "larger") document.documentElement.dataset.scale = scale;
+        if (localStorage.getItem("hints") === "off") document.documentElement.dataset.hints = "off";
       } catch (e) {}
     </script>
   </head>
   <body>
     <header class="toolbar">
-      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>Dictum</div>
-
-      <div class="recorder">
-        <button class="btn-record" id="record" type="button" aria-pressed="false">
-          <span class="dot" aria-hidden="true"></span><span class="label">Record</span>
-        </button>
-        <span class="rec-timer" id="rec-timer" hidden>0:00</span>
-        <select class="select" id="model" aria-label="Default model" title="The model every recording uses; picking one here applies at once"></select>
-        <button type="button" class="btn-icon" id="metrics-toggle" title="Performance by model" aria-label="Performance by model" aria-expanded="false" aria-controls="metrics" hidden>
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 13.5h11M4 11V7M8 11V3.5M12 11V8.5"/></svg>
-        </button>
-        <span class="status" id="status"></span>
-      </div>
-      <div class="popover" id="metrics" hidden>
-        <div class="popover-head">Performance by model <span class="hint">from every transcription's timing</span></div>
-        <table>
-          <thead><tr><th>Model</th><th>Mode</th><th>Runs</th><th>Audio</th><th>Median wait</th><th>Speed</th></tr></thead>
-          <tbody id="metrics-rows"></tbody>
-        </table>
-      </div>
-
-      <div class="spacer"></div>
-
       <div class="segmented" role="tablist" aria-label="View">
         <button type="button" role="tab" id="tab-history" aria-selected="true" aria-controls="view-history">History</button>
         <button type="button" role="tab" id="tab-dictionary" aria-selected="false" aria-controls="view-dictionary">Dictionary</button>
         <button type="button" role="tab" id="tab-settings" aria-selected="false" aria-controls="view-settings">Settings</button>
       </div>
+      <div class="spacer"></div>
+      <span class="status" id="status" role="status"></span>
+      <div class="perf">
+        <div class="popover" id="metrics" hidden>
+          <div class="popover-head">Performance by model <span class="caption">from every transcription's timing</span></div>
+          <div class="perf-grid perf-head"><span>Model</span><span>Mode</span><span>Runs</span><span>Audio</span><span>Median wait</span><span>Speed</span></div>
+          <div id="metrics-rows"></div>
+          <div class="popover-foot hint">Median wait: from stop to text. Speed: seconds of audio transcribed per second waited; higher is faster. Fast mode uploads while you record.</div>
+        </div>
+        <button type="button" class="btn-icon" id="metrics-toggle" title="Performance by model" aria-label="Performance by model" aria-expanded="false" aria-controls="metrics" hidden>
+          <svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 13V8M8 13V3M13 13V9"/></svg>
+        </button>
+      </div>
+      <select class="select" id="model" aria-label="Default model" title="Default model: what the shortcut uses. Picking one applies at once."></select>
+      <label class="fast" id="fast-mode-wrap" title="Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop (AssemblyAI only)" hidden>
+        <svg class="i13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"/></svg>
+        <input type="checkbox" id="fast-mode" aria-label="Fast mode" />
+      </label>
+      <button class="record" id="record" type="button" aria-pressed="false" title="Record here, to test a model">
+        <span class="dot" aria-hidden="true"></span><span class="label">Record</span><span class="timer" id="rec-timer" hidden>0:00</span>
+      </button>
     </header>
 
     <main class="content">
       <section class="view" id="view-history" role="tabpanel" data-active>
-        <div class="page">
-          <h2 class="section-label" id="history-label">History</h2>
-          <div id="history"></div>
-          <div class="start" id="empty" hidden>
-            <h2>Get started</h2>
-            <p>Three steps, and every dictation lands here as text you can copy.</p>
-            <ol class="steps group" id="steps"></ol>
-          </div>
+        <div class="history" id="history"></div>
+        <div class="start" id="empty" hidden>
+          <h2>Get started</h2>
+          <p class="caption">Three steps, and every dictation lands here as text you can copy.</p>
+          <ol class="steps" id="steps"></ol>
         </div>
       </section>
 
       <section class="view" id="view-dictionary" role="tabpanel">
-        <div class="page">
-          <div class="dict-toolbar">
-            <button type="button" class="btn primary" id="build-dictionary">Build from history</button>
-            <span class="model-chip" id="dictionary-model-chip">no model set</span>
-            <span class="save-status" id="build-status" role="status"></span>
+        <div class="dict">
+          <div class="dict-bar">
+            <div class="segmented" role="tablist" aria-label="Show">
+              <button type="button" role="tab" id="filter-all" aria-selected="true">All</button>
+              <button type="button" role="tab" id="filter-pinned" aria-selected="false">Pinned</button>
+              <button type="button" role="tab" id="filter-learned" aria-selected="false">Learned</button>
+            </div>
+            <button type="button" class="btn ghost help-btn hint" id="help-toggle" aria-expanded="false" aria-controls="help-panel">
+              <svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.3"/><path d="M6.2 6.3a1.9 1.9 0 0 1 3.7.5c0 1.1-1.9 1.4-1.9 2.6M8 11.6v.1"/></svg>How the dictionary works
+            </button>
+            <span class="caption" id="term-budget"></span>
+            <div class="spacer"></div>
+            <span class="caption save-status" id="build-status" role="status"></span>
+            <button type="button" class="btn accent" id="build-dictionary">Build from history</button>
+            <button type="button" class="btn mono" id="json-toggle" title="Edit dictionary.json" aria-expanded="false" aria-controls="json-editor">{ }</button>
           </div>
-          <p class="help dict-note">Building sends the recent transcripts of the model you dictate with, and the current dictionary, to the language model you chose in Settings, with your key, only when you click. What it learns is kept for that speech model; entries you pin are shared by every model and never changed by it.</p>
 
-          <div class="group proposal" id="proposal" hidden>
+          <div class="json-editor" id="json-editor" hidden>
+            <textarea class="input code" id="dictionary" spellcheck="false" rows="12"></textarea>
+            <div class="row-actions">
+              <button type="button" class="btn accent" id="save-dictionary">Save JSON</button>
+              <span class="caption save-status" id="dictionary-status" role="status"></span>
+              <span class="caption hint">The file is <code>dictionary.json</code> in Dictum's data folder. Replacements are whole words, matched regardless of case; the longest phrase wins.</span>
+            </div>
+          </div>
+
+          <div class="help-panel" id="help-panel" hidden>
+            <div class="defs">
+              <b>Word</b><span>A name or term the speech model should expect: <i>Dictum</i>, <i>CLAUDE.md</i>. Sent to the model before it listens.</span>
+              <b>Replacement</b><span>What it heard → what you meant, fixed in every transcript afterwards: <i>cloud code → Claude Code</i>.</span>
+              <b>Pinned</b><span>Entered by you. Used with every model. Never changed by a machine.</span>
+              <b>Learned</b><span>Proposed from one model's own transcripts and accepted by you. Used only with that model.</span>
+            </div>
+            <div class="defs more" id="help-more" hidden>
+              <b>Refine</b><span>Sends this model's recent transcripts, with your pinned list as context, to the dictionary model set in Settings. You get a proposal, entries to add and to drop, and nothing is saved until you press Accept.</span>
+              <b>Agents</b><span>Agents you dictate to can post a confirmed correction to Dictum's local API. It arrives here as Pinned; remove it if they got it wrong.</span>
+              <b>Limits</b><span>Every provider caps how many words it takes; Parakeet takes none and uses replacements only. The count beside the filters shows what is in use.</span>
+            </div>
+            <button type="button" class="btn link" id="help-more-toggle">More detail</button>
+          </div>
+
+          <div class="proposal" id="proposal" hidden>
             <div class="proposal-head">
               <span class="proposal-title">Proposed by the model</span>
+              <span class="caption hint">Nothing is saved until you accept.</span>
               <span class="spacer"></span>
-              <button type="button" class="btn sm primary" id="accept-proposal">Accept</button>
-              <button type="button" class="btn sm" id="discard-proposal">Discard</button>
+              <button type="button" class="btn accent" id="accept-proposal">Accept</button>
+              <button type="button" class="btn ghost" id="discard-proposal">Discard</button>
             </div>
             <div class="proposal-body" id="proposal-body"></div>
           </div>
 
-          <h2 class="section-label">Pinned by you</h2>
-          <div class="group">
-            <div class="entries" id="pinned-entries"></div>
-            <div class="add-row">
-              <input class="input" id="add-term" type="text" placeholder="A term the provider should know, e.g. Dictum" spellcheck="false" />
-              <button type="button" class="btn" id="add-term-btn">Add term</button>
+          <div class="add-panel">
+            <div class="segmented" role="tablist" aria-label="Add">
+              <button type="button" role="tab" id="add-word-mode" aria-selected="true">Add a word</button>
+              <button type="button" role="tab" id="add-fix-mode" aria-selected="false">Fix a recurring mistake</button>
             </div>
-            <div class="add-row">
-              <input class="input" id="add-heard" type="text" placeholder="heard, e.g. whisper flow" spellcheck="false" />
+            <div class="add-row" id="add-word-row">
+              <input class="input" id="add-term" type="text" placeholder="A name, product or identifier the model should expect" spellcheck="false" />
+              <button type="button" class="btn fill" id="add-term-btn">Pin word</button>
+            </div>
+            <div class="add-row fix" id="add-fix-row" hidden>
+              <input class="input" id="add-heard" type="text" placeholder="What it heard" spellcheck="false" />
               <span class="arrow" aria-hidden="true">→</span>
-              <input class="input" id="add-meant" type="text" placeholder="meant, e.g. Wispr Flow" spellcheck="false" />
-              <button type="button" class="btn" id="add-replacement-btn">Add replacement</button>
+              <input class="input" id="add-meant" type="text" placeholder="What you meant" spellcheck="false" />
+              <button type="button" class="btn fill" id="add-replacement-btn">Pin replacement</button>
             </div>
           </div>
 
-          <h2 class="section-label">Learned for <span id="learned-model">no default model</span> <button type="button" class="btn sm inline" id="pin-all" hidden>Pin all</button></h2>
-          <p class="help" id="term-budget"></p>
-          <div class="group">
-            <div class="entries" id="learned-entries"></div>
+          <div class="dict-table">
+            <div class="entry-row head"><span>KIND</span><span>ENTRY</span><span>SOURCE</span><span class="actions"><button type="button" class="btn ghost sm" id="pin-all" title="Pin every learned entry: keep them for every model" hidden>Pin all</button></span></div>
+            <div id="dict-rows"></div>
           </div>
-
-          <details class="json-editor">
-            <summary>Edit as JSON</summary>
-            <textarea class="input dictionary" id="dictionary" spellcheck="false" rows="14"></textarea>
-            <div class="save-row">
-              <button type="button" class="btn" id="save-dictionary">Save JSON</button>
-              <span class="save-status" id="dictionary-status" role="status"></span>
-            </div>
-            <p class="help">The file is <code>dictionary.json</code> in Dictum's data folder. Replacements are whole words, matched regardless of case; the longest phrase wins.</p>
-          </details>
         </div>
       </section>
 
       <section class="view" id="view-settings" role="tabpanel">
-        <form class="page" id="settings-form">
-          <h2 class="section-label">Providers</h2>
-          <p class="help section-intro">A key for a cloud provider, or a local model downloaded once. Everything else on this page applies as soon as you change it.</p>
-          <div class="group" id="keys"></div>
+        <div class="settings">
+          <nav class="rail" aria-label="Settings">
+            <button type="button" id="sec-general" aria-selected="true">General</button>
+            <button type="button" id="sec-providers" aria-selected="false">Providers</button>
+            <button type="button" id="sec-local" aria-selected="false">Local models</button>
+            <button type="button" id="sec-agents" aria-selected="false">Agents</button>
+            <div class="spacer"></div>
+            <p class="hint rail-note">Everything applies as you change it. Keys wait for Save.</p>
+          </nav>
 
-          <h2 class="section-label">Dictation</h2>
-          <div class="group">
-            <div class="row top">
-              <div class="lbl"><label for="default-model">Default model</label><span class="hint">What every recording uses; the toolbar picker is the same setting. Applies as soon as you pick it.</span></div>
-              <div class="field"><select class="select" id="default-model"></select></div>
-            </div>
-            <div class="row top" id="fast-mode-row" hidden>
-              <div class="lbl"><label for="fast-mode">Fast mode</label><span class="hint">Uploads while you record, so a dictation over two minutes is transcribed as soon as you stop. AssemblyAI only; shorter clips are unchanged.</span></div>
-              <div class="field radios">
-                <label><input type="checkbox" id="fast-mode" /> Upload while recording</label>
-                <span class="save-status" id="fast-mode-status" role="status"></span>
-              </div>
-            </div>
-            <div class="row top">
-              <div class="lbl"><label for="shortcut-hold">Hold to talk</label><span class="hint">One key. Records while held, release to stop.</span></div>
-              <div class="field shortcut-field">
-                <input class="input key-input" id="shortcut-hold" type="text" readonly placeholder="Not set" />
-                <button type="button" class="btn capture" data-target="shortcut-hold">Record shortcut</button>
-                <button type="button" class="btn clear" data-target="shortcut-hold">Clear</button>
-              </div>
-            </div>
-            <div class="row top">
-              <div class="lbl"><label for="shortcut-toggle">Hands-free</label><span class="hint">A combination. Press to start; press again, or press the hold key, to stop.</span></div>
-              <div class="field">
-                <div class="shortcut-field">
-                  <input class="input key-input" id="shortcut-toggle" type="text" readonly placeholder="Not set" />
-                  <button type="button" class="btn capture" data-target="shortcut-toggle">Record shortcut</button>
-                  <button type="button" class="btn clear" data-target="shortcut-toggle">Clear</button>
+          <div class="settings-content">
+            <div class="section" id="settings-general" data-active>
+              <h2 class="sec-label">Shortcuts</h2>
+              <div class="scard">
+                <div class="srow">
+                  <div><div class="name">Hold-to-talk</div><div class="caption">One key. Records while held, release to stop.</div></div>
+                  <div class="field shortcut">
+                    <kbd id="shortcut-hold" data-empty="Not set"></kbd>
+                    <button type="button" class="btn capture" data-target="shortcut-hold">Set…</button>
+                    <button type="button" class="btn ghost clear" data-target="shortcut-hold">Clear</button>
+                  </div>
                 </div>
-                <p class="help">Click “Record shortcut”, press the key or combination, let go; it is saved. Both can be set, for example hold <kbd>fn</kbd> and <kbd>cmd+fn</kbd> hands-free.</p>
-                <p class="help" id="shortcut-status" role="status"></p>
+                <div class="srow">
+                  <div><div class="name">Hands-free</div><div class="caption">A combination. Press to start, again to stop.</div></div>
+                  <div class="field shortcut">
+                    <kbd id="shortcut-toggle" data-empty="Not set"></kbd>
+                    <button type="button" class="btn capture" data-target="shortcut-toggle">Set…</button>
+                    <button type="button" class="btn ghost clear" data-target="shortcut-toggle">Clear</button>
+                  </div>
+                </div>
+                <div class="srow note" id="shortcut-status-row" hidden><span></span><span class="caption" id="shortcut-status" role="status"></span></div>
               </div>
-            </div>
-          </div>
 
-          <h2 class="section-label">Dictionary model</h2>
-          <p class="help section-intro">Only used when you click Build on the Dictionary tab; never on a transcript.</p>
-          <div class="group" id="llm-keys"></div>
-          <div class="group">
-            <div class="row top">
-              <div class="lbl"><label for="dictionary-model">Model</label><span class="hint">Runs at high reasoning effort. Empty means the suggested model of the first provider with a key.</span></div>
-              <div class="field">
-                <input class="input key-input" id="dictionary-model" type="text" list="dictionary-models" placeholder="provider:model, e.g. anthropic:claude-fable-5-1" spellcheck="false" autocomplete="off" />
-                <datalist id="dictionary-models"></datalist>
-                <p class="help save-status" id="dictionary-model-status" role="status"></p>
+              <h2 class="sec-label">Appearance</h2>
+              <div class="scard">
+                <div class="srow">
+                  <div><div class="name">Theme</div><div class="caption">Follow the system, or fix one.</div></div>
+                  <div class="segmented" role="radiogroup" aria-label="Theme">
+                    <label><input type="radio" name="appearance" value="system" checked />System</label>
+                    <label><input type="radio" name="appearance" value="light" />Light</label>
+                    <label><input type="radio" name="appearance" value="dark" />Dark</label>
+                  </div>
+                </div>
+                <div class="srow">
+                  <div><div class="name">Text size</div><div class="caption">Scales the whole window. ⌘+ ⌘− step it, ⌘0 resets.</div></div>
+                  <div class="segmented sizes" role="radiogroup" aria-label="Text size">
+                    <label><input type="radio" name="scale" value="small" /><span class="a1">A</span></label>
+                    <label><input type="radio" name="scale" value="default" checked /><span class="a2">A</span></label>
+                    <label><input type="radio" name="scale" value="large" /><span class="a3">A</span></label>
+                    <label><input type="radio" name="scale" value="larger" /><span class="a4">A</span></label>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
 
-          <h2 class="section-label">Appearance</h2>
-          <div class="group">
-            <div class="row">
-              <span class="lbl">Theme</span>
-              <div class="field radios" role="radiogroup" aria-label="Appearance">
-                <label><input type="radio" name="appearance" value="system" checked /> Match the system</label>
-                <label><input type="radio" name="appearance" value="light" /> Light</label>
-                <label><input type="radio" name="appearance" value="dark" /> Dark</label>
+              <h2 class="sec-label">System</h2>
+              <div class="scard">
+                <label class="srow check">
+                  <div><div class="name">Show helpful hints</div><div class="caption">Short explanations and "How it works" links. Errors, progress and required setup always show.</div></div>
+                  <input type="checkbox" id="hints" />
+                </label>
               </div>
             </div>
-            <div class="row top">
-              <div class="lbl"><span>Text size</span><span class="hint">Scales the whole window. <kbd>cmd</kbd>+<kbd>+</kbd> and <kbd>cmd</kbd>+<kbd>−</kbd> step it, <kbd>cmd</kbd>+<kbd>0</kbd> resets.</span></div>
-              <div class="field radios" role="radiogroup" aria-label="Text size">
-                <label><input type="radio" name="scale" value="small" /> Small</label>
-                <label><input type="radio" name="scale" value="default" checked /> Default</label>
-                <label><input type="radio" name="scale" value="large" /> Large</label>
-                <label><input type="radio" name="scale" value="larger" /> Larger</label>
+
+            <div class="section" id="settings-providers">
+              <form class="scard" id="keys-form">
+                <div class="scard-head"><div class="name strong">Speech providers</div><div class="caption hint">Add a key only for the services you will use; each one then appears in the model picker beside your local models.</div></div>
+                <div id="keys"></div>
+                <div class="srow foot"><button type="submit" class="btn accent" title="Keys are only sent when you save">Save keys</button><span class="caption hint">a half-typed key is never sent</span><span class="caption save-status" id="keys-status" role="status"></span></div>
+              </form>
+
+              <div class="scard">
+                <div class="scard-head"><div class="name strong">Dictionary model</div><div class="caption hint">Optional. Only Build from history uses it; dictation, pinned entries and manual editing work without it.</div></div>
+                <div class="srow summary" id="dm-summary">
+                  <div><div class="name" id="dm-title">No model</div><div class="caption" id="dm-caption"></div></div>
+                  <div class="field right"><button type="button" class="btn" id="dm-change">Change</button></div>
+                </div>
+                <form id="dm-edit" hidden>
+                  <div class="srow"><span class="name">Provider</span><select class="select field" id="dm-provider"></select></div>
+                  <div class="srow"><span class="name">API key</span><input class="input field" id="dm-key" type="password" autocomplete="off" placeholder="Not set" /></div>
+                  <div class="srow"><span class="name">Model</span><div class="field"><select class="select" id="dm-model"></select><input class="input mono" id="dm-model-custom" type="text" placeholder="model id, as the provider names it" spellcheck="false" autocomplete="off" hidden /></div></div>
+                  <div class="srow foot"><button type="submit" class="btn accent">Save</button><button type="button" class="btn ghost" id="dm-cancel">Cancel</button><span class="caption save-status" id="dm-status" role="status"></span></div>
+                </form>
+              </div>
+            </div>
+
+            <div class="section" id="settings-local">
+              <div class="local-bar">
+                <input class="input search" id="local-search" type="search" placeholder="Search models" />
+                <span class="caption" id="local-summary"></span>
+              </div>
+              <div id="local-cards"></div>
+            </div>
+
+            <div class="section" id="settings-agents">
+              <h2 class="sec-label">Local API <span class="hint">· agents you dictate to can post confirmed corrections; they land in Pinned</span></h2>
+              <div class="scard">
+                <div class="srow">
+                  <div><div class="name">Endpoint</div><div class="caption">HTTP on this machine only. Nothing else is exposed.</div></div>
+                  <div class="field copyable"><code class="code-line" id="agent-endpoint"></code><button type="button" class="btn copy-btn" data-copy="agent-endpoint">Copy</button></div>
+                </div>
+                <div class="srow top">
+                  <div><div class="name">Example request</div><div class="caption">Send only what the person confirmed, whole words or phrases, never guesses.</div></div>
+                  <div class="field copyable"><pre class="code-block" id="agent-curl"></pre><button type="button" class="btn copy-btn" data-copy="agent-curl">Copy</button></div>
+                </div>
+              </div>
+              <h2 class="sec-label">Received <span class="hint">· newest first</span></h2>
+              <div class="scard">
+                <div id="corrections-rows"></div>
+                <div class="srow note hint"><span></span><span class="caption">Each one is already in Pinned by you. Remove it there if an agent got it wrong.</span></div>
               </div>
             </div>
           </div>
-          <span class="save-status" id="settings-status" role="status"></span>
-        </form>
+        </div>
       </section>
     </main>
     <script type="module" src="/static/app.js"></script>

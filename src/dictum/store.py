@@ -44,6 +44,13 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     fast INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS transcriptions_by_recording ON transcriptions(recording_id);
+CREATE TABLE IF NOT EXISTS corrections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    heard TEXT NOT NULL,
+    meant TEXT,
+    source TEXT
+);
 """
 
 # Columns added after the first release; applied to databases that predate them.
@@ -77,6 +84,17 @@ class Transcription:
     audio_seconds: float | None = None  # how long the clip is, when its container says
     elapsed_seconds: float | None = None  # how long the provider took to answer
     fast: bool = False  # transcribed from fast mode's stream (issue #20)
+
+
+@dataclass(frozen=True)
+class Correction:
+    """One entry an agent sent and Dictum pinned: a term (no `meant`) or a replacement."""
+
+    id: int
+    created_at: str
+    heard: str
+    meant: str | None
+    source: str | None
 
 
 @dataclass(frozen=True)
@@ -219,6 +237,25 @@ class Store:
                 (provider, model, limit),
             ).fetchall()
         return [str(row["text"]) for row in rows]
+
+    # Corrections agents sent, so the Agents page can show what arrived and from whom.
+
+    def add_corrections(
+        self, terms: tuple[str, ...], replacements: dict[str, str], source: str | None
+    ) -> None:
+        rows = [(heard, None) for heard in terms] + list(replacements.items())
+        with self._lock, self._db:
+            self._db.executemany(
+                "INSERT INTO corrections (created_at, heard, meant, source) VALUES (?, ?, ?, ?)",
+                [(_now(), heard, meant, source) for heard, meant in rows],
+            )
+
+    def list_corrections(self, limit: int = 100) -> list[Correction]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM corrections ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [Correction(**dict(row)) for row in rows]
 
     def _recording(self, row: sqlite3.Row) -> Recording:
         attempts = self._db.execute(

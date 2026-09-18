@@ -324,6 +324,12 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
     }
     again = client.post("/api/dictionary/corrections", json={"terms": ["soniox"]})
     assert again.json() == {"added": {"terms": [], "replacements": {}}}
+    # What arrived is kept, newest first, with its source, for the Agents page.
+    received = client.get("/api/dictionary/corrections").json()
+    assert [(c["heard"], c["meant"], c["source"]) for c in received] == [
+        ("whisper flow", "Wispr Flow", "dictum-agent"),
+        ("Soniox", None, "dictum-agent"),
+    ]
 
     client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
