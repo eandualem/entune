@@ -19,6 +19,8 @@ from pynput.keyboard import Key, KeyCode
 from dictum.desktop.engine import ShortcutEngine
 
 FN_VK = 63
+GLOBE_VK = 179  # the key press macOS synthesizes for a bare tap of fn (opens Emoji & Symbols)
+KEY_EVENTS = (int(Quartz.kCGEventKeyDown), int(Quartz.kCGEventKeyUp))
 FN_FLAG = int(Quartz.kCGEventFlagMaskSecondaryFn)
 TAP_DISABLED = (
     int(Quartz.kCGEventTapDisabledByTimeout),
@@ -33,9 +35,15 @@ def swallow_fn(event_type: int, keycode: int, owns_fn: bool) -> bool:
 
     When fn is one of the user's shortcuts, Dictum owns the key: a bare tap must not
     open Emoji & Symbols (macOS's default for the globe key) or start Apple dictation.
+    That takes two events: the fn flag change, and the globe key press macOS
+    synthesizes on release of a bare tap, which is the one the front app acts on.
     Nothing else is ever dropped.
     """
-    return owns_fn and event_type == int(Quartz.kCGEventFlagsChanged) and keycode == FN_VK
+    if not owns_fn:
+        return False
+    if event_type == int(Quartz.kCGEventFlagsChanged):
+        return keycode == FN_VK
+    return event_type in KEY_EVENTS and keycode == GLOBE_VK
 
 
 class FnAwareListener(_ListenerBase):  # type: ignore[misc]
