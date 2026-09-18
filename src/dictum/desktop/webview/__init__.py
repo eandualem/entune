@@ -295,7 +295,7 @@ def _terminate_through(quit_app: Callable[[], None]) -> None:
         BrowserView.AppDelegate,
         [
             objc.selector(
-                should_terminate, selector=b"applicationShouldTerminate:", signature=b"Q@:@"
+                should_terminate, selector=b"applicationShouldTerminate:", signature=b"I@:@"
             )
         ],
     )
