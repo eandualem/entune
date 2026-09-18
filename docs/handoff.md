@@ -23,8 +23,13 @@ comparison, etc"
   defaults (`indicatorOrigin`) and used from then on, on any screen it is
   still on. It is saved when the pill hides, since only a drag moves it in
   between. Not yet observed live: needs the rebuilt app and a shortcut.
-- History shows the transcripts only; the performance table moved to
-  Settings under the default model it informs.
+- History shows the transcripts only; the performance table is a popover
+  behind a chart button next to the model picker (his correction after the
+  first look: "model comparison hidden inside settings makes completely no
+  sense; next to the model selector there could be a small indicator").
+- The page fills the window at any size (his correction: "when I make it
+  larger, it doesn't take the available space"); the fixed page width is
+  gone.
 - The empty History is a three-step "Get started" checklist (add a
   provider, pick the model, dictate) that ticks itself off and links to
   Settings. The page opens on History for a new person, not Settings.
