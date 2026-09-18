@@ -119,6 +119,11 @@ class Downloadable(Protocol):
         """Load the model ahead of the first dictation; nothing if it is not downloaded."""
         ...
 
+    def unload(self, keep: str | None = None) -> None:
+        """Free every loaded model except `keep`: a local model takes memory only while
+        it is the selected one, or for the one retry it was asked for."""
+        ...
+
 
 @runtime_checkable
 class Streams(Protocol):

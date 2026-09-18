@@ -238,11 +238,31 @@ class Dictum:
 
     def warm_default_model(self) -> None:
         """A local default model is loaded ahead of the first dictation (at start and
-        whenever the default changes); cloud models have nothing to warm."""
+        whenever the default changes), and every other local model is unloaded: a model
+        takes memory only while it is the selected one. Cloud models have nothing to warm."""
         default = self.default_model()
         ref = self.resolve(default) if default else None
+        for provider in self.providers:
+            if isinstance(provider, Downloadable):
+                provider.unload(
+                    keep=ref.model if ref is not None and ref.provider is provider else None
+                )
         if ref is not None and isinstance(ref.provider, Downloadable):
             ref.provider.warm(ref.model)
+
+    def _release_after_use(self, ref: ModelRef) -> None:
+        """A local model used for a retry, not the selected one, is unloaded again."""
+        if not isinstance(ref.provider, Downloadable):
+            return
+        default = self.default_model()
+        if default != ref.id:
+            selected = self.resolve(default) if default else None
+            keep = (
+                selected.model
+                if selected is not None and selected.provider is ref.provider
+                else None
+            )
+            ref.provider.unload(keep=keep)
 
     def llm_provider_statuses(self) -> list[ProviderStatus]:
         statuses = []
@@ -502,6 +522,7 @@ class Dictum:
             elapsed_seconds=timing.elapsed_seconds,
             fast=timing.fast,
         )
+        self._release_after_use(ref)
         updated = self.store.get_recording(recording.id)
         assert updated is not None
         return updated
