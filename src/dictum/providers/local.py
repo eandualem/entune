@@ -33,6 +33,7 @@ from dictum.providers.base import (
 MODELS_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 WHISPER_RATE = 16_000
 PROMPT_CHARS = 800  # whisper's prompt window is about 224 tokens
+LEADING_PUNCTUATION = " .,;:!?"  # whisper.cpp also starts a first segment with ". " at times
 DOWNLOAD_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 
 
@@ -176,7 +177,8 @@ class Local:
         # whisper.cpp sometimes emits a segment that is only punctuation, e.g. "." before
         # the first words; joined in, it would start the transcript with ". ".
         parts = [str(segment.text).strip() for segment in segments]
-        return Transcript(" ".join(part for part in parts if any(c.isalnum() for c in part)))
+        text = " ".join(part for part in parts if any(c.isalnum() for c in part))
+        return Transcript(text.lstrip(LEADING_PUNCTUATION))
 
 
 def _spec(name: str) -> ModelSpec:
