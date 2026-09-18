@@ -233,17 +233,14 @@ def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     assert settings["dictionaryModel"] is None
     bad = client.put("/api/settings", json={"dictionaryModel": "gemini:pro"})
     assert bad.status_code == 400 and "provider:model" in bad.text
-    ok = client.put(
-        "/api/settings",
-        json={
-            "keys": {"anthropic": "sk-ant-1234"},
-            "dictionaryModel": "anthropic:claude-fable-5-1",
-        },
-    )
+    ok = client.put("/api/settings", json={"keys": {"openai": "sk-1", "anthropic": "sk-ant-1234"}})
     assert ok.status_code == 200
     settings = client.get("/api/settings").json()
+    # A key is enough: the suggested model of the first provider with one is the default.
     assert settings["dictionaryModel"] == "anthropic:claude-fable-5-1"
     assert settings["llmProviders"][0]["keyHint"] == "••••1234"
+    client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
+    assert client.get("/api/settings").json()["dictionaryModel"] == "openai:gpt-6-astra"
 
 
 def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
@@ -260,7 +257,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     dictum = Dictum(Store(tmp_path), [stub], llm_call=fake)
     client = TestClient(create_app(dictum), base_url="http://localhost")
     res = client.post("/api/dictionary/build")
-    assert res.status_code == 400 and "Pick a model" in res.text
+    assert res.status_code == 400 and "Add an Anthropic or OpenAI key" in res.text
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
     res = client.post("/api/dictionary/build")
     assert res.status_code == 400 and "No API key set for OpenAI" in res.text
