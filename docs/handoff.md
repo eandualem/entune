@@ -21,6 +21,18 @@ one set; without one, reading it is a visible error saying to set one.
 Elias's existing list was built with AssemblyAI, which is his default, so
 it lands under `assemblyai/universal-3-5-pro`.
 
+**Later the same evening (PR #82).** Build from history failed inside
+Dictum.app with "No package metadata was found for genai_prices": three
+packages on the build's import path read their own version from package
+metadata, which PyInstaller does not carry unless the spec copies it (it
+now does; verified by running the bundle on a scratch folder with a fake
+key: the 401 comes back verbatim). And the dictionary model now defaults to
+the suggested model of the first language-model provider with a key, on
+Elias's instruction ("there should be a default model"). He also noticed
+"some lag and slowness" after the rebuild; not investigated yet. Likely
+cause, not verified: selecting a local model in the toolbar loads it into
+memory, which takes seconds; the log shows normal transcription times.
+
 **Rule since this evening.** The installed Dictum.app is a frozen bundle:
 after every merge into `develop`, rebuild it and install it
 (`uv run --group build python packaging/build_app.py`, then `uv run dictum
