@@ -49,7 +49,7 @@ mypy_path = "src"
 files = ["src/dictum", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["sounddevice", "Quartz", "AppKit", "Foundation", "PyObjCTools", "assistant_runtime.*", "loguru", "pystray.*", "webview.*", "PIL.*"]
+module = ["sounddevice", "objc", "Quartz", "AppKit", "Foundation", "PyObjCTools", "assistant_runtime.*", "loguru", "pystray.*", "webview.*", "PIL.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
