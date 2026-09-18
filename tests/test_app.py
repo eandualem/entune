@@ -385,3 +385,18 @@ def test_the_tray_shows_recording_while_an_older_transcription_finishes(tmp_path
     assert platform.tray.states[-1] == "recording"
     app.stop_recording()
     wait_for(lambda: platform.tray.states[-1] == "idle")
+
+
+def test_clearing_the_shortcuts_mid_recording_finishes_the_clip(tmp_path: Path) -> None:
+    app, platform, dictum = make(tmp_path)
+    dictum.set_key("stub", "k")
+    dictum.set_default_model("stub/good")
+    dictum.set_shortcuts(None, "cmd+alt_r")
+    engine = app.engine
+    assert engine is not None
+    engine.press("cmd")
+    engine.press("alt_r")  # hands-free recording
+    assert app.recorder.recording  # type: ignore[attr-defined]
+    dictum.set_shortcuts(None, None)  # the engine goes: the clip is finished, not abandoned
+    assert not app.recorder.recording  # type: ignore[attr-defined]
+    wait_for(lambda: platform.actions.pasted == 1)

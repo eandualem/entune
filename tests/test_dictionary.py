@@ -115,3 +115,8 @@ def test_pinned_wins_regardless_of_capitalisation() -> None:
 def test_a_replacement_is_never_rewritten_by_another_rule() -> None:
     e = Entries(replacements={"cloud code": "Claude Code", "code": "Codex"})
     assert dictionary.apply(e, "cloud code and code") == "Claude Code and Codex"
+
+
+def test_the_matched_rule_decides_even_when_lowercasing_disagrees_with_the_regex() -> None:
+    e = Entries(replacements={"istanbul": "Istanbul"})
+    assert dictionary.apply(e, "in İstanbul today") == "in Istanbul today"
