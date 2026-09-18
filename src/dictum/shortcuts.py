@@ -38,6 +38,11 @@ class Shortcuts:
     def __bool__(self) -> bool:
         return self.hold is not None or self.toggle is not None
 
+    @property
+    def uses_fn(self) -> bool:
+        """Whether fn is in either shortcut; the listener then owns that key."""
+        return "fn" in {*(self.hold or ()), *(self.toggle or ())}
+
     def describe(self) -> str:
         parts = []
         if self.hold:

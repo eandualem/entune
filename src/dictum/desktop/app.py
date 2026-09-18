@@ -97,6 +97,15 @@ class DictumApp:
             self._set_status(f"Allow Input Monitoring in {permissions.settings_hint}")
             permissions.request_listen()
             return
+        if shortcuts.uses_fn and not permissions.can_post():
+            # Owning the fn key takes an active event tap, which macOS only gives a
+            # process with Accessibility; without it the listener starts dead.
+            self.engine = None
+            self.platform.hotkeys.stop()
+            self._listening = False
+            self._set_status(f"Allow Accessibility in {permissions.settings_hint}")
+            permissions.request_post()
+            return
         self.engine = ShortcutEngine(shortcuts, self.start_recording, self.stop_recording)
         self.platform.hotkeys.start(self.engine)
         self._listening = True
@@ -123,10 +132,13 @@ class DictumApp:
 
     def _recheck_permission(self) -> None:
         """Start listening as soon as Input Monitoring is granted, without a restart."""
+        shortcuts = self.dictum.shortcuts()
+        permissions = self.platform.permissions
         if (
             not self._listening
-            and self.dictum.shortcuts()
-            and self.platform.permissions.can_listen()
+            and shortcuts
+            and permissions.can_listen()
+            and (permissions.can_post() or not shortcuts.uses_fn)
         ):
             self.apply_shortcut()
 
