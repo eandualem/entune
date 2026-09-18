@@ -74,6 +74,10 @@ A failure is data the user reads and acts on; that is the retry feature.
 - Conventional commits (`feat:`, `fix:`, `docs:`, `chore:`, `test:`) with
   a body saying why. Beyond that, choose the smallest stack that meets the
   constraints and record the choice in the README.
+- Pull requests go into `develop`; `main` moves only by a release pull
+  request from `develop` after a deep review of everything on it (the
+  owner's practice, adopted 2026-09-18). Review evidence lives under the
+  ignored `.backbone/reviews/`, never under `docs/`.
 
 ## Scope
 

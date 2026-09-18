@@ -39,12 +39,15 @@ class DictumApp:
         self.engine: ShortcutEngine | None = None
         self._listening = False
         self._upload: Upload | None = None  # fast mode's stream for the current recording
+        self._recording = False
+        self._pending = 0  # transcriptions still running; the tray state is derived
         self._server_answers = server_answers or self._probe_server
 
         platform.tray.set_actions(self.open_window, self.open_settings, self.quit)
         platform.every(PERMISSION_POLL_SECONDS, self._recheck_permission)
         dictum.on_change(lambda: platform.run_on_ui_thread(self.apply_shortcut))
         dictum.on_capture(lambda: platform.run_on_ui_thread(self.begin_capture))
+        dictum.on_cancel_capture(lambda: platform.run_on_ui_thread(platform.hotkeys.cancel_capture))
         dictum.on_show_window(lambda: platform.run_on_ui_thread(self.open_window))
         dictum.report_status(desktop=True, shell=type(platform).__name__)
         self.apply_shortcut()
@@ -108,6 +111,10 @@ class DictumApp:
             self._set_status(f"Allow Accessibility in {permissions.settings_hint}")
             permissions.request_post()
             return
+        if self._listening and self.engine is not None and self.engine.shortcuts == shortcuts:
+            # Any settings or dictionary change lands here, including an agent's
+            # corrections mid-dictation; a new engine would forget that a key is held.
+            return
         self.engine = ShortcutEngine(shortcuts, self.start_recording, self.stop_recording)
         self.platform.hotkeys.start(self.engine)
         self._listening = True
@@ -158,7 +165,8 @@ class DictumApp:
                 self.engine.recording = False
             return
         self.dictum.report_status(lastRecordingStarted=time.time())
-        self._later(lambda: self.platform.tray.set_state("recording"))
+        self._recording = True
+        self._later(self._refresh_state)
 
     def _begin_upload(self, sample_rate: int) -> Sink | None:
         self._upload = self.dictum.begin_upload(sample_rate)
@@ -167,15 +175,27 @@ class DictumApp:
     def stop_recording(self) -> None:
         capture = self.recorder.stop()
         upload, self._upload = self._upload, None
+        self._recording = False
         if capture.seconds < MIN_CLIP_SECONDS:
             if upload is not None:
                 upload.abort()
-            self._later(lambda: self.platform.tray.set_state("idle"))
+            self._later(self._refresh_state)
             return
-        self._later(lambda: self.platform.tray.set_state("busy"))
+        self._pending += 1
+        self._later(self._refresh_state)
         threading.Thread(
             target=self._transcribe_and_deliver, args=(capture, upload), daemon=True
         ).start()
+
+    def _refresh_state(self) -> None:
+        """The tray and the pill follow what is really going on: a recording in progress
+        beats a transcription still running, which beats idle."""
+        if self._recording:
+            self.platform.tray.set_state("recording")
+        elif self._pending > 0:
+            self.platform.tray.set_state("busy")
+        else:
+            self.platform.tray.set_state("idle")
 
     def _transcribe_and_deliver(self, capture: Capture, upload: Upload | None = None) -> None:
         try:
@@ -186,7 +206,8 @@ class DictumApp:
                 lambda: self.platform.actions.notify("Dictum: transcription failed", message)
             )
         finally:
-            self._later(lambda: self.platform.tray.set_state("idle"))
+            self._pending -= 1
+            self._later(self._refresh_state)
 
     def _transcribe_and_deliver_inner(self, capture: Capture, upload: Upload | None) -> None:
         started = time.monotonic()
