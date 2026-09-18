@@ -21,6 +21,7 @@ class StubProvider:
     id: str = "stub"
     name: str = "Stub"
     models: tuple[str, ...] = ("good", "bad")
+    term_limit: int | None = 3
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
@@ -62,8 +63,8 @@ def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
     assert settings["providers"][0]["keyHint"] == "••••1234"
     assert settings["defaultModel"] == "stub/good"
     assert client.get("/api/models").json() == [
-        {"id": "stub/good", "label": "Stub / good", "default": True},
-        {"id": "stub/bad", "label": "Stub / bad", "default": False},
+        {"id": "stub/good", "label": "Stub / good", "default": True, "term_limit": 3},
+        {"id": "stub/bad", "label": "Stub / bad", "default": False, "term_limit": 3},
     ]
 
 
@@ -252,7 +253,11 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
         calls.append((model, api_key))
         assert "hello there, I use cloud code" in user
         assert "from another model" not in user  # only the default model's transcripts
-        return '{"terms": ["Claude Code", "Soniox"], "replacements": {"cloud code": "Claude Code"}}'
+        assert "takes at most 3 terms; 1 are pinned already, so propose at most 2" in user
+        return (
+            '{"terms": ["Claude Code", "Soniox", "Groq", "Deepgram"],'
+            ' "replacements": {"cloud code": "Claude Code"}}'
+        )
 
     dictum = Dictum(Store(tmp_path), [stub], llm_call=fake)
     client = TestClient(create_app(dictum), base_url="http://localhost")
@@ -279,11 +284,13 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     proposal = res.json()
     assert calls == [("openai:gpt-6-astra", "sk-1")]
     assert proposal["model"] == "stub/good"
-    assert proposal["learned"] == {
-        "terms": ["Soniox"],
+    assert proposal["learned"] == {  # cut to the two terms that fit beside the pinned one
+        "terms": ["Soniox", "Groq"],
         "replacements": {"cloud code": "Claude Code"},
     }
-    assert proposal["added"]["terms"] == ["Soniox"]
+    assert proposal["added"]["terms"] == ["Soniox", "Groq"]
+    assert proposal["budget"] == {"limit": 3, "pinned": 1, "room": 2}
+    assert proposal["dropped_terms"] == 1
     # Nothing is saved until the page accepts.
     assert client.get("/api/dictionary").json()["learned"] == {}
 

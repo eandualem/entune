@@ -47,6 +47,20 @@ is still read, as pinned. Two later forms are read and rewritten once: an
 a `learned` section that was one list for every model moves under the
 default model, which the app needs set to read such a file (issue #30).
 
+**Size is enforced, not advised** (issue #83). Every provider declares how
+many terms it takes as a vocabulary hint: AssemblyAI 100 on the endpoint
+dictation uses, Soniox 100, the local Whisper models 60 and Groq 50 (what
+fits Whisper's 224-token prompt), and Parakeet none, since its engine takes
+no hint. Pinned terms count against every model's limit, because every
+model carries them. A build is told how many terms still fit for that model
+and asked for the most valuable first; the proposal is cut to that number,
+so the file never holds terms a model cannot use, and for Parakeet the build
+asks for replacements only. When pinned terms alone fill a model's limit,
+the Dictionary tab says so: remove some to make room for new ones.
+Replacements have no limit; applying a thousand takes a fifth of a second,
+and the cost of a bad one is a wrong word, so the prompt keeps them few and
+multi-word.
+
 **Build from history** sends the default speech model's recent raw
 transcripts (at most 300, or 40,000 characters), the pinned section as
 approved and as evidence of who the user is and what they talk about, and

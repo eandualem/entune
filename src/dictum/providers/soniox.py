@@ -31,6 +31,7 @@ POLL_LIMIT_SECONDS = 120.0
 class Soniox:
     id: str = "soniox"
     name: str = "Soniox"
+    term_limit: int | None = 100  # the documented limit is 8,000 tokens of context in all
     models: tuple[str, ...] = ("stt-async-v5",)
 
     def __init__(
