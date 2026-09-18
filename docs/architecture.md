@@ -20,7 +20,8 @@ src/dictum/
                   each chunk as it is recorded, which fast mode streams to the provider
   server.py       routes, JSON shapes, static files; refuses requests not addressed to
                   localhost and state changes from other origins
-  web/            index.html, app.js, style.css: history with the performance table,
+  web/            index.html, app.js, tokens.css (every colour and size), style.css:
+                  history with the performance table behind a toolbar button,
                   dictionary, settings; the Record button records WAV
   paths.py        the data directory per platform
   desktop/        app.py: the orchestration, written against platform.py's protocols

@@ -46,5 +46,6 @@ silently if Dictum is not running.
 | `POST /api/recordings/{id}/transcriptions` | `{"model": "provider/model"}`: transcribe again |
 | `GET /api/recordings/{id}/audio` | the clip |
 | `GET /api/dictionary`, `PUT /api/dictionary` | the whole dictionary as JSON; the `ETag` names its version, and a `PUT` with `If-Match` set to a stale one gets 409 instead of overwriting what was added meanwhile |
+| `GET /api/dictionary/corrections` | what agents sent and Dictum pinned, newest first, with the `source` each gave |
 | `POST /api/dictionary/build` | ask the configured language model for a proposal for the default speech model, from its transcripts only (nothing saved); the reply names the `model` |
 | `POST /api/capture`, `GET`, `DELETE` | record a shortcut by pressing it (needs the menu-bar app) |
