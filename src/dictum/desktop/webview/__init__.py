@@ -84,7 +84,7 @@ class WebviewPlatform:
             _grant_media_capture()
             _terminate_through(self.quit)
         window.create()
-        webview.start()
+        webview.start(private_mode=False)  # the page keeps its appearance choice
 
     def quit(self) -> None:
         self._quitting = True
