@@ -37,6 +37,19 @@ Keychain Access, as it took on macOS 26 (2026-09-18):
    Control › **Allow all applications to access this item** › Save.
    Without this `codesign` fails with `errSecInternalComponent`, and its
    password dialog rejects the correct password.
+4. Trust it system-wide, from a terminal (asks for your password):
+
+   ```sh
+   security find-certificate -c "Dictum Developer" -p > /tmp/dictum-developer.cer
+   sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+     -k /Library/Keychains/System.keychain /tmp/dictum-developer.cer
+   ```
+
+   Step 2 trusts the certificate only in your login keychain. Input
+   Monitoring and Accessibility are checked by a system daemon that does
+   not see it, so it treats the signed app as untrusted and the grants
+   never take, however often they are toggled; the Microphone check is
+   per user and works. Seen 2026-09-18 on macOS 26.
 
 When that certificate exists, `install-app` signs with it instead, every
 build has the same identity (`codesign -d -r- Dictum.app` shows
