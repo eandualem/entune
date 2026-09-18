@@ -39,7 +39,7 @@
         </button>
       </div>
       <select class="select" id="model" aria-label="Default model" title="Default model: what the shortcut uses. Picking one applies at once."></select>
-      <label class="fast" id="fast-mode-wrap" title="Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop (AssemblyAI only)" hidden>
+      <label class="fast" id="fast-mode-wrap" title="Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop (AssemblyAI only)">
         <svg class="i13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"/></svg>
         <input type="checkbox" id="fast-mode" aria-label="Fast mode" />
       </label>
@@ -69,7 +69,6 @@
             <button type="button" class="btn ghost help-btn hint" id="help-toggle" aria-expanded="false" aria-controls="help-panel">
               <svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.3"/><path d="M6.2 6.3a1.9 1.9 0 0 1 3.7.5c0 1.1-1.9 1.4-1.9 2.6M8 11.6v.1"/></svg>How the dictionary works
             </button>
-            <span class="caption" id="term-budget"></span>
             <div class="spacer"></div>
             <span class="caption save-status" id="build-status" role="status"></span>
             <button type="button" class="btn accent" id="build-dictionary">Build from history</button>
@@ -131,6 +130,7 @@
           <div class="dict-table">
             <div class="entry-row head"><span>KIND</span><span>ENTRY</span><span>SOURCE</span><span class="actions"><button type="button" class="btn ghost sm" id="pin-all" title="Pin every learned entry: keep them for every model" hidden>Pin all</button></span></div>
             <div id="dict-rows"></div>
+            <div class="entry-row foot" id="term-budget-row" hidden><span class="caption" id="term-budget"></span></div>
           </div>
         </div>
       </section>

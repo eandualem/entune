@@ -135,7 +135,12 @@ async function loadModels() {
   fillModels(modelSelect, defaultModel?.id ?? null, "No models: add a key or download one");
   if (!defaultModel && models.length > 0) modelSelect.prepend(new Option("Pick a model", "", true, true));
   const provider = defaultModel?.id.split("/")[0];
-  fastWrap.hidden = !(settings?.providers ?? []).some((p) => p.id === provider && p.streams);
+  const streams = (settings?.providers ?? []).some((p) => p.id === provider && p.streams);
+  fastInput.disabled = !streams;
+  fastWrap.classList.toggle("off", !streams);
+  fastWrap.title = streams
+    ? "Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop"
+    : "Fast mode: only AssemblyAI takes the audio while you record; pick it to use fast mode";
   if (!status.textContent || status.textContent === "Ready") status.textContent = defaultModel ? "Ready" : "";
   renderDictionary();
   renderStart();
@@ -1068,7 +1073,9 @@ function renderDictionary(jsonText) {
   buildBtn.title = settings?.dictionaryModel
     ? `Send this model's recent transcripts to ${settings.dictionaryModel} and review a proposal; nothing is saved before Accept`
     : "Needs an Anthropic or OpenAI key in Settings › Providers";
-  el("term-budget").textContent = termBudgetText(learned);
+  const budget = termBudgetText(learned);
+  el("term-budget").textContent = budget;
+  el("term-budget-row").hidden = !budget;
   if (jsonText !== undefined) dictionaryBox.value = jsonText;
 }
 
