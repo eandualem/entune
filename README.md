@@ -79,8 +79,10 @@ can be set:
 - **Hands-free**: a combination, for example `cmd+fn`. Press to start;
   press again, or press the hold key, to stop.
 
-On stop, the clip goes to your default model, the transcript is copied to
-the clipboard and pasted into whatever had focus. A failure shows as a
+While you record, a small "Recording" pill sits in the bottom-left corner
+of the screen your pointer is on; it says "Transcribing…" until the text
+lands, and never takes focus. On stop, the clip goes to your default model,
+the transcript is copied to the clipboard and pasted into whatever had focus. A failure shows as a
 notification with the provider's message; History has the retry.
 
 When `fn` is one of your shortcuts, Dictum owns that key while it runs: a
