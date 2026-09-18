@@ -124,7 +124,7 @@ class Parakeet:
     def warm(self, name: str) -> None:
         _check(name)
         if self._ready() and self.engine() is not None:
-            threading.Thread(target=self._ensure_loaded, daemon=True, name="dictum-warm").start()
+            self._ensure_loaded()
 
     def transcribe(
         self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()

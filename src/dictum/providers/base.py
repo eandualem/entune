@@ -116,7 +116,8 @@ class Downloadable(Protocol):
     def download(self, name: str) -> None: ...
     def remove(self, name: str) -> None: ...
     def warm(self, name: str) -> None:
-        """Load the model ahead of the first dictation; nothing if it is not downloaded."""
+        """Load the model, blocking, ahead of the first dictation; nothing if it is not
+        downloaded. The caller keeps this off the UI and request paths."""
         ...
 
     def unload(self, keep: str | None = None) -> None:

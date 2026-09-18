@@ -133,14 +133,12 @@ class Local:
                 path.unlink(missing_ok=True)
 
     def warm(self, name: str) -> None:
-        """Load the model on a thread now, so the first dictation does not pay for it.
-
-        Loading and the first Metal library compile took 11 s on an M5; the runs
-        after that take a fraction of a second.
+        """Load the model now (the caller is off the UI and request paths), so the first
+        dictation does not pay for it: loading and the first Metal library compile took
+        11 s on an M5; the runs after that take a fraction of a second.
         """
-        if name not in self.models:
-            return
-        threading.Thread(target=self._engine, args=(name,), daemon=True, name="dictum-warm").start()
+        if name in self.models:
+            self._engine(name)
 
     def unload(self, keep: str | None = None) -> None:
         with self._lock:
