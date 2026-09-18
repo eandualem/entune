@@ -78,6 +78,9 @@ class WebviewPlatform:
         window = self.window
         assert isinstance(window, _Window)
         webview.settings["SHOW_DEFAULT_MENUS"] = True
+        webview.settings["ALLOW_DOWNLOADS"] = True  # the history's download button, to ~/Downloads
+        if sys.platform == "darwin":
+            _grant_media_capture()
         window.create()
         webview.start()
 
@@ -228,3 +231,28 @@ class _NoPermissions:
 
     def request_post(self) -> None:
         pass
+
+
+def _grant_media_capture() -> None:
+    """Answer WKWebView's own microphone question for the page's recorder.
+
+    Without this WebKit asks before every getUserMedia call, so every press of the
+    record button brought a dialog. macOS's Microphone permission for the app is a
+    separate, one-time prompt and still applies.
+    """
+    import objc
+    from webview.platforms.cocoa import BrowserView
+
+    def decide(self: Any, view: Any, origin: Any, frame: Any, kind: int, handler: Any) -> None:
+        handler(1)  # WKPermissionDecisionGrant
+
+    objc.classAddMethods(
+        BrowserView.BrowserDelegate,
+        [
+            objc.selector(
+                decide,
+                selector=b"webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:",
+                signature=b"v@:@@@q@?",
+            )
+        ],
+    )
