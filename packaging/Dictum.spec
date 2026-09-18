@@ -6,7 +6,7 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
 import dictum
 
@@ -19,6 +19,12 @@ a = Analysis(
         (str(PACKAGE_DIR / "web"), "dictum/web"),
         (str(PACKAGE_DIR / "assets"), "dictum/assets"),
         (str(PACKAGE_DIR / "providers" / "parakeet_helper.py"), "dictum/providers"),
+        # Packages on the dictionary build's import path that read their own version
+        # from package metadata at import; without it the build fails in the bundle
+        # with "No package metadata was found" (seen 2026-09-18).
+        *copy_metadata("genai_prices"),
+        *copy_metadata("pydantic_ai_slim"),
+        *copy_metadata("assistant-runtime"),
     ],
     hiddenimports=[
         *collect_submodules("uvicorn"),
