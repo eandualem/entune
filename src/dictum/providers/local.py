@@ -173,8 +173,10 @@ class Local:
                 segments = engine.transcribe(audio, **params)
             except Exception as exc:
                 return Failure(f"{type(exc).__name__}: {exc}")
-        text = " ".join(str(segment.text).strip() for segment in segments).strip()
-        return Transcript(text)
+        # whisper.cpp sometimes emits a segment that is only punctuation, e.g. "." before
+        # the first words; joined in, it would start the transcript with ". ".
+        parts = [str(segment.text).strip() for segment in segments]
+        return Transcript(" ".join(part for part in parts if any(c.isalnum() for c in part)))
 
 
 def _spec(name: str) -> ModelSpec:
