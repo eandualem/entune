@@ -69,3 +69,27 @@ def test_recent_transcripts_prefer_raw_text_newest_first(tmp_path: Path) -> None
     store.add_transcription(rec.id, "p", "m", "ok", "two", None)
     assert store.recent_transcripts(10) == ["two", "raw one"]
     assert store.recent_transcripts(1) == ["two"]
+
+
+def test_timing_columns_persist_and_older_databases_get_them(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    recording = store.create_recording(b"abc", "audio/wav")
+    store.add_transcription(
+        recording.id,
+        provider="p",
+        model="m",
+        status="ok",
+        text="t",
+        error=None,
+        audio_seconds=150.0,
+        elapsed_seconds=7.0,
+        fast=True,
+    )
+    store.add_transcription(
+        recording.id, provider="p", model="m", status="ok", text="t", error=None
+    )
+    (untimed, timed) = store.get_recording(recording.id).transcriptions  # type: ignore[union-attr]
+    assert (timed.audio_seconds, timed.elapsed_seconds, timed.fast) == (150.0, 7.0, True)
+    assert (untimed.audio_seconds, untimed.elapsed_seconds, untimed.fast) == (None, None, False)
+    assert [t.id for t in store.timed_transcriptions()] == [timed.id]
+    store.close()

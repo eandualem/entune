@@ -38,13 +38,27 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     text TEXT,
     error TEXT,
     created_at TEXT NOT NULL,
-    raw_text TEXT
+    raw_text TEXT,
+    audio_seconds REAL,
+    elapsed_seconds REAL,
+    fast INTEGER NOT NULL DEFAULT 0
 );
 """
 
 # Columns added after the first release; applied to databases that predate them.
 MIGRATIONS = [
     ("transcriptions", "raw_text", "ALTER TABLE transcriptions ADD COLUMN raw_text TEXT"),
+    ("transcriptions", "audio_seconds", "ALTER TABLE transcriptions ADD COLUMN audio_seconds REAL"),
+    (
+        "transcriptions",
+        "elapsed_seconds",
+        "ALTER TABLE transcriptions ADD COLUMN elapsed_seconds REAL",
+    ),
+    (
+        "transcriptions",
+        "fast",
+        "ALTER TABLE transcriptions ADD COLUMN fast INTEGER NOT NULL DEFAULT 0",
+    ),
 ]
 
 
@@ -59,6 +73,9 @@ class Transcription:
     error: str | None
     created_at: str
     raw_text: str | None = None  # what the provider returned, before the dictionary
+    audio_seconds: float | None = None  # how long the clip is, when its container says
+    elapsed_seconds: float | None = None  # how long the provider took to answer
+    fast: bool = False  # transcribed from fast mode's stream (issue #20)
 
 
 @dataclass(frozen=True)
@@ -141,14 +158,38 @@ class Store:
         text: str | None,
         error: str | None,
         raw_text: str | None = None,
+        audio_seconds: float | None = None,
+        elapsed_seconds: float | None = None,
+        fast: bool = False,
     ) -> None:
         with self._lock, self._db:
             self._db.execute(
                 "INSERT INTO transcriptions"
-                " (recording_id, provider, model, status, text, error, created_at, raw_text)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (recording_id, provider, model, status, text, error, _now(), raw_text),
+                " (recording_id, provider, model, status, text, error, created_at, raw_text,"
+                "  audio_seconds, elapsed_seconds, fast)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    recording_id,
+                    provider,
+                    model,
+                    status,
+                    text,
+                    error,
+                    _now(),
+                    raw_text,
+                    audio_seconds,
+                    elapsed_seconds,
+                    int(fast),
+                ),
             )
+
+    def timed_transcriptions(self) -> list[Transcription]:
+        """Every attempt whose duration was measured, for the performance table."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM transcriptions WHERE elapsed_seconds IS NOT NULL ORDER BY id"
+            ).fetchall()
+        return [_transcription(row) for row in rows]
 
     def get_recording(self, recording_id: int) -> Recording | None:
         with self._lock:
@@ -185,5 +226,11 @@ class Store:
             created_at=row["created_at"],
             file=row["file"],
             mime=row["mime"],
-            transcriptions=[Transcription(**dict(a)) for a in attempts],
+            transcriptions=[_transcription(a) for a in attempts],
         )
+
+
+def _transcription(row: sqlite3.Row) -> Transcription:
+    fields = dict(row)
+    fields["fast"] = bool(fields.get("fast", 0))
+    return Transcription(**fields)
