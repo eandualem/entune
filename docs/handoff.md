@@ -42,7 +42,16 @@ comparison, etc"
 scratch folder in Chrome: the checklist, the Settings layout and the Large
 text size render, no console errors. The rebuilt app is installed for him.
 
-**Next.** Elias inspects; merge to main after, or revert the PR.
+**Elias's verdict, after two looks.** "This is perfect. This is good. Now
+the scaling is also working." Merged into develop on his word. He still
+finds it "doesn't feel like a polished application": the next step is his,
+exploring with design-focused models from `docs/design-brief.md` (the
+prompt he asked for: exact on the features, loose on the how; usability
+first, light, calm, not popping) and a screenshot. What he picks from that
+comes back here as issue #77 work.
+
+**Next.** His design exploration; then the documentation pass, PyPI,
+Windows.
 
 ## 2026-09-18, late evening: dictionaries per speech model (issue #30)
 
