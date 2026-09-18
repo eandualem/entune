@@ -92,11 +92,11 @@ function fillModels(select, selected, emptyLabel) {
 async function loadModels() {
   models = await api("/api/models");
   const def = models.find((m) => m.default)?.id ?? null;
-  fillModels(modelSelect, def, "No models: add an API key");
-  fillModels(defaultSelect, def, "Add an API key first");
+  fillModels(modelSelect, def, "No models: add a key or download one");
+  fillModels(defaultSelect, def, "Add a key or download a model first");
   if (def === null && models.length > 0) {
     defaultSelect.prepend(new Option("Not set", "", true, true));
-    modelSelect.prepend(new Option("Default (not set)", "", true, true));
+    modelSelect.prepend(new Option("Pick a model", "", true, true));
   }
   showFastModeIfSupported();
 }
@@ -106,19 +106,24 @@ function showFastModeIfSupported() {
   const provider = defaultSelect.value.split("/")[0];
   fastModeRow.hidden = !streamingProviders.has(provider);
 }
-// Picking a default model applies at once; Save is for the rest of the form and never touches it.
-defaultSelect.addEventListener("change", async () => {
-  showFastModeIfSupported();
-  const chosen = defaultSelect.value || null;
+// One default model, picked in the toolbar or in Settings: it applies at once and is what
+// the shortcut, the Record button and a plain "transcribe" use. Save never touches it.
+async function chooseDefaultModel(select, statusTarget) {
+  const chosen = select.value || null;
+  const label = select.selectedOptions[0]?.textContent ?? chosen;
   try {
     await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ defaultModel: chosen }) });
-    flash(settingsStatus, chosen ? `Default model: ${defaultSelect.selectedOptions[0]?.textContent ?? chosen}` : "No default model", "ok");
-    await loadModels();
+    if (statusTarget === status) status.textContent = chosen ? `Using ${label}` : "";
+    else flash(statusTarget, chosen ? `Default model: ${label}` : "No default model", "ok");
   } catch (err) {
-    flash(settingsStatus, String(err.message ?? err), "err");
-    await loadModels();
+    if (statusTarget === status) status.textContent = String(err.message ?? err);
+    else flash(statusTarget, String(err.message ?? err), "err");
   }
-});
+  await loadModels();
+  showFastModeIfSupported();
+}
+defaultSelect.addEventListener("change", () => chooseDefaultModel(defaultSelect, settingsStatus));
+modelSelect.addEventListener("change", () => chooseDefaultModel(modelSelect, status));
 
 async function loadMetrics() {
   const rows = await api("/api/metrics");
@@ -645,7 +650,6 @@ recordBtn.addEventListener("click", async () => {
 async function upload(audio) {
   const form = new FormData();
   form.append("audio", audio, "clip");
-  if (modelSelect.value) form.append("model", modelSelect.value);
   const label = modelSelect.selectedOptions[0]?.textContent ?? "default model";
   status.textContent = `Transcribing with ${label}…`;
   try {
