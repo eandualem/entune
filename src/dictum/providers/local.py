@@ -74,7 +74,7 @@ class Local:
         self.models_dir = models_dir
         self._client = client or httpx.Client(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True)
         self._load_model = load_model or _load_whisper
-        self._downloads: dict[str, _Download] = {}
+        self._downloads: dict[str, Download] = {}
         self._models: dict[str, Any] = {}
         self._lock = threading.Lock()
 
@@ -99,7 +99,14 @@ class Local:
                 state, progress, error = "absent", 0.0, None
             statuses.append(
                 LocalModelStatus(
-                    spec.name, spec.label, spec.size_bytes, spec.note, state, progress, error
+                    spec.name,
+                    spec.label,
+                    spec.size_bytes,
+                    spec.note,
+                    state,
+                    progress,
+                    error,
+                    self.id,
                 )
             )
         return statuses
@@ -112,7 +119,7 @@ class Local:
                 return
             self.models_dir.mkdir(parents=True, exist_ok=True)
             url = f"{MODELS_URL}/ggml-{spec.name}.bin"
-            download = _Download(self._client, url, self._path(name), spec.size_bytes)
+            download = Download(self._client, [(url, self._path(name))], spec.size_bytes)
             self._downloads[name] = download
             download.start()
 
@@ -214,7 +221,7 @@ def pcm16k(clip: Clip) -> Any:
 
     data = clip.data
     if sniff_mime(data) != "audio/wav":
-        data = _to_wav_with_ffmpeg(data)
+        data = to_wav_with_ffmpeg(data)
     with wave.open(io.BytesIO(data), "rb") as wav:
         channels, width, rate = wav.getnchannels(), wav.getsampwidth(), wav.getframerate()
         frames = wav.readframes(wav.getnframes())
@@ -224,13 +231,37 @@ def pcm16k(clip: Clip) -> Any:
     if channels > 1:
         samples = samples.reshape(-1, channels).mean(axis=1)
     if rate != WHISPER_RATE and len(samples) > 1:
-        count = int(len(samples) * WHISPER_RATE / rate)
-        positions = np.linspace(0, len(samples) - 1, count)
-        samples = np.interp(positions, np.arange(len(samples)), samples)
+        samples = resample(samples, rate, WHISPER_RATE)
     return samples.astype(np.float32)
 
 
-def _to_wav_with_ffmpeg(data: bytes) -> bytes:
+def resample(samples: Any, rate: int, target: int) -> Any:
+    """Rate conversion with a low-pass first, so the speech band is kept intact.
+
+    Plain interpolation aliases the top of the spectrum and cost Parakeet its
+    punctuation and Whisper some words; a windowed-sinc filter at the new Nyquist
+    (applied by FFT, so a five-minute clip takes well under a second) then a
+    decimation, or an interpolation for non-integer ratios, is what libraries do.
+    """
+    import numpy as np
+
+    if target < rate:
+        cutoff = 0.45 * target / rate  # fraction of the input rate, a little under Nyquist
+        taps = 64 * int(np.ceil(rate / target)) + 1
+        n = np.arange(taps) - (taps - 1) / 2
+        kernel = 2 * cutoff * np.sinc(2 * cutoff * n) * np.hamming(taps)
+        kernel /= kernel.sum()
+        size = 1 << int(np.ceil(np.log2(len(samples) + taps)))
+        filtered = np.fft.irfft(np.fft.rfft(samples, size) * np.fft.rfft(kernel, size), size)
+        samples = filtered[(taps - 1) // 2 : (taps - 1) // 2 + len(samples)]
+    ratio = rate / target
+    if ratio == int(ratio):
+        return samples[:: int(ratio)]
+    count = int(len(samples) / ratio)
+    return np.interp(np.linspace(0, len(samples) - 1, count), np.arange(len(samples)), samples)
+
+
+def to_wav_with_ffmpeg(data: bytes) -> bytes:
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("only WAV can be decoded without ffmpeg; record with the shortcut")
     with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as source:
@@ -244,13 +275,12 @@ def _to_wav_with_ffmpeg(data: bytes) -> bytes:
     return bytes(result.stdout)
 
 
-class _Download:
-    """One model file, fetched on a thread, resumed from a `.part` file if one is there."""
+class Download:
+    """A model's files, fetched in turn on a thread; each resumes from its `.part`."""
 
-    def __init__(self, client: httpx.Client, url: str, target: Path, size: int) -> None:
-        self._client, self._url, self._target, self._size = client, url, target, size
-        self._part = target.with_name(target.name + ".part")
-        self.received = self._part.stat().st_size if self._part.exists() else 0
+    def __init__(self, client: httpx.Client, files: list[tuple[str, Path]], size: int) -> None:
+        self._client, self._files, self._size = client, files, size
+        self.received = sum(_have(target) for _, target in files)
         self.error: str | None = None
         self._thread = threading.Thread(target=self._run, daemon=True, name="dictum-download")
 
@@ -266,18 +296,27 @@ class _Download:
         self._thread.start()
 
     def _run(self) -> None:
-        headers = {"Range": f"bytes={self.received}-"} if self.received else {}
+        for url, target in self._files:
+            if target.exists():
+                continue
+            if not self._fetch(url, target):
+                return
+
+    def _fetch(self, url: str, target: Path) -> bool:
+        part = target.with_name(target.name + ".part")
+        have = part.stat().st_size if part.exists() else 0
+        headers = {"Range": f"bytes={have}-"} if have else {}
         try:
             with (
-                self._client.stream("GET", self._url, headers=headers) as response,
-                self._part.open("ab" if self.received else "wb") as out,
+                self._client.stream("GET", url, headers=headers) as response,
+                part.open("ab" if have else "wb") as out,
             ):
                 if response.status_code == 416:  # the part is already complete
                     pass
-                elif response.status_code == 200 and self.received:
+                elif response.status_code == 200 and have:
                     out.seek(0)
                     out.truncate()
-                    self.received = 0
+                    self.received -= have
                     for chunk in response.iter_bytes():
                         out.write(chunk)
                         self.received += len(chunk)
@@ -286,9 +325,17 @@ class _Download:
                         out.write(chunk)
                         self.received += len(chunk)
                 else:
-                    self.error = f"HTTP {response.status_code} from {self._url}"
-                    return
+                    self.error = f"HTTP {response.status_code} from {url}"
+                    return False
         except (httpx.HTTPError, OSError) as exc:
             self.error = f"{type(exc).__name__}: {exc}"
-            return
-        self._part.replace(self._target)
+            return False
+        part.replace(target)
+        return True
+
+
+def _have(target: Path) -> int:
+    if target.exists():
+        return target.stat().st_size
+    part = target.with_name(target.name + ".part")
+    return part.stat().st_size if part.exists() else 0
