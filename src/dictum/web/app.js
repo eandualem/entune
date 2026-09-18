@@ -99,6 +99,7 @@ async function loadModels() {
     modelSelect.prepend(new Option("Pick a model", "", true, true));
   }
   showFastModeIfSupported();
+  loadHistory(true).catch(() => {}); // the cards' retry pickers list these models too
 }
 
 // Fast mode only means something for a provider that takes the audio while it is recorded.
@@ -303,19 +304,34 @@ const buildBtn = el("build-dictionary");
 const proposalPanel = el("proposal");
 const proposalBody = el("proposal-body");
 
+let dictLoadedText = null; // the document as last read, to notice edits made elsewhere
+
 async function loadDictionary() {
   const res = await fetch("/api/dictionary");
   const text = await res.text();
   if (!res.ok) { flash(dictionaryStatus, text, "err"); return; }
   dict = JSON.parse(text);
+  dictLoadedText = text;
   renderDictionary(text);
 }
 
+// Every edit sends the whole document, so an edit on top of a stale copy would silently
+// drop what an agent or a hand edit added meanwhile: such a save is refused and the
+// fresh document shown instead.
 async function saveDictionary(next) {
+  const current = await (await fetch("/api/dictionary")).text();
+  if (dictLoadedText !== null && current !== dictLoadedText) {
+    dict = JSON.parse(current);
+    dictLoadedText = current;
+    renderDictionary(current);
+    flash(dictionaryStatus, "The dictionary changed meanwhile (an agent or a hand edit); reloaded, please redo that change", "err");
+    return false;
+  }
   const res = await fetch("/api/dictionary", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(next) });
   const text = await res.text();
   if (!res.ok) { flash(dictionaryStatus, text, "err"); flash(buildStatus, text, "err"); return false; }
   dict = JSON.parse(text);
+  dictLoadedText = text;
   renderDictionary(text);
   return true;
 }
@@ -715,7 +731,7 @@ async function upload(audio) {
 
 // ---- History ----
 function attemptLabel(t) {
-  return `${t.provider} / ${t.model}`;
+  return t.provider === "none" ? "no model set" : `${t.provider} / ${t.model}`;
 }
 
 function chip(text) {

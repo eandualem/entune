@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -47,18 +46,16 @@ class Dictionary:
         """Pinned and agent entries together: what a model must not change."""
         return Entries(
             tuple(dict.fromkeys((*self.pinned.terms, *self.agents.terms))),
-            {**self.agents.replacements, **self.pinned.replacements},
+            _merge(self.agents.replacements, self.pinned.replacements),
         )
 
     @property
     def effective(self) -> Entries:
         """What is applied: every section, pinned winning over agents over learned."""
         terms = tuple(dict.fromkeys((*self.pinned.terms, *self.agents.terms, *self.learned.terms)))
-        replacements = {
-            **self.learned.replacements,
-            **self.agents.replacements,
-            **self.pinned.replacements,
-        }
+        replacements = _merge(
+            self.learned.replacements, self.agents.replacements, self.pinned.replacements
+        )
         return Entries(terms, replacements)
 
     def with_agent_corrections(self, corrections: Entries) -> tuple[Dictionary, Entries]:
@@ -157,16 +154,27 @@ def apply(entries: Entries, text: str) -> str:
     """
     if not entries.replacements or not text:
         return text
-    for heard in sorted(entries.replacements, key=len, reverse=True):
-        meant = entries.replacements[heard]
-        pattern = r"(?<!\w)" + r"\s+".join(map(re.escape, heard.split())) + r"(?!\w)"
-        text = re.sub(pattern, _literal(meant), text, flags=re.IGNORECASE)
-    return text
+    # One pass over the original text: a phrase inserted by one rule is never matched
+    # by another, so "cloud code -> Claude Code" and "code -> Codex" cannot compound.
+    meant_by_heard = {_key(heard): meant for heard, meant in entries.replacements.items()}
+    phrases = sorted(entries.replacements, key=len, reverse=True)
+    alternatives = "|".join(r"\s+".join(map(re.escape, heard.split())) for heard in phrases)
+    pattern = r"(?<!\w)(?:" + alternatives + r")(?!\w)"
+    return re.sub(pattern, lambda m: meant_by_heard[_key(m.group(0))], text, flags=re.IGNORECASE)
 
 
-def _literal(replacement: str) -> Callable[[re.Match[str]], str]:
-    """A substitution that inserts `replacement` as is, no backslash or group expansion."""
-    return lambda _match: replacement
+def _key(phrase: str) -> str:
+    return " ".join(phrase.split()).lower()
+
+
+def _merge(*sections: dict[str, str]) -> dict[str, str]:
+    """Replacements from several sections, later sections winning; the same phrase in
+    a different capitalisation is the same rule, since matching ignores case."""
+    winners: dict[str, tuple[str, str]] = {}
+    for section in sections:
+        for heard, meant in section.items():
+            winners[_key(heard)] = (heard, meant)
+    return dict(winners.values())
 
 
 @dataclass(frozen=True)

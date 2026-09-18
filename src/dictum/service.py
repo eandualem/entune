@@ -95,6 +95,7 @@ class Dictum:
         self._llm_call = llm_call
         self._listeners: list[Callable[[], None]] = []
         self._capture_listeners: list[Callable[[], None]] = []
+        self._cancel_listeners: list[Callable[[], None]] = []
         self._show_window_listeners: list[Callable[[], None]] = []
         self._desktop_status: dict[str, object] = {"desktop": False}
         self._capture_lock = threading.Lock()
@@ -381,9 +382,15 @@ class Dictum:
             if self._capture.state == "listening":
                 self._capture = CaptureStatus("done", shortcuts.format_keys(keys))
 
+    def on_cancel_capture(self, listener: Callable[[], None]) -> None:
+        """Called when a capture is cancelled, so the listener stops waiting for keys."""
+        self._cancel_listeners.append(listener)
+
     def cancel_capture(self) -> None:
         with self._capture_lock:
             self._capture = CaptureStatus("idle", None)
+        for listener in self._cancel_listeners:
+            listener()
 
     def capture_status(self) -> CaptureStatus:
         with self._capture_lock:
@@ -446,8 +453,8 @@ class Dictum:
                 if not mime.startswith("audio/"):
                     mime = sniff_mime(data) or mime
                 effective = self.dictionary().effective
+                started = time.monotonic()  # before the stream is finished: that wait counts
                 clip = Clip(data, mime, upload_url=_finish(upload, ref, Clip(data, mime)))
-                started = time.monotonic()
                 result = ref.provider.transcribe(clip, ref.model, api_key, terms=effective.terms)
                 timing = Timing(
                     clip.seconds, time.monotonic() - started, clip.upload_url is not None
@@ -480,8 +487,22 @@ class Dictum:
     def record_and_transcribe(
         self, data: bytes, label: str | None, ref: str | None, upload: Upload | None = None
     ) -> Recording:
-        model = self.choose_model(ref)
         recording = self.store.create_recording(data, label)
+        try:
+            model = self.choose_model(ref)
+        except (NoDefaultModel, UnknownModel) as exc:
+            # The clip is kept with the error, so it can be retried once a model is set.
+            if upload is not None:
+                upload.abort()
+            self.store.add_transcription(
+                recording.id,
+                provider="none",
+                model="not set",
+                status="error",
+                text=None,
+                error=str(exc),
+            )
+            raise
         return self.transcribe(recording, model, upload)
 
 
