@@ -288,7 +288,15 @@ class Dictum:
         return statuses
 
     def dictionary_model(self) -> str | None:
-        return self.store.get_setting(DICTIONARY_MODEL_KEY)
+        """The saved `provider:model`, else the suggested model of the first language-model
+        provider that has a key; None only when there is no key at all."""
+        saved = self.store.get_setting(DICTIONARY_MODEL_KEY)
+        if saved is not None:
+            return saved
+        for provider_id, (_, default_model) in llm.LLM_PROVIDERS.items():
+            if self.store.get_setting(key_setting(provider_id)) is not None:
+                return default_model
+        return None
 
     def set_dictionary_model(self, ref: str | None) -> None:
         """`provider:model` for a language-model provider we can route to, or None."""
@@ -404,7 +412,7 @@ class Dictum:
         """
         model = self.dictionary_model()
         if model is None:
-            raise ValueError("Pick a model for the dictionary in Settings first.")
+            raise ValueError("Add an Anthropic or OpenAI key under Settings first.")
         provider = model.partition(":")[0]
         api_key = self.store.get_setting(key_setting(provider))
         if api_key is None:
