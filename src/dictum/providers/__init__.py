@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import platform
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,6 +11,7 @@ from dictum.providers.assemblyai import AssemblyAI
 from dictum.providers.base import Clip, Failure, Provider, TranscribeResult, Transcript
 from dictum.providers.groq import Groq
 from dictum.providers.local import Local
+from dictum.providers.parakeet import Parakeet
 from dictum.providers.soniox import Soniox
 
 __all__ = [
@@ -38,8 +41,11 @@ class ModelRef:
 
 
 def default_providers(models_dir: Path) -> list[Provider]:
-    """The cloud providers, then the local one whose models live in `models_dir`."""
-    return [AssemblyAI(), Groq(), Soniox(), Local(models_dir)]
+    """The cloud providers, then the local ones whose models live in `models_dir`."""
+    providers: list[Provider] = [AssemblyAI(), Groq(), Soniox(), Local(models_dir)]
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        providers.append(Parakeet(models_dir))
+    return providers
 
 
 def resolve_model(providers: list[Provider], ref: str) -> ModelRef | None:

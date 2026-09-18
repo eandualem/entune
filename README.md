@@ -110,6 +110,7 @@ reach other apps as a modifier. Pick another key if you need fn elsewhere.
 | Groq | whisper-large-v3-turbo | OpenAI-style transcriptions endpoint |
 | Soniox | stt-async-v5 | upload, poll, fetch; the upload is deleted afterwards |
 | Local | Whisper large-v3-turbo, its compact build, small.en, base.en | whisper.cpp on this machine; no key, nothing leaves the Mac |
+| Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
 
 Enter a provider's API key in Settings and its model appears in the model
 list; mark one as the default. You pay each provider directly, per minute
@@ -127,6 +128,19 @@ sits in the same model lists as the cloud ones, so you can make it the
 default or retry a cloud failure with it. Runs on the GPU on Apple Silicon.
 Measured on 2026-09-18 on an M5: base.en transcribes 25 s of speech in
 under a second. Your dictionary terms are passed as the prompt.
+
+**Parakeet** was the most accurate offline model in our tests, but its
+engine (Apple's MLX and the `parakeet-mlx` package, about 480 MB, Apple
+Silicon only) is not bundled, so the app stays small for everyone who does
+not want it. Install the engine once, from a terminal:
+
+```sh
+uv tool install parakeet-mlx
+```
+
+Dictum finds it on its own, and Parakeet appears under Local models with
+the same Download and Remove buttons; the weights are 2.5 GB. The model
+runs in a helper process inside that installation, loaded once.
 
 ## History
 

@@ -154,17 +154,19 @@ class Dictum:
         ]
 
     def download_local_model(self, name: str) -> None:
-        self._local().download(name)
+        self._local(name).download(name)
 
     def remove_local_model(self, name: str) -> None:
-        self._local().remove(name)
+        self._local(name).remove(name)
         self._changed()
 
-    def _local(self) -> Downloadable:
+    def _local(self, name: str) -> Downloadable:
         for provider in self.providers:
-            if isinstance(provider, Downloadable):
+            if isinstance(provider, Downloadable) and any(
+                status.name == name for status in provider.catalogue()
+            ):
                 return provider
-        raise ValueError("No local provider")
+        raise ValueError(f"Unknown local model: {name}")
 
     def metrics(self) -> list[ModelMetrics]:
         """How each model has performed in real use, fast mode apart, newest data included.
