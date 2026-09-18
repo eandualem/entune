@@ -8,6 +8,7 @@ on Apple Silicon and on the CPU elsewhere; nothing leaves the machine.
 
 from __future__ import annotations
 
+import gc
 import io
 import shutil
 import subprocess
@@ -140,6 +141,12 @@ class Local:
         if name not in self.models:
             return
         threading.Thread(target=self._engine, args=(name,), daemon=True, name="dictum-warm").start()
+
+    def unload(self, keep: str | None = None) -> None:
+        with self._lock:
+            for name in [n for n in self._models if n != keep]:
+                del self._models[name]  # the bindings free the context with the object
+        gc.collect()
 
     def _engine(self, name: str) -> Any:
         with self._lock:
