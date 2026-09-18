@@ -59,6 +59,7 @@ def engine_python() -> Path | None:
 class Parakeet:
     id: str = "parakeet"
     name: str = "Parakeet (local)"
+    term_limit: int | None = None  # the engine takes no vocabulary hint
 
     def __init__(
         self,

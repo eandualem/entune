@@ -65,6 +65,7 @@ CATALOGUE: tuple[ModelSpec, ...] = (
 class Local:
     id: str = "local"
     name: str = "Local"
+    term_limit: int | None = 60  # what fits whisper's 224-token prompt with room to spare
 
     def __init__(
         self,
