@@ -295,11 +295,11 @@ settingsForm.addEventListener("submit", async (e) => {
 });
 
 // ---- Dictionary tab ----
-// `dict` mirrors dictionary.json: pinned (the user's, never changed by the model), agents
-// (corrections they confirmed) and learned (the last accepted proposal, keyed by the speech
+// `dict` mirrors dictionary.json: pinned (the user's, including what their agents sent;
+// never changed by the model) and learned (the last accepted proposal, keyed by the speech
 // model it was learned for). The page shows and builds the default model's learned
 // section. Every change is saved whole.
-let dict = { pinned: { terms: [], replacements: {} }, agents: { terms: [], replacements: {} }, learned: {} };
+let dict = { pinned: { terms: [], replacements: {} }, learned: {} };
 let defaultModel = null; // {id, label} from /api/models, or null
 let proposal = null;
 const dictionaryBox = el("dictionary");
@@ -398,7 +398,6 @@ function renderEntries(container, section) {
 
 function renderDictionary(jsonText) {
   renderEntries(el("pinned-entries"), "pinned");
-  renderEntries(el("agents-entries"), "agents");
   renderEntries(el("learned-entries"), "learned");
   el("learned-model").textContent = defaultModel?.label ?? "no default model";
   const learned = sectionOf(dict, "learned");

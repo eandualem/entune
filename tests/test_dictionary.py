@@ -27,11 +27,21 @@ def test_the_first_flat_form_is_read_as_pinned() -> None:
     assert not old.learned
 
 
-def test_a_flat_learned_section_is_read_as_unscoped() -> None:
-    old = dictionary.parse('{"learned": {"terms": ["Soniox"]}}')
-    assert old.learned == {dictionary.UNSCOPED: Entries(("Soniox",), {})}
-    assert not old.effective("stub/good")  # applies to no model until it is moved
-    assert dictionary.parse(dictionary.dumps(old)) == old
+def test_a_single_learned_list_goes_under_the_default_model_and_agents_into_pinned(
+    tmp_path: Path,
+) -> None:
+    old = '{"pinned": {"terms": ["Dictum"]}, "agents": {"replacements": {"a": "b"}},'
+    old += ' "learned": {"terms": ["Soniox"]}}'
+    with pytest.raises(ValueError, match="set a default model"):
+        dictionary.parse(old)
+    parsed = dictionary.parse(old, legacy_model="stub/good")
+    assert parsed.pinned == Entries(("Dictum",), {"a": "b"})
+    assert parsed.learned == {"stub/good": Entries(("Soniox",), {})}
+    (tmp_path / dictionary.FILENAME).write_text(old, encoding="utf-8")
+    assert dictionary.load(tmp_path, "stub/good") == parsed
+    text = (tmp_path / dictionary.FILENAME).read_text(encoding="utf-8")  # rewritten once
+    assert '"agents"' not in text and '"stub/good"' in text
+    assert dictionary.load(tmp_path) == parsed  # now readable without a default model
 
 
 @pytest.mark.parametrize(
@@ -41,7 +51,10 @@ def test_a_flat_learned_section_is_read_as_unscoped() -> None:
         ("[]", "must be a JSON object"),
         ('{"words": []}', "Unknown keys: words"),
         ('{"pinned": {"terms": "Dictum"}}', "pinned.terms must be a list"),
-        ('{"learned": {"replacements": {"a": 1}}}', "learned.replacements must be an object"),
+        (
+            '{"learned": {"m": {"replacements": {"a": 1}}}}',
+            "learned.m.replacements must be an object",
+        ),
         ('{"learned": []}', "learned must be an object keyed by speech model"),
         ('{"learned": {"stub/good": {"terms": "x"}}}', "learned.stub/good.terms must be a list"),
         ('{"pinned": {"extra": 1}}', "pinned: unknown keys extra"),
@@ -103,32 +116,26 @@ def test_propose_respects_pinned_and_diffs_against_learned() -> None:
     assert p.as_json()["model"] == "stub/good"
 
 
-def test_agents_section_is_confirmed_and_ranks_between_pinned_and_learned() -> None:
+def test_agent_corrections_are_pinned() -> None:
     d = Dictionary(
-        pinned=Entries(replacements={"a": "pinned"}),
-        agents=Entries(("Soniox",), {"a": "agents", "b": "agents"}),
-        learned={"m": Entries(("Groq",), {"b": "learned", "c": "learned"})},
+        pinned=Entries(("Soniox",), {"a": "pinned"}),
+        learned={"m": Entries(("Groq",), {"b": "learned"})},
     )
-    assert d.effective("m").replacements == {"a": "pinned", "b": "agents", "c": "learned"}
-    assert d.effective("m").terms == ("Soniox", "Groq")
-    assert d.confirmed.replacements == {"a": "pinned", "b": "agents"}
     updated, added = d.with_agent_corrections(
-        Entries(("soniox", "Dictum"), {"a": "x", "d": "agents"})
+        Entries(("soniox", "Dictum"), {"a": "x", "A": "x", "d": "agents"})
     )
-    assert added == Entries(("Dictum",), {"a": "x", "d": "agents"})
-    assert updated.agents.terms == ("Soniox", "Dictum")
-    assert updated.agents.replacements == {"a": "x", "b": "agents", "d": "agents"}
-    assert updated.effective("m").replacements["a"] == "pinned"  # pinned still wins when applied
+    assert added == Entries(("Dictum",), {"a": "x", "A": "x", "d": "agents"})
+    assert updated.pinned.terms == ("Soniox", "Dictum")
+    assert updated.pinned.replacements == {"A": "x", "d": "agents"}  # one rule per phrase
+    assert updated.effective("m").replacements == {"b": "learned", "A": "x", "d": "agents"}
     p = dictionary.propose(updated, Entries(("Dictum", "New"), {"d": "learned again"}), "m")
-    assert p.learned == Entries(("New",), {})  # confirmed entries are not re-learned
-    text = dictionary.dumps(updated)
-    assert dictionary.parse(text) == updated
+    assert p.learned == Entries(("New",), {})  # pinned entries are not re-learned
+    assert dictionary.parse(dictionary.dumps(updated)) == updated
 
 
 def test_pinned_wins_regardless_of_capitalisation() -> None:
     d = Dictionary(
         pinned=Entries((), {"grok": "Groq"}),
-        agents=Entries((), {"Grok": "Glock"}),
         learned={"m": Entries((), {"GROK": "Grokk"})},
     )
     assert d.effective("m").replacements == {"grok": "Groq"}
