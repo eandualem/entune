@@ -13,7 +13,7 @@ from dictum import llm, shortcuts
 from dictum.audio import sniff_mime
 from dictum.dictionary import Dictionary, Entries, Proposal
 from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, resolve_model
-from dictum.providers.base import Streams, Upload
+from dictum.providers.base import Downloadable, LocalModelStatus, Streams, Upload
 from dictum.shortcuts import Shortcuts
 from dictum.store import Recording, Store, Transcription
 
@@ -62,6 +62,7 @@ class ProviderStatus:
     default_model: str | None = None  # language-model providers only
     models: tuple[llm.ModelChoice, ...] = ()  # language-model providers only
     streams: bool = False  # can take the audio while it is recorded (fast mode)
+    local: bool = False  # models are downloaded here instead of a key entered
 
 
 @dataclass(frozen=True)
@@ -133,10 +134,37 @@ class Dictum:
             hint = None if key is None else mask_key(key)
             statuses.append(
                 ProviderStatus(
-                    provider.id, provider.name, hint, streams=isinstance(provider, Streams)
+                    provider.id,
+                    provider.name,
+                    hint,
+                    streams=isinstance(provider, Streams),
+                    local=isinstance(provider, Downloadable),
                 )
             )
         return statuses
+
+    # Local models: downloaded from Settings, the counterpart of entering a key.
+
+    def local_models(self) -> list[LocalModelStatus]:
+        return [
+            status
+            for provider in self.providers
+            if isinstance(provider, Downloadable)
+            for status in provider.catalogue()
+        ]
+
+    def download_local_model(self, name: str) -> None:
+        self._local().download(name)
+
+    def remove_local_model(self, name: str) -> None:
+        self._local().remove(name)
+        self._changed()
+
+    def _local(self) -> Downloadable:
+        for provider in self.providers:
+            if isinstance(provider, Downloadable):
+                return provider
+        raise ValueError("No local provider")
 
     def metrics(self) -> list[ModelMetrics]:
         """How each model has performed in real use, fast mode apart, newest data included.
@@ -359,11 +387,12 @@ class Dictum:
         return resolve_model(self.providers, ref)
 
     def available_models(self) -> list[ModelOption]:
-        """Models of every provider that has a key, in registry order."""
+        """Models of every provider that has a key, plus the downloaded local ones."""
         default = self.default_model()
         options = []
         for provider in self.providers:
-            if self.store.get_setting(key_setting(provider.id)) is None:
+            needs_key = not isinstance(provider, Downloadable)
+            if needs_key and self.store.get_setting(key_setting(provider.id)) is None:
                 continue
             for model in provider.models:
                 ref = ModelRef(provider, model)
@@ -391,6 +420,8 @@ class Dictum:
         `upload`: fast mode's stream of this same audio, used when it is the same provider.
         """
         api_key = self.store.get_setting(key_setting(ref.provider.id))
+        if isinstance(ref.provider, Downloadable):
+            api_key = ""  # a local model needs none
         result: Transcript | Failure
         timing = Timing(None, None, False)
         if api_key is None:

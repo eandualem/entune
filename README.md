@@ -109,6 +109,7 @@ reach other apps as a modifier. Pick another key if you need fn elsewhere.
 | AssemblyAI | universal-3-5-pro | sync endpoint; clips over two minutes use the long-form endpoint |
 | Groq | whisper-large-v3-turbo | OpenAI-style transcriptions endpoint |
 | Soniox | stt-async-v5 | upload, poll, fetch; the upload is deleted afterwards |
+| Local | Whisper large-v3-turbo, its compact build, small.en, base.en | whisper.cpp on this machine; no key, nothing leaves the Mac |
 
 Enter a provider's API key in Settings and its model appears in the model
 list; mark one as the default. You pay each provider directly, per minute
@@ -119,6 +120,13 @@ of audio, at its own published rate:
 
 Keys live in the local database, are only ever sent to the provider they
 belong to, and are never shown again beyond a masked hint.
+
+**Local models** need no key. Settings lists them with their size and a
+Download button; a model is fetched once (resumes if interrupted) and then
+sits in the same model lists as the cloud ones, so you can make it the
+default or retry a cloud failure with it. Runs on the GPU on Apple Silicon.
+Measured on 2026-09-18 on an M5: base.en transcribes 25 s of speech in
+under a second. Your dictionary terms are passed as the prompt.
 
 ## History
 
