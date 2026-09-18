@@ -124,13 +124,13 @@ class HotkeyListener:
         When fn is part of the shortcuts the listener owns the key (see `swallow_fn`);
         the listener is recreated when that changes.
         """
-        owns_fn = engine is not None and "fn" in {
-            *(engine.shortcuts.hold or ()),
-            *(engine.shortcuts.toggle or ()),
-        }
+        owns_fn = engine is not None and engine.shortcuts.uses_fn
         with self._lock:
             self._engine = engine
-            if self._listener is not None and self._listener.owns_fn != owns_fn:
+            if self._listener is not None and (
+                self._listener.owns_fn != owns_fn or not self._listener.is_alive()
+            ):
+                # A listener whose event tap macOS refused has no thread any more.
                 self._listener.stop()
                 self._listener = None
             if self._listener is None:
