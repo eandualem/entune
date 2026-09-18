@@ -12,6 +12,7 @@ edited by hand or pasted whole.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -143,7 +144,12 @@ def load(data_dir: Path) -> Dictionary:
 
 
 def save(data_dir: Path, dictionary: Dictionary) -> None:
-    (data_dir / FILENAME).write_text(dumps(dictionary) + "\n", encoding="utf-8")
+    """Written to a temporary file and renamed into place, so a reader (a transcription
+    applying the dictionary while it is being saved) never sees a half-written file."""
+    target = data_dir / FILENAME
+    temporary = target.with_name(FILENAME + ".tmp")
+    temporary.write_text(dumps(dictionary) + "\n", encoding="utf-8")
+    os.replace(temporary, target)
 
 
 def apply(entries: Entries, text: str) -> str:
