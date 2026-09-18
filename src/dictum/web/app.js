@@ -630,6 +630,10 @@ function setRecording(on) {
   }
 }
 
+// The page records raw PCM and wraps it as WAV, like the shortcut does, so every
+// recording is one container that every provider, cloud or local, takes without
+// a decoder. (MediaRecorder would give WebM, which the local engines cannot read
+// without ffmpeg.)
 recordBtn.addEventListener("click", async () => {
   if (recorder) {
     recorder.stop();
@@ -642,21 +646,57 @@ recordBtn.addEventListener("click", async () => {
     status.textContent = `Microphone unavailable: ${err.message ?? err}`;
     return;
   }
-  const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((t) => MediaRecorder.isTypeSupported(t));
+  const context = new AudioContext();
+  const source = context.createMediaStreamSource(stream);
+  const tap = context.createScriptProcessor(4096, 1, 1);
   const chunks = [];
-  recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-  recorder.addEventListener("dataavailable", (e) => chunks.push(e.data));
-  recorder.addEventListener("stop", () => {
-    const type = recorder.mimeType;
-    stream.getTracks().forEach((t) => t.stop());
-    recorder = null;
-    setRecording(false);
-    upload(new Blob(chunks, { type }));
-  });
-  recorder.start();
+  tap.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  source.connect(tap);
+  tap.connect(context.destination);
+  recorder = {
+    stop() {
+      tap.disconnect();
+      source.disconnect();
+      stream.getTracks().forEach((t) => t.stop());
+      const rate = context.sampleRate;
+      context.close();
+      recorder = null;
+      setRecording(false);
+      upload(wavBlob(chunks, rate));
+    },
+  };
   setRecording(true);
   status.textContent = "";
 });
+
+function wavBlob(chunks, rate) {
+  const length = chunks.reduce((n, c) => n + c.length, 0);
+  const buffer = new ArrayBuffer(44 + length * 2);
+  const view = new DataView(buffer);
+  const ascii = (offset, text) => [...text].forEach((ch, i) => view.setUint8(offset + i, ch.charCodeAt(0)));
+  ascii(0, "RIFF");
+  view.setUint32(4, 36 + length * 2, true);
+  ascii(8, "WAVE");
+  ascii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  ascii(36, "data");
+  view.setUint32(40, length * 2, true);
+  let offset = 44;
+  for (const chunk of chunks) {
+    for (const sample of chunk) {
+      const s = Math.max(-1, Math.min(1, sample));
+      view.setInt16(offset, s < 0 ? s * 32768 : s * 32767, true);
+      offset += 2;
+    }
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
 
 async function upload(audio) {
   const form = new FormData();
