@@ -6,16 +6,14 @@ from dictum import llm
 from dictum.dictionary import Dictionary, Entries
 
 
-def test_user_prompt_carries_the_shared_sections_and_one_models_learned_list() -> None:
+def test_user_prompt_carries_pinned_and_one_models_learned_list() -> None:
     current = Dictionary(
         pinned=Entries(("Dictum",)),
-        agents=Entries(("Groq",)),
         learned={"stub/good": Entries(("Soniox",)), "local/small.en": Entries(("Elsewhere",))},
     )
     long = "x" * (llm.MAX_TRANSCRIPT_CHARS - 10)
     prompt = llm.build_user_prompt(current, [" first ", "", long, "never included"], "stub/good")
     assert '"terms": ["Dictum"]' in prompt and '"terms": ["Soniox"]' in prompt
-    assert "Confirmed through the user's agents" in prompt and '"terms": ["Groq"]' in prompt
     assert "Previously learned for stub/good" in prompt and "Elsewhere" not in prompt
     assert "transcripts from stub/good" in prompt
     assert "- first" in prompt and "never included" not in prompt

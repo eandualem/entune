@@ -2,8 +2,8 @@
 
 The model never touches a transcript on its way to the user. It reads one speech
 model's recent raw transcripts and the current dictionary and proposes the `learned`
-section for that speech model; the user's `pinned` entries and the agents' corrections
-are handed to it as approved and off limits, and as evidence of who the user is.
+section for that speech model; the user's `pinned` entries are handed to it as approved
+and off limits, and as evidence of who the user is.
 """
 
 from __future__ import annotations
@@ -80,12 +80,12 @@ section for that speech model:
   common English word to something else unless the transcripts make the mistake unmistakable.
   Prefer multi-word phrases; keep the list short.
 
-The "pinned" section is the user's own, already approved, and the "agents" section holds
-corrections the user confirmed through their assistants. Both apply to every speech model.
-Do not alter, remove or contradict either; do not repeat their entries. Do read them as
-evidence of who this person is, what they work on and how they speak: a pinned "cloud" to
-"Claude" says they talk about the assistant, not the sky, and that guides which of this
-model's mishearings are worth a rule. Build on top of them.
+The "pinned" section is the user's own, already approved (by hand, or confirmed through
+their assistants), and applies to every speech model. Do not alter, remove or contradict
+it; do not repeat its entries. Do read it as evidence of who this person is, what they
+work on and how they speak: a pinned "cloud" to "Claude" says they talk about the
+assistant, not the sky, and that guides which of this model's mishearings are worth a
+rule. Build on top of it.
 The previous "learned" section for this speech model is included; keep what still holds,
 drop what does not.
 
@@ -107,8 +107,6 @@ def build_user_prompt(current: Dictionary, transcripts: Sequence[str], speech_mo
     return (
         "Pinned by the user (approved, shared by every speech model, do not change):\n"
         f"{json.dumps(current.pinned.as_json(), ensure_ascii=False)}\n\n"
-        "Confirmed through the user's agents (approved, shared, do not change):\n"
-        f"{json.dumps(current.agents.as_json(), ensure_ascii=False)}\n\n"
         f"Previously learned for {speech_model} (revise):\n"
         f"{json.dumps(current.learned_for(speech_model).as_json(), ensure_ascii=False)}\n\n"
         f"Recent raw transcripts from {speech_model}, newest first ({len(kept)}):\n"
