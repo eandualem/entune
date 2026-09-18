@@ -135,3 +135,17 @@ def test_the_hold_key_that_stops_a_hands_free_recording_does_not_restart_it() ->
     engine.release("fn")
     engine.release("cmd")
     assert events == ["start", "stop"] and not engine.recording
+
+
+def test_autorepeat_of_the_hold_key_that_stopped_hands_free_starts_nothing() -> None:
+    engine, events = make("space", "cmd+d")
+    engine.press("cmd")
+    engine.press("d")  # hands-free
+    engine.release("d")
+    engine.release("cmd")
+    engine.press("space")  # stops it
+    engine.press("space")  # the OS repeating the held key
+    engine.press("space")
+    assert events == ["start", "stop"] and not engine.recording
+    engine.release("space")
+    assert events == ["start", "stop"]

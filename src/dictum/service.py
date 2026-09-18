@@ -530,7 +530,15 @@ class Dictum:
     def record_and_transcribe(
         self, data: bytes, label: str | None, ref: str | None, upload: Upload | None = None
     ) -> Recording:
-        recording = self.store.create_recording(data, label)
+        return self.transcribe_recording(self.store_recording(data, label), ref, upload)
+
+    def store_recording(self, data: bytes, label: str | None) -> Recording:
+        """The clip is on disk and in history from this moment, whatever happens next."""
+        return self.store.create_recording(data, label)
+
+    def transcribe_recording(
+        self, recording: Recording, ref: str | None, upload: Upload | None = None
+    ) -> Recording:
         try:
             model = self.choose_model(ref)
         except (NoDefaultModel, UnknownModel) as exc:
