@@ -18,6 +18,7 @@ a = Analysis(
     datas=[
         (str(PACKAGE_DIR / "web"), "dictum/web"),
         (str(PACKAGE_DIR / "assets"), "dictum/assets"),
+        (str(PACKAGE_DIR / "providers" / "parakeet_helper.py"), "dictum/providers"),
     ],
     hiddenimports=[
         *collect_submodules("uvicorn"),

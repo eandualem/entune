@@ -102,9 +102,10 @@ class LocalModelStatus:
     label: str
     size_bytes: int
     note: str
-    state: str  # absent | downloading | ready | error
+    state: str  # absent | downloading | ready | error | unavailable (engine not installed)
     progress: float  # 0..1
     error: str | None
+    provider: str = ""
 
 
 @runtime_checkable
