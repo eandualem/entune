@@ -21,14 +21,27 @@
 
 What is applied is the union of the three: `terms` go to the provider as
 its vocabulary hint (each adapter caps them at the provider's documented
-limit), and `replacements` are applied to every transcript as whole words or
-phrases, matched regardless of case, longest phrase first, the replacement
-inserted exactly as written. On a conflict, pinned wins over agents over
-learned. The provider's raw text is kept next to the corrected one.
+limit; the local models take them as the prompt), and `replacements` are
+applied to every transcript as whole words or phrases, matched regardless
+of case, longest phrase first, in one pass over the original text, so one
+rule's output is never rewritten by another; the replacement is inserted
+exactly as written. On a conflict, pinned wins over agents over learned,
+and the same phrase in a different capitalisation is the same rule. The
+provider's raw text is kept next to the corrected one, and no dictionary
+failure ever loses a transcript.
 
-The file is read on every transcription, so a hand edit counts at once. The
+The file is read on every transcription, so a hand edit counts at once; it
+is written to a temporary file and renamed into place, and the page and
+the agents' corrections write under one lock, each naming the version they
+edited (the API's `ETag`), so nothing added meanwhile is dropped. The
 first release stored one flat `{"terms", "replacements"}` object; that form
 is still read, as pinned.
+
+Known limit (issue #30, the next piece of work): the build reads every
+transcript in history regardless of which model produced it, and the
+replacements apply to every provider. With local models in use, whose
+mishearings differ from the cloud models', the dictionary should learn and
+apply per provider.
 
 **Build from history** sends the recent raw transcripts (at most 300, or
 40,000 characters), the pinned and agents sections as approved, and the
