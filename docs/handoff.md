@@ -4,6 +4,41 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-18, night: UI improvements (issue #77), for Elias to inspect
+
+**Elias's brief, from Telegram, in his words.** "Take ur best judgement,
+keep all the features, but try to make it more intuitive, and easy to get
+started for new person. If the changes are good we will merge to main after
+i visually inspect. If not we will revert. For example scaling should scale
+consistently across all components, the recording indicator should be
+moveble, user should see his transcription first, rather than model speed
+comparison, etc"
+
+**What changed (branch `feat/ui-improvements`, PR pending his look).**
+- Scaling: every size in `style.css` is in rem off one root size; a Text
+  size setting under Appearance (Small, Default, Large, Larger) and
+  cmd+, cmd−, cmd0 in the app window scale the whole page together,
+  icons, the audio player and the settings label column included.
+- The recording pill can be dragged; the drop point is kept in the app's
+  defaults (`indicatorOrigin`) and used from then on, on any screen it is
+  still on. It is saved when the pill hides, since only a drag moves it in
+  between. Not yet observed live: needs the rebuilt app and a shortcut.
+- History shows the transcripts only; the performance table moved to
+  Settings under the default model it informs.
+- The empty History is a three-step "Get started" checklist (add a
+  provider, pick the model, dictate) that ticks itself off and links to
+  Settings. The page opens on History for a new person, not Settings.
+- Settings: keys have their own Save keys button per group; fast mode and
+  the dictionary model apply on change like the default model, shortcuts
+  and appearance already did. Section intros say so.
+- Elias's dictionary-tab, history-card and retry features are unchanged.
+
+**Verified (observations).** 123 tests, ruff and mypy pass. On an empty
+scratch folder in Chrome: the checklist, the Settings layout and the Large
+text size render, no console errors. The rebuilt app is installed for him.
+
+**Next.** Elias inspects; merge to main after, or revert the PR.
+
 ## 2026-09-18, late evening: dictionaries per speech model (issue #30)
 
 **What changed.** The `learned` section of `dictionary.json` is now keyed
