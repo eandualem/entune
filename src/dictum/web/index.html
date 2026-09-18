@@ -117,6 +117,12 @@
               <div class="field"><select class="select" id="default-model"></select></div>
             </div>
             <div class="row top">
+              <div class="lbl"><label for="fast-mode">Fast mode</label><span class="hint">Uploads while you record, so a dictation over two minutes is transcribed as soon as you stop. AssemblyAI only; shorter clips are unchanged.</span></div>
+              <div class="field radios">
+                <label><input type="checkbox" id="fast-mode" /> Upload while recording</label>
+              </div>
+            </div>
+            <div class="row top">
               <div class="lbl"><label for="shortcut-hold">Hold to talk</label><span class="hint">One key. Records while held, release to stop.</span></div>
               <div class="field shortcut-field">
                 <input class="input key-input" id="shortcut-hold" type="text" readonly placeholder="Not set" />

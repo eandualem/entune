@@ -106,6 +106,7 @@ def create_app(app: Dictum) -> Starlette:
                     for s in app.llm_provider_statuses()
                 ],
                 "dictionaryModel": app.dictionary_model(),
+                "fastMode": app.fast_mode(),
             }
         )
 
@@ -120,6 +121,8 @@ def create_app(app: Dictum) -> Starlette:
                 app.set_default_model(body["defaultModel"])
             if "dictionaryModel" in body:
                 app.set_dictionary_model(_text(body["dictionaryModel"]) or None)
+            if "fastMode" in body:
+                app.set_fast_mode(bool(body["fastMode"]))
             shortcuts = body.get("shortcuts")
             if isinstance(shortcuts, dict):
                 app.set_shortcuts(_text(shortcuts.get("hold")), _text(shortcuts.get("toggle")))

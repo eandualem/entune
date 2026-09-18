@@ -14,6 +14,7 @@ const settingsForm = el("settings-form");
 const keysGroup = el("keys");
 const llmKeysGroup = el("llm-keys");
 const dictionaryModelInput = el("dictionary-model");
+const fastModeInput = el("fast-mode");
 const dictionaryModels = el("dictionary-models");
 const dictionaryModelChip = el("dictionary-model-chip");
 const defaultSelect = el("default-model");
@@ -124,6 +125,7 @@ async function loadSettings() {
     ...s.llmProviders.flatMap((p) => p.models.map((m) => new Option(`${m.name}${m.id === p.defaultModel ? " (suggested)" : ""}`, m.id))),
   );
   dictionaryModelInput.value = s.dictionaryModel ?? "";
+  fastModeInput.checked = Boolean(s.fastMode);
   dictionaryModelChip.textContent = s.dictionaryModel ?? "no model set";
   shortcuts = s.shortcuts;
   shortcutHold.value = s.shortcuts.hold ?? "";
@@ -145,7 +147,7 @@ settingsForm.addEventListener("submit", async (e) => {
   for (const input of settingsForm.querySelectorAll("input[type=password]")) {
     if (input.value.trim()) keys[input.name.slice("key:".length)] = input.value.trim();
   }
-  const body = { keys, dictionaryModel: dictionaryModelInput.value.trim() || null };
+  const body = { keys, dictionaryModel: dictionaryModelInput.value.trim() || null, fastMode: fastModeInput.checked };
   if (!defaultSelect.disabled) body.defaultModel = defaultSelect.value || null;
   try {
     await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
