@@ -22,6 +22,7 @@ from dictum.desktop.platform import Actions, Hotkeys, Permissions, State, Tray, 
 
 ASSETS = Path(__file__).resolve().parents[2] / "assets"
 TITLES: dict[State, str] = {"idle": "", "recording": "● rec", "busy": "…"}
+INDICATOR: dict[State, str] = {"idle": "", "recording": "Recording", "busy": "Transcribing…"}
 WIDTH, HEIGHT = 880, 640
 
 
@@ -100,6 +101,7 @@ class _Tray:
         self._open_window: Callable[[], None] = lambda: None
         self._open_settings: Callable[[], None] = lambda: None
         self._quit: Callable[[], None] = lambda: None
+        self._pill: Any = None
         self._icon: pystray.Icon | None = None
 
     def build(self) -> pystray.Icon:
@@ -122,6 +124,23 @@ class _Tray:
     def set_state(self, state: State) -> None:
         if self._icon is not None:
             self._icon.title = f"Dictum {TITLES[state]}".strip()
+        indicator = self._indicator()
+        if indicator is None:
+            return
+        if state == "idle":
+            indicator.hide()
+        else:
+            indicator.show(INDICATOR[state])
+
+    def _indicator(self) -> Any:
+        """The on-screen pill (macOS today); the tray title alone is a tooltip there."""
+        if sys.platform != "darwin":
+            return None
+        if self._pill is None:
+            from dictum.desktop.macos.indicator import Indicator
+
+            self._pill = Indicator()
+        return self._pill
 
     def set_status(self, text: str) -> None:
         self._status = text
