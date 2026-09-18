@@ -149,3 +149,21 @@ def test_autorepeat_of_the_hold_key_that_stopped_hands_free_starts_nothing() -> 
     assert events == ["start", "stop"] and not engine.recording
     engine.release("space")
     assert events == ["start", "stop"]
+
+
+def test_injected_keys_such_as_our_own_paste_never_reach_the_engine() -> None:
+    pytest.importorskip("Quartz", reason="macOS only")
+    from pynput.keyboard import Key
+
+    from dictum.desktop.macos.hotkeys import HotkeyListener
+
+    listener = HotkeyListener()
+    engine, events = make("alt_r", "cmd+alt_r")
+    listener._engine = engine
+    listener._on_press(Key.alt_r)  # the user: hold to talk
+    assert events == ["start"] and engine.recording
+    listener._on_press(Key.cmd, injected=True)  # Dictum pasting the previous transcript
+    listener._on_release(Key.cmd, injected=True)
+    assert events == ["start"] and engine.recording  # not turned hands-free
+    listener._on_release(Key.alt_r)
+    assert events == ["start", "stop"] and not engine.recording
