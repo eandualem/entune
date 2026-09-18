@@ -126,6 +126,9 @@ belong to, and are never shown again beyond a masked hint.
 Download button; a model is fetched once (resumes if interrupted) and then
 sits in the same model lists as the cloud ones, so you can make it the
 default or retry a cloud failure with it. Runs on the GPU on Apple Silicon.
+A local model takes memory only while it is the selected model: it is loaded
+when you pick it, freed when you pick something else, and a model used for a
+single retry is freed right after.
 Measured on 2026-09-18 on an M5: base.en transcribes 25 s of speech in
 under a second. Your dictionary terms are passed as the prompt.
 

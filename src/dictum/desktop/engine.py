@@ -30,6 +30,8 @@ class ShortcutEngine:
         self._chord_fired = False
 
     def press(self, key: str) -> None:
+        if key in self.pressed:
+            return  # the OS auto-repeats a held key; only a new physical press counts
         self.pressed.add(key)
         hold, toggle = self.shortcuts.hold, self.shortcuts.toggle
         if toggle and key in toggle and set(toggle) <= self.pressed:
@@ -52,6 +54,10 @@ class ShortcutEngine:
                 self._start()
             elif not self._held:
                 self._stop()  # a press of the hold key always stops a hands-free recording
+                if toggle and key in toggle:
+                    # With hold=fn and toggle=cmd+fn, a cmd that follows would complete
+                    # the chord and start again; this press has done its job until released.
+                    self._chord_fired = True
 
     def release(self, key: str) -> None:
         self.pressed.discard(key)

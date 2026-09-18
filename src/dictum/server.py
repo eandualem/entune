@@ -18,7 +18,7 @@ from starlette.staticfiles import StaticFiles
 
 from dictum import __version__
 from dictum.audio import extension_for
-from dictum.service import Dictum, NoDefaultModel, UnknownModel
+from dictum.service import DictionaryChanged, Dictum, NoDefaultModel, UnknownModel
 from dictum.store import Recording
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -37,9 +37,16 @@ class LocalOnly(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        host = request.headers.get("host", "")
+        if not _loopback(host):
+            # A DNS-rebinding page reaches a localhost server with its own Host header;
+            # every route, reads included, is refused unless the host is this machine.
+            return _bad("Requests must be addressed to localhost", 403)
         if request.method in ("POST", "PUT", "DELETE"):
             origin = request.headers.get("origin")
-            if origin is not None and not _same_origin(origin, request):
+            if origin is not None and origin.lower() != f"http://{host}".lower():
+                # "null" (a sandboxed frame, a file: page) is refused too: the window
+                # is served over http and sends its real loopback origin.
                 return _bad("Requests from other origins are refused", 403)
             length = request.headers.get("content-length")
             if length and length.isdigit() and int(length) > MAX_UPLOAD_BYTES:
@@ -47,9 +54,12 @@ class LocalOnly(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-def _same_origin(origin: str, request: Request) -> bool:
-    host = request.headers.get("host", "")
-    return origin.lower() in (f"http://{host}".lower(), "null") if host else False
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+
+
+def _loopback(host: str) -> bool:
+    name = host.rsplit(":", 1)[0] if not host.endswith("]") and ":" in host else host
+    return name.lower() in LOOPBACK_HOSTS
 
 
 class NoCache(BaseHTTPMiddleware):
@@ -138,18 +148,31 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc))
         return JSONResponse({"ok": True})
 
+    def _dictionary_response(app: Dictum) -> Response:
+        return PlainTextResponse(
+            app.dictionary_text(),
+            media_type="application/json",
+            headers={"ETag": f'"{app.dictionary_version()}"'},
+        )
+
     async def get_dictionary(_: Request) -> Response:
         try:
-            return PlainTextResponse(app.dictionary_text(), media_type="application/json")
+            return _dictionary_response(app)
         except ValueError as exc:
             return _bad(f"dictionary.json on disk is not usable: {exc}", 500)
 
     async def put_dictionary(request: Request) -> Response:
+        expected = request.headers.get("if-match")
         try:
-            app.set_dictionary((await request.body()).decode("utf-8"))
+            app.set_dictionary(
+                (await request.body()).decode("utf-8"),
+                expected.strip('"') if expected else None,
+            )
+        except DictionaryChanged as exc:
+            return _bad(str(exc), 409)
         except ValueError as exc:
             return _bad(str(exc))
-        return PlainTextResponse(app.dictionary_text(), media_type="application/json")
+        return _dictionary_response(app)
 
     async def agent_corrections(request: Request) -> Response:
         try:
@@ -239,14 +262,14 @@ def create_app(app: Dictum) -> Starlette:
 
     async def download_local_model(request: Request) -> Response:
         try:
-            app.download_local_model(request.path_params["name"])
+            await run_in_threadpool(app.download_local_model, request.path_params["name"])
         except ValueError as exc:
             return _bad(str(exc), 404)
         return JSONResponse({"ok": True})
 
     async def remove_local_model(request: Request) -> Response:
         try:
-            app.remove_local_model(request.path_params["name"])
+            await run_in_threadpool(app.remove_local_model, request.path_params["name"])
         except ValueError as exc:
             return _bad(str(exc), 404)
         return JSONResponse({"ok": True})

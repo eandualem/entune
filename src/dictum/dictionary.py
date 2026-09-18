@@ -12,8 +12,8 @@ edited by hand or pasted whole.
 from __future__ import annotations
 
 import json
+import os
 import re
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -47,18 +47,16 @@ class Dictionary:
         """Pinned and agent entries together: what a model must not change."""
         return Entries(
             tuple(dict.fromkeys((*self.pinned.terms, *self.agents.terms))),
-            {**self.agents.replacements, **self.pinned.replacements},
+            _merge(self.agents.replacements, self.pinned.replacements),
         )
 
     @property
     def effective(self) -> Entries:
         """What is applied: every section, pinned winning over agents over learned."""
         terms = tuple(dict.fromkeys((*self.pinned.terms, *self.agents.terms, *self.learned.terms)))
-        replacements = {
-            **self.learned.replacements,
-            **self.agents.replacements,
-            **self.pinned.replacements,
-        }
+        replacements = _merge(
+            self.learned.replacements, self.agents.replacements, self.pinned.replacements
+        )
         return Entries(terms, replacements)
 
     def with_agent_corrections(self, corrections: Entries) -> tuple[Dictionary, Entries]:
@@ -146,7 +144,12 @@ def load(data_dir: Path) -> Dictionary:
 
 
 def save(data_dir: Path, dictionary: Dictionary) -> None:
-    (data_dir / FILENAME).write_text(dumps(dictionary) + "\n", encoding="utf-8")
+    """Written to a temporary file and renamed into place, so a reader (a transcription
+    applying the dictionary while it is being saved) never sees a half-written file."""
+    target = data_dir / FILENAME
+    temporary = target.with_name(FILENAME + ".tmp")
+    temporary.write_text(dumps(dictionary) + "\n", encoding="utf-8")
+    os.replace(temporary, target)
 
 
 def apply(entries: Entries, text: str) -> str:
@@ -157,16 +160,35 @@ def apply(entries: Entries, text: str) -> str:
     """
     if not entries.replacements or not text:
         return text
-    for heard in sorted(entries.replacements, key=len, reverse=True):
-        meant = entries.replacements[heard]
-        pattern = r"(?<!\w)" + r"\s+".join(map(re.escape, heard.split())) + r"(?!\w)"
-        text = re.sub(pattern, _literal(meant), text, flags=re.IGNORECASE)
-    return text
+    # One pass over the original text: a phrase inserted by one rule is never matched
+    # by another, so "cloud code -> Claude Code" and "code -> Codex" cannot compound.
+    phrases = sorted(entries.replacements, key=len, reverse=True)
+    # One capturing group per rule: which group matched says which rule applies, so the
+    # answer never depends on lowercasing the matched text (Unicode case folding is not
+    # what the regex engine does, "İstanbul" being the classic case).
+    alternatives = "|".join(
+        "(" + r"\s+".join(map(re.escape, heard.split())) + ")" for heard in phrases
+    )
+    pattern = r"(?<!\w)(?:" + alternatives + r")(?!\w)"
+
+    def meant(match: re.Match[str]) -> str:
+        return entries.replacements[phrases[(match.lastindex or 1) - 1]]
+
+    return re.sub(pattern, meant, text, flags=re.IGNORECASE)
 
 
-def _literal(replacement: str) -> Callable[[re.Match[str]], str]:
-    """A substitution that inserts `replacement` as is, no backslash or group expansion."""
-    return lambda _match: replacement
+def _key(phrase: str) -> str:
+    return " ".join(phrase.split()).lower()
+
+
+def _merge(*sections: dict[str, str]) -> dict[str, str]:
+    """Replacements from several sections, later sections winning; the same phrase in
+    a different capitalisation is the same rule, since matching ignores case."""
+    winners: dict[str, tuple[str, str]] = {}
+    for section in sections:
+        for heard, meant in section.items():
+            winners[_key(heard)] = (heard, meant)
+    return dict(winners.values())
 
 
 @dataclass(frozen=True)
