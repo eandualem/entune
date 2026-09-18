@@ -173,7 +173,10 @@ function localRow(provider) {
   row.className = "row top";
   const lbl = document.createElement("div");
   lbl.className = "lbl";
-  lbl.innerHTML = `<label>${provider.name}</label><span class="hint">whisper.cpp on this Mac, no key, nothing leaves the machine. Download a model once; it then appears in the model lists.</span>`;
+  const hint = provider.id === "parakeet"
+    ? "NVIDIA's Parakeet on Apple's MLX, the most accurate offline. Its engine is installed once from a terminal; Dictum then finds it."
+    : "whisper.cpp on this machine, no key, nothing leaves it. Download a model once; it then appears in the model lists.";
+  lbl.innerHTML = `<label>${provider.name}</label><span class="hint">${hint}</span>`;
   const field = document.createElement("div");
   field.className = "field local-models";
   field.id = `local-${provider.id}`;
@@ -182,11 +185,23 @@ function localRow(provider) {
 }
 
 async function loadLocalModels() {
-  const field = document.querySelector(".local-models");
-  if (!field) return;
+  const fields = [...document.querySelectorAll(".local-models")];
+  if (fields.length === 0) return;
   const list = await api("/api/local/models");
-  field.replaceChildren(
-    ...list.map((m) => {
+  for (const field of fields) {
+    const provider = field.id.slice("local-".length);
+    field.replaceChildren(...list.filter((m) => m.provider === provider).map(localModelLine));
+  }
+  const busy = list.some((m) => m.state === "downloading");
+  if (busy && !localPoll) localPoll = setInterval(() => loadLocalModels().catch(() => {}), 1500);
+  if (!busy && localPoll) {
+    clearInterval(localPoll);
+    localPoll = null;
+    await loadModels(); // a model that just finished downloading is now offered
+  }
+}
+
+function localModelLine(m) {
       const line = document.createElement("div");
       line.className = "local-model";
       const name = document.createElement("span");
@@ -194,11 +209,16 @@ async function loadLocalModels() {
       name.textContent = m.label;
       const meta = document.createElement("span");
       meta.className = "local-meta";
-      const size = `${(m.size_bytes / 1048576).toFixed(0)} MB`;
+      const size = m.size_bytes >= 1073741824 ? `${(m.size_bytes / 1073741824).toFixed(1)} GB` : `${(m.size_bytes / 1048576).toFixed(0)} MB`;
       if (m.state === "downloading") meta.textContent = `${Math.round(m.progress * 100)}% of ${size}`;
       else if (m.state === "ready") meta.textContent = `ready · ${size}`;
       else if (m.state === "error") meta.textContent = `failed: ${m.error}`;
+      else if (m.state === "unavailable") meta.innerHTML = `${size} · ${m.note}. Engine not installed; in a terminal run <code>uv tool install parakeet-mlx</code>, then reopen Settings.`;
       else meta.textContent = `${size} · ${m.note}`;
+      if (m.state === "unavailable") {
+        line.append(name, meta);
+        return line;
+      }
       const button = document.createElement("button");
       button.type = "button";
       button.className = "btn sm";
@@ -213,15 +233,6 @@ async function loadLocalModels() {
       }
       line.append(name, meta, button);
       return line;
-    }),
-  );
-  const busy = list.some((m) => m.state === "downloading");
-  if (busy && !localPoll) localPoll = setInterval(() => loadLocalModels().catch(() => {}), 1500);
-  if (!busy && localPoll) {
-    clearInterval(localPoll);
-    localPoll = null;
-    await loadModels(); // a model that just finished downloading is now offered
-  }
 }
 
 keysGroup.addEventListener("click", async (e) => {
