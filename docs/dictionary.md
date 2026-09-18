@@ -1,25 +1,33 @@
 # The dictionary file
 
-`dictionary.json` in the data directory. Three sections, each with `terms`
-(a list of strings) and `replacements` (an object of heard → meant):
+`dictionary.json` in the data directory. Three sections; an entry list has
+`terms` (a list of strings) and `replacements` (an object of heard → meant):
 
 ```json
 {
   "pinned":  {"terms": ["Dictum"], "replacements": {"dictum app": "Dictum"}},
   "agents":  {"terms": [], "replacements": {"cloud code": "Claude Code"}},
-  "learned": {"terms": ["AssemblyAI", "Soniox"], "replacements": {}}
+  "learned": {
+    "assemblyai/universal-3.5-pro": {"terms": ["Soniox"], "replacements": {}},
+    "local/small.en": {"terms": [], "replacements": {"sonic's": "Soniox"}}
+  }
 }
 ```
 
 - **pinned** is the user's: entered by hand, or pinned from a proposal. A
-  model never changes it.
+  model never changes it, and it applies to every speech model.
 - **agents** holds corrections the user's agents sent after confirming a
   mistranscription with the user (see [the agents' API](agents-api.md)). A
-  model never changes these either.
-- **learned** is what a model proposed from the history and the user
-  accepted; the next build replaces it.
+  model never changes these either; they apply to every speech model too.
+- **learned** is kept per speech model (`provider/model`, the id the API
+  uses): what a language model proposed from that model's own transcripts
+  and the user accepted. One model's mishearings are not another's, so a
+  local model's list never touches a cloud model's output. The next build
+  for that model replaces its list. The Dictionary tab shows and builds the
+  default model's list; the file holds them all.
 
-What is applied is the union of the three: `terms` go to the provider as
+What is applied to a transcript is pinned, agents and the learned list of
+the model that produced it: `terms` go to the provider as
 its vocabulary hint (each adapter caps them at the provider's documented
 limit; the local models take them as the prompt), and `replacements` are
 applied to every transcript as whole words or phrases, matched regardless
@@ -35,16 +43,15 @@ is written to a temporary file and renamed into place, and the page and
 the agents' corrections write under one lock, each naming the version they
 edited (the API's `ETag`), so nothing added meanwhile is dropped. The
 first release stored one flat `{"terms", "replacements"}` object; that form
-is still read, as pinned.
+is still read, as pinned. A `learned` section in the flat form, from before
+lists were kept per model, is read under the key `*`, applies to no model,
+and is moved under the default model the first time the app reads it with
+one set (issue #30).
 
-Known limit (issue #30, the next piece of work): the build reads every
-transcript in history regardless of which model produced it, and the
-replacements apply to every provider. With local models in use, whose
-mishearings differ from the cloud models', the dictionary should learn and
-apply per provider.
-
-**Build from history** sends the recent raw transcripts (at most 300, or
-40,000 characters), the pinned and agents sections as approved, and the
-previous learned section to revise, to the model chosen in Settings, at high
-reasoning effort. The reply becomes a proposal shown as added and removed
-entries; nothing is saved until Accept.
+**Build from history** sends the default speech model's recent raw
+transcripts (at most 300, or 40,000 characters), the pinned and agents
+sections as approved and as evidence of who the user is and what they talk
+about, and that model's previous learned list to revise, to the language
+model chosen in Settings, at high reasoning effort. The reply becomes a
+proposal for that speech model, shown as added and removed entries; nothing
+is saved until Accept.

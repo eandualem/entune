@@ -207,14 +207,16 @@ class Store:
             ).fetchall()
             return [self._recording(row) for row in rows]
 
-    def recent_transcripts(self, limit: int) -> list[str]:
-        """Provider text of the latest successful transcriptions, newest first, raw when kept."""
+    def recent_transcripts(self, provider: str, model: str, limit: int) -> list[str]:
+        """That model's text from its latest successful transcriptions, newest first, raw
+        when kept."""
         with self._lock:
             rows = self._db.execute(
                 "SELECT COALESCE(raw_text, text) AS text FROM transcriptions"
-                " WHERE status = 'ok' AND COALESCE(raw_text, text) <> ''"
+                " WHERE status = 'ok' AND provider = ? AND model = ?"
+                " AND COALESCE(raw_text, text) <> ''"
                 " ORDER BY id DESC LIMIT ?",
-                (limit,),
+                (provider, model, limit),
             ).fetchall()
         return [str(row["text"]) for row in rows]
 

@@ -168,9 +168,12 @@ products, identifiers), sent along with every clip, and **replacements**
 (heard → meant) applied to every transcript. Edit it by hand, or click
 **Build from history** to have a language model of your choice, Anthropic
 or OpenAI on your own key, read your recent transcripts and propose
-additions, which you review before anything is saved. Entries you add or
-pin are never changed by the model. If you dictate to AI agents, they can
-post corrections once you have confirmed a mistranscription with them.
+additions, which you review before anything is saved. What it learns is
+kept per speech model, from that model's own transcripts, since a local
+model's mishearings are not AssemblyAI's. Entries you add or pin are shared
+by every model and never changed by the language model. If you dictate to
+AI agents, they can post corrections once you have confirmed a
+mistranscription with them.
 The suggested models, Claude Fable 5.1 and GPT-6 Astra, are the current
 strongest from each provider; any model id the provider accepts works.
 
