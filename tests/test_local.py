@@ -68,7 +68,8 @@ class FakeEngine:
 
     def transcribe(self, audio: Any, **params: Any) -> list[Any]:
         self.calls.append({"samples": len(audio), **params})
-        return [type("Seg", (), {"text": " hello "})(), type("Seg", (), {"text": "there"})()]
+        texts = [".", " hello ", "there"]  # a punctuation-only segment is dropped
+        return [type("Seg", (), {"text": text})() for text in texts]
 
 
 def test_transcribe_resamples_prompts_with_terms_and_needs_the_file(tmp_path: Path) -> None:
