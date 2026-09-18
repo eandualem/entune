@@ -26,7 +26,17 @@
         </button>
         <span class="rec-timer" id="rec-timer" hidden>0:00</span>
         <select class="select" id="model" aria-label="Default model" title="The model every recording uses; picking one here applies at once"></select>
+        <button type="button" class="btn-icon" id="metrics-toggle" title="Performance by model" aria-label="Performance by model" aria-expanded="false" aria-controls="metrics" hidden>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 13.5h11M4 11V7M8 11V3.5M12 11V8.5"/></svg>
+        </button>
         <span class="status" id="status"></span>
+      </div>
+      <div class="popover" id="metrics" hidden>
+        <div class="popover-head">Performance by model <span class="hint">from every transcription's timing</span></div>
+        <table>
+          <thead><tr><th>Model</th><th>Mode</th><th>Runs</th><th>Audio</th><th>Median wait</th><th>Speed</th></tr></thead>
+          <tbody id="metrics-rows"></tbody>
+        </table>
       </div>
 
       <div class="spacer"></div>
@@ -143,16 +153,6 @@
               </div>
             </div>
           </div>
-
-          <section class="metrics" id="metrics" hidden>
-            <h2 class="section-label">Performance by model</h2>
-            <div class="group">
-              <table>
-                <thead><tr><th>Model</th><th>Mode</th><th>Runs</th><th>Audio</th><th>Median wait</th><th>Speed</th></tr></thead>
-                <tbody id="metrics-rows"></tbody>
-              </table>
-            </div>
-          </section>
 
           <h2 class="section-label">Dictionary model</h2>
           <p class="help section-intro">Only used when you click Build on the Dictionary tab; never on a transcript.</p>

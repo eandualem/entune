@@ -18,7 +18,8 @@ const fastModeInput = el("fast-mode");
 const fastModeRow = el("fast-mode-row");
 const fastModeStatus = el("fast-mode-status");
 const dictionaryModelStatus = el("dictionary-model-status");
-const metricsSection = el("metrics");
+const metricsPopover = el("metrics");
+const metricsToggle = el("metrics-toggle");
 const metricsRows = el("metrics-rows");
 let streamingProviders = new Set();
 const dictionaryModels = el("dictionary-models");
@@ -160,9 +161,23 @@ async function chooseDefaultModel(select, statusTarget) {
 defaultSelect.addEventListener("change", () => chooseDefaultModel(defaultSelect, settingsStatus));
 modelSelect.addEventListener("change", () => chooseDefaultModel(modelSelect, status));
 
+// The performance table lives behind the chart button next to the model picker: it is
+// what you look at when choosing a model, not a page of its own.
+function showMetrics(open) {
+  metricsPopover.hidden = !open;
+  metricsToggle.setAttribute("aria-expanded", String(open));
+  if (open) metricsPopover.style.left = `${metricsToggle.offsetLeft}px`;
+}
+metricsToggle.addEventListener("click", () => showMetrics(metricsPopover.hidden));
+document.addEventListener("click", (e) => {
+  if (!metricsPopover.hidden && !metricsPopover.contains(e.target) && !metricsToggle.contains(e.target)) showMetrics(false);
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !metricsPopover.hidden) showMetrics(false); });
+
 async function loadMetrics() {
   const rows = await api("/api/metrics");
-  metricsSection.hidden = rows.length === 0;
+  metricsToggle.hidden = rows.length === 0;
+  if (rows.length === 0) showMetrics(false);
   const cell = (text) => Object.assign(document.createElement("td"), { textContent: text });
   metricsRows.replaceChildren(
     ...rows.map((m) => {
