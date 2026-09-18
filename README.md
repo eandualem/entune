@@ -102,9 +102,9 @@ endpoint takes an upload; shorter clips use the sync endpoint as before and
 are unchanged.
 
 **Performance.** Every transcription records how long the clip was, how long
-the provider took, and whether fast mode was used. Settings shows the table
-by model, under the default model it informs: runs, minutes of audio, median
-wait, and speed as seconds of audio per second waited. Measured on 2026-09-18 with a 172-second dictation over
+the provider took, and whether fast mode was used. The chart button next
+to the model picker opens the table by model: runs, minutes of audio,
+median wait, and speed as seconds of audio per second waited. Measured on 2026-09-18 with a 172-second dictation over
 AssemblyAI Universal-3.5 Pro: 7.0 s with fast mode, 14.8 s without, of which
 the upload alone was 6 to 7 s. Your own table is the one to trust.
 
