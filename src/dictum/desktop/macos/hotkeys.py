@@ -165,7 +165,9 @@ class HotkeyListener:
         with self._lock:
             self._capture_done = None
 
-    def _on_press(self, key: Any) -> None:
+    def _on_press(self, key: Any, injected: bool = False) -> None:
+        if injected:
+            return  # our own paste (Cmd+V) and other synthetic events are not the user's keys
         name = key_name(self._listener, key)
         if name is None:
             return
@@ -179,7 +181,9 @@ class HotkeyListener:
         if engine is not None:
             engine.press(name)
 
-    def _on_release(self, key: Any) -> None:
+    def _on_release(self, key: Any, injected: bool = False) -> None:
+        if injected:
+            return
         name = key_name(self._listener, key)
         if name is None:
             return

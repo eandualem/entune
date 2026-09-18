@@ -435,6 +435,9 @@ def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: St
         # Selecting a cloud model again frees the local one; a retry with it loads it
         # for that one transcription and frees it afterwards.
         client.put("/api/settings", json={"defaultModel": "stub/good"})
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and local._models:
+            time.sleep(0.01)
         assert local._models == {}
         rec = client.post(
             "/api/recordings", files={"audio": ("a.wav", wav_bytes(b"\x00\x00" * 16_000 * 3))}
