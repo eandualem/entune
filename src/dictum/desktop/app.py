@@ -5,6 +5,7 @@ Written against `platform.Platform` only; no operating-system code lives here.
 
 from __future__ import annotations
 
+import queue
 import socket
 import threading
 import time
@@ -41,6 +42,8 @@ class DictumApp:
         self._upload: Upload | None = None  # fast mode's stream for the current recording
         self._recording = False
         self._pending = 0  # transcriptions still running; the tray state is derived
+        self._jobs: queue.Queue[tuple[Capture, Upload | None]] = queue.Queue()
+        threading.Thread(target=self._work, daemon=True, name="dictum-transcribe").start()
         self._server_answers = server_answers or self._probe_server
 
         platform.tray.set_actions(self.open_window, self.open_settings, self.quit)
@@ -89,6 +92,11 @@ class DictumApp:
     def apply_shortcut(self) -> None:
         shortcuts = self.dictum.shortcuts()
         permissions = self.platform.permissions
+        unchanged = self.engine is not None and self.engine.shortcuts == shortcuts
+        if self._recording and not unchanged:
+            # The engine that started this recording is about to go (shortcuts cleared or
+            # rebound mid-dictation): finish the clip now rather than leave the mic open.
+            self.stop_recording()
         if not shortcuts:
             self.engine = None
             self.platform.hotkeys.stop()
@@ -183,9 +191,14 @@ class DictumApp:
             return
         self._pending += 1
         self._later(self._refresh_state)
-        threading.Thread(
-            target=self._transcribe_and_deliver, args=(capture, upload), daemon=True
-        ).start()
+        self._jobs.put((capture, upload))
+
+    def _work(self) -> None:
+        """One worker, so two dictations in a row are transcribed and pasted in the order
+        they were spoken, whichever provider answers first."""
+        while True:
+            capture, upload = self._jobs.get()
+            self._transcribe_and_deliver(capture, upload)
 
     def _refresh_state(self) -> None:
         """The tray and the pill follow what is really going on: a recording in progress

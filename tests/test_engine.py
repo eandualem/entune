@@ -116,3 +116,22 @@ def test_only_fn_flag_events_are_swallowed_and_only_when_owned() -> None:
     assert swallow_fn(key_up, GLOBE_VK, owns_fn=True)
     assert not swallow_fn(key_down, GLOBE_VK, owns_fn=False)
     assert not swallow_fn(key_down, 9, owns_fn=True)  # v passes through
+
+
+def test_the_hold_key_that_stops_a_hands_free_recording_does_not_restart_it() -> None:
+    events: list[str] = []
+    engine = ShortcutEngine(
+        shortcuts.Shortcuts(hold=("fn",), toggle=("cmd", "fn")),
+        lambda: events.append("start"),
+        lambda: events.append("stop"),
+    )
+    engine.press("cmd")
+    engine.press("fn")  # chord: hands-free
+    engine.release("fn")
+    engine.release("cmd")
+    assert events == ["start"]
+    engine.press("fn")  # the hold key stops it
+    engine.press("cmd")  # completing the chord must not start again
+    engine.release("fn")
+    engine.release("cmd")
+    assert events == ["start", "stop"] and not engine.recording

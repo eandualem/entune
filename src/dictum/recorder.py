@@ -79,13 +79,21 @@ class Recorder:
             device = sounddevice.query_devices(kind="input")
             self._rate = int(device["default_samplerate"]) or FALLBACK_RATE
             self._sink = sink_for_rate(self._rate) if sink_for_rate else None
-            self._stream = sounddevice.RawInputStream(
+            stream = sounddevice.RawInputStream(
                 samplerate=self._rate,
                 channels=CHANNELS,
                 dtype="int16",
                 callback=self._on_audio,
             )
-            self._stream.start()
+            try:
+                stream.start()
+            except Exception:
+                # A device mid-switch (Bluetooth) can refuse; nothing must be left half
+                # open, or the next attempt would think it is already recording.
+                stream.close()
+                self._sink = None
+                raise
+            self._stream = stream
 
     def stop(self) -> Capture:
         """Stop capturing and return what was recorded since `start`."""

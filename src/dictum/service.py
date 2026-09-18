@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import statistics
 import threading
 import time
@@ -73,6 +74,10 @@ class CaptureStatus:
     keys: str | None
 
 
+class DictionaryChanged(Exception):
+    """A dictionary write named a version that is no longer the one on disk."""
+
+
 class NoDefaultModel(Exception):
     """Transcription was asked for without a model and none is set as default."""
 
@@ -95,6 +100,7 @@ class Dictum:
         self._llm_call = llm_call
         self._listeners: list[Callable[[], None]] = []
         self._capture_listeners: list[Callable[[], None]] = []
+        self._dictionary_lock = threading.Lock()
         self._cancel_listeners: list[Callable[[], None]] = []
         self._show_window_listeners: list[Callable[[], None]] = []
         self._desktop_status: dict[str, object] = {"desktop": False}
@@ -313,10 +319,24 @@ class Dictum:
     def dictionary_text(self) -> str:
         return dictionary_file.dumps(self.dictionary())
 
-    def set_dictionary(self, text: str) -> Dictionary:
-        """Validate and save the JSON form. Raises ValueError with the reason."""
+    def dictionary_version(self) -> str:
+        """A hash of the file as it is on disk; a writer names the version it edited."""
+        path = self.store.data_dir / dictionary_file.FILENAME
+        raw = path.read_bytes() if path.exists() else b""
+        return str(hashlib.sha256(raw).hexdigest()[:16])
+
+    def set_dictionary(self, text: str, expected_version: str | None = None) -> Dictionary:
+        """Validate and save the JSON form. Raises ValueError with the reason, and
+        DictionaryChanged when `expected_version` is given and the file moved on since:
+        an edit made on a stale copy would silently drop what was added meanwhile."""
         parsed = dictionary_file.parse(text)
-        dictionary_file.save(self.store.data_dir, parsed)
+        with self._dictionary_lock:
+            if expected_version is not None and expected_version != self.dictionary_version():
+                raise DictionaryChanged(
+                    "The dictionary changed since it was loaded (an agent or a hand edit);"
+                    " reload it and redo the change."
+                )
+            dictionary_file.save(self.store.data_dir, parsed)
         self._changed()
         return parsed
 
@@ -332,10 +352,12 @@ class Dictum:
         corrections = dictionary_file.parse_entries(body, "corrections")
         if not corrections:
             raise ValueError("Nothing to add: give terms and/or replacements")
-        current = self.dictionary()
-        updated, added = current.with_agent_corrections(corrections)
+        with self._dictionary_lock:
+            current = self.dictionary()
+            updated, added = current.with_agent_corrections(corrections)
+            if added:
+                dictionary_file.save(self.store.data_dir, updated)
         if added:
-            dictionary_file.save(self.store.data_dir, updated)
             self._changed()
         return added
 
@@ -466,8 +488,8 @@ class Dictum:
         if raw_text is not None:
             try:
                 text = dictionary_file.apply(self.dictionary().effective, raw_text)
-            except ValueError:
-                text = raw_text  # a dictionary that no longer parses must not lose a transcript
+            except Exception:  # a dictionary that fails, however, must not lose a transcript
+                text = raw_text
         self.store.add_transcription(
             recording.id,
             provider=ref.provider.id,
@@ -526,6 +548,7 @@ def _finish(upload: Upload | None, ref: ModelRef, clip: Clip) -> str | None:
 
 __all__ = [
     "CaptureStatus",
+    "DictionaryChanged",
     "Dictum",
     "ModelMetrics",
     "ModelOption",
