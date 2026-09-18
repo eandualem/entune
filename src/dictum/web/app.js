@@ -400,11 +400,27 @@ function renderDictionary(jsonText) {
   renderEntries(el("pinned-entries"), "pinned");
   renderEntries(el("learned-entries"), "learned");
   el("learned-model").textContent = defaultModel?.label ?? "no default model";
+  el("term-budget").textContent = termBudgetText();
   const learned = sectionOf(dict, "learned");
   const learnedCount = learned.terms.length + Object.keys(learned.replacements).length;
   el("pin-all").hidden = learnedCount === 0;
   buildBtn.textContent = learnedCount ? "Refine from history" : "Build from history";
   if (jsonText !== undefined) dictionaryBox.value = jsonText;
+}
+
+// The term budget of the default model: its provider's limit, shared by the pinned terms
+// (every model carries them) and the terms learned for it. Enforced by the build; shown
+// here so nobody has to know the limits.
+function termBudgetText() {
+  if (!defaultModel) return "";
+  const limit = defaultModel.term_limit;
+  if (limit === null) return "This model takes no terms; only replacements apply to it. Builds for it propose replacements only.";
+  const pinned = dict.pinned.terms.length;
+  const used = pinned + sectionOf(dict, "learned").terms.length;
+  const line = `${used} of ${limit} terms this model takes are in use (${pinned} pinned).`;
+  if (pinned >= limit) return `${line} Pinned terms fill it: remove some to make room for new ones.`;
+  if (used >= limit) return `${line} Full: a build can only replace what is learned.`;
+  return line;
 }
 
 function clone() {
@@ -506,6 +522,12 @@ function renderProposal(p) {
     p2.className = "nothing";
     p2.textContent = "The model proposed no changes to what is learned.";
     proposalBody.append(p2);
+  }
+  if (p.dropped_terms > 0) {
+    const note = document.createElement("p");
+    note.className = "nothing";
+    note.textContent = `${p.dropped_terms} more proposed terms did not fit: this model takes ${p.budget.limit} and ${p.budget.pinned} are pinned. Remove some to make room.`;
+    proposalBody.append(note);
   }
   proposalPanel.hidden = false;
 }

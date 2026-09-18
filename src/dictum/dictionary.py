@@ -226,14 +226,32 @@ def _merge(*sections: dict[str, str]) -> dict[str, str]:
 
 
 @dataclass(frozen=True)
+class TermBudget:
+    """How many terms one speech model can still take: its provider's limit, less the
+    pinned terms, which every model carries. `limit` None means it takes no terms at all."""
+
+    limit: int | None
+    pinned: int
+
+    @property
+    def room(self) -> int:
+        return 0 if self.limit is None else max(0, self.limit - self.pinned)
+
+    def as_json(self) -> dict[str, object]:
+        return {"limit": self.limit, "pinned": self.pinned, "room": self.room}
+
+
+@dataclass(frozen=True)
 class Proposal:
     """A proposed `learned` section for one speech model, with what it adds and removes
-    versus the current one."""
+    versus the current one, cut to the model's term budget."""
 
     model: str
     learned: Entries
     added: Entries
     removed: Entries
+    budget: TermBudget
+    dropped_terms: int  # proposed terms that did not fit the budget
 
     def as_json(self) -> dict[str, object]:
         return {
@@ -241,15 +259,20 @@ class Proposal:
             "learned": self.learned.as_json(),
             "added": self.added.as_json(),
             "removed": self.removed.as_json(),
+            "budget": self.budget.as_json(),
+            "dropped_terms": self.dropped_terms,
         }
 
 
-def propose(current: Dictionary, proposed: Entries, model: str) -> Proposal:
-    """Drop anything already pinned, then diff against what was learned for that model."""
+def propose(current: Dictionary, proposed: Entries, model: str, budget: TermBudget) -> Proposal:
+    """Drop anything already pinned, keep the first terms that fit the budget (the model
+    is asked to put the most valuable first), then diff against what was learned for
+    that model. Nothing beyond what the speech model can use is ever proposed."""
     pinned_terms = {t.lower() for t in current.pinned.terms}
     pinned_heard = {h.lower() for h in current.pinned.replacements}
+    terms = tuple(t for t in proposed.terms if t.lower() not in pinned_terms)
     learned = Entries(
-        tuple(t for t in proposed.terms if t.lower() not in pinned_terms),
+        terms[: budget.room],
         {h: m for h, m in proposed.replacements.items() if h.lower() not in pinned_heard},
     )
     old = current.learned_for(model)
@@ -261,4 +284,4 @@ def propose(current: Dictionary, proposed: Entries, model: str) -> Proposal:
         tuple(t for t in old.terms if t not in learned.terms),
         {h: m for h, m in old.replacements.items() if h not in learned.replacements},
     )
-    return Proposal(model, learned, added, removed)
+    return Proposal(model, learned, added, removed, budget, len(terms) - len(learned.terms))
