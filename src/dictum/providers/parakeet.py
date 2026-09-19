@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -127,7 +128,9 @@ class Parakeet:
     def warm(self, name: str) -> None:
         _check(name)
         if self._ready() and self.engine() is not None:
-            self._ensure_loaded()
+            answer = self._ensure_loaded()
+            if "error" in answer:
+                raise OSError(str(answer["error"]))
 
     def transcribe(
         self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
@@ -180,19 +183,36 @@ class Parakeet:
     def _ask_locked(self, request: dict[str, Any]) -> dict[str, Any]:
         helper = self._helper
         if helper is None or helper.poll() is not None:
+            self._stop_helper()
             helper = self._helper = self._spawn()
             self._loaded = False
         assert helper.stdin is not None and helper.stdout is not None
-        helper.stdin.write(json.dumps(request) + "\n")
-        helper.stdin.flush()
-        if not select.select([helper.stdout], [], [], HELPER_TIMEOUT_SECONDS)[0]:
+        try:
+            helper.stdin.write(json.dumps(request) + "\n")
+            helper.stdin.flush()
+            deadline = time.monotonic() + HELPER_TIMEOUT_SECONDS
+            line = bytearray()
+            while b"\n" not in line:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([helper.stdout], [], [], remaining)[0]:
+                    raise OSError(
+                        f"the helper did not answer within {HELPER_TIMEOUT_SECONDS:g} seconds"
+                    )
+                # readline() can block forever after select sees only the first byte.
+                chunk = os.read(helper.stdout.fileno(), 65536)
+                if not chunk:
+                    raise OSError("the helper process exited")
+                line.extend(chunk)
+            answer: Any = json.loads(line)
+            if not isinstance(answer, dict) or not (
+                isinstance(answer.get("error"), str)
+                or (request["op"] == "load" and answer.get("ok") is True)
+                or (request["op"] == "transcribe" and isinstance(answer.get("text"), str))
+            ):
+                raise ValueError("invalid helper answer")
+        except (OSError, ValueError) as exc:
             self._stop_helper()
-            raise OSError(f"the helper did not answer within {HELPER_TIMEOUT_SECONDS:g} seconds")
-        line = helper.stdout.readline()
-        if not line:
-            self._stop_helper()
-            raise OSError("the helper process exited")
-        answer: dict[str, Any] = json.loads(line)
+            raise OSError(str(exc)) from exc
         return answer
 
     def _spawn(self) -> subprocess.Popen[str]:

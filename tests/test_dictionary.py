@@ -108,7 +108,7 @@ def test_propose_respects_pinned_and_diffs_against_learned() -> None:
         },
     )
     proposed = Entries(
-        ("dictum", "Soniox", "AssemblyAI"), {"Whisper Flow": "Whisper", "grok": "Groq"}
+        ("dictum", "Soniox", "AssemblyAI"), {"Whisper  Flow": "Whisper", "grok": "Groq"}
     )
     p = dictionary.propose(current, proposed, "stub/good", PLENTY)
     assert p.learned == Entries(("Soniox", "AssemblyAI"), {"grok": "Groq"})  # pinned ones dropped
@@ -138,13 +138,21 @@ def test_agent_corrections_are_pinned() -> None:
     updated, added = d.with_agent_corrections(
         Entries(("soniox", "Dictum"), {"a": "x", "A": "x", "d": "agents"})
     )
-    assert added == Entries(("Dictum",), {"a": "x", "A": "x", "d": "agents"})
+    assert added == Entries(("Dictum",), {"A": "x", "d": "agents"})
     assert updated.pinned.terms == ("Soniox", "Dictum")
     assert updated.pinned.replacements == {"A": "x", "d": "agents"}  # one rule per phrase
     assert updated.effective("m").replacements == {"b": "learned", "A": "x", "d": "agents"}
     p = dictionary.propose(updated, Entries(("Dictum", "New"), {"d": "learned again"}), "m", PLENTY)
     assert p.learned == Entries(("New",), {})  # pinned entries are not re-learned
     assert dictionary.parse(dictionary.dumps(updated)) == updated
+
+
+def test_equivalent_corrections_are_not_added_again() -> None:
+    original = Dictionary(pinned=Entries(replacements={"cloud code": "Claude Code"}))
+    updated, added = original.with_agent_corrections(
+        Entries(replacements={"Cloud  Code": "Claude Code"})
+    )
+    assert not added and updated == original
 
 
 def test_pinned_wins_regardless_of_capitalisation() -> None:

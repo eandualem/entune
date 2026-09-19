@@ -58,6 +58,8 @@ def test_the_helper_answers_over_the_pipe_and_reports_a_missing_engine(tmp_path:
     result = parakeet.transcribe(clip, MODEL, "")
     assert isinstance(result, Failure) and "Could not load" in result.error
     assert "parakeet_mlx" in result.error
+    with pytest.raises(OSError, match="parakeet_mlx"):
+        parakeet.warm(MODEL)
     parakeet.remove(MODEL)  # also stops the helper
 
 
@@ -122,3 +124,56 @@ def test_stalled_helper_is_stopped_and_reported(
     with pytest.raises(OSError, match="did not answer"):
         parakeet._ensure_loaded()
     assert helper.poll() is not None and parakeet._helper is None
+
+
+def test_partial_helper_answer_has_a_deadline_and_releases_the_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import select
+    import subprocess
+
+    from dictum.providers import parakeet as module
+
+    helper = subprocess.Popen(
+        [sys.executable, "-c", "import sys,time; print('{', end='', flush=True); time.sleep(10)"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    parakeet = Parakeet(tmp_path, engine=Path(sys.executable))
+    parakeet._helper = helper
+    monkeypatch.setattr(module, "HELPER_TIMEOUT_SECONDS", 0.05)
+    try:
+        assert helper.stdout is not None and select.select([helper.stdout], [], [], 2)[0]
+        started = time.monotonic()
+        with pytest.raises(OSError, match="did not answer"):
+            parakeet._ensure_loaded()
+        assert time.monotonic() - started < 1
+        assert helper.poll() is not None and parakeet._helper is None
+    finally:
+        parakeet.unload()
+
+
+def test_invalid_helper_answer_is_reported_and_does_not_leave_a_loaded_process(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    helper = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys,time; sys.stdin.readline(); print('[]', flush=True); time.sleep(10)",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    parakeet = Parakeet(tmp_path, engine=Path(sys.executable))
+    parakeet._helper = helper
+    try:
+        with pytest.raises(OSError, match="invalid helper answer"):
+            parakeet._ensure_loaded()
+        assert not parakeet._loaded and helper.poll() is not None
+    finally:
+        parakeet.unload()
