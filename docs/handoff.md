@@ -4,6 +4,16 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-19: performance build installed
+
+Elias explicitly approved building and installing the merged performance
+fixes. Rebuilt `develop` at `e61d648` and installed it in
+`/Applications/Dictum.app`. Deep/strict code-signature verification passed
+with the `Dictum Developer` identity, and the installed history module
+matches the build. This resolves the installation gate recorded below.
+Elias will quit from the menu bar, reopen Dictum and test local-model
+switches in his normal workflow. No app behavior changed in this handoff.
+
 ## 2026-09-19: remove the instruction shim (issue #87)
 
 Removed the one-line `CLAUDE.md` import of `AGENTS.md`, as requested in
