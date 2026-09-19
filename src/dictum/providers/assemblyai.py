@@ -184,7 +184,11 @@ class StreamingUpload:
 
     def abort(self) -> None:
         self._aborted.set()
-        self._close()
+        self._closed = True
+        # A request may still be waiting on the network; release its audio now,
+        # then leave a marker to wake a consumer blocked on the queue.
+        self._discard_pending()
+        self._queue.put(_END)
 
     def _close(self) -> None:
         if not self._closed:
@@ -225,11 +229,14 @@ class StreamingUpload:
             return
         finally:
             self._closed = True
-            while True:
-                try:
-                    self._queue.get_nowait()
-                except queue.Empty:
-                    break
+            self._discard_pending()
+
+    def _discard_pending(self) -> None:
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
 
 
 def _cap(terms: tuple[str, ...], max_terms: int, max_chars: int | None) -> list[str]:
