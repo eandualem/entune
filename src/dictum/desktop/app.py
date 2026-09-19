@@ -41,6 +41,7 @@ class DictumApp:
         self.recorder: Microphone = recorder or Recorder()
         self.engine: ShortcutEngine | None = None
         self._listening = False
+        self._requested_permissions: set[str] = set()
         self._upload: Upload | None = None  # fast mode's stream for the current recording
         self._recording = False
         self._pending = 0  # transcriptions still running; the tray state is derived
@@ -56,6 +57,11 @@ class DictumApp:
         dictum.on_capture(lambda: platform.run_on_ui_thread(self.begin_capture))
         dictum.on_cancel_capture(lambda: platform.run_on_ui_thread(platform.hotkeys.cancel_capture))
         dictum.on_show_window(lambda: platform.run_on_ui_thread(self.open_window))
+        dictum.on_permission_request(
+            lambda name, settings: platform.run_on_ui_thread(
+                lambda: self._request_permission(name, settings)
+            )
+        )
         dictum.report_status(desktop=True, shell=type(platform).__name__)
         self.apply_shortcut()
         if show_window:
@@ -88,7 +94,10 @@ class DictumApp:
         if not self._server_answers() and time.monotonic() - started < SERVER_WAIT_SECONDS:
             self.platform.call_later(0.2, lambda: self._show_window_when_served(started))
             return
-        self.platform.window.show("" if self.dictum.shortcuts() else "#settings")
+        needs_setup = not self.dictum.shortcuts() or any(
+            state != "granted" for state in self._permission_status().values()
+        )
+        self.platform.window.show("#settings" if needs_setup else "")
 
     def _probe_server(self) -> bool:
         host, _, port = self.url.removeprefix("http://").rstrip("/").partition(":")
@@ -119,7 +128,8 @@ class DictumApp:
             self.platform.hotkeys.stop()
             self._listening = False
             self._set_status(f"Allow Input Monitoring in {permissions.settings_hint}")
-            permissions.request_listen()
+            if "inputMonitoring" not in self._requested_permissions:
+                self._request_permission("inputMonitoring")
             return
         if shortcuts.uses_fn and not permissions.can_post():
             # Owning the fn key takes an active event tap, which macOS only gives a
@@ -128,7 +138,8 @@ class DictumApp:
             self.platform.hotkeys.stop()
             self._listening = False
             self._set_status(f"Allow Accessibility in {permissions.settings_hint}")
-            permissions.request_post()
+            if "accessibility" not in self._requested_permissions:
+                self._request_permission("accessibility")
             return
         if self._listening and self.engine is not None and self.engine.shortcuts == shortcuts:
             # Any settings or dictionary change lands here, including an agent's
@@ -149,7 +160,42 @@ class DictumApp:
             listening=self._listening,
             canListen=permissions.can_listen(),
             canPost=permissions.can_post(),
+            permissions=self._permission_status(),
         )
+
+    def _permission_status(self) -> dict[str, str]:
+        permissions = self.platform.permissions
+        microphone = permissions.microphone_status()
+        if microphone == "not_requested" and "microphone" in self._requested_permissions:
+            microphone = "requested"
+        return {
+            "microphone": microphone,
+            **{
+                name: "granted"
+                if allowed
+                else ("requested" if name in self._requested_permissions else "needed")
+                for name, allowed in (
+                    ("inputMonitoring", permissions.can_listen()),
+                    ("accessibility", permissions.can_post()),
+                )
+            },
+        }
+
+    def _request_permission(self, name: str, open_settings: bool = False) -> None:
+        permissions = self.platform.permissions
+        state = self._permission_status()[name]
+        if state == "granted":
+            return
+        self._requested_permissions.add(name)
+        if open_settings or state in {"denied", "restricted", "requested"}:
+            permissions.open_settings(name)
+        elif name == "microphone":
+            permissions.request_microphone()
+        elif name == "inputMonitoring":
+            permissions.request_listen()
+        else:
+            permissions.request_post()
+        self.dictum.report_status(permissions=self._permission_status())
 
     def begin_capture(self) -> None:
         """Settings asked for a shortcut to be pressed: record it with the global listener."""
@@ -164,6 +210,11 @@ class DictumApp:
         """Start listening as soon as Input Monitoring is granted, without a restart."""
         shortcuts = self.dictum.shortcuts()
         permissions = self.platform.permissions
+        self.dictum.report_status(
+            permissions=self._permission_status(),
+            canListen=permissions.can_listen(),
+            canPost=permissions.can_post(),
+        )
         if (
             not self._listening
             and shortcuts

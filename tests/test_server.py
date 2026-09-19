@@ -52,7 +52,7 @@ def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
         {"id": "stub", "name": "Stub", "keyHint": None, "streams": False, "local": False}
     ]
     assert settings["defaultModel"] is None
-    assert settings["shortcuts"] == {"hold": None, "toggle": None}
+    assert settings["shortcuts"] == {"hold": None, "toggle": None, "cancel": "fn+esc"}
     assert client.get("/api/models").json() == []
 
     res = client.put(
@@ -129,7 +129,11 @@ def test_unknown_routes(client: TestClient) -> None:
 
 
 def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None:
-    assert client.get("/api/settings").json()["shortcuts"] == {"hold": None, "toggle": None}
+    assert client.get("/api/settings").json()["shortcuts"] == {
+        "hold": None,
+        "toggle": None,
+        "cancel": "fn+esc",
+    }
     res = client.put(
         "/api/settings", json={"shortcuts": {"hold": "Alt_R", "toggle": "Cmd+Shift+Space"}}
     )
@@ -137,6 +141,7 @@ def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None
     assert client.get("/api/settings").json()["shortcuts"] == {
         "hold": "alt_r",
         "toggle": "cmd+shift+space",
+        "cancel": "fn+esc",
     }
     bad = client.put("/api/settings", json={"shortcuts": {"hold": "cmd+space", "toggle": ""}})
     assert bad.status_code == 400 and "exactly one key" in bad.text
@@ -145,6 +150,7 @@ def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None
     assert client.get("/api/settings").json()["shortcuts"] == {
         "hold": None,
         "toggle": "cmd+shift+space",
+        "cancel": "fn+esc",
     }
 
 
@@ -153,7 +159,43 @@ def test_legacy_single_shortcut_is_still_read(tmp_path: Path, stub: StubProvider
     store.set_setting("shortcut_mode", "toggle")
     store.set_setting("shortcut_keys", "cmd+d")
     client = TestClient(create_app(Dictum(store, [stub])), base_url="http://localhost")
-    assert client.get("/api/settings").json()["shortcuts"] == {"hold": None, "toggle": "cmd+d"}
+    assert client.get("/api/settings").json()["shortcuts"] == {
+        "hold": None,
+        "toggle": "cmd+d",
+        "cancel": "fn+esc",
+    }
+
+
+def test_cancel_shortcut_persists_and_can_be_cleared(client: TestClient) -> None:
+    saved = {"hold": "alt_r", "toggle": "cmd+d", "cancel": "ctrl+esc"}
+    assert client.put("/api/settings", json={"shortcuts": saved}).status_code == 200
+    assert client.get("/api/settings").json()["shortcuts"] == saved
+    bad = client.put("/api/settings", json={"shortcuts": {**saved, "cancel": "cmd+d"}})
+    assert bad.status_code == 400
+    assert client.get("/api/settings").json()["shortcuts"] == saved
+    client.put("/api/settings", json={"shortcuts": {"hold": "alt_r", "toggle": "cmd+d"}})
+    assert client.get("/api/settings").json()["shortcuts"] == saved  # older clients preserve it
+    client.put("/api/settings", json={"shortcuts": {**saved, "cancel": ""}})
+    assert client.get("/api/settings").json()["shortcuts"]["cancel"] is None
+
+
+def test_permissions_require_a_desktop_and_validate_before_dispatch(
+    client: TestClient, tmp_path: Path, stub: StubProvider
+) -> None:
+    assert client.post("/api/permissions/microphone", json={}).status_code == 409
+    dictum = Dictum(Store(tmp_path / "desktop"), [stub])
+    requested: list[tuple[str, bool]] = []
+    dictum.on_permission_request(lambda name, settings: requested.append((name, settings)))
+    desktop = TestClient(create_app(dictum), base_url="http://localhost")
+    assert desktop.post("/api/permissions/microphone", json={}).status_code == 202
+    assert (
+        desktop.post("/api/permissions/accessibility", json={"openSettings": True}).status_code
+        == 202
+    )
+    assert requested == [("microphone", False), ("accessibility", True)]
+    for name, body in (("camera", {}), ("microphone", []), ("microphone", {"openSettings": "yes"})):
+        assert desktop.post(f"/api/permissions/{name}", json=body).status_code == 400
+    assert len(requested) == 2
 
 
 def test_audio_download_has_a_filename(client: TestClient) -> None:

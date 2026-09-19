@@ -23,6 +23,7 @@ DICTIONARY_MODEL_KEY = "dictionary_model"
 FAST_MODE_KEY = "fast_mode"
 SHORTCUT_HOLD_KEY = "shortcut_hold"
 SHORTCUT_TOGGLE_KEY = "shortcut_toggle"
+SHORTCUT_CANCEL_KEY = "shortcut_cancel"
 LEGACY_MODE_KEY = "shortcut_mode"
 LEGACY_KEYS_KEY = "shortcut_keys"
 
@@ -107,6 +108,7 @@ class Dictum:
         self._warm_pending = False
         self._cancel_listeners: list[Callable[[], None]] = []
         self._show_window_listeners: list[Callable[[], None]] = []
+        self._permission_listeners: list[Callable[[str, bool], None]] = []
         self._desktop_status: dict[str, object] = {"desktop": False}
         self._capture_lock = threading.Lock()
         self._capture = CaptureStatus("idle", None)
@@ -118,6 +120,14 @@ class Dictum:
 
     def desktop_status(self) -> dict[str, object]:
         return dict(self._desktop_status)
+
+    def on_permission_request(self, listener: Callable[[str, bool], None]) -> None:
+        self._permission_listeners.append(listener)
+
+    def request_permission(self, name: str, open_settings: bool) -> bool:
+        for listener in self._permission_listeners:
+            listener(name, open_settings)
+        return bool(self._permission_listeners)
 
     def on_show_window(self, listener: Callable[[], None]) -> None:
         """A second launch asks the running app to show its window instead of starting."""
@@ -353,16 +363,23 @@ class Dictum:
                 hold = keys
             elif mode == "toggle":
                 toggle = keys
-        return shortcuts.parse(hold, toggle)
+        cancel = self.store.get_setting(SHORTCUT_CANCEL_KEY)
+        return shortcuts.parse(hold, toggle, "fn+esc" if cancel is None else cancel)
 
-    def set_shortcuts(self, hold: str | None, toggle: str | None) -> Shortcuts:
-        """Validate and store both shortcuts; blank clears one. ValueError says what is wrong."""
-        parsed = shortcuts.parse(hold, toggle)
+    def set_shortcuts(
+        self, hold: str | None, toggle: str | None, cancel: str | None = "fn+esc"
+    ) -> Shortcuts:
+        """Validate and store shortcuts; blank clears one. ValueError says what is wrong."""
+        parsed = shortcuts.parse(hold, toggle, cancel)
         self.store.set_setting(
             SHORTCUT_HOLD_KEY, shortcuts.format_keys(parsed.hold) if parsed.hold else None
         )
         self.store.set_setting(
             SHORTCUT_TOGGLE_KEY, shortcuts.format_keys(parsed.toggle) if parsed.toggle else None
+        )
+        # Missing means the original default; an empty value explicitly disables cancel.
+        self.store.set_setting(
+            SHORTCUT_CANCEL_KEY, shortcuts.format_keys(parsed.cancel) if parsed.cancel else ""
         )
         self.store.set_setting(LEGACY_MODE_KEY, None)
         self.store.set_setting(LEGACY_KEYS_KEY, None)
