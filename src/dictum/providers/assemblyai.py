@@ -138,7 +138,6 @@ class _Aborted(Exception):
 
 
 _END = object()
-_ABORT = object()
 FINISH_TIMEOUT_SECONDS = 60.0
 
 
@@ -155,6 +154,7 @@ class StreamingUpload:
     def __init__(self, client: httpx.Client, api_key: str, sample_rate: int) -> None:
         self._queue: queue.Queue[object] = queue.Queue()
         self._closed = False
+        self._aborted = threading.Event()
         self.url: str | None = None
         self.error: str | None = None
         header = bytearray(wav_bytes(b"", sample_rate))
@@ -174,27 +174,30 @@ class StreamingUpload:
         if seconds <= SYNC_LIMIT_SECONDS:
             self.abort()
             return None
-        self._close(_END)
+        self._close()
         self._thread.join(FINISH_TIMEOUT_SECONDS)
         if self._thread.is_alive():
             self.error = f"upload did not finish within {FINISH_TIMEOUT_SECONDS:.0f} seconds"
+            self.abort()
+            return None
         return self.url
 
     def abort(self) -> None:
-        self._close(_ABORT)
+        self._aborted.set()
+        self._close()
 
-    def _close(self, marker: object) -> None:
+    def _close(self) -> None:
         if not self._closed:
             self._closed = True
-            self._queue.put(marker)
+            self._queue.put(_END)
 
     def _chunks(self) -> Iterator[bytes]:
         while True:
             item = self._queue.get()
+            if self._aborted.is_set():
+                raise _Aborted
             if item is _END:
                 return
-            if item is _ABORT:
-                raise _Aborted
             assert isinstance(item, bytes)
             yield item
 
@@ -206,20 +209,27 @@ class StreamingUpload:
                 content=self._chunks(),
                 timeout=httpx.Timeout(FINISH_TIMEOUT_SECONDS, connect=10.0),
             )
+            if response.is_error:
+                self.error = failure_from_response(response).error
+                return
+            body = response.json()
+            url = body.get("upload_url") if isinstance(body, dict) else None
+            if isinstance(url, str):
+                self.url = url
+            else:
+                self.error = failure_from_body(body).error
         except _Aborted:
             return
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, ValueError) as exc:
             self.error = f"{type(exc).__name__}: {exc}"
             return
-        if response.is_error:
-            self.error = failure_from_response(response).error
-            return
-        body = response.json()
-        url = body.get("upload_url") if isinstance(body, dict) else None
-        if isinstance(url, str):
-            self.url = url
-        else:
-            self.error = failure_from_body(body).error
+        finally:
+            self._closed = True
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    break
 
 
 def _cap(terms: tuple[str, ...], max_terms: int, max_chars: int | None) -> list[str]:

@@ -13,16 +13,17 @@ src/dictum/
                   base.py also has the optional Streams (fast mode) and Downloadable
                   (local models) protocols; local.py is whisper.cpp in-process,
                   parakeet.py runs parakeet_helper.py inside a separate engine
-  dictionary.py   the three-section dictionary, applied to transcripts, proposals
-  llm.py          building the dictionary with a language model (assistant-runtime)
+  dictionary.py   shared pinned entries and per-model learned entries, replacements, proposals
+  llm.py          dictionary prompts, model choices and direct Anthropic/OpenAI HTTP calls
   shortcuts.py    shortcut strings: hold key, hands-free chord
   recorder.py     microphone -> WAV at the device's rate (sounddevice); a sink gets
                   each chunk as it is recorded, which fast mode streams to the provider
   server.py       routes, JSON shapes, static files; refuses requests not addressed to
                   localhost and state changes from other origins
-  web/            index.html, app.js, tokens.css (every colour and size), style.css:
-                  history with the performance table behind a toolbar button,
-                  dictionary, settings; the Record button records WAV
+  web/            app.js wires navigation and models; dictionary-view.js and settings-view.js
+                  own their view state; recording.js owns microphone capture and WAV encoding;
+                  history.js pages and refreshes history, history-card.js renders each card;
+                  ui.js shares DOM helpers; tokens.css defines colours and sizes
   paths.py        the data directory per platform
   desktop/        app.py: the orchestration, written against platform.py's protocols
                   (tray, window, hotkeys, actions, permissions, UI-thread scheduling);
@@ -52,10 +53,18 @@ provider they belong to; the page keeps itself current by polling the API
 while visible; anything touching AppKit or HIToolbox runs on the main
 thread.
 
-Everything macOS-specific is under `desktop/macos/`; `desktop/create_platform()`
-picks the implementation for the running system. Another platform is a new
-package implementing the same protocols. Cross-platform work is tracked in
+Native recording, permissions, shortcuts, paste and the indicator live under
+`desktop/macos/`; the webview shell also wires macOS application termination
+and media permission callbacks. `desktop/create_platform()` picks the
+implementation for the running system. Cross-platform work is tracked in
 the issues (Windows, #36).
+
+The dictionary uses the existing httpx dependency for one request to the
+selected provider's official API, with the saved key passed explicitly.
+Its suggested catalog is local and custom model IDs remain available.
+There is no assistant framework, process-wide credential mutation, retry
+loop or model fallback. HTTP errors, refusals and incomplete replies remain
+visible; a proposed dictionary still needs the user's acceptance.
 
 Branches: pull requests go into `develop`; `main` moves by a release pull
 request after a deep review of everything on `develop`. Five Codex review
