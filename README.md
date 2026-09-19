@@ -81,9 +81,10 @@ can be set:
 - **Hands-free**: a combination, for example `cmd+fn`. Press to start;
   press again, or press the hold key, to stop.
 
-While you record, a small "Recording" pill sits in the bottom-left corner
-of the screen your pointer is on; it says "Transcribing…" until the text
-lands, and never takes focus. On stop, the clip is saved to history at once
+While you record, a small "Recording" pill appears, in the bottom-left
+corner of the screen your pointer is on until you drag it somewhere else;
+it stays where you drop it. It says "Transcribing…" until the text lands,
+and never takes focus. On stop, the clip is saved to history at once
 and goes to your default model; the transcript is copied to the clipboard
 and pasted into whatever had focus. Two dictations in a row land in the
 order you spoke them. A failure shows as a notification with the provider's
@@ -101,9 +102,9 @@ endpoint takes an upload; shorter clips use the sync endpoint as before and
 are unchanged.
 
 **Performance.** Every transcription records how long the clip was, how long
-the provider took, and whether fast mode was used. History shows the table
-by model: runs, minutes of audio, median wait, and speed as seconds of audio
-per second waited. Measured on 2026-09-18 with a 172-second dictation over
+the provider took, and whether fast mode was used. The chart button next
+to the model picker opens the table by model: runs, minutes of audio,
+median wait, and speed as seconds of audio per second waited. Measured on 2026-09-18 with a 172-second dictation over
 AssemblyAI Universal-3.5 Pro: 7.0 s with fast mode, 14.8 s without, of which
 the upload alone was 6 to 7 s. Your own table is the one to trust.
 
@@ -168,9 +169,12 @@ products, identifiers), sent along with every clip, and **replacements**
 (heard → meant) applied to every transcript. Edit it by hand, or click
 **Build from history** to have a language model of your choice, Anthropic
 or OpenAI on your own key, read your recent transcripts and propose
-additions, which you review before anything is saved. Entries you add or
-pin are never changed by the model. If you dictate to AI agents, they can
-post corrections once you have confirmed a mistranscription with them.
+additions, which you review before anything is saved. What it learns is
+kept per speech model, from that model's own transcripts, since a local
+model's mishearings are not AssemblyAI's. Entries you add or pin are shared
+by every model and never changed by the language model. If you dictate to
+AI agents, they can post corrections once you have confirmed a
+mistranscription with them.
 The suggested models, Claude Fable 5.1 and GPT-6 Astra, are the current
 strongest from each provider; any model id the provider accepts works.
 
@@ -210,6 +214,11 @@ points. Nothing leaves your machine except:
 No telemetry, no accounts, no cloud storage.
 
 ## Development
+
+The app uses Starlette and SQLite, plain browser JavaScript modules without
+a build step, and httpx for provider calls. Dictionary builds call Anthropic
+or OpenAI directly; the suggested model list is kept in `llm.py`, with a
+custom model field in Settings.
 
 ```sh
 uv sync                 # environment with dev tools

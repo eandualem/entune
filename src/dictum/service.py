@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from dictum import dictionary as dictionary_file
 from dictum import llm, shortcuts
 from dictum.audio import sniff_mime
-from dictum.dictionary import Dictionary, Entries, Proposal
+from dictum.dictionary import Dictionary, Entries, Proposal, TermBudget
 from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, resolve_model
 from dictum.providers.base import Downloadable, LocalModelStatus, Streams, Upload
 from dictum.shortcuts import Shortcuts
@@ -41,6 +41,7 @@ class ModelOption:
     id: str
     label: str
     default: bool
+    term_limit: int | None  # how many dictionary terms this model takes; None: none
 
 
 @dataclass(frozen=True)
@@ -93,15 +94,17 @@ class Dictum:
         self,
         store: Store,
         providers: list[Provider],
-        llm_call: llm.Caller = llm.call_assistant_runtime,
+        llm_call: llm.Caller = llm.call_model,
     ) -> None:
         self.store = store
         self.providers = providers
         self._llm_call = llm_call
         self._listeners: list[Callable[[], None]] = []
         self._capture_listeners: list[Callable[[], None]] = []
-        self._dictionary_lock = threading.Lock()
+        self._dictionary_lock = threading.RLock()  # dictionary() may save inside a write
         self._warm_lock = threading.Lock()
+        self._warming = False
+        self._warm_pending = False
         self._cancel_listeners: list[Callable[[], None]] = []
         self._show_window_listeners: list[Callable[[], None]] = []
         self._desktop_status: dict[str, object] = {"desktop": False}
@@ -241,25 +244,41 @@ class Dictum:
         """A local default model is loaded ahead of the first dictation (at start and
         whenever the default changes), and every other local model is unloaded: a model
         takes memory only while it is the selected one. Cloud models have nothing to warm."""
-        locals_ = [p for p in self.providers if isinstance(p, Downloadable)]
+        with self._warm_lock:
+            self._warm_pending = True
+            if self._warming:
+                return
+            self._warming = True
 
         def work() -> None:
-            # One reconciliation at a time, each reading the selection as it is now; a
-            # load waits for a provider's lock, which an inference may hold, so this
-            # never runs on a request. A selection changed during a load is caught by
-            # the check after it: the model just loaded is unloaded again.
-            with self._warm_lock:
-                default = self.default_model()
-                ref = self.resolve(default) if default else None
-                for provider in locals_:
-                    keep = ref.model if ref is not None and ref.provider is provider else None
-                    provider.unload(keep=keep)
-                if ref is not None and isinstance(ref.provider, Downloadable):
-                    ref.provider.warm(ref.model)
-                    if self.default_model() != ref.id:
-                        ref.provider.unload(keep=None)
+            while True:
+                with self._warm_lock:
+                    if not self._warm_pending:
+                        self._warming = False
+                        return
+                    self._warm_pending = False
+                try:
+                    self._warm_selected()
+                except Exception as exc:
+                    self.report_status(lastError=f"Could not load local model: {exc}")
 
         threading.Thread(target=work, daemon=True, name="dictum-warm").start()
+
+    def _warm_selected(self) -> None:
+        # One worker follows the latest selection; rapid changes coalesce instead of
+        # creating a queue of threads that repeatedly load/unload the same model.
+        default = self.default_model()
+        ref = self.resolve(default) if default else None
+        for provider in self.providers:
+            if isinstance(provider, Downloadable):
+                keep = ref.model if ref is not None and ref.provider is provider else None
+                provider.unload(keep=keep)
+        if self.default_model() != default:
+            return  # selection changed while waiting for an inference to release its lock
+        if ref is not None and isinstance(ref.provider, Downloadable):
+            ref.provider.warm(ref.model)
+            if self.default_model() != ref.id:
+                ref.provider.unload(keep=None)
 
     def _release_after_use(self, ref: ModelRef) -> None:
         """A local model used for a retry, not the selected one, is unloaded again."""
@@ -288,7 +307,15 @@ class Dictum:
         return statuses
 
     def dictionary_model(self) -> str | None:
-        return self.store.get_setting(DICTIONARY_MODEL_KEY)
+        """The saved `provider:model`, else the suggested model of the first language-model
+        provider that has a key; None only when there is no key at all."""
+        saved = self.store.get_setting(DICTIONARY_MODEL_KEY)
+        if saved is not None:
+            return saved
+        for provider_id, (_, default_model) in llm.LLM_PROVIDERS.items():
+            if self.store.get_setting(key_setting(provider_id)) is not None:
+                return default_model
+        return None
 
     def set_dictionary_model(self, ref: str | None) -> None:
         """`provider:model` for a language-model provider we can route to, or None."""
@@ -345,10 +372,18 @@ class Dictum:
     # Dictionary: read from disk each time so a hand edit of the file counts too.
 
     def dictionary(self) -> Dictionary:
-        return dictionary_file.load(self.store.data_dir)
+        # A file from before learned lists were kept per model goes under the default
+        # model (load rewrites it once); the next build for that model replaces it.
+        with self._dictionary_lock:
+            return dictionary_file.load(self.store.data_dir, self.default_model())
 
     def dictionary_text(self) -> str:
         return dictionary_file.dumps(self.dictionary())
+
+    def dictionary_snapshot(self) -> tuple[str, str]:
+        """The editor's document and revision from the same locked read."""
+        with self._dictionary_lock:
+            return self.dictionary_text(), self.dictionary_version()
 
     def dictionary_version(self) -> str:
         """A hash of the file as it is on disk; a writer names the version it edited."""
@@ -360,7 +395,7 @@ class Dictum:
         """Validate and save the JSON form. Raises ValueError with the reason, and
         DictionaryChanged when `expected_version` is given and the file moved on since:
         an edit made on a stale copy would silently drop what was added meanwhile."""
-        parsed = dictionary_file.parse(text)
+        parsed = dictionary_file.parse(text, self.default_model())
         with self._dictionary_lock:
             if expected_version is not None and expected_version != self.dictionary_version():
                 raise DictionaryChanged(
@@ -372,7 +407,7 @@ class Dictum:
         return parsed
 
     def add_agent_corrections(self, data: object) -> Entries:
-        """Merge corrections an agent sent (after confirming with the user) into the agents section.
+        """Pin corrections an agent sent after confirming them with the user.
 
         `data` is the request body: terms and replacements, plus an optional `source`.
         Returns what was actually new. Raises ValueError with the reason on bad input.
@@ -389,30 +424,44 @@ class Dictum:
             if added:
                 dictionary_file.save(self.store.data_dir, updated)
         if added:
+            source = data.get("source")
+            self.store.add_corrections(
+                added.terms, added.replacements, source if isinstance(source, str) else None
+            )
             self._changed()
         return added
 
     def build_dictionary(self) -> Proposal:
-        """Ask the configured language model for a new learned section. Nothing is saved.
+        """Ask the configured language model for a new learned section for the default
+        speech model, from that model's transcripts only. Nothing is saved.
 
         Raises ValueError with the reason when unconfigured, or with the provider's or
         model's own words when the call or its reply fails.
         """
         model = self.dictionary_model()
         if model is None:
-            raise ValueError("Pick a model for the dictionary in Settings first.")
+            raise ValueError("Add an Anthropic or OpenAI key under Settings first.")
         provider = model.partition(":")[0]
         api_key = self.store.get_setting(key_setting(provider))
         if api_key is None:
             raise ValueError(f"No API key set for {llm.LLM_PROVIDERS[provider][0]}.")
+        try:
+            ref = self.choose_model(None)
+        except NoDefaultModel:
+            raise ValueError(
+                "Pick a default model first: the dictionary is learned per speech model."
+            ) from None
         current = self.dictionary()
-        transcripts = self.store.recent_transcripts(llm.MAX_TRANSCRIPTS)
+        transcripts = self.store.recent_transcripts(ref.provider.id, ref.model, llm.MAX_TRANSCRIPTS)
         if not transcripts:
-            raise ValueError("Nothing to learn from yet: the history has no transcripts.")
+            raise ValueError(
+                f"Nothing to learn from yet: the history has no transcripts from {ref.label}."
+            )
+        budget = TermBudget(ref.provider.term_limit, len(current.pinned.terms))
         learned = llm.propose_learned(
-            provider, api_key, model, current, transcripts, call=self._llm_call
+            provider, api_key, model, current, transcripts, ref.id, budget, call=self._llm_call
         )
-        return dictionary_file.propose(current, learned)
+        return dictionary_file.propose(current, learned, ref.id, budget)
 
     # Shortcut capture: the page asks, the menu-bar app's global listener records the keys.
 
@@ -467,7 +516,9 @@ class Dictum:
                 continue
             for model in provider.models:
                 ref = ModelRef(provider, model)
-                options.append(ModelOption(ref.id, ref.label, ref.id == default))
+                options.append(
+                    ModelOption(ref.id, ref.label, ref.id == default, provider.term_limit)
+                )
         return options
 
     # Transcription
@@ -505,7 +556,7 @@ class Dictum:
                 mime = recording.mime
                 if not mime.startswith("audio/"):
                     mime = sniff_mime(data) or mime
-                effective = self.dictionary().effective
+                effective = self.dictionary().effective(ref.id)
                 started = time.monotonic()  # before the stream is finished: that wait counts
                 stream, upload = upload, None  # from here the stream is finished or aborted
                 clip = Clip(data, mime, upload_url=_finish(stream, ref, Clip(data, mime)))
@@ -521,7 +572,7 @@ class Dictum:
         text = None
         if raw_text is not None:
             try:
-                text = dictionary_file.apply(self.dictionary().effective, raw_text)
+                text = dictionary_file.apply(self.dictionary().effective(ref.id), raw_text)
             except Exception:  # a dictionary that fails, however, must not lose a transcript
                 text = raw_text
         self.store.add_transcription(

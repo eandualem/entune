@@ -16,9 +16,11 @@ copies that one instead.
 from __future__ import annotations
 
 import plistlib
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from dictum import __version__
@@ -36,19 +38,50 @@ def install_app(directory: Path, source: Path | None = None) -> Path:
     writing the script bundle.
     """
     app = directory / "Dictum.app"
-    if app.exists():
-        shutil.rmtree(app)
     if source is not None:
-        shutil.copytree(source, app, symlinks=True)
-        sign(app)
-        return app
+        _validate_bundle(source)
+    directory.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".dictum-install-", dir=directory))
+    prepared, previous = staging / "Dictum.app", staging / "previous.app"
+    installed = False
+    try:
+        if source is not None:
+            shutil.copytree(source, prepared, symlinks=True)
+        else:
+            _write_launcher(prepared)
+        sign(prepared)
+        if app.exists():
+            app.rename(previous)
+        try:
+            prepared.rename(app)
+        except BaseException:
+            if previous.exists():
+                previous.rename(app)
+            raise
+        installed = True
+    finally:
+        # If restoring the old app also failed, keep its backup for recovery.
+        if installed or not previous.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+    return app
+
+
+def _validate_bundle(app: Path) -> None:
+    with (app / "Contents" / "Info.plist").open("rb") as handle:
+        info = plistlib.load(handle)
+    executable = app / "Contents" / "MacOS" / "Dictum"
+    if info.get("CFBundleExecutable") != "Dictum" or not executable.is_file():
+        raise ValueError(f"Not a Dictum application bundle: {app}")
+
+
+def _write_launcher(app: Path) -> None:
     contents = app / "Contents"
     (contents / "MacOS").mkdir(parents=True)
     (contents / "Resources").mkdir()
 
     launcher = contents / "MacOS" / "Dictum"
     launcher.write_text(
-        f'#!/bin/sh\nexec "{sys.executable}" -m dictum "$@"\n',
+        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -m dictum "$@"\n',
         encoding="utf-8",
     )
     launcher.chmod(0o755)
@@ -72,8 +105,6 @@ def install_app(directory: Path, source: Path | None = None) -> Path:
         info["CFBundleIconFile"] = icon_file
     with (contents / "Info.plist").open("wb") as f:
         plistlib.dump(info, f)
-    sign(app)
-    return app
 
 
 def signing_identity() -> str | None:
@@ -112,7 +143,8 @@ def sign(app: Path) -> str:
         if done.returncode == 0:
             return identity
         print(f"Could not sign with {identity}: {done.stderr.strip()}", file=sys.stderr)
-    _codesign(app, "-")
+    fallback = _codesign(app, "-")
+    fallback.check_returncode()
     return "-"
 
 

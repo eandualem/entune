@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import gc
 import io
+import re
 import shutil
 import subprocess
 import tempfile
@@ -65,6 +66,7 @@ CATALOGUE: tuple[ModelSpec, ...] = (
 class Local:
     id: str = "local"
     name: str = "Local"
+    term_limit: int | None = 60  # what fits whisper's 224-token prompt with room to spare
 
     def __init__(
         self,
@@ -77,7 +79,7 @@ class Local:
         self._load_model = load_model or _load_whisper
         self._downloads: dict[str, Download] = {}
         self._models: dict[str, Any] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     # ---- the catalogue and its files
 
@@ -142,9 +144,11 @@ class Local:
 
     def unload(self, keep: str | None = None) -> None:
         with self._lock:
-            for name in [n for n in self._models if n != keep]:
+            removed = [n for n in self._models if n != keep]
+            for name in removed:
                 del self._models[name]  # the bindings free the context with the object
-        gc.collect()
+        if removed:
+            gc.collect()
 
     def _engine(self, name: str) -> Any:
         with self._lock:
@@ -170,11 +174,13 @@ class Local:
             audio = pcm16k(clip)
         except Exception as exc:
             return Failure(f"Could not decode the clip: {type(exc).__name__}: {exc}")
-        try:
-            engine = self._engine(model)
-        except Exception as exc:
-            return Failure(f"Could not load {model}: {type(exc).__name__}: {exc}")
         with self._lock:
+            # Loading, inference and unloading share one critical section. Otherwise
+            # switching models can unload the engine between loading and using it.
+            try:
+                engine = self._engine(model)
+            except Exception as exc:
+                return Failure(f"Could not load {model}: {type(exc).__name__}: {exc}")
             params: dict[str, Any] = {
                 "language": "en" if model.endswith(".en") else "auto",
                 "print_progress": False,
@@ -310,32 +316,50 @@ class Download:
     def _fetch(self, url: str, target: Path) -> bool:
         part = target.with_name(target.name + ".part")
         have = part.stat().st_size if part.exists() else 0
-        headers = {"Range": f"bytes={have}-"} if have else {}
+        headers = {"Accept-Encoding": "identity"}
+        if have:
+            headers["Range"] = f"bytes={have}-"
         try:
-            with (
-                self._client.stream("GET", url, headers=headers) as response,
-                part.open("ab" if have else "wb") as out,
-            ):
-                if response.status_code == 416:  # the part is already complete
-                    pass
-                elif response.status_code == 200 and have:
-                    out.seek(0)
-                    out.truncate()
-                    self.received -= have
-                    for chunk in response.iter_bytes():
-                        out.write(chunk)
-                        self.received += len(chunk)
+            with self._client.stream("GET", url, headers=headers) as response:
+                if response.status_code == 416:
+                    complete = re.fullmatch(
+                        r"bytes \*/(\d+)", response.headers.get("content-range", "")
+                    )
+                    if complete is None or have == 0 or have != int(complete[1]):
+                        raise ValueError(
+                            "The server refused the range, but the partial file is not complete"
+                        )
                 elif response.status_code in (200, 206):
-                    for chunk in response.iter_bytes():
-                        out.write(chunk)
-                        self.received += len(chunk)
+                    expected = None
+                    if response.status_code == 206:
+                        interval = re.fullmatch(
+                            r"bytes (\d+)-(\d+)/(\d+)", response.headers.get("content-range", "")
+                        )
+                        if (
+                            interval is None
+                            or int(interval[1]) != have
+                            or int(interval[2]) != int(interval[3]) - 1
+                        ):
+                            raise ValueError("The server returned a different range than requested")
+                        expected = int(interval[3])
+                    else:
+                        self.received -= have
+                        have = 0
+                        length = response.headers.get("content-length")
+                        expected = int(length) if length is not None else None
+                    with part.open("ab" if have else "wb") as out:
+                        for chunk in response.iter_bytes():
+                            out.write(chunk)
+                            self.received += len(chunk)
+                    if expected is not None and part.stat().st_size != expected:
+                        raise ValueError("The download ended before the complete file arrived")
                 else:
                     self.error = f"HTTP {response.status_code} from {url}"
                     return False
-        except (httpx.HTTPError, OSError) as exc:
+            part.replace(target)
+        except (httpx.HTTPError, OSError, ValueError) as exc:
             self.error = f"{type(exc).__name__}: {exc}"
             return False
-        part.replace(target)
         return True
 
 

@@ -17,8 +17,9 @@ curl -s -X POST localhost:4187/api/dictionary/corrections \
   -d '{"replacements": {"cloud code": "Claude Code"}, "terms": ["Dictum"], "source": "my-agent"}'
 ```
 
-Entries land in the dictionary's `agents` section. Anything already pinned,
-or already sent, is not added again; the reply lists what was new:
+Entries are pinned: they apply to every speech model and a build never
+changes them. Anything already pinned is not added again; the reply lists
+what was new:
 
 ```json
 {"added": {"terms": ["Dictum"], "replacements": {"cloud code": "Claude Code"}}}
@@ -45,5 +46,6 @@ silently if Dictum is not running.
 | `POST /api/recordings/{id}/transcriptions` | `{"model": "provider/model"}`: transcribe again |
 | `GET /api/recordings/{id}/audio` | the clip |
 | `GET /api/dictionary`, `PUT /api/dictionary` | the whole dictionary as JSON; the `ETag` names its version, and a `PUT` with `If-Match` set to a stale one gets 409 instead of overwriting what was added meanwhile |
-| `POST /api/dictionary/build` | ask the configured model for a proposal (nothing saved) |
+| `GET /api/dictionary/corrections` | what agents sent and Dictum pinned, newest first, with the `source` each gave |
+| `POST /api/dictionary/build` | ask the configured language model for a proposal for the default speech model, from its transcripts only (nothing saved); the reply names the `model` |
 | `POST /api/capture`, `GET`, `DELETE` | record a shortcut by pressing it (needs the menu-bar app) |

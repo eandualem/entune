@@ -14,6 +14,8 @@ def test_bytes_win_over_the_label() -> None:
     assert identify(WEBM_HEADER, "application/octet-stream") == "audio/webm"
     assert identify(b"unknown bytes here", "audio/mp4") == "audio/mp4"
     assert identify(b"unknown bytes here", None) == "application/octet-stream"
+    assert identify(b"<script>bad()</script>", "text/html") == "application/octet-stream"
+    assert identify(b"unknown bytes here", "audio/webm;codecs=opus") == "audio/webm"
 
 
 def test_extension_follows_the_mime_type() -> None:

@@ -1,12 +1,14 @@
 """The personal dictionary: terms the providers should know, and replacements applied to
 every transcript.
 
-Three sections. `pinned` is the user's: entered by hand or approved from a proposal; a
-model never changes it. `agents` holds corrections the user's agents sent after
-confirming a mistranscription with the user; a model never changes those either.
-`learned` is what a model proposed from the history and the user accepted; the next
-build replaces it. Stored as `dictionary.json` in the data directory so it can be
-edited by hand or pasted whole.
+Two sections. `pinned` is the user's and applies to every speech model: entered by
+hand, pinned from a proposal, or sent by the user's agents after confirming a
+mistranscription with the user; a model never changes it. `learned` is what a language
+model proposed from the history and the user accepted, kept per speech model
+(`provider/model`) and built from that model's transcripts only, since one model's
+mishearings are not another's; the next build for that model replaces it. There is no
+list for all models: that is what pinned is. Stored as `dictionary.json` in the data
+directory so it can be edited by hand or pasted whole.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 FILENAME = "dictionary.json"
-SECTIONS = ("pinned", "agents", "learned")
+SECTIONS = ("pinned", "learned")
 
 
 @dataclass(frozen=True)
@@ -36,72 +38,96 @@ class Entries:
 @dataclass(frozen=True)
 class Dictionary:
     pinned: Entries = field(default_factory=Entries)
-    agents: Entries = field(default_factory=Entries)
-    learned: Entries = field(default_factory=Entries)
+    learned: dict[str, Entries] = field(default_factory=dict)  # keyed by speech model
 
     def __bool__(self) -> bool:
-        return bool(self.pinned or self.agents or self.learned)
+        return bool(self.pinned or any(self.learned.values()))
 
-    @property
-    def confirmed(self) -> Entries:
-        """Pinned and agent entries together: what a model must not change."""
-        return Entries(
-            tuple(dict.fromkeys((*self.pinned.terms, *self.agents.terms))),
-            _merge(self.agents.replacements, self.pinned.replacements),
-        )
+    def learned_for(self, model: str) -> Entries:
+        return self.learned.get(model, Entries())
 
-    @property
-    def effective(self) -> Entries:
-        """What is applied: every section, pinned winning over agents over learned."""
-        terms = tuple(dict.fromkeys((*self.pinned.terms, *self.agents.terms, *self.learned.terms)))
-        replacements = _merge(
-            self.learned.replacements, self.agents.replacements, self.pinned.replacements
-        )
+    def effective(self, model: str) -> Entries:
+        """What is applied to that model's transcripts: pinned, shared by every model, plus
+        what was learned for this one; pinned wins."""
+        learned = self.learned_for(model)
+        terms = tuple(dict.fromkeys((*self.pinned.terms, *learned.terms)))
+        replacements = _merge(learned.replacements, self.pinned.replacements)
         return Entries(terms, replacements)
 
     def with_agent_corrections(self, corrections: Entries) -> tuple[Dictionary, Entries]:
-        """Merge corrections into the agents section; the second value is what was new."""
-        new_terms = tuple(
-            t
-            for t in corrections.terms
-            if t.lower() not in {x.lower() for x in self.confirmed.terms}
-        )
+        """Pin corrections an agent sent; the second value is what was new."""
+        pinned_terms = {t.lower() for t in self.pinned.terms}
+        pinned_replacements = {_key(h): m for h, m in self.pinned.replacements.items()}
+        new_terms = tuple(t for t in corrections.terms if t.lower() not in pinned_terms)
         new_replacements = {
             h: m
-            for h, m in corrections.replacements.items()
-            if self.confirmed.replacements.get(h) != m
+            for h, m in _merge(corrections.replacements).items()
+            if pinned_replacements.get(_key(h)) != m
         }
-        agents = Entries(
-            tuple(dict.fromkeys((*self.agents.terms, *new_terms))),
-            {**self.agents.replacements, **new_replacements},
+        pinned = Entries(
+            tuple(dict.fromkeys((*self.pinned.terms, *new_terms))),
+            _merge(self.pinned.replacements, new_replacements),
         )
-        return Dictionary(self.pinned, agents, self.learned), Entries(new_terms, new_replacements)
+        return Dictionary(pinned, self.learned), Entries(new_terms, new_replacements)
 
 
 EMPTY = Dictionary()
 
 
-def parse(text: str) -> Dictionary:
+def parse(text: str, legacy_model: str | None = None) -> Dictionary:
     """Parse the JSON form. Raises ValueError with a reason a person can act on.
 
-    The first release stored one flat list; that form is read as `pinned`.
+    Earlier forms are read too: the first release's one flat list becomes `pinned`; an
+    `agents` section (corrections the user confirmed) is folded into `pinned`; a
+    `learned` section that was one list for every model goes under `legacy_model`, the
+    default model at the time, or is an error when none is given.
     """
+    return _parse(_decode(text), legacy_model)
+
+
+def _decode(text: str) -> dict[str, object]:
     try:
         data = json.loads(text or "{}")
     except json.JSONDecodeError as exc:
         raise ValueError(f"Not valid JSON: {exc.msg} (line {exc.lineno})") from None
     if not isinstance(data, dict):
         raise ValueError("The dictionary must be a JSON object with pinned and learned")
+    return data
+
+
+def _parse(data: dict[str, object], legacy_model: str | None) -> Dictionary:
     if "terms" in data or "replacements" in data:
         return Dictionary(pinned=parse_entries(data, "dictionary"))
-    unknown = set(data) - set(SECTIONS)
+    unknown = set(data) - {*SECTIONS, "agents"}
     if unknown:
         raise ValueError(f"Unknown keys: {', '.join(sorted(unknown))} (use {', '.join(SECTIONS)})")
-    return Dictionary(
-        pinned=parse_entries(data.get("pinned", {}), "pinned"),
-        agents=parse_entries(data.get("agents", {}), "agents"),
-        learned=parse_entries(data.get("learned", {}), "learned"),
-    )
+    pinned = parse_entries(data.get("pinned", {}), "pinned")
+    if "agents" in data:
+        agents = parse_entries(data["agents"], "agents")
+        pinned = Entries(
+            tuple(dict.fromkeys((*pinned.terms, *agents.terms))),
+            _merge(agents.replacements, pinned.replacements),
+        )
+    return Dictionary(pinned=pinned, learned=parse_learned(data.get("learned", {}), legacy_model))
+
+
+def _single_list(learned: object) -> bool:
+    return isinstance(learned, dict) and ("terms" in learned or "replacements" in learned)
+
+
+def parse_learned(data: object, legacy_model: str | None = None) -> dict[str, Entries]:
+    """`learned` keyed by speech model; the earlier single list goes under `legacy_model`."""
+    if not isinstance(data, dict):
+        raise ValueError("learned must be an object keyed by speech model (provider/model)")
+    if _single_list(data):
+        if legacy_model is None:
+            raise ValueError(
+                "learned is one list for every model (the earlier form); set a default model"
+                " and it moves under that model, or key it by provider/model"
+            )
+        return {legacy_model: parse_entries(data, "learned")}
+    learned = {model: parse_entries(entries, f"learned.{model}") for model, entries in data.items()}
+    return {model: entries for model, entries in learned.items() if entries}
 
 
 def parse_entries(data: object, where: str) -> Entries:
@@ -127,20 +153,28 @@ def dumps(dictionary: Dictionary) -> str:
     return json.dumps(
         {
             "pinned": dictionary.pinned.as_json(),
-            "agents": dictionary.agents.as_json(),
-            "learned": dictionary.learned.as_json(),
+            "learned": {model: e.as_json() for model, e in dictionary.learned.items()},
         },
         indent=2,
         ensure_ascii=False,
     )
 
 
-def load(data_dir: Path) -> Dictionary:
-    """The dictionary on disk; empty when there is none. A broken file raises ValueError."""
+def load(data_dir: Path, legacy_model: str | None = None) -> Dictionary:
+    """The dictionary on disk; empty when there is none. A broken file raises ValueError.
+
+    A file in an earlier form (an `agents` section, or one learned list for every model)
+    is rewritten in the current one, once, so the page and the file agree; the learned
+    list goes under `legacy_model`, the default model, when one is given.
+    """
     path = data_dir / FILENAME
     if not path.exists():
         return EMPTY
-    return parse(path.read_text(encoding="utf-8"))
+    data = _decode(path.read_text(encoding="utf-8"))
+    dictionary = _parse(data, legacy_model)
+    if "agents" in data or (legacy_model is not None and _single_list(data.get("learned"))):
+        save(data_dir, dictionary)
+    return dictionary
 
 
 def save(data_dir: Path, dictionary: Dictionary) -> None:
@@ -192,30 +226,56 @@ def _merge(*sections: dict[str, str]) -> dict[str, str]:
 
 
 @dataclass(frozen=True)
-class Proposal:
-    """A model's proposed `learned` section, with what it adds and removes versus the current."""
+class TermBudget:
+    """How many terms one speech model can still take: its provider's limit, less the
+    pinned terms, which every model carries. `limit` None means it takes no terms at all."""
 
+    limit: int | None
+    pinned: int
+
+    @property
+    def room(self) -> int:
+        return 0 if self.limit is None else max(0, self.limit - self.pinned)
+
+    def as_json(self) -> dict[str, object]:
+        return {"limit": self.limit, "pinned": self.pinned, "room": self.room}
+
+
+@dataclass(frozen=True)
+class Proposal:
+    """A proposed `learned` section for one speech model, with what it adds and removes
+    versus the current one, cut to the model's term budget."""
+
+    model: str
     learned: Entries
     added: Entries
     removed: Entries
+    budget: TermBudget
+    dropped_terms: int  # proposed terms that did not fit the budget
 
     def as_json(self) -> dict[str, object]:
         return {
+            "model": self.model,
             "learned": self.learned.as_json(),
             "added": self.added.as_json(),
             "removed": self.removed.as_json(),
+            "budget": self.budget.as_json(),
+            "dropped_terms": self.dropped_terms,
         }
 
 
-def propose(current: Dictionary, proposed: Entries) -> Proposal:
-    """Drop anything already confirmed (pinned or from agents), then diff against learned."""
-    pinned_terms = {t.lower() for t in current.confirmed.terms}
-    pinned_heard = {h.lower() for h in current.confirmed.replacements}
+def propose(current: Dictionary, proposed: Entries, model: str, budget: TermBudget) -> Proposal:
+    """Drop anything already pinned, keep the first terms that fit the budget (the model
+    is asked to put the most valuable first), then diff against what was learned for
+    that model. Nothing beyond what the speech model can use is ever proposed."""
+    pinned_terms = {t.lower() for t in current.pinned.terms}
+    pinned_heard = {_key(h) for h in current.pinned.replacements}
+    terms = tuple(t for t in proposed.terms if t.lower() not in pinned_terms)
     learned = Entries(
-        tuple(t for t in proposed.terms if t.lower() not in pinned_terms),
-        {h: m for h, m in proposed.replacements.items() if h.lower() not in pinned_heard},
+        terms[: budget.room],
+        {h: m for h, m in proposed.replacements.items() if _key(h) not in pinned_heard},
     )
-    old = current.learned
+    old = current.learned_for(model)
     added = Entries(
         tuple(t for t in learned.terms if t not in old.terms),
         {h: m for h, m in learned.replacements.items() if old.replacements.get(h) != m},
@@ -224,4 +284,4 @@ def propose(current: Dictionary, proposed: Entries) -> Proposal:
         tuple(t for t in old.terms if t not in learned.terms),
         {h: m for h, m in old.replacements.items() if h not in learned.replacements},
     )
-    return Proposal(learned, added, removed)
+    return Proposal(model, learned, added, removed, budget, len(terms) - len(learned.terms))
