@@ -1,44 +1,32 @@
-// Dictum's window: history, recording from here, settings. Plain DOM code against
-// the local API; no framework, no build step.
+// Dictum's window: history, dictionary, settings, and recording from here. Plain DOM
+// code against the local API; no framework, no build step. Layout and tokens follow
+// the design of 2026-09-18; every colour and size lives in tokens.css.
 
 const el = (id) => document.getElementById(id);
+const status = el("status");
+const modelSelect = el("model");
+const fastWrap = el("fast-mode-wrap");
+const fastInput = el("fast-mode");
 const recordBtn = el("record");
 const recTimer = el("rec-timer");
-const modelSelect = el("model");
-const status = el("status");
 const historyList = el("history");
-const historyLabel = el("history-label");
 const emptyState = el("empty");
 const stepsList = el("steps");
-const settingsForm = el("settings-form");
-const keysGroup = el("keys");
-const llmKeysGroup = el("llm-keys");
-const dictionaryModelInput = el("dictionary-model");
-const fastModeInput = el("fast-mode");
-const fastModeRow = el("fast-mode-row");
-const fastModeStatus = el("fast-mode-status");
-const dictionaryModelStatus = el("dictionary-model-status");
-const metricsPopover = el("metrics");
-const metricsToggle = el("metrics-toggle");
-const metricsRows = el("metrics-rows");
-let streamingProviders = new Set();
-const dictionaryModels = el("dictionary-models");
-const dictionaryModelChip = el("dictionary-model-chip");
-const defaultSelect = el("default-model");
-const settingsStatus = el("settings-status");
-const shortcutHold = el("shortcut-hold");
-const shortcutToggle = el("shortcut-toggle");
-const shortcutStatus = el("shortcut-status");
 
 const ICON = {
-  copy: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>',
-  check: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>',
-  download: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v8m-3.5-3L8 11l3.5-3.5M3 13.5h10"/></svg>',
-  chevron: '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2 6.5 5 3.5 8"/></svg>',
-  warn: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 1.5 11 10H1L6 1.5ZM6 5v2.2M6 8.6v.1"/></svg>',
+  check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>',
+  play: '<svg class="i12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 2l7 4-7 4z" fill="currentColor"/></svg>',
+  pause: '<svg class="i12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 2h2.5v8H3zM6.5 2H9v8H6.5z" fill="currentColor"/></svg>',
+  download: '<svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M4.5 6.5L8 10l3.5-3.5M3 13h10"/></svg>',
+  attempts: '<svg class="i13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 5h12M2 8h12M2 11h8"/></svg>',
+  retry: '<svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 3v3h-3"/></svg>',
+  remove: '<svg class="i12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+  chevron: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" style="width:0.625rem;height:0.625rem"><path d="M4 6l4 4 4-4"/></svg>',
 };
 
 let models = [];
+let defaultModel = null; // {id, label, term_limit} from /api/models, or null
+let settings = null; // the last /api/settings answer
 let shortcuts = { hold: null, toggle: null };
 let recordingsCount = 0;
 
@@ -48,43 +36,44 @@ async function api(path, init) {
   return res.json();
 }
 
-// ---- Appearance: a per-window preference, applied before first paint by index.html ----
+function flash(target, message, kind) {
+  target.textContent = message;
+  target.classList.add("save-status", "show");
+  target.classList.toggle("ok", kind === "ok");
+  target.classList.toggle("err", kind === "err");
+  clearTimeout(target._timer);
+  target._timer = setTimeout(() => target.classList.remove("show"), kind === "ok" ? 1800 : 8000);
+}
+
+const errorText = (err) => String(err?.message ?? err);
+
+// ---- Preferences kept in this window: theme, text size, hints ----
 function applyTheme(theme) {
   if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
   else delete document.documentElement.dataset.theme;
-  try {
-    if (theme === "system") localStorage.removeItem("theme");
-    else localStorage.setItem("theme", theme);
-  } catch (e) {}
+  try { theme === "system" ? localStorage.removeItem("theme") : localStorage.setItem("theme", theme); } catch (e) {}
 }
 {
   let saved = "system";
   try { saved = localStorage.getItem("theme") || "system"; } catch (e) {}
-  for (const radio of settingsForm.querySelectorAll("input[name=appearance]")) {
+  for (const radio of document.querySelectorAll("input[name=appearance]")) {
     radio.checked = radio.value === saved;
     radio.addEventListener("change", () => applyTheme(radio.value));
   }
 }
 
-// ---- Text size: one root size every component is relative to, so it all scales together ----
 const SCALES = ["small", "default", "large", "larger"];
+const currentScale = () => document.documentElement.dataset.scale ?? "default";
 function applyScale(scale) {
   if (scale === "default") delete document.documentElement.dataset.scale;
   else document.documentElement.dataset.scale = scale;
-  try {
-    if (scale === "default") localStorage.removeItem("scale");
-    else localStorage.setItem("scale", scale);
-  } catch (e) {}
-  for (const radio of settingsForm.querySelectorAll("input[name=scale]")) radio.checked = radio.value === scale;
+  try { scale === "default" ? localStorage.removeItem("scale") : localStorage.setItem("scale", scale); } catch (e) {}
+  for (const radio of document.querySelectorAll("input[name=scale]")) radio.checked = radio.value === scale;
 }
-function currentScale() {
-  return document.documentElement.dataset.scale ?? "default";
-}
-for (const radio of settingsForm.querySelectorAll("input[name=scale]")) {
+for (const radio of document.querySelectorAll("input[name=scale]")) {
   radio.checked = radio.value === currentScale();
   radio.addEventListener("change", () => applyScale(radio.value));
 }
-// cmd/ctrl with + - 0, like a browser's zoom, in the app window where there is no browser.
 document.addEventListener("keydown", (e) => {
   if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
   const step = e.key === "=" || e.key === "+" ? 1 : e.key === "-" ? -1 : e.key === "0" ? 0 : null;
@@ -94,22 +83,41 @@ document.addEventListener("keydown", (e) => {
   applyScale(step === 0 ? "default" : SCALES[Math.max(0, Math.min(SCALES.length - 1, at + step))]);
 });
 
-// ---- Tabs ----
-const tabs = { history: el("tab-history"), dictionary: el("tab-dictionary"), settings: el("tab-settings") };
-const views = { history: el("view-history"), dictionary: el("view-dictionary"), settings: el("view-settings") };
-function show(name) {
-  for (const key in tabs) {
-    tabs[key].setAttribute("aria-selected", String(key === name));
-    if (key === name) views[key].setAttribute("data-active", "");
-    else views[key].removeAttribute("data-active");
-  }
-  document.querySelector(".content").scrollTop = 0;
-}
-tabs.history.addEventListener("click", () => show("history"));
-tabs.dictionary.addEventListener("click", () => show("dictionary"));
-tabs.settings.addEventListener("click", () => show("settings"));
+const hintsInput = el("hints");
+hintsInput.checked = document.documentElement.dataset.hints !== "off";
+hintsInput.addEventListener("change", () => {
+  if (hintsInput.checked) delete document.documentElement.dataset.hints;
+  else document.documentElement.dataset.hints = "off";
+  try { hintsInput.checked ? localStorage.removeItem("hints") : localStorage.setItem("hints", "off"); } catch (e) {}
+  if (!hintsInput.checked) showHelp(false);
+});
 
-// ---- Models ----
+// ---- Views and the settings rail ----
+function segmentedGroup(buttons, onPick) {
+  for (const [name, button] of Object.entries(buttons)) {
+    button.addEventListener("click", () => { select(name); onPick(name); });
+  }
+  function select(name) {
+    for (const [key, button] of Object.entries(buttons)) button.setAttribute("aria-selected", String(key === name));
+  }
+  return select;
+}
+const views = { history: el("view-history"), dictionary: el("view-dictionary"), settings: el("view-settings") };
+const selectTab = segmentedGroup({ history: el("tab-history"), dictionary: el("tab-dictionary"), settings: el("tab-settings") }, showView);
+function showView(name) {
+  for (const key in views) views[key].toggleAttribute("data-active", key === name);
+  views[name].scrollTop = 0;
+}
+function show(name) { selectTab(name); showView(name); }
+
+const sections = { general: el("settings-general"), providers: el("settings-providers"), local: el("settings-local"), agents: el("settings-agents") };
+const selectSection = segmentedGroup({ general: el("sec-general"), providers: el("sec-providers"), local: el("sec-local"), agents: el("sec-agents") }, showSection);
+function showSection(name) {
+  for (const key in sections) sections[key].toggleAttribute("data-active", key === name);
+}
+function openSettings(section) { show("settings"); selectSection(section); showSection(section); }
+
+// ---- Models: one default, picked in the toolbar; it applies at once ----
 function fillModels(select, selected, emptyLabel) {
   select.replaceChildren();
   if (models.length === 0) {
@@ -123,50 +131,53 @@ function fillModels(select, selected, emptyLabel) {
 
 async function loadModels() {
   models = await api("/api/models");
-  const def = models.find((m) => m.default)?.id ?? null;
   defaultModel = models.find((m) => m.default) ?? null;
-  renderDictionary(); // the learned section is the default model's
-  fillModels(modelSelect, def, "No models: add a key or download one");
-  fillModels(defaultSelect, def, "Add a key or download a model first");
-  if (def === null && models.length > 0) {
-    defaultSelect.prepend(new Option("Not set", "", true, true));
-    modelSelect.prepend(new Option("Pick a model", "", true, true));
-  }
-  showFastModeIfSupported();
+  fillModels(modelSelect, defaultModel?.id ?? null, "No models: add a key or download one");
+  if (!defaultModel && models.length > 0) modelSelect.prepend(new Option("Pick a model", "", true, true));
+  const provider = defaultModel?.id.split("/")[0];
+  const streams = (settings?.providers ?? []).some((p) => p.id === provider && p.streams);
+  fastInput.disabled = !streams;
+  fastWrap.classList.toggle("off", !streams);
+  fastWrap.title = streams
+    ? "Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop"
+    : "Fast mode: only AssemblyAI takes the audio while you record; pick it to use fast mode";
+  if (!status.textContent || status.textContent === "Ready") status.textContent = defaultModel ? "Ready" : "";
+  renderDictionary();
   renderStart();
   loadHistory(true).catch(() => {}); // the cards' retry pickers list these models too
 }
 
-// Fast mode only means something for a provider that takes the audio while it is recorded.
-function showFastModeIfSupported() {
-  const provider = defaultSelect.value.split("/")[0];
-  fastModeRow.hidden = !streamingProviders.has(provider);
-}
-// One default model, picked in the toolbar or in Settings: it applies at once and is what
-// the shortcut, the Record button and a plain "transcribe" use. Save never touches it.
-async function chooseDefaultModel(select, statusTarget) {
-  const chosen = select.value || null;
-  const label = select.selectedOptions[0]?.textContent ?? chosen;
+modelSelect.addEventListener("change", async () => {
+  const chosen = modelSelect.value || null;
   try {
     await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ defaultModel: chosen }) });
-    if (statusTarget === status) status.textContent = chosen ? `Using ${label}` : "";
-    else flash(statusTarget, chosen ? `Default model: ${label}` : "No default model", "ok");
+    status.textContent = chosen ? `Using ${modelSelect.selectedOptions[0]?.textContent}` : "";
   } catch (err) {
-    if (statusTarget === status) status.textContent = String(err.message ?? err);
-    else flash(statusTarget, String(err.message ?? err), "err");
+    status.textContent = errorText(err);
   }
   await loadModels();
-  showFastModeIfSupported();
-}
-defaultSelect.addEventListener("change", () => chooseDefaultModel(defaultSelect, settingsStatus));
-modelSelect.addEventListener("change", () => chooseDefaultModel(modelSelect, status));
+});
 
-// The performance table lives behind the chart button next to the model picker: it is
-// what you look at when choosing a model, not a page of its own.
+async function saveSetting(body, statusTarget) {
+  try {
+    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: {}, ...body }) });
+    if (statusTarget) flash(statusTarget, "Saved", "ok");
+    return true;
+  } catch (err) {
+    if (statusTarget) flash(statusTarget, errorText(err), "err");
+    else status.textContent = errorText(err);
+    return false;
+  }
+}
+fastInput.addEventListener("change", () => saveSetting({ fastMode: fastInput.checked }, null));
+
+// ---- Performance by model: a popover behind the chart button ----
+const metricsPopover = el("metrics");
+const metricsToggle = el("metrics-toggle");
+const metricsRows = el("metrics-rows");
 function showMetrics(open) {
   metricsPopover.hidden = !open;
   metricsToggle.setAttribute("aria-expanded", String(open));
-  if (open) metricsPopover.style.left = `${metricsToggle.offsetLeft}px`;
 }
 metricsToggle.addEventListener("click", () => showMetrics(metricsPopover.hidden));
 document.addEventListener("click", (e) => {
@@ -178,11 +189,12 @@ async function loadMetrics() {
   const rows = await api("/api/metrics");
   metricsToggle.hidden = rows.length === 0;
   if (rows.length === 0) showMetrics(false);
-  const cell = (text) => Object.assign(document.createElement("td"), { textContent: text });
+  const cell = (text) => Object.assign(document.createElement("span"), { textContent: text });
   metricsRows.replaceChildren(
     ...rows.map((m) => {
-      const tr = document.createElement("tr");
-      tr.append(
+      const row = document.createElement("div");
+      row.className = "perf-grid";
+      row.append(
         cell(`${m.provider} / ${m.model}`),
         cell(m.fast ? "fast" : "plain"),
         cell(m.ok === m.runs ? String(m.runs) : `${m.ok} of ${m.runs} ok`),
@@ -190,73 +202,115 @@ async function loadMetrics() {
         cell(m.median_wait === null ? "–" : `${m.median_wait.toFixed(1)} s`),
         cell(m.speed === null ? "–" : `${m.speed.toFixed(0)}× realtime`),
       );
-      return tr;
+      return row;
     }),
   );
 }
 
 // ---- Settings ----
-// Keys are the one thing saved with a button: a half-typed key must not be sent.
-function saveKeysRow() {
-  const row = document.createElement("div");
-  row.className = "save-row";
-  const button = document.createElement("button");
-  button.type = "submit";
-  button.className = "btn primary";
-  button.textContent = "Save keys";
-  const status = document.createElement("span");
-  status.className = "save-status";
-  row.append(button, status);
-  return row;
-}
-
 function keyRow(provider) {
   const row = document.createElement("div");
-  row.className = "row";
+  row.className = "srow";
   const label = document.createElement("label");
+  label.className = "name";
   label.htmlFor = `key-${provider.id}`;
   label.textContent = provider.name;
-  const field = document.createElement("div");
-  field.className = "field";
   const input = document.createElement("input");
-  input.className = "input";
+  input.className = "input field";
   input.id = `key-${provider.id}`;
   input.type = "password";
-  input.name = `key:${provider.id}`;
+  input.name = provider.id;
   input.autocomplete = "off";
   input.placeholder = provider.keyHint ? `saved ${provider.keyHint} · type to replace` : "Not set";
-  field.append(input);
-  row.append(label, field);
+  row.append(label, input);
   return row;
 }
 
-// A local provider has no key: its models are files, fetched with a button.
-let localPoll = null;
-function localRow(provider) {
-  const row = document.createElement("div");
-  row.className = "row top";
-  const lbl = document.createElement("div");
-  lbl.className = "lbl";
-  const hint = provider.id === "parakeet"
-    ? "NVIDIA's Parakeet on Apple's MLX, the most accurate offline. Its engine is installed once from a terminal; Dictum then finds it."
-    : "whisper.cpp on this machine, no key, nothing leaves it. Download a model once; it then appears in the model lists.";
-  lbl.innerHTML = `<label>${provider.name}</label><span class="hint">${hint}</span>`;
-  const field = document.createElement("div");
-  field.className = "field local-models";
-  field.id = `local-${provider.id}`;
-  row.append(lbl, field);
-  return row;
+const keysForm = el("keys-form");
+keysForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const keys = {};
+  for (const input of keysForm.querySelectorAll("input[type=password]")) {
+    if (input.value.trim()) keys[input.name] = input.value.trim();
+  }
+  if (Object.keys(keys).length === 0) { flash(el("keys-status"), "Nothing to save", "ok"); return; }
+  if (await saveSetting({ keys }, el("keys-status"))) await loadSettings();
+});
+
+// The dictionary model: a summary line with Change, then provider, key and model.
+const dm = { edit: el("dm-edit"), provider: el("dm-provider"), key: el("dm-key"), model: el("dm-model"), custom: el("dm-model-custom") };
+function renderDictionaryModel() {
+  const [providerId, , modelId] = splitRef(settings.dictionaryModel);
+  const provider = settings.llmProviders.find((p) => p.id === providerId);
+  const anyKey = settings.llmProviders.find((p) => p.keyHint);
+  if (provider) {
+    el("dm-title").textContent = `${provider.name} · ${modelId}`;
+    el("dm-caption").textContent = provider.keyHint ? `key saved ${provider.keyHint} · runs at high reasoning effort` : `no key for ${provider.name} yet: add one to build the dictionary`;
+  } else {
+    el("dm-title").textContent = "No model";
+    el("dm-caption").textContent = anyKey ? "" : "Add an Anthropic or OpenAI key to build the dictionary from your history.";
+  }
 }
+function splitRef(ref) {
+  const i = (ref ?? "").indexOf(":");
+  return i < 0 ? [ref ?? "", "", ""] : [ref.slice(0, i), ":", ref.slice(i + 1)];
+}
+function fillDictionaryModelForm() {
+  const [providerId, , modelId] = splitRef(settings.dictionaryModel);
+  dm.provider.replaceChildren(...settings.llmProviders.map((p) => new Option(p.name, p.id, false, p.id === providerId)));
+  if (!providerId) dm.provider.value = settings.llmProviders.find((p) => p.keyHint)?.id ?? settings.llmProviders[0]?.id ?? "";
+  fillDictionaryModelChoices(modelId);
+}
+function fillDictionaryModelChoices(chosen) {
+  const provider = settings.llmProviders.find((p) => p.id === dm.provider.value);
+  if (!provider) return;
+  dm.key.value = "";
+  dm.key.placeholder = provider.keyHint ? `saved ${provider.keyHint} · type to replace` : "Not set";
+  const known = provider.models.map((m) => m.id);
+  const listed = chosen && !known.includes(`${provider.id}:${chosen}`) ? [{ id: `${provider.id}:${chosen}`, name: chosen }] : [];
+  dm.model.replaceChildren(
+    ...[...listed, ...provider.models].map((m) => new Option(`${m.name}${m.id === provider.defaultModel ? " (suggested)" : ""}`, m.id.slice(provider.id.length + 1))),
+    new Option("Custom…", "__custom__"),
+  );
+  dm.model.value = chosen && dm.model.querySelector(`option[value="${CSS.escape(chosen)}"]`) ? chosen : provider.defaultModel.slice(provider.id.length + 1);
+  dm.custom.hidden = true;
+  dm.custom.value = "";
+}
+dm.provider.addEventListener("change", () => fillDictionaryModelChoices(null));
+dm.model.addEventListener("change", () => {
+  dm.custom.hidden = dm.model.value !== "__custom__";
+  if (!dm.custom.hidden) dm.custom.focus();
+});
+el("dm-change").addEventListener("click", () => {
+  fillDictionaryModelForm();
+  el("dm-summary").hidden = true;
+  dm.edit.hidden = false;
+});
+el("dm-cancel").addEventListener("click", () => { dm.edit.hidden = true; el("dm-summary").hidden = false; });
+dm.edit.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const modelId = dm.model.value === "__custom__" ? dm.custom.value.trim() : dm.model.value;
+  if (!modelId) { flash(el("dm-status"), "Give the model's id", "err"); return; }
+  const keys = dm.key.value.trim() ? { [dm.provider.value]: dm.key.value.trim() } : {};
+  if (await saveSetting({ keys, dictionaryModel: `${dm.provider.value}:${modelId}` }, el("dm-status"))) {
+    dm.edit.hidden = true;
+    el("dm-summary").hidden = false;
+    await loadSettings();
+  }
+});
+
+// Local models: a card per local provider, rows with size, state and one button.
+let localPoll = null;
+let localList = [];
+const localSearch = el("local-search");
+localSearch.addEventListener("input", () => renderLocalModels());
 
 async function loadLocalModels() {
-  const fields = [...document.querySelectorAll(".local-models")];
-  if (fields.length === 0) return;
-  const list = await api("/api/local/models");
-  for (const field of fields) {
-    const provider = field.id.slice("local-".length);
-    field.replaceChildren(...list.filter((m) => m.provider === provider).map(localModelLine));
-  }
-  const busy = list.some((m) => m.state === "downloading");
+  const providers = (settings?.providers ?? []).filter((p) => p.local);
+  if (providers.length === 0) return;
+  localList = await api("/api/local/models");
+  renderLocalModels();
+  const busy = localList.some((m) => m.state === "downloading");
   if (busy && !localPoll) localPoll = setInterval(() => loadLocalModels().catch(() => {}), 1500);
   if (!busy && localPoll) {
     clearInterval(localPoll);
@@ -265,41 +319,106 @@ async function loadLocalModels() {
   }
 }
 
-function localModelLine(m) {
-      const line = document.createElement("div");
-      line.className = "local-model";
-      const name = document.createElement("span");
-      name.className = "local-name";
-      name.textContent = m.label;
-      const meta = document.createElement("span");
-      meta.className = "local-meta";
-      const size = m.size_bytes >= 1073741824 ? `${(m.size_bytes / 1073741824).toFixed(1)} GB` : `${(m.size_bytes / 1048576).toFixed(0)} MB`;
-      if (m.state === "downloading") meta.textContent = `${Math.round(m.progress * 100)}% of ${size}`;
-      else if (m.state === "ready") meta.textContent = `ready · ${size}`;
-      else if (m.state === "error") meta.textContent = `failed: ${m.error}`;
-      else if (m.state === "unavailable") meta.innerHTML = `${size} · ${m.note}. Engine not installed; in a terminal run <code>uv tool install parakeet-mlx</code>, then reopen Settings.`;
-      else meta.textContent = `${size} · ${m.note}`;
-      if (m.state === "unavailable") {
-        line.append(name, meta);
-        return line;
-      }
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "btn sm";
-      button.dataset.model = m.name;
-      if (m.state === "ready") {
-        button.textContent = "Remove";
-        button.dataset.action = "remove";
-      } else {
-        button.textContent = m.state === "downloading" ? "Downloading…" : m.state === "error" ? "Retry" : "Download";
-        button.dataset.action = "download";
-        button.disabled = m.state === "downloading";
-      }
-      line.append(name, meta, button);
-      return line;
+const gb = (bytes) => (bytes >= 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` : `${(bytes / 1048576).toFixed(0)} MB`);
+
+function renderLocalModels() {
+  const query = localSearch.value.trim().toLowerCase();
+  const ready = localList.filter((m) => m.state === "ready");
+  const onDisk = ready.reduce((n, m) => n + m.size_bytes, 0);
+  el("local-summary").textContent = localList.length ? `${ready.length} of ${localList.length} downloaded · ${gb(onDisk)} on disk` : "";
+  const cards = [];
+  for (const provider of settings.providers.filter((p) => p.local)) {
+    const mine = localList.filter((m) => m.provider === provider.id && (!query || `${m.label} ${m.note}`.toLowerCase().includes(query)));
+    if (query && mine.length === 0) continue;
+    const card = document.createElement("div");
+    card.className = "scard";
+    const head = document.createElement("div");
+    head.className = "scard-head";
+    const isParakeet = provider.id === "parakeet";
+    head.innerHTML = isParakeet
+      ? `<div class="name strong">Parakeet <span class="caption">· NVIDIA on Apple MLX</span></div><div class="caption hint">The most accurate offline model. Its engine is installed outside Dictum, once; Dictum then finds it.</div>`
+      : `<div class="name strong">Whisper <span class="caption">· whisper.cpp</span></div><div class="caption hint">Downloaded inside Dictum with one click. Runs on this machine; nothing leaves it.</div>`;
+    card.append(head, ...mine.map((m) => localRow(m, isParakeet)));
+    const missing = mine.find((m) => m.state === "unavailable");
+    if (isParakeet && missing) card.append(engineNote(missing));
+    else if (isParakeet && mine.some((m) => m.state !== "unavailable")) {
+      const found = document.createElement("div");
+      found.className = "engine";
+      found.innerHTML = `<span class="dot ok"></span>Engine found.`;
+      card.append(found);
+    }
+    cards.push(card);
+  }
+  el("local-cards").replaceChildren(...cards);
 }
 
-keysGroup.addEventListener("click", async (e) => {
+function localRow(m, isParakeet) {
+  const row = document.createElement("div");
+  row.className = "lrow";
+  const name = document.createElement("div");
+  name.innerHTML = `<div class="name"></div><div class="note"></div>`;
+  name.querySelector(".name").textContent = m.label;
+  name.querySelector(".note").textContent = isParakeet ? `${m.note} · takes no words, replacements only` : m.note;
+  const size = document.createElement("span");
+  size.className = "size";
+  size.textContent = gb(m.size_bytes);
+  const state = document.createElement("div");
+  state.className = "state";
+  const dot = document.createElement("span");
+  dot.className = "dot";
+  const text = document.createElement("span");
+  if (m.state === "ready") { dot.classList.add("ok"); text.textContent = "ready"; }
+  else if (m.state === "downloading") { dot.classList.add("busy"); text.textContent = `${Math.round(m.progress * 100)}%`; }
+  else if (m.state === "error") { dot.classList.add("err"); text.textContent = "failed"; }
+  else if (m.state === "unavailable") { dot.classList.add("busy"); text.textContent = "setup required"; state.classList.add("setup"); }
+  else text.textContent = "not downloaded";
+  state.append(dot, text);
+  if (m.state === "downloading") {
+    const bar = document.createElement("span");
+    bar.className = "bar";
+    bar.innerHTML = `<span style="width:${Math.round(m.progress * 100)}%"></span>`;
+    state.append(bar);
+  }
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "btn sm";
+  button.dataset.model = m.name;
+  if (m.state === "ready") { button.textContent = "Remove"; button.dataset.action = "remove"; }
+  else if (m.state === "downloading") { button.textContent = "Downloading…"; button.disabled = true; }
+  else if (m.state === "unavailable") { button.textContent = "Check installation"; button.classList.add("setup"); button.dataset.action = "check"; }
+  else { button.textContent = m.state === "error" ? "Retry" : "Download"; button.dataset.action = "download"; }
+  row.append(name, size, state, button);
+  if (m.state === "error" && m.error) {
+    const wrap = document.createElement("div");
+    wrap.append(row);
+    const why = document.createElement("div");
+    why.className = "engine";
+    why.innerHTML = `<span class="dot err"></span>`;
+    why.append(m.error);
+    wrap.append(why);
+    return wrap;
+  }
+  return row;
+}
+
+let engineStepsOpen = false;
+function engineNote(m) {
+  const wrap = document.createElement("div");
+  const line = document.createElement("div");
+  line.className = "engine";
+  line.innerHTML = `<span>Engine not found. Install it in Terminal, then check again.</span><span class="spacer"></span><button type="button" class="btn link steps-toggle">${ICON.chevron}Installation steps</button>`;
+  const steps = document.createElement("div");
+  steps.className = "engine-steps";
+  steps.hidden = !engineStepsOpen;
+  steps.innerHTML = `<span class="n">1</span><div>Install the engine, once:<pre>uv tool install parakeet-mlx</pre></div>
+    <span class="n">2</span><div>Come back and press <b>Check installation</b>. Dictum looks for <code>parakeet-mlx</code> where uv installs tools.</div>
+    <span class="n">3</span><div>Then press <b>Download</b> here to fetch the model (about ${gb(m.size_bytes)}).</div>`;
+  line.querySelector(".steps-toggle").addEventListener("click", () => { engineStepsOpen = !engineStepsOpen; steps.hidden = !engineStepsOpen; });
+  wrap.append(line, steps);
+  return wrap;
+}
+
+el("local-cards").addEventListener("click", async (e) => {
   const button = e.target.closest("button[data-model]");
   if (!button) return;
   const { model, action } = button.dataset;
@@ -309,369 +428,101 @@ keysGroup.addEventListener("click", async (e) => {
     await loadLocalModels();
     if (action === "remove") await loadModels();
   } catch (err) {
-    flash(settingsStatus, String(err.message ?? err), "err");
+    el("local-summary").textContent = errorText(err);
   }
 });
 
-async function loadSettings() {
-  const s = await api("/api/settings");
-  keysGroup.replaceChildren(...s.providers.map((p) => (p.local ? localRow(p) : keyRow(p))), saveKeysRow());
-  loadLocalModels().catch(() => {});
-  llmKeysGroup.replaceChildren(...s.llmProviders.map(keyRow), saveKeysRow());
-  dictionaryModels.replaceChildren(
-    ...s.llmProviders.flatMap((p) => p.models.map((m) => new Option(`${m.name}${m.id === p.defaultModel ? " (suggested)" : ""}`, m.id))),
+// Agents: the local API, and what arrived through it.
+function renderAgents() {
+  const endpoint = `${location.origin}/api/dictionary/corrections`;
+  el("agent-endpoint").textContent = endpoint;
+  el("agent-curl").textContent = `curl -s -m 2 -X POST ${endpoint} \\\n  -H 'content-type: application/json' \\\n  -d '{"replacements": {"cloud code": "Claude Code"}, "terms": ["Dictum"], "source": "my-agent"}'`;
+}
+for (const button of document.querySelectorAll(".copy-btn")) {
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(el(button.dataset.copy).textContent);
+      button.textContent = "Copied";
+      setTimeout(() => { button.textContent = "Copy"; }, 1400);
+    } catch (err) {
+      button.textContent = "Copy failed";
+    }
+  });
+}
+async function loadCorrections() {
+  const rows = await api("/api/dictionary/corrections");
+  const list = el("corrections-rows");
+  if (rows.length === 0) {
+    list.innerHTML = `<div class="crow none">Nothing received yet.</div>`;
+    return;
+  }
+  list.replaceChildren(
+    ...rows.map((c) => {
+      const row = document.createElement("div");
+      row.className = "crow";
+      const ts = document.createElement("span");
+      ts.className = "ts";
+      ts.textContent = whenLabel(c.created_at);
+      const what = document.createElement("span");
+      what.className = "what";
+      if (c.meant) {
+        what.innerHTML = `<span class="heard"></span><span class="arrow">→</span><span class="meant"></span>`;
+        what.querySelector(".heard").textContent = c.heard;
+        what.querySelector(".meant").textContent = c.meant;
+      } else what.textContent = c.heard;
+      const from = document.createElement("span");
+      from.className = "from";
+      from.textContent = c.source ?? "";
+      row.append(ts, what, from);
+      return row;
+    }),
   );
-  dictionaryModelInput.value = s.dictionaryModel ?? "";
-  fastModeInput.checked = Boolean(s.fastMode);
-  streamingProviders = new Set(s.providers.filter((p) => p.streams).map((p) => p.id));
-  dictionaryModelChip.textContent = s.dictionaryModel ?? "no model set";
-  shortcuts = s.shortcuts;
-  shortcutHold.value = s.shortcuts.hold ?? "";
-  shortcutToggle.value = s.shortcuts.toggle ?? "";
+}
+
+async function loadSettings() {
+  settings = await api("/api/settings");
+  el("keys").replaceChildren(...settings.providers.filter((p) => !p.local).map(keyRow));
+  fastInput.checked = Boolean(settings.fastMode);
+  shortcuts = settings.shortcuts;
+  el("shortcut-hold").textContent = settings.shortcuts.hold ?? "";
+  el("shortcut-toggle").textContent = settings.shortcuts.toggle ?? "";
+  renderDictionaryModel();
+  renderAgents();
+  loadLocalModels().catch(() => {});
+  loadCorrections().catch(() => {});
   loadMetrics().catch(() => {});
   await Promise.all([loadModels(), loadDictionary()]);
 }
 
-// Everything but the keys applies as soon as it changes.
-async function saveSetting(body, statusTarget) {
-  try {
-    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: {}, ...body }) });
-    flash(statusTarget, "Saved", "ok");
-    return true;
-  } catch (err) {
-    flash(statusTarget, String(err.message ?? err), "err");
-    return false;
-  }
-}
-fastModeInput.addEventListener("change", () => saveSetting({ fastMode: fastModeInput.checked }, fastModeStatus));
-dictionaryModelInput.addEventListener("change", async () => {
-  const chosen = dictionaryModelInput.value.trim() || null;
-  if (await saveSetting({ dictionaryModel: chosen }, dictionaryModelStatus)) {
-    const s = await api("/api/settings");
-    dictionaryModelInput.value = s.dictionaryModel ?? "";
-    dictionaryModelChip.textContent = s.dictionaryModel ?? "no model set";
-  }
-});
-
-function flash(target, message, kind) {
-  target.textContent = message;
-  target.className = `save-status show ${kind}`;
-  clearTimeout(target._timer);
-  target._timer = setTimeout(() => target.classList.remove("show"), kind === "ok" ? 1800 : 6000);
-}
-
-settingsForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const keys = {};
-  for (const input of settingsForm.querySelectorAll("input[type=password]")) {
-    if (input.value.trim()) keys[input.name.slice("key:".length)] = input.value.trim();
-  }
-  const statusTarget = e.submitter?.closest(".save-row")?.querySelector(".save-status") ?? settingsStatus;
-  try {
-    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys }) });
-    await loadSettings();
-    flash(e.submitter?.closest(".group")?.querySelector(".save-status") ?? settingsStatus, Object.keys(keys).length ? "Saved" : "Nothing to save", "ok");
-  } catch (err) {
-    flash(statusTarget, String(err.message ?? err), "err");
-  }
-});
-
-// ---- Dictionary tab ----
-// `dict` mirrors dictionary.json: pinned (the user's, including what their agents sent;
-// never changed by the model) and learned (the last accepted proposal, keyed by the speech
-// model it was learned for). The page shows and builds the default model's learned
-// section. Every change is saved whole.
-let dict = { pinned: { terms: [], replacements: {} }, learned: {} };
-let defaultModel = null; // {id, label} from /api/models, or null
-let proposal = null;
-const dictionaryBox = el("dictionary");
-const dictionaryStatus = el("dictionary-status");
-const buildStatus = el("build-status");
-const buildBtn = el("build-dictionary");
-const proposalPanel = el("proposal");
-const proposalBody = el("proposal-body");
-
-let dictVersion = null; // the server's ETag for the document we edit; null after a failed load
-
-async function loadDictionary() {
-  const res = await fetch("/api/dictionary");
-  const text = await res.text();
-  if (!res.ok) { dictVersion = null; flash(dictionaryStatus, text, "err"); return; }
-  dict = JSON.parse(text);
-  dictVersion = res.headers.get("etag");
-  renderDictionary(text);
-}
-
-// Every edit sends the whole document, named with the version it was made on. The
-// server refuses a save on a stale version (an agent or a hand edit got there first)
-// and the fresh document is shown instead. After a failed load there is no version:
-// the JSON editor can then repair a broken file.
-async function saveDictionary(next) {
-  const headers = { "content-type": "application/json" };
-  if (dictVersion) headers["if-match"] = dictVersion;
-  const res = await fetch("/api/dictionary", { method: "PUT", headers, body: JSON.stringify(next) });
-  const text = await res.text();
-  if (res.status === 409) {
-    await loadDictionary();
-    flash(dictionaryStatus, `${text} Reloaded; please redo that change.`, "err");
-    return false;
-  }
-  if (!res.ok) { flash(dictionaryStatus, text, "err"); flash(buildStatus, text, "err"); return false; }
-  dict = JSON.parse(text);
-  dictVersion = res.headers.get("etag");
-  renderDictionary(text);
-  return true;
-}
-
-function entryRow(section, kind, heard, meant) {
-  const row = document.createElement("div");
-  row.className = "entry";
-  const kindEl = document.createElement("span");
-  kindEl.className = "kind";
-  kindEl.textContent = kind;
-  const what = document.createElement("span");
-  what.className = "what";
-  if (kind === "term") {
-    what.textContent = heard;
-  } else {
-    const arrow = document.createElement("span");
-    arrow.className = "arrow";
-    arrow.textContent = "→";
-    const m = document.createElement("span");
-    m.className = "meant";
-    m.textContent = meant;
-    what.append(heard, arrow, m);
-  }
-  const actions = document.createElement("span");
-  actions.className = "actions";
-  if (section !== "pinned") {
-    const pin = document.createElement("button");
-    pin.type = "button";
-    pin.className = "btn sm";
-    pin.textContent = "Pin";
-    pin.title = "Keep it: the model will not change it";
-    pin.addEventListener("click", () => moveToPinned(section, kind, heard, meant));
-    actions.append(pin);
-  }
-  const remove = document.createElement("button");
-  remove.type = "button";
-  remove.className = "btn sm";
-  remove.textContent = "Remove";
-  remove.addEventListener("click", () => removeEntry(section, kind, heard));
-  actions.append(remove);
-  row.append(kindEl, what, actions);
-  return row;
-}
-
-// The entries of a section in a document; for learned, the default model's, made if absent.
-function sectionOf(doc, section) {
-  if (section !== "learned") return doc[section];
-  if (!defaultModel) return { terms: [], replacements: {} };
-  return (doc.learned[defaultModel.id] ??= { terms: [], replacements: {} });
-}
-
-function renderEntries(container, section) {
-  const entries = sectionOf(dict, section);
-  container.replaceChildren(
-    ...entries.terms.map((t) => entryRow(section, "term", t)),
-    ...Object.entries(entries.replacements).map(([h, m]) => entryRow(section, "replace", h, m)),
-  );
-}
-
-function renderDictionary(jsonText) {
-  renderEntries(el("pinned-entries"), "pinned");
-  renderEntries(el("learned-entries"), "learned");
-  el("learned-model").textContent = defaultModel?.label ?? "no default model";
-  el("term-budget").textContent = termBudgetText();
-  const learned = sectionOf(dict, "learned");
-  const learnedCount = learned.terms.length + Object.keys(learned.replacements).length;
-  el("pin-all").hidden = learnedCount === 0;
-  buildBtn.textContent = learnedCount ? "Refine from history" : "Build from history";
-  if (jsonText !== undefined) dictionaryBox.value = jsonText;
-}
-
-// The term budget of the default model: its provider's limit, shared by the pinned terms
-// (every model carries them) and the terms learned for it. Enforced by the build; shown
-// here so nobody has to know the limits.
-function termBudgetText() {
-  if (!defaultModel) return "";
-  const limit = defaultModel.term_limit;
-  if (limit === null) return "This model takes no terms; only replacements apply to it. Builds for it propose replacements only.";
-  const pinned = dict.pinned.terms.length;
-  const used = pinned + sectionOf(dict, "learned").terms.length;
-  const line = `${used} of ${limit} terms this model takes are in use (${pinned} pinned).`;
-  if (pinned >= limit) return `${line} Pinned terms fill it: remove some to make room for new ones.`;
-  if (used >= limit) return `${line} Full: a build can only replace what is learned.`;
-  return line;
-}
-
-function clone() {
-  return JSON.parse(JSON.stringify(dict));
-}
-
-async function addToPinned(kind, heard, meant) {
-  const next = clone();
-  if (kind === "term") {
-    if (!next.pinned.terms.includes(heard)) next.pinned.terms.push(heard);
-  } else {
-    next.pinned.replacements[heard] = meant;
-  }
-  return saveDictionary(next);
-}
-
-async function removeEntry(section, kind, heard) {
-  const next = clone();
-  const from = sectionOf(next, section);
-  if (kind === "term") from.terms = from.terms.filter((t) => t !== heard);
-  else delete from.replacements[heard];
-  await saveDictionary(next);
-}
-
-async function moveToPinned(section, kind, heard, meant) {
-  const next = clone();
-  const from = sectionOf(next, section);
-  if (kind === "term") {
-    from.terms = from.terms.filter((t) => t !== heard);
-    if (!next.pinned.terms.includes(heard)) next.pinned.terms.push(heard);
-  } else {
-    delete from.replacements[heard];
-    next.pinned.replacements[heard] = meant;
-  }
-  await saveDictionary(next);
-}
-
-el("add-term-btn").addEventListener("click", async () => {
-  const term = el("add-term").value.trim();
-  if (!term) return;
-  if (await addToPinned("term", term)) el("add-term").value = "";
-});
-el("add-term").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el("add-term-btn").click(); } });
-el("add-replacement-btn").addEventListener("click", async () => {
-  const heard = el("add-heard").value.trim();
-  const meant = el("add-meant").value.trim();
-  if (!heard || !meant) return;
-  if (await addToPinned("replace", heard, meant)) { el("add-heard").value = ""; el("add-meant").value = ""; }
-});
-el("add-meant").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el("add-replacement-btn").click(); } });
-el("pin-all").addEventListener("click", async () => {
-  if (!defaultModel) return;
-  const next = clone();
-  const learned = sectionOf(next, "learned");
-  for (const t of learned.terms) if (!next.pinned.terms.includes(t)) next.pinned.terms.push(t);
-  Object.assign(next.pinned.replacements, learned.replacements);
-  delete next.learned[defaultModel.id];
-  await saveDictionary(next);
-});
-
-el("save-dictionary").addEventListener("click", async () => {
-  let parsed;
-  try { parsed = JSON.parse(dictionaryBox.value); } catch (err) { flash(dictionaryStatus, `Not valid JSON: ${err.message}`, "err"); return; }
-  if (await saveDictionary(parsed)) flash(dictionaryStatus, "Saved", "ok");
-});
-
-// Build: the model proposes a learned section for the default speech model, from that
-// model's transcripts; nothing changes until Accept.
-function chips(list, cls) {
-  const box = document.createElement("div");
-  box.className = "chips";
-  for (const text of list) {
-    const c = document.createElement("span");
-    c.className = `chip ${cls}`;
-    c.textContent = text;
-    box.append(c);
-  }
-  return box;
-}
-
-function renderProposal(p) {
-  proposalBody.replaceChildren();
-  const sections = [
-    ["Added terms", p.added.terms, "add"],
-    ["Added replacements", Object.entries(p.added.replacements).map(([h, m]) => `${h} → ${m}`), "add"],
-    ["Removed terms", p.removed.terms, "remove"],
-    ["Removed replacements", Object.entries(p.removed.replacements).map(([h, m]) => `${h} → ${m}`), "remove"],
-  ];
-  let any = false;
-  for (const [title, items, cls] of sections) {
-    if (items.length === 0) continue;
-    any = true;
-    const h = document.createElement("h3");
-    h.textContent = `${title} (${items.length})`;
-    proposalBody.append(h, chips(items, cls));
-  }
-  if (!any) {
-    const p2 = document.createElement("p");
-    p2.className = "nothing";
-    p2.textContent = "The model proposed no changes to what is learned.";
-    proposalBody.append(p2);
-  }
-  if (p.dropped_terms > 0) {
-    const note = document.createElement("p");
-    note.className = "nothing";
-    note.textContent = `${p.dropped_terms} more proposed terms did not fit: this model takes ${p.budget.limit} and ${p.budget.pinned} are pinned. Remove some to make room.`;
-    proposalBody.append(note);
-  }
-  proposalPanel.hidden = false;
-}
-
-buildBtn.addEventListener("click", async () => {
-  buildBtn.disabled = true;
-  buildStatus.className = "save-status show";
-  buildStatus.textContent = "Asking the model… this can take a minute.";
-  try {
-    const res = await fetch("/api/dictionary/build", { method: "POST" });
-    const text = await res.text();
-    if (!res.ok) throw new Error(text);
-    proposal = JSON.parse(text);
-    buildStatus.classList.remove("show");
-    renderProposal(proposal);
-  } catch (err) {
-    flash(buildStatus, String(err.message ?? err), "err");
-  } finally {
-    buildBtn.disabled = false;
-  }
-});
-el("accept-proposal").addEventListener("click", async () => {
-  if (!proposal) return;
-  const next = clone();
-  next.learned[proposal.model] = proposal.learned;
-  if (await saveDictionary(next)) {
-    proposal = null;
-    proposalPanel.hidden = true;
-    flash(buildStatus, "Accepted", "ok");
-  }
-});
-el("discard-proposal").addEventListener("click", () => {
-  proposal = null;
-  proposalPanel.hidden = true;
-});
-
 // ---- Shortcuts: recorded by pressing them ----
-// The menu-bar app's global listener captures the keys (it is the only thing that
-// can see fn); the page polls for the result and saves it. Without the app, the
-// page captures what the browser lets it see.
+const shortcutStatus = el("shortcut-status");
+function showShortcutStatus(text) {
+  shortcutStatus.textContent = text;
+  el("shortcut-status-row").hidden = !text;
+}
 async function saveShortcuts() {
-  const body = { keys: {}, shortcuts: { hold: shortcutHold.value.trim(), toggle: shortcutToggle.value.trim() } };
+  const hold = el("shortcut-hold").textContent.trim();
+  const toggle = el("shortcut-toggle").textContent.trim();
   try {
-    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    shortcutStatus.textContent = "Saved.";
-    shortcuts = { hold: shortcutHold.value.trim() || null, toggle: shortcutToggle.value.trim() || null };
+    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: {}, shortcuts: { hold, toggle } }) });
+    showShortcutStatus("");
+    shortcuts = { hold: hold || null, toggle: toggle || null };
     renderStart();
   } catch (err) {
-    shortcutStatus.textContent = String(err.message ?? err);
+    showShortcutStatus(errorText(err));
   }
 }
 
-async function captureShortcut(input, button) {
-  const previous = input.value;
-  input.value = "";
-  input.placeholder = "Press keys…";
+async function captureShortcut(display, button) {
+  const previous = display.textContent;
+  display.textContent = "";
+  display.dataset.empty = "Press keys…";
   button.disabled = true;
-  shortcutStatus.textContent = "";
+  showShortcutStatus("");
   try {
     const res = await fetch("/api/capture", { method: "POST" });
     if (res.status === 409) {
-      input.value = await captureInPage(input);
+      display.textContent = await captureInPage();
     } else if (!res.ok) {
       throw new Error(await res.text());
     } else {
@@ -687,19 +538,19 @@ async function captureShortcut(input, button) {
         await fetch("/api/capture", { method: "DELETE" });
         throw new Error("Nothing pressed.");
       }
-      input.value = keys;
+      display.textContent = keys;
     }
     await saveShortcuts();
   } catch (err) {
-    input.value = previous;
-    shortcutStatus.textContent = String(err.message ?? err);
+    display.textContent = previous;
+    showShortcutStatus(errorText(err));
   } finally {
-    input.placeholder = "Not set";
+    display.dataset.empty = "Not set";
     button.disabled = false;
   }
 }
 
-function captureInPage(input) {
+function captureInPage() {
   return new Promise((resolve, reject) => {
     const names = { Meta: "cmd", Control: "ctrl", Alt: "alt", Shift: "shift", " ": "space", Enter: "enter", Escape: "esc", Tab: "tab", Backspace: "backspace", ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
     const keys = [];
@@ -719,51 +570,23 @@ function captureInPage(input) {
     window.addEventListener("keydown", onDown, true);
     window.addEventListener("keyup", onUp, true);
     setTimeout(() => { if (keys.length === 0) { cleanup(); reject(new Error("Nothing pressed.")); } }, 15000);
-    input.focus();
   });
 }
 
-for (const button of settingsForm.querySelectorAll("button.capture")) {
+for (const button of document.querySelectorAll("button.capture")) {
   button.addEventListener("click", () => captureShortcut(el(button.dataset.target), button));
 }
-for (const button of settingsForm.querySelectorAll("button.clear")) {
-  button.addEventListener("click", async () => { el(button.dataset.target).value = ""; await saveShortcuts(); });
+for (const button of document.querySelectorAll("button.clear")) {
+  button.addEventListener("click", async () => { el(button.dataset.target).textContent = ""; await saveShortcuts(); });
 }
 
-// ---- Getting started: the empty history is a checklist that ticks itself off ----
-function step(n, done, what, how, action) {
-  const li = document.createElement("li");
-  li.className = done ? "step done" : "step";
-  const mark = document.createElement("span");
-  mark.className = "mark";
-  mark.innerHTML = done ? ICON.check : String(n);
-  const text = document.createElement("span");
-  text.className = "what";
-  text.append(what);
-  const hint = document.createElement("span");
-  hint.className = "how";
-  hint.append(...how);
-  text.append(hint);
-  li.append(mark, text);
-  if (action && !done) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "btn sm";
-    button.textContent = action;
-    button.addEventListener("click", () => show("settings"));
-    li.append(button);
-  }
-  return li;
-}
-
+// ---- Getting started: the empty history, as steps that tick themselves off ----
 function renderStart() {
-  if (!stepsList) return;
   const kbd = (keys) => Object.assign(document.createElement("kbd"), { textContent: keys });
   const haveModel = models.length > 0;
   const haveDefault = Boolean(defaultModel);
-  const haveShortcut = Boolean(shortcuts.hold || shortcuts.toggle);
   const dictate = [];
-  if (haveShortcut) {
+  if (shortcuts.hold || shortcuts.toggle) {
     dictate.push("Anywhere, ");
     if (shortcuts.hold) dictate.push("hold ", kbd(shortcuts.hold));
     if (shortcuts.hold && shortcuts.toggle) dictate.push(" or ");
@@ -772,16 +595,41 @@ function renderStart() {
   } else {
     dictate.push("Press Record above and speak. A shortcut in Settings lets you dictate into any app.");
   }
+  const step = (done, what, how, action) => {
+    const li = document.createElement("li");
+    li.className = done ? "step done" : "step";
+    const mark = document.createElement("span");
+    mark.className = "mark";
+    mark.innerHTML = ICON.check;
+    const text = document.createElement("span");
+    text.className = "what";
+    text.append(what);
+    const hint = document.createElement("span");
+    hint.className = "how";
+    hint.append(...how);
+    text.append(hint);
+    li.append(mark, text);
+    if (action && !done) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn ghost sm";
+      button.textContent = action.label;
+      button.addEventListener("click", action.go);
+      li.append(button);
+    }
+    return li;
+  };
   stepsList.replaceChildren(
-    step(1, haveModel, "Add a provider", ["An API key for AssemblyAI, Soniox or Groq, or a local model downloaded once, in Settings."], "Open Settings"),
-    step(2, haveDefault, "Pick the model to dictate with", ["The picker in the toolbar, or Default model in Settings. It applies at once."], haveModel ? "Open Settings" : null),
-    step(3, recordingsCount > 0, "Dictate", dictate, null),
+    step(haveModel, "Add a provider", ["A key, or a downloaded model."], { label: "Providers", go: () => openSettings("providers") }),
+    step(haveDefault, "Pick the default model", ["The picker in the toolbar; it applies at once."], null),
+    step(recordingsCount > 0, "Dictate", dictate, shortcuts.hold || shortcuts.toggle ? null : { label: "Set a shortcut", go: () => openSettings("general") }),
   );
 }
 
 // ---- Recording from this window ----
 let recorder = null;
 let recTick = null;
+let starting = false; // between the click and the microphone answering
 
 function setRecording(on) {
   recordBtn.setAttribute("aria-pressed", String(on));
@@ -799,16 +647,10 @@ function setRecording(on) {
 }
 
 // The page records raw PCM and wraps it as WAV, like the shortcut does, so every
-// recording is one container that every provider, cloud or local, takes without
-// a decoder. (MediaRecorder would give WebM, which the local engines cannot read
-// without ffmpeg.)
-let starting = false; // between the click and the microphone answering
-
+// recording is one container that every provider, cloud or local, takes without a
+// decoder. (MediaRecorder would give WebM, which the local engines cannot read.)
 recordBtn.addEventListener("click", async () => {
-  if (recorder) {
-    recorder.stop();
-    return;
-  }
+  if (recorder) { recorder.stop(); return; }
   if (starting) return; // a second click before permission resolves would open a second mic
   starting = true;
   let stream;
@@ -816,7 +658,7 @@ recordBtn.addEventListener("click", async () => {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
     starting = false;
-    status.textContent = `Microphone unavailable: ${err.message ?? err}`;
+    status.textContent = `Microphone unavailable: ${errorText(err)}`;
     return;
   }
   starting = false;
@@ -840,7 +682,7 @@ recordBtn.addEventListener("click", async () => {
     },
   };
   setRecording(true);
-  status.textContent = "";
+  status.textContent = "Recording…";
 });
 
 function wavBlob(chunks, rate) {
@@ -879,51 +721,63 @@ async function upload(audio) {
   status.textContent = `Transcribing with ${label}…`;
   try {
     await api("/api/recordings", { method: "POST", body: form });
-    status.textContent = "";
+    status.textContent = "Ready";
   } catch (err) {
-    status.textContent = err.message ?? String(err);
+    status.textContent = errorText(err);
   }
   show("history");
   await loadHistory(true);
 }
 
 // ---- History ----
-function attemptLabel(t) {
-  return t.provider === "none" ? "no model set" : `${t.provider} / ${t.model}`;
+function whenLabel(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay(d, now)) return `Today ${time}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (sameDay(d, yesterday)) return `Yesterday ${time}`;
+  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
 }
+const attemptLabel = (t) => (t.provider === "none" ? "no model set" : `${t.provider} / ${t.model}`);
+const clock = (s) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "–:––");
 
-function chip(text) {
-  const span = document.createElement("span");
-  span.className = "model-chip";
-  span.textContent = text;
-  return span;
-}
-
-function transcriptBlock(t) {
-  const block = document.createElement("div");
-  const failed = t.status !== "ok";
-  block.className = failed ? "transcript error failed" : t.text ? "transcript" : "transcript empty";
-  block.dataset.copy = failed ? t.error ?? "" : t.text ?? "";
-  block.title = block.dataset.copy ? "Click to copy" : "";
-  if (failed) {
-    const label = document.createElement("div");
-    label.className = "error-label";
-    label.innerHTML = `${ICON.warn} Transcription failed`;
-    block.append(label, t.error ?? "");
-  } else {
-    block.append(t.text || "(no speech detected)");
-  }
-  const toast = document.createElement("span");
-  toast.className = "copied-toast";
-  toast.textContent = "Copied";
-  const copy = document.createElement("button");
-  copy.type = "button";
-  copy.className = "btn-icon copy";
-  copy.setAttribute("aria-label", failed ? "Copy error" : "Copy transcript");
-  copy.innerHTML = ICON.copy;
-  copy.disabled = !block.dataset.copy;
-  block.append(toast, copy);
-  return block;
+function player(url, label) {
+  const box = document.createElement("div");
+  box.className = "player";
+  const audio = document.createElement("audio");
+  audio.preload = "metadata";
+  audio.src = url;
+  audio.setAttribute("aria-label", label);
+  const play = document.createElement("button");
+  play.type = "button";
+  play.className = "btn-icon";
+  play.title = "Play";
+  play.innerHTML = ICON.play;
+  const now = document.createElement("span");
+  now.textContent = "0:00";
+  const track = document.createElement("div");
+  track.className = "track";
+  track.innerHTML = "<span></span>";
+  const total = document.createElement("span");
+  total.textContent = "–:––";
+  for (const event of ["loadedmetadata", "durationchange"]) audio.addEventListener(event, () => { total.textContent = clock(audio.duration); });
+  audio.addEventListener("timeupdate", () => {
+    now.textContent = clock(audio.currentTime);
+    track.firstChild.style.width = audio.duration ? `${(audio.currentTime / audio.duration) * 100}%` : "0";
+  });
+  audio.addEventListener("play", () => { play.innerHTML = ICON.pause; play.title = "Pause"; });
+  audio.addEventListener("pause", () => { play.innerHTML = ICON.play; play.title = "Play"; });
+  audio.addEventListener("ended", () => { audio.currentTime = 0; });
+  play.addEventListener("click", () => (audio.paused ? audio.play() : audio.pause()));
+  track.addEventListener("click", (e) => {
+    const rect = track.getBoundingClientRect();
+    if (audio.duration) audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
+  });
+  box.append(audio, play, now, track, total);
+  return box;
 }
 
 function renderCard(r) {
@@ -937,18 +791,42 @@ function renderCard(r) {
   const when = document.createElement("time");
   when.className = "when";
   when.dateTime = r.created_at;
-  when.textContent = new Date(r.created_at).toLocaleString();
-  head.append(when);
-  if (latest) head.append(chip(attemptLabel(latest)));
+  when.textContent = whenLabel(r.created_at);
+  when.title = new Date(r.created_at).toLocaleString();
+  const model = document.createElement("span");
+  model.className = "model";
+  model.textContent = latest ? attemptLabel(latest) : "";
   const spacer = document.createElement("span");
   spacer.className = "spacer";
-  const audioRow = document.createElement("div");
-  audioRow.className = "audio-row";
-  const audio = document.createElement("audio");
-  audio.controls = true;
-  audio.preload = "none";
-  audio.src = `/api/recordings/${r.id}/audio`;
-  audio.setAttribute("aria-label", `Recording ${when.textContent}`);
+  const copied = document.createElement("span");
+  copied.className = "copied-tag";
+  copied.textContent = "Copied";
+  head.append(when, model, spacer, copied);
+  card.append(head);
+
+  if (latest && latest.status !== "ok") {
+    const failed = document.createElement("div");
+    failed.className = "failed";
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = "FAILED";
+    const pre = document.createElement("pre");
+    pre.textContent = latest.error ?? "";
+    failed.append(label, pre);
+    card.append(failed);
+    card.dataset.copy = latest.error ?? "";
+  } else if (latest) {
+    const block = document.createElement("div");
+    block.className = latest.text ? "transcript" : "transcript empty";
+    block.textContent = latest.text || "(no speech detected)";
+    block.title = latest.text ? "Click to copy" : "";
+    card.append(block);
+    card.dataset.copy = latest.text ?? "";
+  }
+
+  const row = document.createElement("div");
+  row.className = "card-row";
+  row.append(player(`/api/recordings/${r.id}/audio`, `Recording ${when.textContent}`));
   const download = document.createElement("a");
   download.className = "btn-icon";
   download.href = `/api/recordings/${r.id}/audio`;
@@ -956,53 +834,61 @@ function renderCard(r) {
   download.title = "Download audio";
   download.setAttribute("aria-label", "Download audio");
   download.innerHTML = ICON.download;
-  audioRow.append(audio, download);
-  head.append(spacer, audioRow);
-  card.append(head);
-
-  if (latest) card.append(transcriptBlock(latest));
-
-  // Any recording can be transcribed again with another model.
-  const foot = document.createElement("div");
-  foot.className = "card-foot";
-  const select = document.createElement("select");
-  select.className = "select sm retry-model";
-  select.setAttribute("aria-label", "Model for re-transcription");
-  const current = latest ? `${latest.provider}/${latest.model}` : null;
-  fillModels(select, models.find((m) => m.id !== current)?.id ?? models[0]?.id ?? null, "No models: add an API key");
-  const retry = document.createElement("button");
-  retry.type = "button";
-  retry.className = "btn sm retry";
-  retry.textContent = latest?.status === "error" ? "Try again" : "Transcribe again";
-  retry.disabled = select.disabled;
-  const foot_status = document.createElement("span");
-  foot_status.className = "status";
-  foot.append(select, retry, foot_status);
-  card.append(foot);
-
+  const rowStatus = document.createElement("span");
+  rowStatus.className = "status";
+  const rowSpacer = document.createElement("span");
+  rowSpacer.className = "spacer";
+  row.append(download, rowStatus, rowSpacer);
+  let attempts = null;
   if (earlier.length > 0) {
-    const details = document.createElement("details");
-    details.className = "attempts";
-    const summary = document.createElement("summary");
-    summary.innerHTML = `${ICON.chevron} ${earlier.length} earlier attempt${earlier.length === 1 ? "" : "s"}`;
-    details.append(summary);
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "btn ghost attempts-toggle";
+    toggle.title = earlier.length === 1 ? `1 earlier attempt · ${attemptLabel(earlier[0])}` : `${earlier.length} earlier attempts`;
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.innerHTML = `${ICON.attempts}${earlier.length}`;
+    attempts = document.createElement("div");
+    attempts.hidden = true;
     for (const t of earlier) {
       const attempt = document.createElement("div");
       attempt.className = "attempt";
-      const p = document.createElement("p");
-      p.className = t.status === "ok" ? "" : "err";
-      p.textContent = t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
-      attempt.append(chip(attemptLabel(t)), p);
-      details.append(attempt);
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = `${attemptLabel(t)} · ${whenLabel(t.created_at)}`;
+      const text = document.createElement("div");
+      text.className = t.status === "ok" ? "text" : "text err";
+      text.textContent = t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
+      attempt.append(meta, text);
+      attempts.append(attempt);
     }
-    card.append(details);
+    toggle.addEventListener("click", () => {
+      attempts.hidden = !attempts.hidden;
+      toggle.setAttribute("aria-expanded", String(!attempts.hidden));
+    });
+    row.append(toggle);
   }
+  const select = document.createElement("select");
+  select.className = "select quiet retry-model";
+  select.title = "Transcribe again with…";
+  select.setAttribute("aria-label", "Model for re-transcription");
+  const current = latest ? `${latest.provider}/${latest.model}` : null;
+  fillModels(select, models.find((m) => m.id !== current)?.id ?? models[0]?.id ?? null, "No models");
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "btn-icon retry";
+  retry.title = latest?.status === "error" ? "Try again" : "Transcribe again";
+  retry.setAttribute("aria-label", retry.title);
+  retry.innerHTML = ICON.retry;
+  retry.disabled = select.disabled;
+  row.append(select, retry);
+  card.append(row);
+  if (attempts) card.append(attempts);
   return card;
 }
 
-// Dictations made with the shortcut arrive while this page is open, so it keeps
-// itself current: it re-reads the history every few seconds while visible and
-// re-renders only when something changed.
+// Dictations made with the shortcut arrive while this page is open, so it keeps itself
+// current: it re-reads the history every few seconds while visible and re-renders only
+// when something changed.
 let historySnapshot = "";
 const HISTORY_POLL_MS = 3000;
 
@@ -1015,7 +901,6 @@ async function loadHistory(force = false) {
   loadMetrics().catch(() => {});
   recordingsCount = recordings.length;
   emptyState.hidden = recordings.length > 0;
-  historyLabel.hidden = recordings.length === 0;
   if (recordings.length === 0) renderStart();
 }
 
@@ -1026,32 +911,33 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") loadHistory().catch(() => {});
 });
 
-// Copy (whole block or its icon) and re-transcribe, delegated so re-renders need no rebinding.
+// Copy (click on the transcript) and re-transcribe, delegated so re-renders need no rebinding.
 historyList.addEventListener("click", async (e) => {
-  const block = e.target.closest(".transcript");
-  if (block && block.dataset.copy) {
-    const button = block.querySelector(".copy");
-    const toast = block.querySelector(".copied-toast");
+  const block = e.target.closest(".transcript, .failed");
+  if (block) {
+    const card = block.closest(".card");
+    if (!card.dataset.copy) return;
+    const tag = card.querySelector(".copied-tag");
     try {
-      await navigator.clipboard.writeText(block.dataset.copy);
-      toast.textContent = "Copied";
-      button.innerHTML = ICON.check;
+      await navigator.clipboard.writeText(card.dataset.copy);
+      tag.textContent = "Copied";
     } catch (err) {
-      toast.textContent = `Copy failed: ${err.message ?? err}`;
+      tag.textContent = `Copy failed: ${errorText(err)}`;
     }
-    block.classList.add("copied");
-    setTimeout(() => { block.classList.remove("copied"); button.innerHTML = ICON.copy; }, 1500);
+    card.classList.add("copied");
+    clearTimeout(card._copied);
+    card._copied = setTimeout(() => card.classList.remove("copied"), 1400);
     return;
   }
   const retry = e.target.closest(".retry");
   if (retry) {
     const card = retry.closest(".card");
-    const foot_status = card.querySelector(".card-foot .status");
+    const rowStatus = card.querySelector(".card-row .status");
     const select = card.querySelector(".retry-model");
     const label = select.selectedOptions[0]?.textContent ?? "";
     retry.disabled = true;
-    foot_status.className = "status";
-    foot_status.textContent = `Transcribing with ${label}…`;
+    rowStatus.className = "status";
+    rowStatus.textContent = `Transcribing with ${label}…`;
     try {
       await api(`/api/recordings/${card.dataset.id}/transcriptions`, {
         method: "POST",
@@ -1059,8 +945,8 @@ historyList.addEventListener("click", async (e) => {
         body: JSON.stringify({ model: select.value }),
       });
     } catch (err) {
-      foot_status.className = "status err";
-      foot_status.textContent = err.message ?? String(err);
+      rowStatus.className = "status err";
+      rowStatus.textContent = errorText(err);
       retry.disabled = false;
       return;
     }
@@ -1068,8 +954,292 @@ historyList.addEventListener("click", async (e) => {
   }
 });
 
+// ---- Dictionary ----
+// `dict` mirrors dictionary.json: pinned (the user's, including what their agents sent;
+// never changed by the model) and learned (the last accepted proposal, keyed by the
+// speech model it was learned for). The table shows pinned and the default model's
+// learned list, filtered; every change is saved whole.
+let dict = { pinned: { terms: [], replacements: {} }, learned: {} };
+let dictVersion = null; // the server's ETag for the document we edit; null after a failed load
+let proposal = null;
+let filter = "all";
+const dictionaryBox = el("dictionary");
+const buildBtn = el("build-dictionary");
+const buildStatus = el("build-status");
+const proposalPanel = el("proposal");
+const proposalBody = el("proposal-body");
+const empty = () => ({ terms: [], replacements: {} });
+
+const selectFilter = segmentedGroup({ all: el("filter-all"), pinned: el("filter-pinned"), learned: el("filter-learned") }, (name) => { filter = name; renderDictionary(); });
+
+async function loadDictionary() {
+  const res = await fetch("/api/dictionary");
+  const text = await res.text();
+  if (!res.ok) { dictVersion = null; flash(el("dictionary-status"), text, "err"); el("json-editor").hidden = false; return; }
+  dict = JSON.parse(text);
+  dictVersion = res.headers.get("etag");
+  renderDictionary(text);
+}
+
+// Every edit sends the whole document, named with the version it was made on. The
+// server refuses a save on a stale version (an agent or a hand edit got there first)
+// and the fresh document is shown instead.
+async function saveDictionary(next) {
+  const headers = { "content-type": "application/json" };
+  if (dictVersion) headers["if-match"] = dictVersion;
+  const res = await fetch("/api/dictionary", { method: "PUT", headers, body: JSON.stringify(next) });
+  const text = await res.text();
+  if (res.status === 409) {
+    await loadDictionary();
+    flash(el("dictionary-status"), `${text} Reloaded; please redo that change.`, "err");
+    return false;
+  }
+  if (!res.ok) { flash(el("dictionary-status"), text, "err"); flash(buildStatus, text, "err"); return false; }
+  dict = JSON.parse(text);
+  dictVersion = res.headers.get("etag");
+  renderDictionary(text);
+  return true;
+}
+
+// The default model's learned list, made if absent. Pinned is shared by every model.
+function learnedOf(doc) {
+  if (!defaultModel) return empty();
+  return (doc.learned[defaultModel.id] ??= empty());
+}
+const clone = () => JSON.parse(JSON.stringify(dict));
+
+function entryRow(source, kind, heard, meant) {
+  const row = document.createElement("div");
+  row.className = "entry-row";
+  const kindEl = document.createElement("span");
+  kindEl.className = "kind";
+  kindEl.textContent = kind === "term" ? "TERM" : "REPLACE";
+  const what = document.createElement("span");
+  what.className = "what";
+  if (kind === "term") what.textContent = heard;
+  else {
+    what.innerHTML = `<span class="heard"></span><span class="arrow">→</span><span class="meant"></span>`;
+    what.querySelector(".heard").textContent = heard;
+    what.querySelector(".meant").textContent = meant;
+  }
+  const src = document.createElement("span");
+  src.className = source === "learned" ? "source learned" : "source";
+  src.textContent = source === "learned" ? "Learned" : "Pinned";
+  const actions = document.createElement("span");
+  actions.className = "actions";
+  if (source === "learned") {
+    const pin = document.createElement("button");
+    pin.type = "button";
+    pin.className = "btn ghost sm";
+    pin.textContent = "Pin";
+    pin.title = "Pin: keep it for every model";
+    pin.addEventListener("click", () => moveToPinned(kind, heard, meant));
+    actions.append(pin);
+  }
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "btn-icon";
+  remove.title = "Remove";
+  remove.setAttribute("aria-label", "Remove");
+  remove.innerHTML = ICON.remove;
+  remove.addEventListener("click", () => removeEntry(source, kind, heard));
+  actions.append(remove);
+  row.append(kindEl, what, src, actions);
+  return row;
+}
+
+function renderDictionary(jsonText) {
+  const learned = learnedOf(dict);
+  const rows = [];
+  if (filter !== "learned") {
+    rows.push(...dict.pinned.terms.map((t) => entryRow("pinned", "term", t)));
+    rows.push(...Object.entries(dict.pinned.replacements).map(([h, m]) => entryRow("pinned", "replace", h, m)));
+  }
+  if (filter !== "pinned") {
+    rows.push(...learned.terms.map((t) => entryRow("learned", "term", t)));
+    rows.push(...Object.entries(learned.replacements).map(([h, m]) => entryRow("learned", "replace", h, m)));
+  }
+  if (rows.length === 0) {
+    const none = document.createElement("div");
+    none.className = "entry-row none";
+    none.textContent = filter === "learned" ? "Nothing learned for this model yet. Build from history proposes a list." : "Nothing here yet.";
+    rows.push(none);
+  }
+  el("dict-rows").replaceChildren(...rows);
+  const learnedCount = learned.terms.length + Object.keys(learned.replacements).length;
+  el("filter-learned").textContent = defaultModel ? `Learned · ${defaultModel.label.replace(" / ", " · ")}` : "Learned";
+  el("pin-all").hidden = learnedCount === 0;
+  buildBtn.textContent = learnedCount ? "Refine from history" : "Build from history";
+  buildBtn.title = settings?.dictionaryModel
+    ? `Send this model's recent transcripts to ${settings.dictionaryModel} and review a proposal; nothing is saved before Accept`
+    : "Needs an Anthropic or OpenAI key in Settings › Providers";
+  const budget = termBudgetText(learned);
+  el("term-budget").textContent = budget;
+  el("term-budget-row").hidden = !budget;
+  if (jsonText !== undefined) dictionaryBox.value = jsonText;
+}
+
+function termBudgetText(learned) {
+  if (!defaultModel) return "";
+  const limit = defaultModel.term_limit;
+  const pinned = dict.pinned.terms.length;
+  const inUse = pinned + learned.terms.length;
+  if (limit === null) return `${defaultModel.label.split(" / ")[0]} takes no terms · replacements only · ${inUse} pinned words unused here`;
+  const line = `${inUse} of ${limit} terms in use · ${pinned} pinned`;
+  if (pinned >= limit) return `${line} · full: remove pinned terms to make room`;
+  if (inUse >= limit) return `${line} · full`;
+  return line;
+}
+
+async function addToPinned(kind, heard, meant) {
+  const next = clone();
+  if (kind === "term") { if (!next.pinned.terms.includes(heard)) next.pinned.terms.push(heard); }
+  else next.pinned.replacements[heard] = meant;
+  return saveDictionary(next);
+}
+async function removeEntry(source, kind, heard) {
+  const next = clone();
+  const from = source === "pinned" ? next.pinned : learnedOf(next);
+  if (kind === "term") from.terms = from.terms.filter((t) => t !== heard);
+  else delete from.replacements[heard];
+  await saveDictionary(next);
+}
+async function moveToPinned(kind, heard, meant) {
+  const next = clone();
+  const from = learnedOf(next);
+  if (kind === "term") {
+    from.terms = from.terms.filter((t) => t !== heard);
+    if (!next.pinned.terms.includes(heard)) next.pinned.terms.push(heard);
+  } else {
+    delete from.replacements[heard];
+    next.pinned.replacements[heard] = meant;
+  }
+  await saveDictionary(next);
+}
+el("pin-all").addEventListener("click", async () => {
+  if (!defaultModel) return;
+  const next = clone();
+  const learned = learnedOf(next);
+  for (const t of learned.terms) if (!next.pinned.terms.includes(t)) next.pinned.terms.push(t);
+  Object.assign(next.pinned.replacements, learned.replacements);
+  delete next.learned[defaultModel.id];
+  await saveDictionary(next);
+});
+
+// Add: a word, or a heard → meant fix; both are pinned.
+segmentedGroup({ word: el("add-word-mode"), fix: el("add-fix-mode") }, (name) => {
+  el("add-word-row").hidden = name !== "word";
+  el("add-fix-row").hidden = name !== "fix";
+});
+el("add-term-btn").addEventListener("click", async () => {
+  const term = el("add-term").value.trim();
+  if (!term) return;
+  if (await addToPinned("term", term)) el("add-term").value = "";
+});
+el("add-term").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el("add-term-btn").click(); } });
+el("add-replacement-btn").addEventListener("click", async () => {
+  const heard = el("add-heard").value.trim();
+  const meant = el("add-meant").value.trim();
+  if (!heard || !meant) return;
+  if (await addToPinned("replace", heard, meant)) { el("add-heard").value = ""; el("add-meant").value = ""; }
+});
+el("add-meant").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el("add-replacement-btn").click(); } });
+
+// JSON editor and help panel
+el("json-toggle").addEventListener("click", () => {
+  const editor = el("json-editor");
+  editor.hidden = !editor.hidden;
+  el("json-toggle").setAttribute("aria-expanded", String(!editor.hidden));
+});
+el("save-dictionary").addEventListener("click", async () => {
+  let parsed;
+  try { parsed = JSON.parse(dictionaryBox.value); } catch (err) { flash(el("dictionary-status"), `Not valid JSON: ${err.message}`, "err"); return; }
+  if (await saveDictionary(parsed)) flash(el("dictionary-status"), "Saved", "ok");
+});
+function showHelp(open) {
+  el("help-panel").hidden = !open;
+  el("help-toggle").setAttribute("aria-expanded", String(open));
+}
+el("help-toggle").addEventListener("click", () => showHelp(el("help-panel").hidden));
+el("help-more-toggle").addEventListener("click", () => {
+  const more = el("help-more");
+  more.hidden = !more.hidden;
+  el("help-more-toggle").textContent = more.hidden ? "More detail" : "Less";
+});
+
+// Build: the model proposes a learned list for the default speech model, from that
+// model's transcripts; nothing changes until Accept.
+function chips(list, cls) {
+  const box = document.createElement("div");
+  box.className = "chips";
+  for (const text of list) {
+    const c = document.createElement("span");
+    c.className = `chip ${cls}`;
+    c.textContent = text;
+    box.append(c);
+  }
+  return box;
+}
+function renderProposal(p) {
+  proposalBody.replaceChildren();
+  const groups = [
+    ["Added terms", p.added.terms, "add"],
+    ["Added replacements", Object.entries(p.added.replacements).map(([h, m]) => `${h} → ${m}`), "add"],
+    ["Removed terms", p.removed.terms, "remove"],
+    ["Removed replacements", Object.entries(p.removed.replacements).map(([h, m]) => `${h} → ${m}`), "remove"],
+  ];
+  let any = false;
+  for (const [title, items, cls] of groups) {
+    if (items.length === 0) continue;
+    any = true;
+    const h = document.createElement("h3");
+    h.textContent = `${title} (${items.length})`;
+    proposalBody.append(h, chips(items, cls));
+  }
+  if (!any) {
+    const p2 = document.createElement("p");
+    p2.className = "nothing";
+    p2.textContent = "The model proposed no changes to what is learned.";
+    proposalBody.append(p2);
+  }
+  if (p.dropped_terms > 0) {
+    const note = document.createElement("p");
+    note.className = "nothing";
+    note.textContent = `${p.dropped_terms} more proposed terms did not fit: this model takes ${p.budget.limit} and ${p.budget.pinned} are pinned. Remove some to make room.`;
+    proposalBody.append(note);
+  }
+  proposalPanel.hidden = false;
+}
+buildBtn.addEventListener("click", async () => {
+  buildBtn.disabled = true;
+  buildStatus.className = "caption save-status show";
+  buildStatus.textContent = "Asking the model… this can take a minute.";
+  try {
+    const res = await fetch("/api/dictionary/build", { method: "POST" });
+    const text = await res.text();
+    if (!res.ok) throw new Error(text);
+    proposal = JSON.parse(text);
+    buildStatus.classList.remove("show");
+    renderProposal(proposal);
+  } catch (err) {
+    flash(buildStatus, errorText(err), "err");
+  } finally {
+    buildBtn.disabled = false;
+  }
+});
+el("accept-proposal").addEventListener("click", async () => {
+  if (!proposal) return;
+  const next = clone();
+  next.learned[proposal.model] = proposal.learned;
+  if (await saveDictionary(next)) {
+    proposal = null;
+    proposalPanel.hidden = true;
+    flash(buildStatus, "Accepted", "ok");
+  }
+});
+el("discard-proposal").addEventListener("click", () => { proposal = null; proposalPanel.hidden = true; });
+
 // ---- Start ----
 await loadSettings();
 if (location.hash === "#settings") show("settings");
 else if (location.hash === "#dictionary") show("dictionary");
-await loadHistory(true);
