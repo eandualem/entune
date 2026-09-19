@@ -32,6 +32,8 @@ class Indicator:
     def show(self, text: str) -> None:
         if self._panel is None:
             self._build()
+        else:
+            self._save_dragged_origin()
         self._label.setStringValue_(text)
         self._label.sizeToFit()
         width = PAD + DOT + GAP + self._label.frame().size.width + PAD
@@ -45,13 +47,17 @@ class Indicator:
     def hide(self) -> None:
         if self._panel is None:
             return
-        # The only way it moves between show and hide is the user dragging it: keep that.
+        self._save_dragged_origin()
+        self._panel.orderOut_(None)
+
+    def _save_dragged_origin(self) -> None:
+        """Keep a drag before a status change can reposition the visible panel."""
         origin = self._panel.frame().origin
         if (origin.x, origin.y) != self._placed:
             AppKit.NSUserDefaults.standardUserDefaults().setObject_forKey_(
                 [float(origin.x), float(origin.y)], ORIGIN_KEY
             )
-        self._panel.orderOut_(None)
+            self._placed = (origin.x, origin.y)
 
     def _saved_origin(self) -> tuple[float, float] | None:
         """Where the user dropped it last, if that point is still on some screen."""

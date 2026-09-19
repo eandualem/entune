@@ -22,6 +22,7 @@ export function createDictionary({ getModel, getSettings }) {
   segmentedGroup({ all: el("filter-all"), pinned: el("filter-pinned"), learned: el("filter-learned") }, (name) => { filter = name; renderDictionary(); });
 
   async function loadDictionary() {
+    dictVersion = null;
     const res = await fetch("/api/dictionary");
     const text = await res.text();
     if (!res.ok) { dictVersion = null; flash(el("dictionary-status"), text, "err"); el("json-editor").hidden = false; return; }
@@ -34,8 +35,13 @@ export function createDictionary({ getModel, getSettings }) {
   // server refuses a save on a stale version (an agent or a hand edit got there first)
   // and the fresh document is shown instead.
   async function saveDictionary(next) {
+    if (!dictVersion) {
+      await loadDictionary();
+      if (dictVersion) flash(el("dictionary-status"), "Dictionary reloaded; please redo that change.", "err");
+      return false;
+    }
     const headers = { "content-type": "application/json" };
-    if (dictVersion) headers["if-match"] = dictVersion;
+    headers["if-match"] = dictVersion;
     const res = await fetch("/api/dictionary", { method: "PUT", headers, body: JSON.stringify(next) });
     const text = await res.text();
     if (res.status === 409) {
@@ -293,5 +299,5 @@ export function createDictionary({ getModel, getSettings }) {
   });
   el("discard-proposal").addEventListener("click", () => { proposal = null; proposalPanel.hidden = true; });
 
-  return { load: loadDictionary, render: renderDictionary, showHelp };
+  return { load: loadDictionary, showHelp };
 }
