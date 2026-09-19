@@ -4,6 +4,18 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-19: remove the instruction shim (issue #87)
+
+Removed the one-line `CLAUDE.md` import of `AGENTS.md`, as requested in
+#87. `AGENTS.md` and the other runtimes' adapters are unchanged. Verify
+native `AGENTS.md` loading at the next Claude Code startup; this session
+cannot verify that startup message.
+
+Performance fixes are merged into `develop` in PR #89 and the final build
+is ready. Installation is still pending: automatic approval review refused
+replacement of `/Applications/Dictum.app` without explicit authorization.
+The owner was asked in chat; #88 remains open until installation is done.
+
 ## 2026-09-19: performance stabilization (issue #88)
 
 **Request.** Elias reported significant lag and requested a high-priority
