@@ -19,6 +19,7 @@ PROMPT_CHARS = 600  # the prompt is a soft hint capped at 224 tokens; stay well 
 class Groq:
     id: str = "groq"
     name: str = "Groq"
+    term_limit: int | None = 50  # what fits the 224-token prompt with room to spare
     models: tuple[str, ...] = ("whisper-large-v3-turbo",)
 
     def __init__(self, client: httpx.Client | None = None) -> None:

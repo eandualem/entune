@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 
 from dictum.providers.base import Clip, Failure, Transcript
 from dictum.providers.local import CATALOGUE, Local, _prompt, pcm16k
@@ -39,7 +40,11 @@ def test_download_resumes_a_partial_file_and_remove_deletes_it(tmp_path: Path) -
         ranges.append(header)
         if header:
             start = int(header.removeprefix("bytes=").rstrip("-"))
-            return httpx.Response(206, content=body[start:])
+            return httpx.Response(
+                206,
+                headers={"Content-Range": f"bytes {start}-{len(body) - 1}/{len(body)}"},
+                content=body[start:],
+            )
         return httpx.Response(200, content=body)
 
     tmp_path.mkdir(exist_ok=True)
@@ -60,6 +65,42 @@ def test_a_failed_download_is_reported_in_the_catalogue(tmp_path: Path) -> None:
     wait_until(lambda: any(m.state == "error" for m in local.catalogue()))
     (failed,) = [m for m in local.catalogue() if m.state == "error"]
     assert failed.name == "small.en" and "HTTP 503" in (failed.error or "")
+
+
+@pytest.mark.parametrize(
+    ("status", "interval", "body"),
+    [(416, "bytes */2", b""), (206, "bytes 0-3/4", b"abcd"), (206, "bytes 3-6/7", b"x")],
+)
+def test_invalid_resumed_download_never_becomes_a_ready_model(
+    tmp_path: Path, status: int, interval: str, body: bytes
+) -> None:
+    from dictum.providers.local import Download
+
+    target = tmp_path / "model.bin"
+    part = target.with_suffix(".bin.part")
+    part.write_bytes(b"abc")
+    client = mock_client(
+        lambda request: httpx.Response(status, headers={"Content-Range": interval}, content=body)
+    )
+    download = Download(client, [("https://example.com/model", target)], 7)
+    download.start()
+    download._thread.join(2)
+    assert download.error and not target.exists()
+    assert part.exists()
+
+
+def test_range_refusal_accepts_only_a_verified_complete_part(tmp_path: Path) -> None:
+    from dictum.providers.local import Download
+
+    target = tmp_path / "model.bin"
+    target.with_suffix(".bin.part").write_bytes(b"abc")
+    client = mock_client(
+        lambda request: httpx.Response(416, headers={"Content-Range": "bytes */3"})
+    )
+    download = Download(client, [("https://example.com/model", target)], 3)
+    download.start()
+    download._thread.join(2)
+    assert download.error is None and target.read_bytes() == b"abc"
 
 
 class FakeEngine:
@@ -141,3 +182,47 @@ def test_unload_frees_every_model_but_the_kept_one(tmp_path: Path) -> None:
     local.unload()
     local.transcribe(clip, "small.en", "")
     assert len(loaded) == 4
+
+
+def test_empty_unload_does_not_collect_the_whole_application(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import gc
+
+    calls: list[bool] = []
+    monkeypatch.setattr(gc, "collect", lambda: calls.append(True))
+    Local(tmp_path).unload()
+    assert calls == []
+
+
+def test_rapid_selection_changes_coalesce_to_the_latest_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from dictum.service import Dictum
+    from dictum.store import Store
+
+    for name in ("base.en", "small.en"):
+        (tmp_path / f"ggml-{name}.bin").write_bytes(b"model")
+    local = Local(tmp_path)
+    app = Dictum(Store(tmp_path), [local])
+    entered, release = threading.Event(), threading.Event()
+    warmed: list[str] = []
+
+    def warm(name: str) -> None:
+        warmed.append(name)
+        if name == "base.en":
+            entered.set()
+            assert release.wait(3)
+
+    monkeypatch.setattr(local, "warm", warm)
+    try:
+        app.set_default_model("local/base.en")
+        assert entered.wait(1)
+        for _ in range(10):
+            app.set_default_model("local/small.en")
+    finally:
+        release.set()
+    wait_until(lambda: not app._warming)
+    assert warmed == ["base.en", "small.en"]

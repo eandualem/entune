@@ -1,3 +1,4 @@
+import plistlib
 import socket
 from pathlib import Path
 
@@ -38,15 +39,79 @@ def test_install_app_writes_a_launchable_bundle(tmp_path: Path) -> None:
     install_app(tmp_path)  # replacing an existing bundle is fine
 
 
-def test_install_app_can_copy_a_built_bundle(tmp_path: Path) -> None:
+def test_install_app_can_copy_a_built_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     pytest.importorskip("Foundation", reason="macOS only")
     from dictum.desktop.macos.bundle import install_app
 
     built = tmp_path / "built" / "Dictum.app"
     (built / "Contents" / "MacOS").mkdir(parents=True)
     (built / "Contents" / "MacOS" / "Dictum").write_bytes(b"binary")
+    (built / "Contents" / "Info.plist").write_bytes(
+        plistlib.dumps({"CFBundleExecutable": "Dictum"})
+    )
+    monkeypatch.setattr("dictum.desktop.macos.bundle.sign", lambda app: "-")
     installed = install_app(tmp_path / "apps", source=built)
     assert (installed / "Contents" / "MacOS" / "Dictum").read_bytes() == b"binary"
+
+
+@pytest.mark.parametrize("failure", ["source", "copy", "sign", "replace"])
+def test_failed_install_preserves_the_previous_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from dictum.desktop.macos import bundle
+
+    built = tmp_path / "built" / "Dictum.app"
+    (built / "Contents" / "MacOS").mkdir(parents=True)
+    (built / "Contents" / "MacOS" / "Dictum").write_bytes(b"new app")
+    (built / "Contents" / "Info.plist").write_bytes(
+        plistlib.dumps({"CFBundleExecutable": "Dictum"})
+    )
+    installed = tmp_path / "apps" / "Dictum.app"
+    installed.mkdir(parents=True)
+    (installed / "working").write_bytes(b"old app")
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise OSError("injected failure")
+
+    monkeypatch.setattr(bundle, "sign", lambda app: "-")
+    if failure == "source":
+        (built / "Contents" / "Info.plist").unlink()
+    elif failure == "copy":
+        monkeypatch.setattr("dictum.desktop.macos.bundle.shutil.copytree", fail)
+    elif failure == "sign":
+        monkeypatch.setattr(bundle, "sign", fail)
+    else:
+        rename = Path.rename
+
+        def fail_replace(path: Path, target: Path) -> Path:
+            if path.name == "Dictum.app" and path != installed:
+                raise OSError("injected failure")
+            return rename(path, target)
+
+        monkeypatch.setattr(Path, "rename", fail_replace)
+    with pytest.raises(OSError):
+        bundle.install_app(installed.parent, source=built)
+    assert (installed / "working").read_bytes() == b"old app"
+    assert list(installed.parent.iterdir()) == [installed]
+
+
+def test_signing_failure_is_not_reported_as_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from dictum.desktop.macos import bundle
+
+    monkeypatch.setattr(bundle, "signing_identity", lambda: None)
+    monkeypatch.setattr(
+        bundle,
+        "_codesign",
+        lambda app, identity: subprocess.CompletedProcess(["codesign"], 1, "", "cannot sign"),
+    )
+    with pytest.raises(subprocess.CalledProcessError):
+        bundle.sign(tmp_path)
 
 
 def test_applications_folder_prefers_the_system_one_when_writable() -> None:

@@ -82,7 +82,7 @@ class WebviewPlatform:
         webview.settings["ALLOW_DOWNLOADS"] = True  # the history's download button, to ~/Downloads
         if sys.platform == "darwin":
             _grant_media_capture()
-            _terminate_through(self.quit)
+            _terminate_through(tray._quit)
         window.create()
         webview.start(private_mode=False)  # the page keeps its appearance choice
 

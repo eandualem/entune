@@ -166,6 +166,7 @@ class FakeUpload:
 
 class StubProvider:
     id: str = "stub"
+    term_limit: int | None = 100
     name: str = "Stub"
     models: tuple[str, ...] = ("good", "bad")
 
