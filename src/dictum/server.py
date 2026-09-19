@@ -110,6 +110,7 @@ def _shortcuts_json(app: Dictum) -> dict[str, str | None]:
     return {
         "hold": "+".join(shortcuts.hold) if shortcuts.hold else None,
         "toggle": "+".join(shortcuts.toggle) if shortcuts.toggle else None,
+        "cancel": "+".join(shortcuts.cancel) if shortcuts.cancel else None,
     }
 
 
@@ -189,7 +190,10 @@ def create_app(app: Dictum) -> Starlette:
                 raise ValueError("shortcuts must be an object")
             hold = _optional_text(shortcut_settings.get("hold"), "shortcuts.hold")
             toggle = _optional_text(shortcut_settings.get("toggle"), "shortcuts.toggle")
-            shortcuts.parse(hold, toggle)
+            cancel = _optional_text(
+                shortcut_settings.get("cancel", _shortcuts_json(app)["cancel"]), "shortcuts.cancel"
+            )
+            shortcuts.parse(hold, toggle, cancel)
 
             # Validate the complete request before storing any field: a bad shortcut
             # or model must not leave a seemingly failed Save with some keys changed.
@@ -202,7 +206,7 @@ def create_app(app: Dictum) -> Starlette:
             if "fastMode" in body:
                 app.set_fast_mode(body["fastMode"])
             if "shortcuts" in body:
-                app.set_shortcuts(hold, toggle)
+                app.set_shortcuts(hold, toggle, cancel)
         except UnknownModel as exc:
             return _bad(f"Unknown model: {exc}")
         except ValueError as exc:
@@ -284,6 +288,20 @@ def create_app(app: Dictum) -> Starlette:
         if not app.show_window():
             return _bad("No desktop app is running to show a window", 409)
         return JSONResponse({"ok": True})
+
+    async def request_permission(request: Request) -> Response:
+        name = request.path_params["name"]
+        if name not in {"microphone", "inputMonitoring", "accessibility"}:
+            return _bad("Unknown permission")
+        try:
+            body = await request.json()
+        except ValueError:
+            return _bad("Body must be JSON")
+        if not isinstance(body, dict) or not isinstance(body.get("openSettings", False), bool):
+            return _bad("openSettings must be a boolean")
+        if not app.request_permission(name, body.get("openSettings", False)):
+            return _bad("Open the Dictum desktop app to set up permissions", 409)
+        return JSONResponse({"ok": True}, status_code=202)
 
     def models(_: Request) -> Response:
         return JSONResponse([asdict(m) for m in app.available_models()])
@@ -388,6 +406,7 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/capture", cancel_capture, methods=["DELETE"]),
             Route("/api/status", status),
             Route("/api/window", show_window, methods=["POST"]),
+            Route("/api/permissions/{name}", request_permission, methods=["POST"]),
             Route("/api/models", models),
             Route("/api/recordings", list_recordings, methods=["GET"]),
             Route("/api/recordings", create_recording, methods=["POST"]),

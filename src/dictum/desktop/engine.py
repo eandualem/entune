@@ -13,9 +13,9 @@ class ShortcutEngine:
     The hold key starts on press and stops on release. The toggle chord fires on
     the press that completes it, once per press, and flips between start and
     stop. Both can be configured at once and share one recording state: a press
-    of the hold key also stops a recording the chord started. For fn this waits
-    until release, leaving time for fn+esc to cancel. Key auto-repeat sends
-    repeated presses; both ignore them.
+    of the hold key also stops a recording the chord started. When that key is
+    part of Cancel, this waits until release so the combination can finish.
+    Key auto-repeat sends repeated presses; both ignore them.
     """
 
     def __init__(
@@ -33,7 +33,7 @@ class ShortcutEngine:
         self.recording = False
         self._held = False  # recording was started by the hold key
         self._chord_fired = False
-        self._fn_stop_pending = False
+        self._hold_stop_pending = False
         self._cancelled = False
 
     def press(self, key: str) -> None:
@@ -42,13 +42,14 @@ class ShortcutEngine:
         self.pressed.add(key)
         if self._cancelled:
             return  # no restart until the cancellation chord has been released
-        if key in ("fn", "esc") and {"fn", "esc"} <= self.pressed:
+        cancel = self.shortcuts.cancel
+        if cancel and key in cancel and set(cancel) <= self.pressed:
             self._cancelled = True
             if self.recording:
-                self.recording = self._held = self._fn_stop_pending = False
+                self.recording = self._held = self._hold_stop_pending = False
                 self._on_cancel()
             return
-        if self._fn_stop_pending:
+        if self._hold_stop_pending:
             return
         hold, toggle = self.shortcuts.hold, self.shortcuts.toggle
         if toggle and key in toggle and set(toggle) <= self.pressed:
@@ -70,8 +71,8 @@ class ShortcutEngine:
                 self._held = True
                 self._start()
             elif not self._held:
-                if key == "fn":
-                    self._fn_stop_pending = True
+                if cancel and key in cancel:
+                    self._hold_stop_pending = True
                     return
                 self._stop()
                 if toggle and key in toggle:
@@ -82,11 +83,11 @@ class ShortcutEngine:
     def release(self, key: str) -> None:
         self.pressed.discard(key)
         if self._cancelled:
-            if not self.pressed.intersection(("fn", "esc")):
+            if not self.pressed.intersection(self.shortcuts.cancel or ()):
                 self._cancelled = False
                 self._chord_fired = False
             return
-        if key == "fn" and self._fn_stop_pending:
+        if self.shortcuts.hold == (key,) and self._hold_stop_pending:
             self._stop()
         hold, toggle = self.shortcuts.hold, self.shortcuts.toggle
         if hold and key == hold[0] and self.recording and self._held:
@@ -101,5 +102,5 @@ class ShortcutEngine:
     def _stop(self) -> None:
         self.recording = False
         self._held = False
-        self._fn_stop_pending = False
+        self._hold_stop_pending = False
         self._on_stop()

@@ -33,3 +33,12 @@ class _Permissions:
 
     def request_post(self) -> None:
         _permissions.request_post()
+
+    def microphone_status(self) -> str:
+        return _permissions.microphone_status()
+
+    def request_microphone(self) -> None:
+        _permissions.request_microphone()
+
+    def open_settings(self, permission: str) -> None:
+        _permissions.open_settings(permission)

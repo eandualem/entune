@@ -41,6 +41,8 @@ a { color: var(--accent-text); text-decoration: none; }
   background: var(--surface-raised); border-bottom: 1px solid var(--line);
 }
 .toolbar .status { font-size: var(--fs-12-5); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.native-mac .toolbar { padding-left: 84px; }
+.native-mac .toolbar .select { min-width: 0; }
 
 /* Segmented control: a well with one raised segment */
 .segmented { display: inline-flex; gap: var(--sp-2); padding: 3px; border-radius: var(--r-8); background: var(--well); width: max-content; }
@@ -258,6 +260,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .field { min-width: 0; }
 .field.right { display: flex; justify-content: flex-end; }
 .field.shortcut { display: flex; gap: var(--sp-8); align-items: center; }
+.field.permission { display: flex; gap: var(--sp-12); align-items: center; flex-wrap: wrap; }
 .field.copyable { display: flex; gap: var(--sp-8); align-items: flex-start; }
 .field > .select, .select.field, .input.field { width: 100%; }
 .field .input.mono { margin-top: var(--sp-8); font-size: var(--fs-12-5); }
