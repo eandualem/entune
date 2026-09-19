@@ -95,3 +95,17 @@ def test_timing_columns_persist_and_older_databases_get_them(tmp_path: Path) -> 
     assert (untimed.audio_seconds, untimed.elapsed_seconds, untimed.fast) == (None, None, False)
     assert [t.id for t in store.timed_transcriptions()] == [timed.id]
     store.close()
+
+
+def test_history_page_queries_do_not_grow_with_recording_count(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    for _ in range(30):
+        recording = store.create_recording(WEBM_HEADER)
+        store.add_transcription(recording.id, "p", "m", "ok", "text", None)
+        store.add_transcription(recording.id, "p", "m", "error", None, "failed")
+    queries: list[str] = []
+    store._db.set_trace_callback(queries.append)
+    page = store.list_recordings(limit=25)
+    store._db.set_trace_callback(None)
+    assert len(page) == 25 and len(queries) == 2
+    assert all([t.status for t in r.transcriptions] == ["error", "ok"] for r in page)

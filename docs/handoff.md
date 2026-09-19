@@ -4,6 +4,62 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-19: performance stabilization (issue #88)
+
+**Request.** Elias reported significant lag and requested a high-priority
+performance fix and full code sweep. His clarification: “When starting local
+models, plus after switching away from local models.”
+
+**Confirmed cause.** Each model selection forced the entire history to be
+rebuilt, replacing all audio players and starting their metadata requests
+again. The packaged app made 300 extra audio requests across four model
+switches on 150 synthetic recordings (his database had 145 when inspected).
+History also fetched every recording every three seconds on other tabs,
+with one additional database query per recording.
+
+**Changed.** History has 25 cards per page, older/newer navigation,
+conditional refresh, no automatic audio loads, and retains unchanged cards
+and their playback/retry state. Model selection updates only the pickers.
+The paging/refresh controller lives in `web/history.js`; no framework or
+build step was added. Storage reads a page in two queries; the existing
+unpaged API still returns all history. Synchronous HTTP work runs off the
+event loop. Dictionary text and revision are read under one lock.
+
+Local warm-up requests now coalesce onto one worker following the latest
+selection; an empty Whisper unload skips whole-app garbage collection.
+Local load/use is atomic with unload/remove, fixing the Parakeet race
+between its load and transcription requests. Its helper is reaped and its
+pipes closed on unload, and a stalled reply has a timeout. Dictionary
+builds serialize across worker threads (the previous async lock crossed
+event loops), and environment settings are restored on startup/shutdown
+failure.
+
+**Verified.** 133 pytest tests; ruff lint/format, strict mypy, JavaScript
+syntax and diff whitespace checks. Browser checks on scratch data:
+paging, playback, retry, retained unaffected cards, no polling on Settings,
+no console errors. With 10,000 synthetic recordings, a page loaded in
+about 1 ms; an unchanged poll went from 14.3 MB / 10,001 queries to no
+body / two indexed lookups. The rebuilt package made zero audio requests
+across the same four local/cloud switches. Real Whisper base/large and
+Parakeet load/unload probes completed without Python heartbeat gaps above
+100 ms on warm caches. This does not establish cold-start, loaded-system,
+or WKWebView compositor performance; Elias's observation after reopening
+the rebuilt app remains the confirmation of the subjective lag.
+
+**Review scope.** Application source, adapters, desktop/native seams,
+window code, storage, dictionary, CLI and packaging reviewed locally;
+this was not an independent Ultra review. Existing provider/platform
+boundaries stay; the heavy dictionary dependency is not the measured
+persistent lag, so its replacement remains the existing #37 decision.
+Evidence and detailed dispositions:
+`.backbone/reviews/performance-20260919/review.md` (ignored).
+
+**Delivery.** Stabilization follows the design port (#86) into `develop`;
+`main` is still the released branch. The rebuilt app is verified on scratch
+data before installation. Next: Elias reopens Dictum and checks the
+local-model switches in his normal workflow; then the documentation/PyPI/
+Windows priorities resume.
+
 ## 2026-09-18, late night: the Claude Design direction, implemented (issue #77)
 
 **Where it came from.** Elias explored with Claude Design from
