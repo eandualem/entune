@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import shutil
 import subprocess
 import tempfile
@@ -35,6 +36,7 @@ REPO = "https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3/resolve/main"
 FILES = (("config.json", 244_093), ("model.safetensors", 2_508_288_736))  # sizes on 2026-09-18
 INSTALL_COMMAND = "uv tool install parakeet-mlx"
 HELPER = Path(__file__).with_name("parakeet_helper.py")
+HELPER_TIMEOUT_SECONDS = 300.0
 
 
 def engine_python() -> Path | None:
@@ -75,7 +77,7 @@ class Parakeet:
         self._download: Download | None = None
         self._helper: subprocess.Popen[str] | None = None
         self._loaded = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     @property
     def models(self) -> tuple[str, ...]:
@@ -145,10 +147,13 @@ class Parakeet:
             handle.write(data)
             path = handle.name
         try:
-            answer = self._ensure_loaded()
-            if "error" in answer:
-                return Failure(f"Could not load {MODEL}: {answer['error']}")
-            answer = self._ask({"op": "transcribe", "path": path})
+            with self._lock:
+                # A default-model change must not kill the loaded helper before the
+                # following request. Keep this operation atomic with unload/remove.
+                answer = self._ensure_loaded()
+                if "error" in answer:
+                    return Failure(f"Could not load {MODEL}: {answer['error']}")
+                answer = self._ask_locked({"op": "transcribe", "path": path})
         except OSError as exc:
             return Failure(f"Parakeet helper: {type(exc).__name__}: {exc}")
         finally:
@@ -172,10 +177,6 @@ class Parakeet:
             self._loaded = "error" not in answer
             return answer
 
-    def _ask(self, request: dict[str, Any]) -> dict[str, Any]:
-        with self._lock:
-            return self._ask_locked(request)
-
     def _ask_locked(self, request: dict[str, Any]) -> dict[str, Any]:
         helper = self._helper
         if helper is None or helper.poll() is not None:
@@ -184,6 +185,9 @@ class Parakeet:
         assert helper.stdin is not None and helper.stdout is not None
         helper.stdin.write(json.dumps(request) + "\n")
         helper.stdin.flush()
+        if not select.select([helper.stdout], [], [], HELPER_TIMEOUT_SECONDS)[0]:
+            self._stop_helper()
+            raise OSError(f"the helper did not answer within {HELPER_TIMEOUT_SECONDS:g} seconds")
         line = helper.stdout.readline()
         if not line:
             self._stop_helper()
@@ -205,6 +209,11 @@ class Parakeet:
     def _stop_helper(self) -> None:
         if self._helper is not None:
             self._helper.kill()
+            self._helper.wait()
+            if self._helper.stdin is not None:
+                self._helper.stdin.close()
+            if self._helper.stdout is not None:
+                self._helper.stdout.close()
             self._helper = None
         self._loaded = False
 

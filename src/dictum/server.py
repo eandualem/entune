@@ -96,7 +96,7 @@ def create_app(app: Dictum) -> Starlette:
     async def index(_: Request) -> Response:
         return FileResponse(WEB_DIR / "index.html")
 
-    async def get_settings(_: Request) -> Response:
+    def get_settings(_: Request) -> Response:
         return JSONResponse(
             {
                 "providers": [
@@ -129,6 +129,12 @@ def create_app(app: Dictum) -> Starlette:
     async def put_settings(request: Request) -> Response:
         try:
             body = await request.json()
+        except ValueError as exc:
+            return _bad(str(exc))
+        return await run_in_threadpool(update_settings, body)
+
+    def update_settings(body: object) -> Response:
+        try:
             if not isinstance(body, dict):
                 raise ValueError("Body must be a JSON object")
             for provider_id, key in (body.get("keys") or {}).items():
@@ -149,13 +155,14 @@ def create_app(app: Dictum) -> Starlette:
         return JSONResponse({"ok": True})
 
     def _dictionary_response(app: Dictum) -> Response:
+        text, version = app.dictionary_snapshot()
         return PlainTextResponse(
-            app.dictionary_text(),
+            text,
             media_type="application/json",
-            headers={"ETag": f'"{app.dictionary_version()}"'},
+            headers={"ETag": f'"{version}"'},
         )
 
-    async def get_dictionary(_: Request) -> Response:
+    def get_dictionary(_: Request) -> Response:
         try:
             return _dictionary_response(app)
         except ValueError as exc:
@@ -164,7 +171,8 @@ def create_app(app: Dictum) -> Starlette:
     async def put_dictionary(request: Request) -> Response:
         expected = request.headers.get("if-match")
         try:
-            app.set_dictionary(
+            await run_in_threadpool(
+                app.set_dictionary,
                 (await request.body()).decode("utf-8"),
                 expected.strip('"') if expected else None,
             )
@@ -172,9 +180,9 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc), 409)
         except ValueError as exc:
             return _bad(str(exc))
-        return _dictionary_response(app)
+        return await run_in_threadpool(_dictionary_response, app)
 
-    async def received_corrections(_: Request) -> Response:
+    def received_corrections(_: Request) -> Response:
         return JSONResponse([asdict(c) for c in app.store.list_corrections()])
 
     async def agent_corrections(request: Request) -> Response:
@@ -183,7 +191,7 @@ def create_app(app: Dictum) -> Starlette:
         except ValueError:
             return _bad("Body must be JSON")
         try:
-            added = app.add_agent_corrections(body)
+            added = await run_in_threadpool(app.add_agent_corrections, body)
         except ValueError as exc:
             return _bad(str(exc))
         return JSONResponse({"added": added.as_json()})
@@ -207,7 +215,7 @@ def create_app(app: Dictum) -> Starlette:
         app.cancel_capture()
         return JSONResponse({"ok": True})
 
-    async def status(_: Request) -> Response:
+    def status(_: Request) -> Response:
         return JSONResponse(
             {
                 "version": __version__,
@@ -222,12 +230,25 @@ def create_app(app: Dictum) -> Starlette:
             return _bad("No desktop app is running to show a window", 409)
         return JSONResponse({"ok": True})
 
-    async def models(_: Request) -> Response:
+    def models(_: Request) -> Response:
         return JSONResponse([asdict(m) for m in app.available_models()])
 
-    async def list_recordings(_: Request) -> Response:
-        recordings = await run_in_threadpool(app.store.list_recordings)
-        return JSONResponse([_recording_json(r) for r in recordings])
+    def list_recordings(request: Request) -> Response:
+        try:
+            limit = int(request.query_params["limit"]) if "limit" in request.query_params else None
+            before = (
+                int(request.query_params["before"]) if "before" in request.query_params else None
+            )
+            if (limit is not None and not 1 <= limit <= 200) or (before is not None and before < 1):
+                raise ValueError
+        except ValueError:
+            return _bad("limit must be 1-200; before must be a positive recording id")
+        version = f'"{app.store.history_version()}-{limit}-{before}"'
+        headers = {"ETag": version, "Cache-Control": "no-cache"}
+        if request.headers.get("if-none-match") == version:
+            return Response(status_code=304, headers=headers)
+        recordings = app.store.list_recordings(limit=limit, before=before)
+        return JSONResponse([_recording_json(r) for r in recordings], headers=headers)
 
     async def create_recording(request: Request) -> Response:
         form = await request.form()
@@ -250,7 +271,7 @@ def create_app(app: Dictum) -> Starlette:
         return JSONResponse(_recording_json(recording))
 
     async def retry(request: Request) -> Response:
-        recording = app.store.get_recording(int(request.path_params["id"]))
+        recording = await run_in_threadpool(app.store.get_recording, int(request.path_params["id"]))
         if recording is None:
             return _bad("No such recording", 404)
         body = await request.json()
@@ -260,7 +281,7 @@ def create_app(app: Dictum) -> Starlette:
         updated = await run_in_threadpool(app.transcribe, recording, ref)
         return JSONResponse(_recording_json(updated))
 
-    async def local_models(_: Request) -> Response:
+    def local_models(_: Request) -> Response:
         return JSONResponse([asdict(m) for m in app.local_models()])
 
     async def download_local_model(request: Request) -> Response:
@@ -277,10 +298,10 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc), 404)
         return JSONResponse({"ok": True})
 
-    async def metrics(_: Request) -> Response:
+    def metrics(_: Request) -> Response:
         return JSONResponse([asdict(m) for m in app.metrics()])
 
-    async def audio(request: Request) -> Response:
+    def audio(request: Request) -> Response:
         recording = app.store.get_recording(int(request.path_params["id"]))
         if recording is None:
             return _bad("No such recording", 404)

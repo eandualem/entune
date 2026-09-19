@@ -2,6 +2,8 @@
 // code against the local API; no framework, no build step. Layout and tokens follow
 // the design of 2026-09-18; every colour and size lives in tokens.css.
 
+import { createHistory } from "./history.js";
+
 const el = (id) => document.getElementById(id);
 const status = el("status");
 const modelSelect = el("model");
@@ -107,6 +109,7 @@ const selectTab = segmentedGroup({ history: el("tab-history"), dictionary: el("t
 function showView(name) {
   for (const key in views) views[key].toggleAttribute("data-active", key === name);
   views[name].scrollTop = 0;
+  if (name === "history") loadHistory().catch((err) => { status.textContent = errorText(err); });
 }
 function show(name) { selectTab(name); showView(name); }
 
@@ -144,7 +147,12 @@ async function loadModels() {
   if (!status.textContent || status.textContent === "Ready") status.textContent = defaultModel ? "Ready" : "";
   renderDictionary();
   renderStart();
-  loadHistory(true).catch(() => {}); // the cards' retry pickers list these models too
+  // A model change only changes the pickers, never the cards or their audio.
+  for (const select of historyList.querySelectorAll(".retry-model")) {
+    fillModels(select, select.value, "No models");
+    const retry = select.nextElementSibling;
+    if (!retry.dataset.busy) retry.disabled = select.disabled;
+  }
 }
 
 modelSelect.addEventListener("change", async () => {
@@ -726,7 +734,7 @@ async function upload(audio) {
     status.textContent = errorText(err);
   }
   show("history");
-  await loadHistory(true);
+  await history.latest();
 }
 
 // ---- History ----
@@ -744,12 +752,11 @@ function whenLabel(iso) {
 const attemptLabel = (t) => (t.provider === "none" ? "no model set" : `${t.provider} / ${t.model}`);
 const clock = (s) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "–:––");
 
-function player(url, label) {
+function player(url, label, seconds) {
   const box = document.createElement("div");
   box.className = "player";
   const audio = document.createElement("audio");
-  audio.preload = "metadata";
-  audio.src = url;
+  audio.preload = "none";
   audio.setAttribute("aria-label", label);
   const play = document.createElement("button");
   play.type = "button";
@@ -762,7 +769,7 @@ function player(url, label) {
   track.className = "track";
   track.innerHTML = "<span></span>";
   const total = document.createElement("span");
-  total.textContent = "–:––";
+  total.textContent = clock(seconds);
   for (const event of ["loadedmetadata", "durationchange"]) audio.addEventListener(event, () => { total.textContent = clock(audio.duration); });
   audio.addEventListener("timeupdate", () => {
     now.textContent = clock(audio.currentTime);
@@ -771,7 +778,11 @@ function player(url, label) {
   audio.addEventListener("play", () => { play.innerHTML = ICON.pause; play.title = "Pause"; });
   audio.addEventListener("pause", () => { play.innerHTML = ICON.play; play.title = "Play"; });
   audio.addEventListener("ended", () => { audio.currentTime = 0; });
-  play.addEventListener("click", () => (audio.paused ? audio.play() : audio.pause()));
+  play.addEventListener("click", async () => {
+    if (!audio.src) audio.src = url;
+    try { audio.paused ? await audio.play() : audio.pause(); }
+    catch (err) { play.title = `Playback failed: ${errorText(err)}`; }
+  });
   track.addEventListener("click", (e) => {
     const rect = track.getBoundingClientRect();
     if (audio.duration) audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
@@ -826,7 +837,7 @@ function renderCard(r) {
 
   const row = document.createElement("div");
   row.className = "card-row";
-  row.append(player(`/api/recordings/${r.id}/audio`, `Recording ${when.textContent}`));
+  row.append(player(`/api/recordings/${r.id}/audio`, `Recording ${when.textContent}`, latest?.audio_seconds));
   const download = document.createElement("a");
   download.className = "btn-icon";
   download.href = `/api/recordings/${r.id}/audio`;
@@ -886,29 +897,27 @@ function renderCard(r) {
   return card;
 }
 
-// Dictations made with the shortcut arrive while this page is open, so it keeps itself
-// current: it re-reads the history every few seconds while visible and re-renders only
-// when something changed.
-let historySnapshot = "";
+// Poll only the visible History page. The controller keeps one bounded page and
+// preserves unchanged cards, including playback and a retry already in progress.
 const HISTORY_POLL_MS = 3000;
-
-async function loadHistory(force = false) {
-  const recordings = await api("/api/recordings");
-  const snapshot = JSON.stringify(recordings);
-  if (!force && snapshot === historySnapshot) return;
-  historySnapshot = snapshot;
-  historyList.replaceChildren(...recordings.map(renderCard));
-  loadMetrics().catch(() => {});
-  recordingsCount = recordings.length;
-  emptyState.hidden = recordings.length > 0;
-  if (recordings.length === 0) renderStart();
-}
+const history = createHistory({
+  list: historyList, newer: el("history-newer"), older: el("history-older"), renderCard,
+  onChange(recordings) {
+    loadMetrics().catch(() => {});
+    recordingsCount = recordings.length;
+    emptyState.hidden = recordings.length > 0;
+    if (recordings.length === 0) renderStart();
+  },
+  onError(err) { status.textContent = errorText(err); },
+});
+const loadHistory = (force = false) => history.refresh(force);
+const historyVisible = () => document.visibilityState === "visible" && views.history.hasAttribute("data-active");
 
 setInterval(() => {
-  if (document.visibilityState === "visible") loadHistory().catch(() => {});
+  if (historyVisible()) loadHistory().catch(() => {});
 }, HISTORY_POLL_MS);
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") loadHistory().catch(() => {});
+  if (historyVisible()) loadHistory().catch(() => {});
 });
 
 // Copy (click on the transcript) and re-transcribe, delegated so re-renders need no rebinding.
@@ -936,6 +945,7 @@ historyList.addEventListener("click", async (e) => {
     const select = card.querySelector(".retry-model");
     const label = select.selectedOptions[0]?.textContent ?? "";
     retry.disabled = true;
+    retry.dataset.busy = "true";
     rowStatus.className = "status";
     rowStatus.textContent = `Transcribing with ${label}…`;
     try {
@@ -948,6 +958,7 @@ historyList.addEventListener("click", async (e) => {
       rowStatus.className = "status err";
       rowStatus.textContent = errorText(err);
       retry.disabled = false;
+      delete retry.dataset.busy;
       return;
     }
     await loadHistory(true);
@@ -1243,3 +1254,4 @@ el("discard-proposal").addEventListener("click", () => { proposal = null; propos
 await loadSettings();
 if (location.hash === "#settings") show("settings");
 else if (location.hash === "#dictionary") show("dictionary");
+else show("history");

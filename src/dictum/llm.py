@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import re
+import threading
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -30,14 +31,7 @@ ENDPOINTS = {
     "anthropic": {"ANTHROPIC_BASE_URL": "https://api.anthropic.com"},
     "openai": {"OPENAI_BASE_URL": "https://api.openai.com/v1"},
 }
-_build_lock: asyncio.Lock | None = None
-
-
-def _one_build_at_a_time() -> asyncio.Lock:
-    global _build_lock
-    if _build_lock is None:
-        _build_lock = asyncio.Lock()
-    return _build_lock
+_build_lock = threading.Lock()
 
 
 # assistant-runtime maps this budget to "high" reasoning effort on both providers.
@@ -168,13 +162,15 @@ async def call_assistant_runtime(
     # shell, would not be used otherwise) and the endpoint pinned to the provider's own
     # (a base-URL variable in the shell would otherwise route the key and the user's
     # transcripts elsewhere). The environment is process-wide, so one build at a time.
-    async with _one_build_at_a_time():
-        pinned = {KEY_VARIABLES[provider]: api_key, **ENDPOINTS[provider]}
-        previous = {name: os.environ.get(name) for name in pinned}
+    # propose_learned holds a thread lock: concurrent builds run in separate worker
+    # threads, each with its own event loop, so an asyncio.Lock cannot serialize them.
+    pinned = {KEY_VARIABLES[provider]: api_key, **ENDPOINTS[provider]}
+    previous = {name: os.environ.get(name) for name in pinned}
+    try:
         os.environ.update(pinned)
         service = LlmService(config=config)
-        await service.start()
         try:
+            await service.start()
             result = await service.execute_llm_call(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -183,11 +179,12 @@ async def call_assistant_runtime(
             )
         finally:
             await service.stop()
-            for name, value in previous.items():
-                if value is None:
-                    os.environ.pop(name, None)
-                else:
-                    os.environ[name] = value
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
     return str(result.content)
 
 
@@ -207,7 +204,8 @@ def propose_learned(
     """
     user_prompt = build_user_prompt(current, transcripts, speech_model, budget)
     try:
-        reply = asyncio.run(call(provider, api_key, model, SYSTEM_PROMPT, user_prompt))
+        with _build_lock:
+            reply = asyncio.run(call(provider, api_key, model, SYSTEM_PROMPT, user_prompt))
     except Exception as exc:
         raise ValueError(f"{type(exc).__name__}: {exc}") from exc
     return parse_reply(reply)
