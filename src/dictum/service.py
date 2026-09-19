@@ -395,7 +395,7 @@ class Dictum:
         """Validate and save the JSON form. Raises ValueError with the reason, and
         DictionaryChanged when `expected_version` is given and the file moved on since:
         an edit made on a stale copy would silently drop what was added meanwhile."""
-        parsed = dictionary_file.parse(text)
+        parsed = dictionary_file.parse(text, self.default_model())
         with self._dictionary_lock:
             if expected_version is not None and expected_version != self.dictionary_version():
                 raise DictionaryChanged(

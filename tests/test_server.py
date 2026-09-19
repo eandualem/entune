@@ -212,6 +212,7 @@ def test_a_single_learned_list_moves_under_the_default_model_once(
     client: TestClient, tmp_path: Path
 ) -> None:
     legacy = '{"pinned": {"terms": ["Dictum"]}, "learned": {"terms": ["Soniox"]}}'
+    assert client.put("/api/dictionary", content=legacy).status_code == 400
     (tmp_path / "dictionary.json").write_text(legacy, encoding="utf-8")
     unusable = client.get("/api/dictionary")
     assert unusable.status_code == 500 and "set a default model" in unusable.text
@@ -220,6 +221,8 @@ def test_a_single_learned_list_moves_under_the_default_model_once(
     assert moved["learned"] == {"stub/good": {"terms": ["Soniox"], "replacements": {}}}
     assert moved["pinned"]["terms"] == ["Dictum"]
     assert '"stub/good"' in (tmp_path / "dictionary.json").read_text(encoding="utf-8")
+    imported = client.put("/api/dictionary", content=legacy)
+    assert imported.status_code == 200 and imported.json() == moved
 
 
 def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:

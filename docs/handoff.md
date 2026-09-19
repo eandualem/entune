@@ -4,6 +4,30 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-19: release review reaches its stopping point
+
+The second native Codex pass used GPT-6 Astra at `high`, reviewing `21f01d9`
+against `d3d45a8`. It finished in 4m30s with two P2 and one P3 findings,
+all valid. Fixed explicit JSON repair after malformed dictionary loads
+(the first pass's guard was too broad), legacy imports ignoring the saved
+default model, and relative dates on retained history cards going stale
+at midnight. Table edits still require a loaded revision; replacing an
+unreadable file from the JSON editor requires confirmation.
+
+Verified 161 tests, lint/format, strict types and JS syntax. Scratch browser
+checks cover cancelled/accepted repair, legacy import and conditional writes;
+a simulated day rollover updated both recording and retry timestamps on a
+304 without replacing cards, pausing audio or losing retry/expansion state.
+The full-review sequence stops after this small fix batch: no high-severity
+findings in round two, and no repeat merely to obtain zero findings. Both
+passes' token attribution is unavailable; elapsed times come from the native
+processes. Detailed triage, verification and final delivery references are
+in `.backbone/reviews/20260919T130753Z-release-r2-high/` (`delivery.json`).
+
+Next after release delivery: Elias can quit the tray app and reopen the
+updated installation to test. Remaining priorities are the public-release
+documentation/PyPI work and Windows; CI remains blocked on billing (#39).
+
 ## 2026-09-19: release review, first Codex pass
 
 Elias requested Backbone's native `develop` → `main` review sequence and

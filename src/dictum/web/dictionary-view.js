@@ -33,15 +33,17 @@ export function createDictionary({ getModel, getSettings }) {
 
   // Every edit sends the whole document, named with the version it was made on. The
   // server refuses a save on a stale version (an agent or a hand edit got there first)
-  // and the fresh document is shown instead.
-  async function saveDictionary(next) {
-    if (!dictVersion) {
+  // and the fresh document is shown instead. Explicit JSON repair can replace an
+  // unreadable document after confirmation; table edits always need a loaded version.
+  async function saveDictionary(next, fromEditor = false) {
+    if (!dictVersion && !fromEditor) {
       await loadDictionary();
       if (dictVersion) flash(el("dictionary-status"), "Dictionary reloaded; please redo that change.", "err");
       return false;
     }
     const headers = { "content-type": "application/json" };
-    headers["if-match"] = dictVersion;
+    if (dictVersion) headers["if-match"] = dictVersion;
+    else if (!confirm("The dictionary could not be loaded. Replace it with this JSON?")) return false;
     const res = await fetch("/api/dictionary", { method: "PUT", headers, body: JSON.stringify(next) });
     const text = await res.text();
     if (res.status === 409) {
@@ -214,7 +216,7 @@ export function createDictionary({ getModel, getSettings }) {
   el("save-dictionary").addEventListener("click", async () => {
     let parsed;
     try { parsed = JSON.parse(dictionaryBox.value); } catch (err) { flash(el("dictionary-status"), `Not valid JSON: ${err.message}`, "err"); return; }
-    if (await saveDictionary(parsed)) flash(el("dictionary-status"), "Saved", "ok");
+    if (await saveDictionary(parsed, true)) flash(el("dictionary-status"), "Saved", "ok");
   });
   function showHelp(open) {
     el("help-panel").hidden = !open;
