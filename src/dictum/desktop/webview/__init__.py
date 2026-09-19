@@ -21,8 +21,13 @@ from dictum.desktop.macos.hotkeys import HotkeyListener as _MacHotkeys
 from dictum.desktop.platform import Actions, Hotkeys, Permissions, State, Tray, Window
 
 ASSETS = Path(__file__).resolve().parents[2] / "assets"
-TITLES: dict[State, str] = {"idle": "", "recording": "● rec", "busy": "…"}
-INDICATOR: dict[State, str] = {"idle": "", "recording": "Recording", "busy": "Transcribing…"}
+TITLES: dict[State, str] = {"idle": "", "recording": "● rec", "quiet": "● rec", "busy": "…"}
+INDICATOR: dict[State, str] = {
+    "idle": "",
+    "recording": "Recording",
+    "quiet": "Recording · mic very quiet",
+    "busy": "Transcribing…",
+}
 WIDTH, HEIGHT = 880, 640
 
 
