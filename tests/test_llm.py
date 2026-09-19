@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
-from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 
 from dictum import llm
@@ -104,29 +104,34 @@ def test_catalog_lists_the_strongest_model_first() -> None:
 def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from assistant_runtime.services.llm import interface
-
     seen: list[str] = []
+    original_client = httpx.AsyncClient
 
-    class Service:
-        def __init__(self, **kwargs: Any) -> None:
-            pass
+    async def respond(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.02)
+        seen.append(request.headers["authorization"])
+        assert str(request.url) == "https://api.openai.com/v1/responses"
+        assert os.environ["OPENAI_API_KEY"] == "original"
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": '{"terms": []}'}],
+                    }
+                ],
+            },
+        )
 
-        async def start(self) -> None:
-            pass
+    def client(**kwargs: Any) -> httpx.AsyncClient:
+        assert kwargs["trust_env"] is False
+        return original_client(transport=httpx.MockTransport(respond), **kwargs)
 
-        async def execute_llm_call(self, **kwargs: Any) -> SimpleNamespace:
-            key = os.environ["OPENAI_API_KEY"]
-            await asyncio.sleep(0.02)
-            assert os.environ["OPENAI_API_KEY"] == key
-            seen.append(key)
-            return SimpleNamespace(content='{"terms": []}')
-
-        async def stop(self) -> None:
-            pass
-
-    monkeypatch.setattr(interface, "LlmService", Service)
+    monkeypatch.setattr(httpx, "AsyncClient", client)
     monkeypatch.setenv("OPENAI_API_KEY", "original")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://elsewhere.invalid")
 
     def build(key: str) -> Entries:
         return llm.propose_learned(
@@ -135,35 +140,113 @@ def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
 
     with ThreadPoolExecutor(3) as pool:
         assert list(pool.map(build, ["one", "two", "three"])) == [Entries()] * 3
-    assert sorted(seen) == ["one", "three", "two"]
+    assert sorted(seen) == ["Bearer one", "Bearer three", "Bearer two"]
     assert os.environ["OPENAI_API_KEY"] == "original"
+    assert os.environ["OPENAI_BASE_URL"] == "https://elsewhere.invalid"
 
 
-@pytest.mark.parametrize("fail_at", ["start", "stop"])
-def test_dictionary_service_failures_restore_the_environment(
-    monkeypatch: pytest.MonkeyPatch, fail_at: str
+@pytest.mark.parametrize(
+    "model",
+    [
+        "anthropic:claude-fable-5-1",
+        "anthropic:claude-haiku-4-5",
+        "openai:gpt-6-astra",
+    ],
+)
+def test_direct_request_keeps_prompts_model_and_reasoning(
+    monkeypatch: pytest.MonkeyPatch, model: str
 ) -> None:
-    from assistant_runtime.services.llm import interface
+    import json
 
-    class Service:
-        def __init__(self, **kwargs: Any) -> None:
-            pass
+    original_client = httpx.AsyncClient
+    provider, name = model.split(":")
 
-        async def start(self) -> None:
-            if fail_at == "start":
-                raise RuntimeError("startup failed")
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["model"] == name
+        if provider == "anthropic":
+            assert str(request.url) == "https://api.anthropic.com/v1/messages"
+            assert request.headers["x-api-key"] == "saved"
+            assert request.headers["anthropic-version"] == "2023-06-01"
+            assert body["system"] == "system"
+            assert body["messages"] == [{"role": "user", "content": "user"}]
+            if "haiku" in model:
+                assert body["thinking"] == {"type": "enabled", "budget_tokens": 32000}
+                assert body["max_tokens"] == 40192
+            else:
+                assert body["thinking"] == {"type": "adaptive"}
+                assert body["output_config"] == {"effort": "high"}
+            return httpx.Response(
+                200,
+                json={
+                    "stop_reason": "end_turn",
+                    "content": [
+                        {"type": "thinking", "thinking": "private"},
+                        {"type": "text", "text": "reply"},
+                    ],
+                },
+            )
+        assert body["instructions"] == "system" and body["input"] == "user"
+        assert body["reasoning"] == {"effort": "high"} and body["store"] is False
+        assert body["max_output_tokens"] == 8192
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output": [
+                    {"type": "reasoning", "summary": []},
+                    {"type": "message", "content": [{"type": "output_text", "text": "reply"}]},
+                ],
+            },
+        )
 
-        async def execute_llm_call(self, **kwargs: Any) -> SimpleNamespace:
-            return SimpleNamespace(content='{"terms": []}')
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: original_client(
+            transport=httpx.MockTransport(respond),
+            **kw,
+        ),
+    )
+    assert asyncio.run(llm.call_model(provider, "saved", model, "system", "user")) == "reply"
 
-        async def stop(self) -> None:
-            if fail_at == "stop":
-                raise RuntimeError("shutdown failed")
 
-    monkeypatch.setattr(interface, "LlmService", Service)
-    monkeypatch.setenv("OPENAI_API_KEY", "original")
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    with pytest.raises(RuntimeError, match="failed"):
-        asyncio.run(llm.call_assistant_runtime("openai", "temporary", "openai:gpt-6-astra", "", ""))
-    assert os.environ["OPENAI_API_KEY"] == "original"
-    assert "OPENAI_BASE_URL" not in os.environ
+@pytest.mark.parametrize(
+    "status,body,expected",
+    [
+        (401, '{"error": {"message": "invalid key"}}', "invalid key"),
+        (
+            200,
+            '{"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}',
+            "max_output_tokens",
+        ),
+        (
+            200,
+            '{"status": "completed", "output": [{"type": "message", "content": '
+            '[{"type": "refusal", "refusal": "Cannot comply"}]}]}',
+            "Cannot comply",
+        ),
+    ],
+)
+def test_direct_errors_and_unfinished_replies_are_visible_without_retry(
+    monkeypatch: pytest.MonkeyPatch, status: int, body: str, expected: str
+) -> None:
+    original_client = httpx.AsyncClient
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(status, text=body)
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: original_client(
+            transport=httpx.MockTransport(respond),
+            **kw,
+        ),
+    )
+    with pytest.raises(ValueError, match=expected):
+        asyncio.run(llm.call_model("openai", "key", "openai:gpt-6-astra", "", ""))
+    assert calls == 1

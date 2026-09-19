@@ -4,6 +4,50 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-19: independent deep review and internal cleanup (issue #37)
+
+Elias confirmed the installed performance fix is “very smooth” and requested
+further subagent reviews, with freedom to improve the private app's
+readability, maintainability, extensibility, security and performance.
+Three independent reviewers audited structure/dependencies, security, and
+performance/concurrency, then cross-reviewed the changes. Fourteen distinct
+findings were addressed: two potential data-loss failures, eleven medium
+correctness/maintenance findings, and one dictionary normalization issue.
+Evidence and individual dispositions live under the ignored
+`.backbone/reviews/deep-20260919/`.
+
+The dictionary now calls Anthropic/OpenAI directly with httpx, preserving
+the suggested/custom model choices and reasoning settings. Removing
+assistant-runtime removed 74 installed packages and its environment/key
+mutation and packaging workarounds. The window now has focused settings,
+dictionary, recording and card modules; app.js is 295 lines, down from
+1,257. Historical data migrations remain because the owner's data uses them.
+
+Fixed native Quit bypassing recording persistence, partial Parakeet replies
+escaping the timeout, failed fast uploads retaining audio, invalid resumed
+downloads becoming ready models, browser shortcut capture getting stuck,
+and failed microphone setup leaking the stream. Installation now prepares
+and signs before replacing the app, with restoration on promotion failure.
+Uploaded content is served safely, streamed request limits count actual
+bytes, malformed settings validate before writes, and equivalent dictionary
+replacements share the existing normalization rule.
+
+Verified after removing the unused dependencies: 160 pytest tests, ruff
+lint/format and strict mypy. Browser checks cover settings, dictionary
+add/build/accept/pin/remove, capture cancellation, microphone setup failure
+and retry, recording/upload, history paging/playback/card retention, and
+no console errors. The frozen app was tested with synthetic data and a
+dummy dictionary key; the direct provider authentication error is visible.
+No paid dictionary build or real desktop dictation was performed. Its size
+fell from 111.5 to 58.5 MiB on this Mac. The packaged local/cloud switching
+probe retains the previous no-extra-audio-request behavior.
+
+Delivery is into `develop`, followed by rebuilding and installing the
+reviewed app. Elias should quit the tray app and reopen to use this build;
+his next real dictations remain the native acceptance check. CI remains
+blocked on GitHub billing (#39); no new review blocker remains. Next:
+the owner's documentation/PyPI/Windows priorities, or findings from his use.
+
 ## 2026-09-19: performance build installed
 
 Elias explicitly approved building and installing the merged performance
