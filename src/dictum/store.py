@@ -217,13 +217,43 @@ class Store:
             ).fetchone()
             return None if row is None else self._recording(row)
 
-    def list_recordings(self) -> list[Recording]:
-        """Every recording, newest first, each with its attempts newest first."""
+    def history_version(self) -> str:
+        """An inexpensive revision for the append-only recording and attempt history."""
         with self._lock:
-            rows = self._db.execute(
-                "SELECT id, created_at, file, mime FROM recordings ORDER BY id DESC"
+            recording = self._db.execute("SELECT MAX(id) FROM recordings").fetchone()[0] or 0
+            attempt = self._db.execute("SELECT MAX(id) FROM transcriptions").fetchone()[0] or 0
+        return f"{recording}-{attempt}"
+
+    def list_recordings(
+        self, limit: int | None = None, before: int | None = None
+    ) -> list[Recording]:
+        """Newest first, optionally a page older than `before`, with all its attempts.
+
+        Two queries for the whole page, instead of one extra query per recording.
+        The unpaged call remains available to callers that need the complete history.
+        """
+        query = "SELECT id, created_at, file, mime FROM recordings"
+        params: list[int] = []
+        if before is not None:
+            query += " WHERE id < ?"
+            params.append(before)
+        query += " ORDER BY id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self._lock:
+            rows = self._db.execute(query, params).fetchall()
+            if not rows:
+                return []
+            attempts = self._db.execute(
+                f"SELECT * FROM transcriptions WHERE recording_id IN (SELECT id FROM ({query}))"
+                " ORDER BY id DESC",
+                params,
             ).fetchall()
-            return [self._recording(row) for row in rows]
+        grouped: dict[int, list[Transcription]] = {}
+        for attempt in attempts:
+            grouped.setdefault(attempt["recording_id"], []).append(_transcription(attempt))
+        return [Recording(**dict(row), transcriptions=grouped.get(row["id"], [])) for row in rows]
 
     def recent_transcripts(self, provider: str, model: str, limit: int) -> list[str]:
         """That model's text from its latest successful transcriptions, newest first, raw

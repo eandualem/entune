@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 
 from dictum.providers.base import Clip, Failure, Transcript
 from dictum.providers.local import CATALOGUE, Local, _prompt, pcm16k
@@ -141,3 +142,47 @@ def test_unload_frees_every_model_but_the_kept_one(tmp_path: Path) -> None:
     local.unload()
     local.transcribe(clip, "small.en", "")
     assert len(loaded) == 4
+
+
+def test_empty_unload_does_not_collect_the_whole_application(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import gc
+
+    calls: list[bool] = []
+    monkeypatch.setattr(gc, "collect", lambda: calls.append(True))
+    Local(tmp_path).unload()
+    assert calls == []
+
+
+def test_rapid_selection_changes_coalesce_to_the_latest_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from dictum.service import Dictum
+    from dictum.store import Store
+
+    for name in ("base.en", "small.en"):
+        (tmp_path / f"ggml-{name}.bin").write_bytes(b"model")
+    local = Local(tmp_path)
+    app = Dictum(Store(tmp_path), [local])
+    entered, release = threading.Event(), threading.Event()
+    warmed: list[str] = []
+
+    def warm(name: str) -> None:
+        warmed.append(name)
+        if name == "base.en":
+            entered.set()
+            assert release.wait(3)
+
+    monkeypatch.setattr(local, "warm", warm)
+    try:
+        app.set_default_model("local/base.en")
+        assert entered.wait(1)
+        for _ in range(10):
+            app.set_default_model("local/small.en")
+    finally:
+        release.set()
+    wait_until(lambda: not app._warming)
+    assert warmed == ["base.en", "small.en"]
