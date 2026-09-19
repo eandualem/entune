@@ -44,6 +44,7 @@ class DictumApp:
         self._requested_permissions: set[str] = set()
         self._upload: Upload | None = None  # fast mode's stream for the current recording
         self._recording = False
+        self._quiet_notified = False
         self._pending = 0  # transcriptions still running; the tray state is derived
         self._captures: queue.Queue[tuple[Capture, Upload | None]] = queue.Queue()
         self._jobs: queue.Queue[tuple[Recording, float, Upload | None]] = queue.Queue()
@@ -208,6 +209,8 @@ class DictumApp:
 
     def _recheck_permission(self) -> None:
         """Start listening as soon as Input Monitoring is granted, without a restart."""
+        if self._recording:
+            self._refresh_state()
         shortcuts = self.dictum.shortcuts()
         permissions = self.platform.permissions
         self.dictum.report_status(
@@ -239,7 +242,8 @@ class DictumApp:
                 self._upload.abort()
                 self._upload = None
             return
-        self.dictum.report_status(lastRecordingStarted=time.time())
+        self.dictum.report_status(lastRecordingStarted=time.time(), lastError=None)
+        self._quiet_notified = False
         self._recording = True
         self._later(self._refresh_state)
 
@@ -307,7 +311,15 @@ class DictumApp:
         """The tray and the pill follow what is really going on: a recording in progress
         beats a transcription still running, which beats idle."""
         if self._recording:
-            self.platform.tray.set_state("recording")
+            quiet = self.recorder.quiet
+            self.platform.tray.set_state("quiet" if quiet else "recording")
+            if quiet and not self._quiet_notified:
+                self._quiet_notified = True
+                self.platform.actions.notify(
+                    "Dictum: microphone very quiet",
+                    "Almost no sound is reaching Dictum. Check your microphone in System "
+                    "Settings → Sound → Input. Recording continues.",
+                )
         elif self._pending > 0:
             self.platform.tray.set_state("busy")
         else:
