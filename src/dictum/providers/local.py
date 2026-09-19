@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import gc
 import io
+import re
 import shutil
 import subprocess
 import tempfile
@@ -315,32 +316,50 @@ class Download:
     def _fetch(self, url: str, target: Path) -> bool:
         part = target.with_name(target.name + ".part")
         have = part.stat().st_size if part.exists() else 0
-        headers = {"Range": f"bytes={have}-"} if have else {}
+        headers = {"Accept-Encoding": "identity"}
+        if have:
+            headers["Range"] = f"bytes={have}-"
         try:
-            with (
-                self._client.stream("GET", url, headers=headers) as response,
-                part.open("ab" if have else "wb") as out,
-            ):
-                if response.status_code == 416:  # the part is already complete
-                    pass
-                elif response.status_code == 200 and have:
-                    out.seek(0)
-                    out.truncate()
-                    self.received -= have
-                    for chunk in response.iter_bytes():
-                        out.write(chunk)
-                        self.received += len(chunk)
+            with self._client.stream("GET", url, headers=headers) as response:
+                if response.status_code == 416:
+                    complete = re.fullmatch(
+                        r"bytes \*/(\d+)", response.headers.get("content-range", "")
+                    )
+                    if complete is None or have == 0 or have != int(complete[1]):
+                        raise ValueError(
+                            "The server refused the range, but the partial file is not complete"
+                        )
                 elif response.status_code in (200, 206):
-                    for chunk in response.iter_bytes():
-                        out.write(chunk)
-                        self.received += len(chunk)
+                    expected = None
+                    if response.status_code == 206:
+                        interval = re.fullmatch(
+                            r"bytes (\d+)-(\d+)/(\d+)", response.headers.get("content-range", "")
+                        )
+                        if (
+                            interval is None
+                            or int(interval[1]) != have
+                            or int(interval[2]) != int(interval[3]) - 1
+                        ):
+                            raise ValueError("The server returned a different range than requested")
+                        expected = int(interval[3])
+                    else:
+                        self.received -= have
+                        have = 0
+                        length = response.headers.get("content-length")
+                        expected = int(length) if length is not None else None
+                    with part.open("ab" if have else "wb") as out:
+                        for chunk in response.iter_bytes():
+                            out.write(chunk)
+                            self.received += len(chunk)
+                    if expected is not None and part.stat().st_size != expected:
+                        raise ValueError("The download ended before the complete file arrived")
                 else:
                     self.error = f"HTTP {response.status_code} from {url}"
                     return False
-        except (httpx.HTTPError, OSError) as exc:
+            part.replace(target)
+        except (httpx.HTTPError, OSError, ValueError) as exc:
             self.error = f"{type(exc).__name__}: {exc}"
             return False
-        part.replace(target)
         return True
 
 

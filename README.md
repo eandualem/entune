@@ -215,6 +215,11 @@ No telemetry, no accounts, no cloud storage.
 
 ## Development
 
+The app uses Starlette and SQLite, plain browser JavaScript modules without
+a build step, and httpx for provider calls. Dictionary builds call Anthropic
+or OpenAI directly; the suggested model list is kept in `llm.py`, with a
+custom model field in Settings.
+
 ```sh
 uv sync                 # environment with dev tools
 uv run pytest           # tests
