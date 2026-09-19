@@ -30,18 +30,19 @@ ALIASES = {
 
 @dataclass(frozen=True)
 class Shortcuts:
-    """What is configured. Either may be None; both may be set."""
+    """The recording shortcuts and the key combination that discards a recording."""
 
     hold: tuple[str, ...] | None = None
     toggle: tuple[str, ...] | None = None
+    cancel: tuple[str, ...] | None = ("fn", "esc")
 
     def __bool__(self) -> bool:
         return self.hold is not None or self.toggle is not None
 
     @property
     def uses_fn(self) -> bool:
-        """Whether fn is in either shortcut; the listener then owns that key."""
-        return "fn" in {*(self.hold or ()), *(self.toggle or ())}
+        """Whether fn is in any shortcut; the listener then owns that key."""
+        return "fn" in {*(self.hold or ()), *(self.toggle or ()), *(self.cancel or ())}
 
     def describe(self) -> str:
         parts = []
@@ -88,14 +89,22 @@ def parse_toggle(text: str) -> tuple[str, ...]:
     keys = parse_keys(text)
     if len(keys) < 2:
         raise ValueError("The toggle shortcut is two or more keys, for example cmd+shift+space")
-    if {"fn", "esc"} <= set(keys):
-        raise ValueError("fn+esc is reserved for cancelling dictation")
     return keys
 
 
-def parse(hold: str | None, toggle: str | None) -> Shortcuts:
-    """Build a Shortcuts from the two text fields; blank means not set."""
-    return Shortcuts(
+def parse(hold: str | None, toggle: str | None, cancel: str | None = "fn+esc") -> Shortcuts:
+    """Build shortcuts from the text fields; blank means not set."""
+    parsed = Shortcuts(
         hold=parse_hold(hold) if hold and hold.strip() else None,
         toggle=parse_toggle(toggle) if toggle and toggle.strip() else None,
+        cancel=parse_keys(cancel) if cancel and cancel.strip() else None,
     )
+    if parsed.cancel:
+        cancel_keys = set(parsed.cancel)
+        if parsed.hold and cancel_keys == set(parsed.hold):
+            raise ValueError("Cancel dictation and Hold-to-talk must use different keys")
+        if parsed.toggle and (
+            cancel_keys <= set(parsed.toggle) or set(parsed.toggle) <= cancel_keys
+        ):
+            raise ValueError("Cancel dictation and Hands-free must use distinct combinations")
+    return parsed

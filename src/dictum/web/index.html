@@ -19,13 +19,13 @@
     </script>
   </head>
   <body>
-    <header class="toolbar">
+    <header class="toolbar pywebview-drag-region">
       <div class="segmented" role="tablist" aria-label="View">
         <button type="button" role="tab" id="tab-history" aria-selected="true" aria-controls="view-history">History</button>
         <button type="button" role="tab" id="tab-dictionary" aria-selected="false" aria-controls="view-dictionary">Dictionary</button>
         <button type="button" role="tab" id="tab-settings" aria-selected="false" aria-controls="view-settings">Settings</button>
       </div>
-      <div class="spacer"></div>
+      <div class="spacer pywebview-drag-region"></div>
       <span class="status" id="status" role="status"></span>
       <div class="perf">
         <div class="popover" id="metrics" hidden>
@@ -152,6 +152,25 @@
 
           <div class="settings-content">
             <div class="section" id="settings-general" data-active>
+              <section id="permissions" hidden aria-labelledby="permissions-title">
+                <h2 class="sec-label" id="permissions-title">Permissions</h2>
+                <div class="scard">
+                  <div class="scard-head"><div class="name strong" id="permissions-summary">Set up Dictum on this Mac</div><div class="caption" id="permissions-help">Allow these three permissions so you can dictate in any app. macOS asks for each one separately.</div></div>
+                  <div class="srow">
+                    <div><div class="name">Microphone</div><div class="caption">Record your voice when you start dictation.</div></div>
+                    <div class="field permission"><span class="caption" data-permission-status="microphone"></span><button type="button" class="btn" data-permission="microphone">Allow…</button></div>
+                  </div>
+                  <div class="srow">
+                    <div><div class="name">Input Monitoring</div><div class="caption">Use your shortcuts while another app has focus.</div></div>
+                    <div class="field permission"><span class="caption" data-permission-status="inputMonitoring"></span><button type="button" class="btn" data-permission="inputMonitoring">Allow…</button></div>
+                  </div>
+                  <div class="srow">
+                    <div><div class="name">Accessibility</div><div class="caption">Paste into the focused app and use the Fn key.</div></div>
+                    <div class="field permission"><span class="caption" data-permission-status="accessibility"></span><button type="button" class="btn" data-permission="accessibility">Allow…</button></div>
+                  </div>
+                  <div class="srow foot"><span class="caption" id="permissions-status" role="status"></span></div>
+                </div>
+              </section>
               <h2 class="sec-label">Shortcuts</h2>
               <div class="scard">
                 <div class="srow">
@@ -170,7 +189,14 @@
                     <button type="button" class="btn ghost clear" data-target="shortcut-toggle">Clear</button>
                   </div>
                 </div>
-                <div class="srow"><span class="name">Cancel dictation</span><div class="field"><kbd>fn+esc</kbd><div class="caption">Discard the active shortcut recording. Escape alone keeps recording.</div></div></div>
+                <div class="srow">
+                  <div><div class="name">Cancel dictation</div><div class="caption">Discard the active shortcut recording.</div></div>
+                  <div class="field shortcut">
+                    <kbd id="shortcut-cancel" data-empty="Not set"></kbd>
+                    <button type="button" class="btn capture" data-target="shortcut-cancel">Set…</button>
+                    <button type="button" class="btn ghost clear" data-target="shortcut-cancel">Clear</button>
+                  </div>
+                </div>
                 <div class="srow note" id="shortcut-status-row" hidden><span></span><span class="caption" id="shortcut-status" role="status"></span></div>
               </div>
 

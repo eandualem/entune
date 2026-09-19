@@ -87,6 +87,7 @@ class FakePermissions:
     def __init__(self, listen: bool = True, post: bool = True) -> None:
         self.listen, self.post = listen, post
         self.requested: list[str] = []
+        self.microphone = "granted"
 
     def can_listen(self) -> bool:
         return self.listen
@@ -99,6 +100,15 @@ class FakePermissions:
 
     def request_post(self) -> None:
         self.requested.append("post")
+
+    def microphone_status(self) -> str:
+        return self.microphone
+
+    def request_microphone(self) -> None:
+        self.requested.append("microphone")
+
+    def open_settings(self, permission: str) -> None:
+        self.requested.append(f"settings:{permission}")
 
 
 class FakePlatform:
@@ -278,7 +288,7 @@ def test_without_accessibility_the_transcript_is_copied_and_explained(tmp_path: 
     app, platform, dictum = make(tmp_path, post=False)
     dictum.set_key("stub", "k")
     dictum.set_default_model("stub/good")
-    dictum.set_shortcuts("alt_r", None)
+    dictum.set_shortcuts("alt_r", None, "ctrl+esc")  # no Fn: listening needs no active tap
     app.engine.press("alt_r")  # type: ignore[union-attr]
     app.engine.release("alt_r")  # type: ignore[union-attr]
     wait_for(lambda: bool(platform.actions.notices))
@@ -352,6 +362,32 @@ def test_the_window_opens_on_settings_only_until_a_shortcut_exists(
     action()  # the deferred first show
     assert platform.window.shown == ["" if configured else "#settings"]
     assert app.engine is not None if configured else app.engine is None
+
+
+def test_missing_permissions_reopen_setup_and_recover_without_recording(tmp_path: Path) -> None:
+    app, platform, dictum = make(tmp_path, listen=False, post=False)
+    platform.permissions.microphone = "not_requested"
+    dictum.set_shortcuts("fn", "cmd+fn")
+    app._server_answers = lambda: True
+    app._show_window_when_served(time.monotonic())
+    assert platform.window.shown == ["#settings"]
+    assert dictum.request_permission("microphone", False)
+    assert platform.permissions.requested == ["listen", "microphone"]
+    platform.permissions.microphone = "denied"
+    dictum.request_permission("microphone", False)
+    assert platform.permissions.requested[-1] == "settings:microphone"
+    platform.permissions.microphone = "granted"
+    platform.permissions.listen = platform.permissions.post = True
+    app._recheck_permission()
+    assert dictum.desktop_status()["permissions"] == {
+        "microphone": "granted",
+        "inputMonitoring": "granted",
+        "accessibility": "granted",
+    }
+    assert platform.hotkeys.running
+    assert not app._recording and not dictum.store.list_recordings()
+    app._show_window_when_served(time.monotonic())
+    assert platform.window.shown[-1] == ""
 
 
 def test_an_unrelated_change_keeps_the_engine_mid_recording(tmp_path: Path) -> None:

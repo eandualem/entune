@@ -4,10 +4,12 @@ from dictum import shortcuts
 from dictum.desktop.engine import ShortcutEngine
 
 
-def make(hold: str | None, toggle: str | None) -> tuple[ShortcutEngine, list[str]]:
+def make(
+    hold: str | None, toggle: str | None, cancel: str | None = "fn+esc"
+) -> tuple[ShortcutEngine, list[str]]:
     events: list[str] = []
     engine = ShortcutEngine(
-        shortcuts.parse(hold, toggle),
+        shortcuts.parse(hold, toggle, cancel),
         lambda: events.append("start"),
         lambda: events.append("stop"),
         lambda: events.append("cancel"),
@@ -207,3 +209,32 @@ def test_escape_alone_does_not_cancel_and_fn_escape_works_with_other_shortcuts()
     engine.release("fn")
     engine.release("esc")
     assert events == ["start", "cancel"] and not engine.recording
+
+
+def test_custom_cancel_sharing_the_hold_key_defers_stop_and_discards() -> None:
+    engine, events = make("alt_r", "cmd+d", "alt_r+esc")
+    engine.press("cmd")
+    engine.press("d")
+    engine.release("d")
+    engine.release("cmd")
+    engine.press("fn")
+    engine.press("esc")  # the previous default no longer cancels
+    engine.release("esc")
+    engine.release("fn")
+    assert events == ["start"]
+    engine.press("alt_r")
+    engine.press("esc")
+    engine.release("esc")
+    engine.release("alt_r")
+    assert events == ["start", "cancel"]
+
+
+def test_cleared_cancel_does_not_discard() -> None:
+    engine, events = make(None, "cmd+d", None)
+    engine.press("cmd")
+    engine.press("d")
+    engine.release("d")
+    engine.release("cmd")
+    engine.press("fn")
+    engine.press("esc")
+    assert events == ["start"] and engine.recording
