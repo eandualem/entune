@@ -40,7 +40,11 @@ def test_download_resumes_a_partial_file_and_remove_deletes_it(tmp_path: Path) -
         ranges.append(header)
         if header:
             start = int(header.removeprefix("bytes=").rstrip("-"))
-            return httpx.Response(206, content=body[start:])
+            return httpx.Response(
+                206,
+                headers={"Content-Range": f"bytes {start}-{len(body) - 1}/{len(body)}"},
+                content=body[start:],
+            )
         return httpx.Response(200, content=body)
 
     tmp_path.mkdir(exist_ok=True)
@@ -61,6 +65,42 @@ def test_a_failed_download_is_reported_in_the_catalogue(tmp_path: Path) -> None:
     wait_until(lambda: any(m.state == "error" for m in local.catalogue()))
     (failed,) = [m for m in local.catalogue() if m.state == "error"]
     assert failed.name == "small.en" and "HTTP 503" in (failed.error or "")
+
+
+@pytest.mark.parametrize(
+    ("status", "interval", "body"),
+    [(416, "bytes */2", b""), (206, "bytes 0-3/4", b"abcd"), (206, "bytes 3-6/7", b"x")],
+)
+def test_invalid_resumed_download_never_becomes_a_ready_model(
+    tmp_path: Path, status: int, interval: str, body: bytes
+) -> None:
+    from dictum.providers.local import Download
+
+    target = tmp_path / "model.bin"
+    part = target.with_suffix(".bin.part")
+    part.write_bytes(b"abc")
+    client = mock_client(
+        lambda request: httpx.Response(status, headers={"Content-Range": interval}, content=body)
+    )
+    download = Download(client, [("https://example.com/model", target)], 7)
+    download.start()
+    download._thread.join(2)
+    assert download.error and not target.exists()
+    assert part.exists()
+
+
+def test_range_refusal_accepts_only_a_verified_complete_part(tmp_path: Path) -> None:
+    from dictum.providers.local import Download
+
+    target = tmp_path / "model.bin"
+    target.with_suffix(".bin.part").write_bytes(b"abc")
+    client = mock_client(
+        lambda request: httpx.Response(416, headers={"Content-Range": "bytes */3"})
+    )
+    download = Download(client, [("https://example.com/model", target)], 3)
+    download.start()
+    download._thread.join(2)
+    assert download.error is None and target.read_bytes() == b"abc"
 
 
 class FakeEngine:

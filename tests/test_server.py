@@ -341,6 +341,75 @@ def test_settings_rejects_bad_json_with_400(client: TestClient) -> None:
     assert client.put("/api/settings", content="[]").status_code == 400
 
 
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"keys": "wrong"},
+        {"defaultModel": 123},
+        {"dictionaryModel": "invalid"},
+        {"fastMode": "false"},
+        {"shortcuts": {"hold": "cmd+space"}},
+    ],
+)
+def test_invalid_settings_do_not_partly_apply(
+    client: TestClient, invalid: dict[str, object]
+) -> None:
+    before = client.get("/api/settings").json()
+    response = client.put("/api/settings", json={"keys": {"stub": "new-key"}, **invalid})
+    assert response.status_code == 400
+    assert client.get("/api/settings").json() == before
+
+
+def test_streamed_requests_cannot_bypass_the_size_limit(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("dictum.server.MAX_UPLOAD_BYTES", 64)
+    body = b'{"terms":["' + b"a" * 100 + b'"]}'
+    response = client.post("/api/dictionary/corrections", content=iter([body[:50], body[50:]]))
+    assert response.status_code == 413
+    assert client.get("/api/dictionary").json()["pinned"]["terms"] == []
+    multipart = (
+        b'--clip\r\nContent-Disposition: form-data; name="audio"; filename="clip.webm"\r\n'
+        b"Content-Type: audio/webm\r\n\r\n" + WEBM_HEADER + b"\r\n--clip--\r\n"
+    )
+    response = client.post(
+        "/api/recordings",
+        content=iter([multipart[:50], multipart[50:]]),
+        headers={"content-type": "multipart/form-data; boundary=clip"},
+    )
+    assert response.status_code == 413
+    assert client.get("/api/recordings").json() == []
+
+
+def test_audio_response_cannot_execute_uploaded_or_legacy_html(
+    client: TestClient, tmp_path: Path, stub: StubProvider
+) -> None:
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    body = b"<html><script>document.title='not audio'</script></html>"
+    recording = client.post("/api/recordings", files={"audio": ("clip", body, "text/html")}).json()
+    assert recording["mime"] == "application/octet-stream"
+    store = Store(tmp_path / "legacy")
+    legacy = store.create_recording(body, "audio/wav")
+    with store._db:
+        store._db.execute("UPDATE recordings SET mime = 'text/html' WHERE id = ?", (legacy.id,))
+    legacy_client = TestClient(create_app(Dictum(store, [stub])), base_url="http://localhost")
+    for app_client, identifier in ((client, recording["id"]), (legacy_client, legacy.id)):
+        response = app_client.get(f"/api/recordings/{identifier}/audio")
+        assert response.content == body
+        assert response.headers["content-type"] == "application/octet-stream"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["content-security-policy"] == "sandbox"
+    store.close()
+
+
+def test_retry_rejects_malformed_request_bodies(client: TestClient) -> None:
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    recording = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
+    for body in ("{broken", "[]", "null"):
+        response = client.post(f"/api/recordings/{recording['id']}/transcriptions", content=body)
+        assert response.status_code == 400
+
+
 def test_requests_from_other_origins_are_refused(client: TestClient) -> None:
     foreign = client.post(
         "/api/recordings",

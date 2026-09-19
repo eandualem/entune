@@ -1,4 +1,4 @@
-"""Building the dictionary with a language model, through assistant-runtime.
+"""Building the dictionary with one direct call to the chosen language model.
 
 The model never touches a transcript on its way to the user. It reads one speech
 model's recent raw transcripts and the current dictionary and proposes the `learned`
@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
-import threading
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from typing import Any
+
+import httpx
 
 from dictum import dictionary as dictionary_file
 from dictum.dictionary import Dictionary, Entries, TermBudget
@@ -26,16 +26,9 @@ LLM_PROVIDERS: dict[str, tuple[str, str]] = {
     "anthropic": ("Anthropic", "anthropic:claude-fable-5-1"),
     "openai": ("OpenAI", "openai:gpt-6-astra"),
 }
-KEY_VARIABLES = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
-ENDPOINTS = {
-    "anthropic": {"ANTHROPIC_BASE_URL": "https://api.anthropic.com"},
-    "openai": {"OPENAI_BASE_URL": "https://api.openai.com/v1"},
-}
-_build_lock = threading.Lock()
-
-
-# assistant-runtime maps this budget to "high" reasoning effort on both providers.
+# Older Claude models use a token budget; current models use high reasoning effort.
 THINKING_BUDGET = 32_000
+MAX_OUTPUT_TOKENS = 8192
 MAX_TRANSCRIPT_CHARS = 40_000
 MAX_TRANSCRIPTS = 300
 
@@ -46,17 +39,28 @@ class ModelChoice:
     name: str
 
 
-def catalog(provider: str) -> list[ModelChoice]:
-    """The models assistant-runtime lists for a provider, the suggested default first."""
-    from assistant_runtime.model_catalog import MODEL_CATALOG
+_MODELS = {
+    "anthropic": (
+        ("claude-fable-5-1", "Claude Fable 5.1"),
+        ("claude-opus-5", "Claude Opus 5"),
+        ("claude-sonnet-5", "Claude Sonnet 5"),
+        ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+        ("claude-haiku-4-5", "Claude Haiku 4.5"),
+    ),
+    "openai": (
+        ("gpt-6-astra", "GPT-6 Astra"),
+        ("gpt-5.6-sol", "GPT-5.6 Sol"),
+        ("gpt-5.6-terra", "GPT-5.6 Terra"),
+        ("gpt-5.6-luna", "GPT-5.6 Luna"),
+        ("gpt-5.4", "GPT-5.4"),
+        ("gpt-5.4-pro", "GPT-5.4 Pro"),
+    ),
+}
 
-    default = LLM_PROVIDERS[provider][1]
-    choices = [
-        ModelChoice(m.id, m.name)
-        for m in MODEL_CATALOG
-        if m.provider == provider and "text" in m.capabilities  # not image or video models
-    ]
-    return sorted(choices, key=lambda c: c.id != default)
+
+def catalog(provider: str) -> list[ModelChoice]:
+    """Suggested text models, default first; Settings also accepts a custom model ID."""
+    return [ModelChoice(f"{provider}:{model}", name) for model, name in _MODELS[provider]]
 
 
 SYSTEM_PROMPT = """You maintain a personal dictation dictionary for one person.
@@ -143,49 +147,87 @@ Caller = Callable[[str, str, str, str, str], Coroutine[Any, Any, str]]
 """(provider, api_key, model, system_prompt, user_prompt) -> reply text."""
 
 
-async def call_assistant_runtime(
+async def call_model(
     provider: str, api_key: str, model: str, system_prompt: str, user_prompt: str
 ) -> str:
-    """One standalone call through assistant-runtime's LLM service, keys passed in code."""
-    from loguru import logger
+    """One request, explicit key and official endpoint, without environment discovery.
 
-    logger.disable("assistant_runtime")
-    from assistant_runtime.services.llm.config import LLMConfig
-    from assistant_runtime.services.llm.interface import LlmService
-
-    config = LLMConfig(
-        primary_model=model,
-        providers_json=json.dumps([{"provider": provider, "api_key": api_key}]),
-    )
-    # The runtime's SDK clients take their key and endpoint from the environment: the
-    # key is set to the saved one for the call (a key replaced in Settings, or one in the
-    # shell, would not be used otherwise) and the endpoint pinned to the provider's own
-    # (a base-URL variable in the shell would otherwise route the key and the user's
-    # transcripts elsewhere). The environment is process-wide, so one build at a time.
-    # propose_learned holds a thread lock: concurrent builds run in separate worker
-    # threads, each with its own event loop, so an asyncio.Lock cannot serialize them.
-    pinned = {KEY_VARIABLES[provider]: api_key, **ENDPOINTS[provider]}
-    previous = {name: os.environ.get(name) for name in pinned}
-    try:
-        os.environ.update(pinned)
-        service = LlmService(config=config)
-        try:
-            await service.start()
-            result = await service.execute_llm_call(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                model=model,
-                thinking_budget=THINKING_BUDGET,
+    No retries or fallback. Each call owns its client, so independent builds cannot
+    share credentials or require a process-wide lock.
+    """
+    prefix, sep, name = model.partition(":")
+    if not sep or prefix != provider or not name.strip():
+        raise ValueError("The dictionary model must belong to the selected provider")
+    payload: dict[str, object]
+    if provider == "anthropic":
+        url = "https://api.anthropic.com/v1/messages"
+        headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+        payload = {
+            "model": name,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+            "max_tokens": MAX_OUTPUT_TOKENS,
+        }
+        # Keep budget-based thinking for older/custom IDs supported before this
+        # adapter; newer Claude families use adaptive thinking and reject a budget.
+        adaptive = name.startswith(
+            (
+                "claude-fable-5",
+                "claude-mythos-5",
+                "claude-opus-5",
+                "claude-sonnet-5",
+                "claude-sonnet-4-6",
+                "claude-opus-4-6",
+                "claude-opus-4-7",
+                "claude-opus-4-8",
             )
-        finally:
-            await service.stop()
-    finally:
-        for name, value in previous.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
-    return str(result.content)
+        )
+        if adaptive:
+            payload.update(thinking={"type": "adaptive"}, output_config={"effort": "high"})
+        else:
+            payload.update(
+                thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
+                max_tokens=MAX_OUTPUT_TOKENS + THINKING_BUDGET,
+            )
+    elif provider == "openai":
+        url = "https://api.openai.com/v1/responses"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        payload = {
+            "model": name,
+            "instructions": system_prompt,
+            "input": user_prompt,
+            "max_output_tokens": MAX_OUTPUT_TOKENS,
+            "store": False,
+        }
+        if name.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
+            payload["reasoning"] = {"effort": "high"}
+    else:
+        raise ValueError(f"Unknown dictionary provider: {provider}")
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(1200, connect=5), trust_env=False) as client:
+        response = await client.post(url, headers=headers, json=payload)
+    if not response.is_success:
+        raise ValueError(f"HTTP {response.status_code}: {response.text}")
+    data = response.json()
+    if provider == "anthropic":
+        if data.get("stop_reason") != "end_turn":
+            raise ValueError(f"The model did not finish its reply: {response.text}")
+        blocks = data.get("content", [])
+        text_type = "text"
+    else:
+        if data.get("status") != "completed":
+            raise ValueError(f"The model did not finish its reply: {response.text}")
+        blocks = [
+            block
+            for item in data.get("output", [])
+            if item.get("type") == "message"
+            for block in item.get("content", [])
+        ]
+        text_type = "output_text"
+    text = "\n".join(block["text"] for block in blocks if block.get("type") == text_type)
+    if not text.strip():
+        raise ValueError(f"The model returned no text: {response.text}")
+    return text
 
 
 def propose_learned(
@@ -196,7 +238,7 @@ def propose_learned(
     transcripts: Sequence[str],
     speech_model: str,
     budget: TermBudget,
-    call: Caller = call_assistant_runtime,
+    call: Caller = call_model,
 ) -> Entries:
     """Ask the model for a new `learned` section for `speech_model`, from its transcripts.
 
@@ -204,8 +246,7 @@ def propose_learned(
     """
     user_prompt = build_user_prompt(current, transcripts, speech_model, budget)
     try:
-        with _build_lock:
-            reply = asyncio.run(call(provider, api_key, model, SYSTEM_PROMPT, user_prompt))
+        reply = asyncio.run(call(provider, api_key, model, SYSTEM_PROMPT, user_prompt))
     except Exception as exc:
         raise ValueError(f"{type(exc).__name__}: {exc}") from exc
     return parse_reply(reply)
