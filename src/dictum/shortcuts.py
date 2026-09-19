@@ -88,6 +88,8 @@ def parse_toggle(text: str) -> tuple[str, ...]:
     keys = parse_keys(text)
     if len(keys) < 2:
         raise ValueError("The toggle shortcut is two or more keys, for example cmd+shift+space")
+    if {"fn", "esc"} <= set(keys):
+        raise ValueError("fn+esc is reserved for cancelling dictation")
     return keys
 
 

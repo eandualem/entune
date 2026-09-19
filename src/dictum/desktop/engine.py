@@ -13,26 +13,43 @@ class ShortcutEngine:
     The hold key starts on press and stops on release. The toggle chord fires on
     the press that completes it, once per press, and flips between start and
     stop. Both can be configured at once and share one recording state: a press
-    of the hold key also stops a recording the chord started, so with hold=fn
-    and toggle=cmd+fn, fn is always the way to stop. Key auto-repeat sends
+    of the hold key also stops a recording the chord started. For fn this waits
+    until release, leaving time for fn+esc to cancel. Key auto-repeat sends
     repeated presses; both ignore them.
     """
 
     def __init__(
-        self, shortcuts: Shortcuts, on_start: Callable[[], None], on_stop: Callable[[], None]
+        self,
+        shortcuts: Shortcuts,
+        on_start: Callable[[], None],
+        on_stop: Callable[[], None],
+        on_cancel: Callable[[], None],
     ):
         self.shortcuts = shortcuts
         self._on_start = on_start
         self._on_stop = on_stop
+        self._on_cancel = on_cancel
         self.pressed: set[str] = set()
         self.recording = False
         self._held = False  # recording was started by the hold key
         self._chord_fired = False
+        self._fn_stop_pending = False
+        self._cancelled = False
 
     def press(self, key: str) -> None:
         if key in self.pressed:
             return  # the OS auto-repeats a held key; only a new physical press counts
         self.pressed.add(key)
+        if self._cancelled:
+            return  # no restart until the cancellation chord has been released
+        if key in ("fn", "esc") and {"fn", "esc"} <= self.pressed:
+            self._cancelled = True
+            if self.recording:
+                self.recording = self._held = self._fn_stop_pending = False
+                self._on_cancel()
+            return
+        if self._fn_stop_pending:
+            return
         hold, toggle = self.shortcuts.hold, self.shortcuts.toggle
         if toggle and key in toggle and set(toggle) <= self.pressed:
             if self._chord_fired:
@@ -53,7 +70,10 @@ class ShortcutEngine:
                 self._held = True
                 self._start()
             elif not self._held:
-                self._stop()  # a press of the hold key always stops a hands-free recording
+                if key == "fn":
+                    self._fn_stop_pending = True
+                    return
+                self._stop()
                 if toggle and key in toggle:
                     # With hold=fn and toggle=cmd+fn, a cmd that follows would complete
                     # the chord and start again; this press has done its job until released.
@@ -61,6 +81,13 @@ class ShortcutEngine:
 
     def release(self, key: str) -> None:
         self.pressed.discard(key)
+        if self._cancelled:
+            if not self.pressed.intersection(("fn", "esc")):
+                self._cancelled = False
+                self._chord_fired = False
+            return
+        if key == "fn" and self._fn_stop_pending:
+            self._stop()
         hold, toggle = self.shortcuts.hold, self.shortcuts.toggle
         if hold and key == hold[0] and self.recording and self._held:
             self._stop()
@@ -74,4 +101,5 @@ class ShortcutEngine:
     def _stop(self) -> None:
         self.recording = False
         self._held = False
+        self._fn_stop_pending = False
         self._on_stop()
