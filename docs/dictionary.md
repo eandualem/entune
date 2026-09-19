@@ -7,7 +7,7 @@
 {
   "pinned":  {"terms": ["Dictum"], "replacements": {"dictum app": "Dictum"}},
   "learned": {
-    "assemblyai/universal-3.5-pro": {"terms": ["Soniox"], "replacements": {}},
+    "assemblyai/universal-3-5-pro": {"terms": ["Soniox"], "replacements": {}},
     "local/small.en": {"terms": [], "replacements": {"sonic's": "Soniox"}}
   }
 }

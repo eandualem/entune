@@ -399,5 +399,5 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     button.addEventListener("click", async () => { el(button.dataset.target).textContent = ""; await saveShortcuts(); });
   }
 
-  return { load: loadSettings, save: saveSetting };
+  return { load: loadSettings, save: saveSetting, refreshCorrections: () => loadCorrections().catch((err) => onError(errorText(err))) };
 }

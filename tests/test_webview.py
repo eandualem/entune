@@ -7,6 +7,48 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_dragged_indicator_position_survives_a_status_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appkit = pytest.importorskip("AppKit", reason="macOS only")
+    from dictum.desktop.macos.indicator import ORIGIN_KEY, Indicator
+
+    saved: dict[str, list[float]] = {}
+    defaults = SimpleNamespace(setObject_forKey_=lambda value, key: saved.update({key: value}))
+    monkeypatch.setattr(
+        appkit, "NSUserDefaults", SimpleNamespace(standardUserDefaults=lambda: defaults)
+    )
+    frame = SimpleNamespace(origin=SimpleNamespace(x=16.0, y=16.0))
+
+    def move(rect: tuple[tuple[float, float], tuple[float, float]], display: bool) -> None:
+        frame.origin = SimpleNamespace(x=rect[0][0], y=rect[0][1])
+
+    pill = Indicator()
+    pill._panel = SimpleNamespace(
+        frame=lambda: frame,
+        setFrame_display_=move,
+        orderFrontRegardless=lambda: None,
+        orderOut_=lambda sender: None,
+    )
+    pill._label = SimpleNamespace(
+        setStringValue_=lambda text: None,
+        sizeToFit=lambda: None,
+        frame=lambda: SimpleNamespace(size=SimpleNamespace(width=90, height=14)),
+        setFrameOrigin_=lambda point: None,
+    )
+    pill._placed = (16.0, 16.0)
+    monkeypatch.setattr(pill, "_saved_origin", lambda: tuple(saved[ORIGIN_KEY]) if saved else None)
+    monkeypatch.setattr(pill, "_corner", lambda: (16.0, 16.0))
+    pill.show("Recording")
+    frame.origin = SimpleNamespace(x=350.0, y=450.0)
+    pill.show("Transcribing")
+    assert (frame.origin.x, frame.origin.y) == (350.0, 450.0)
+    pill.hide()
+    pill.show("Recording")
+    assert saved[ORIGIN_KEY] == [350.0, 450.0]
+    assert (frame.origin.x, frame.origin.y) == (350.0, 450.0)
+
+
 def test_terminate_runs_the_quit_path_and_allows_termination() -> None:
     pytest.importorskip("AppKit", reason="macOS only")
     from webview.platforms.cocoa import BrowserView
