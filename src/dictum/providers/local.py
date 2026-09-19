@@ -78,7 +78,7 @@ class Local:
         self._load_model = load_model or _load_whisper
         self._downloads: dict[str, Download] = {}
         self._models: dict[str, Any] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     # ---- the catalogue and its files
 
@@ -143,9 +143,11 @@ class Local:
 
     def unload(self, keep: str | None = None) -> None:
         with self._lock:
-            for name in [n for n in self._models if n != keep]:
+            removed = [n for n in self._models if n != keep]
+            for name in removed:
                 del self._models[name]  # the bindings free the context with the object
-        gc.collect()
+        if removed:
+            gc.collect()
 
     def _engine(self, name: str) -> Any:
         with self._lock:
@@ -171,11 +173,13 @@ class Local:
             audio = pcm16k(clip)
         except Exception as exc:
             return Failure(f"Could not decode the clip: {type(exc).__name__}: {exc}")
-        try:
-            engine = self._engine(model)
-        except Exception as exc:
-            return Failure(f"Could not load {model}: {type(exc).__name__}: {exc}")
         with self._lock:
+            # Loading, inference and unloading share one critical section. Otherwise
+            # switching models can unload the engine between loading and using it.
+            try:
+                engine = self._engine(model)
+            except Exception as exc:
+                return Failure(f"Could not load {model}: {type(exc).__name__}: {exc}")
             params: dict[str, Any] = {
                 "language": "en" if model.endswith(".en") else "auto",
                 "print_progress": False,

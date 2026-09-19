@@ -103,6 +103,8 @@ class Dictum:
         self._capture_listeners: list[Callable[[], None]] = []
         self._dictionary_lock = threading.RLock()  # dictionary() may save inside a write
         self._warm_lock = threading.Lock()
+        self._warming = False
+        self._warm_pending = False
         self._cancel_listeners: list[Callable[[], None]] = []
         self._show_window_listeners: list[Callable[[], None]] = []
         self._desktop_status: dict[str, object] = {"desktop": False}
@@ -242,25 +244,41 @@ class Dictum:
         """A local default model is loaded ahead of the first dictation (at start and
         whenever the default changes), and every other local model is unloaded: a model
         takes memory only while it is the selected one. Cloud models have nothing to warm."""
-        locals_ = [p for p in self.providers if isinstance(p, Downloadable)]
+        with self._warm_lock:
+            self._warm_pending = True
+            if self._warming:
+                return
+            self._warming = True
 
         def work() -> None:
-            # One reconciliation at a time, each reading the selection as it is now; a
-            # load waits for a provider's lock, which an inference may hold, so this
-            # never runs on a request. A selection changed during a load is caught by
-            # the check after it: the model just loaded is unloaded again.
-            with self._warm_lock:
-                default = self.default_model()
-                ref = self.resolve(default) if default else None
-                for provider in locals_:
-                    keep = ref.model if ref is not None and ref.provider is provider else None
-                    provider.unload(keep=keep)
-                if ref is not None and isinstance(ref.provider, Downloadable):
-                    ref.provider.warm(ref.model)
-                    if self.default_model() != ref.id:
-                        ref.provider.unload(keep=None)
+            while True:
+                with self._warm_lock:
+                    if not self._warm_pending:
+                        self._warming = False
+                        return
+                    self._warm_pending = False
+                try:
+                    self._warm_selected()
+                except Exception as exc:
+                    self.report_status(lastError=f"Could not load local model: {exc}")
 
         threading.Thread(target=work, daemon=True, name="dictum-warm").start()
+
+    def _warm_selected(self) -> None:
+        # One worker follows the latest selection; rapid changes coalesce instead of
+        # creating a queue of threads that repeatedly load/unload the same model.
+        default = self.default_model()
+        ref = self.resolve(default) if default else None
+        for provider in self.providers:
+            if isinstance(provider, Downloadable):
+                keep = ref.model if ref is not None and ref.provider is provider else None
+                provider.unload(keep=keep)
+        if self.default_model() != default:
+            return  # selection changed while waiting for an inference to release its lock
+        if ref is not None and isinstance(ref.provider, Downloadable):
+            ref.provider.warm(ref.model)
+            if self.default_model() != ref.id:
+                ref.provider.unload(keep=None)
 
     def _release_after_use(self, ref: ModelRef) -> None:
         """A local model used for a retry, not the selected one, is unloaded again."""
@@ -361,6 +379,11 @@ class Dictum:
 
     def dictionary_text(self) -> str:
         return dictionary_file.dumps(self.dictionary())
+
+    def dictionary_snapshot(self) -> tuple[str, str]:
+        """The editor's document and revision from the same locked read."""
+        with self._dictionary_lock:
+            return self.dictionary_text(), self.dictionary_version()
 
     def dictionary_version(self) -> str:
         """A hash of the file as it is on disk; a writer names the version it edited."""
