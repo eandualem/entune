@@ -80,6 +80,7 @@ class WebviewPlatform:
         assert isinstance(window, _Window)
         webview.settings["SHOW_DEFAULT_MENUS"] = True
         webview.settings["ALLOW_DOWNLOADS"] = True  # the history's download button, to ~/Downloads
+        webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
         if sys.platform == "darwin":
             _grant_media_capture()
             _terminate_through(tray._quit)
@@ -164,13 +165,61 @@ class _Window:
         self.url = url
         self._window: Any = None
         self._pending: str | None = None
+        self._toolbar_height = 52.0
 
     def create(self) -> None:
         self._window = webview.create_window(
-            "Dictum", self.url, width=WIDTH, height=HEIGHT, min_size=(560, 400), hidden=True
+            "Dictum",
+            self.url,
+            width=WIDTH,
+            height=HEIGHT,
+            min_size=(560, 400),
+            hidden=True,
+            frameless=sys.platform == "darwin",
+            easy_drag=False,
         )
         self._window.events.closing += self._on_closing
         self._window.events.shown += self._on_shown
+        if sys.platform == "darwin":
+            # Frameless fills the title area; restore and align the real Mac controls.
+            self._window.events.before_show += self._layout_titlebar
+            self._window.events.resized += self._resize_titlebar
+            self._window.expose(self.layout_titlebar)
+
+    def layout_titlebar(self, height: float) -> None:
+        """The web toolbar reports its height when text size or window width changes."""
+        self._toolbar_height = max(32.0, min(float(height), 160.0))
+        _on_ui_thread(self._layout_titlebar)
+
+    def _resize_titlebar(self, width: int, height: int) -> None:
+        _on_ui_thread(self._layout_titlebar)
+
+    def _layout_titlebar(self) -> None:
+        import AppKit
+
+        window = self._window.native
+        if window.styleMask() & AppKit.NSWindowStyleMaskFullScreen:
+            return  # AppKit owns the controls in the full-screen menu strip.
+        close = window.standardWindowButton_(AppKit.NSWindowCloseButton)
+        titlebar = close.superview()
+        container = titlebar.superview()
+        frame = container.frame()
+        frame.origin.y += frame.size.height - self._toolbar_height
+        frame.size.height = self._toolbar_height
+        container.setFrame_(frame)
+        titlebar.setFrameSize_((titlebar.frame().size.width, self._toolbar_height))
+        for index, kind in enumerate(
+            (
+                AppKit.NSWindowCloseButton,
+                AppKit.NSWindowMiniaturizeButton,
+                AppKit.NSWindowZoomButton,
+            )
+        ):
+            button = window.standardWindowButton_(kind)
+            button.setHidden_(False)
+            button.setFrameOrigin_(
+                (14 + index * 20, (self._toolbar_height - button.frame().size.height) / 2)
+            )
 
     def show(self, fragment: str = "") -> None:
         if self._window is None:
@@ -250,6 +299,15 @@ class _NoPermissions:
         pass
 
     def request_post(self) -> None:
+        pass
+
+    def microphone_status(self) -> str:
+        return "granted"
+
+    def request_microphone(self) -> None:
+        pass
+
+    def open_settings(self, permission: str) -> None:
         pass
 
 

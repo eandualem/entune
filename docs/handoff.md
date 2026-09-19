@@ -4,6 +4,41 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-19: editable cancellation, permission setup and integrated Mac toolbar
+
+Elias restarted the memory-fix build and reported normal memory use. Observed
+the restarted Dictum at **111 MiB physical footprint** and its selected Parakeet
+helper at **1.3 GiB**, down from 4.3 GiB before the fix. The remaining allocation
+is primarily the loaded model; this still does not prove the earlier freeze's cause.
+
+Cancel dictation now follows the Hold-to-talk and Hands-free settings pattern:
+description under the name, editable key combination, Set and Clear. Fn+Escape
+remains the default; a cleared value survives restarts. Conflicting combinations
+are rejected, and a failed save restores the displayed shortcut. Cancellation
+still applies to shortcut recording, as in the previous entry.
+
+On first launch, missing Microphone, Input Monitoring or Accessibility grants
+open Settings. General offers each permission with its reason, current state,
+and Allow/Open Settings action. Microphone access is requested without recording;
+the AVFoundation bridge is now a dependency. Existing OS grants remain the source
+of truth, including after denial or restart. The page polls only while General
+is visible and leaves unchanged permission rows alone.
+
+The Mac window fills its title area, with the real close/minimize/full-screen
+buttons beside the tabs. Empty toolbar space is draggable; controls track text
+size and window size. The model picker shrinks to keep Record visible.
+
+Verified 177 tests, ruff lint/format, strict mypy and JS syntax. Scratch browser
+checks cover cancel rebind/clear/reload, rejected-save restoration and simulated
+permission denial/recovery. A packaged native preview covers pointer-operated
+tabs, zoom/full-screen transitions, minimize/show, and 880/560-pixel layouts at
+the largest text size. OS permission grants were neither reset nor changed:
+actual first-run prompts on an ungranted installation remain an acceptance check.
+Evidence is under `.backbone/reviews/setup-controls-20260919/`.
+
+Delivery is into `develop`, followed by rebuilding/installing. Next: quit and
+reopen Dictum to use the update. CI remains blocked on billing (#39).
+
 ## 2026-09-19: memory retention and Fn+Escape cancellation
 
 Elias reported a whole-Mac freeze around 4 p.m., requiring a reboot, and a

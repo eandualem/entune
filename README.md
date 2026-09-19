@@ -49,8 +49,9 @@ shortcut and the automatic paste need the macOS menu-bar app for now.
 
 ## Permissions (macOS)
 
-The first time you set a shortcut, macOS asks for three permissions in
-**System Settings › Privacy & Security**:
+On first opening the installed app, Settings guides you through the three
+permissions Dictum needs. Click **Allow…** beside each; macOS may send you
+to **System Settings › Privacy & Security** to enable Dictum:
 
 | Permission | Why Dictum needs it |
 |---|---|
@@ -62,27 +63,26 @@ With `uvx dictum` they are granted to whatever runs it, your terminal or
 Python, and asked again if that changes. Building `Dictum.app` (below) gives
 macOS a stable app to attach them to.
 
-The order matters. Input Monitoring comes first: until it is granted Dictum
-cannot see the shortcut, so it never records and never asks for the
-microphone. A shortcut that uses fn also needs Accessibility before it
-listens, because owning that key takes an active event tap; Dictum asks.
-Grant them, quit Dictum from the menu bar and open it again, then
-hold the shortcut: the Microphone prompt appears on that first recording.
-There is no way to add an app to the Microphone list by hand.
+Microphone access can be requested from setup without making a recording.
+Each row updates when its permission is granted. If access was denied,
+**Open Settings…** takes you to the relevant pane. If macOS asks you to quit,
+reopen Dictum to continue; missing permissions bring setup back on launch.
+The Fn key needs Accessibility as well as Input Monitoring.
 
 ## Dictating
 
 Set a shortcut once in Settings; Dictum opens there on first run. Click
-"Record shortcut", press the key or combination, let go. Two kinds, and both
+"Set…", press the key or combination, let go. Two recording shortcuts, and both
 can be set:
 
 - **Hold to talk**: one key, for example `fn` or the right Option key.
   Record while held, release to stop.
 - **Hands-free**: a combination, for example `cmd+fn`. Press to start;
-  press again, or press the hold key, to stop (release it to stop when that key is `fn`).
+  press again, or press the hold key, to stop (on release if that key is also part of Cancel).
 
 **Cancel:** press `fn+esc` while dictating to discard the active recording,
-without saving, transcribing or pasting it. Escape alone does not cancel.
+without saving, transcribing or pasting it. Escape alone does not cancel by
+default. Change or clear this combination in Settings, beside **Cancel dictation**.
 
 While you record, a small "Recording" pill appears, in the bottom-left
 corner of the screen your pointer is on until you drag it somewhere else;

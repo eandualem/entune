@@ -297,6 +297,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     onShortcutsChanged(settings.shortcuts);
     el("shortcut-hold").textContent = settings.shortcuts.hold ?? "";
     el("shortcut-toggle").textContent = settings.shortcuts.toggle ?? "";
+    el("shortcut-cancel").textContent = settings.shortcuts.cancel ?? "";
     renderDictionaryModel();
     renderAgents();
     loadLocalModels().catch(() => {});
@@ -313,13 +314,10 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   async function saveShortcuts() {
     const hold = el("shortcut-hold").textContent.trim();
     const toggle = el("shortcut-toggle").textContent.trim();
-    try {
-      await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: {}, shortcuts: { hold, toggle } }) });
-      showShortcutStatus("");
-      onShortcutsChanged({ hold: hold || null, toggle: toggle || null });
-    } catch (err) {
-      showShortcutStatus(errorText(err));
-    }
+    const cancel = el("shortcut-cancel").textContent.trim();
+    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: {}, shortcuts: { hold, toggle, cancel } }) });
+    showShortcutStatus("");
+    onShortcutsChanged({ hold: hold || null, toggle: toggle || null, cancel: cancel || null });
   }
 
   async function captureShortcut(display, button) {
@@ -396,7 +394,13 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     button.addEventListener("click", () => captureShortcut(el(button.dataset.target), button));
   }
   for (const button of document.querySelectorAll("button.clear")) {
-    button.addEventListener("click", async () => { el(button.dataset.target).textContent = ""; await saveShortcuts(); });
+    button.addEventListener("click", async () => {
+      const display = el(button.dataset.target);
+      const previous = display.textContent;
+      display.textContent = "";
+      try { await saveShortcuts(); }
+      catch (err) { display.textContent = previous; showShortcutStatus(errorText(err)); }
+    });
   }
 
   return { load: loadSettings, save: saveSetting, refreshCorrections: () => loadCorrections().catch((err) => onError(errorText(err))) };

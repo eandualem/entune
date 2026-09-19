@@ -6,6 +6,7 @@ import { createHistory } from "./history.js";
 import { renderCard } from "./history-card.js";
 import { createDictionary } from "./dictionary-view.js";
 import { createSettings } from "./settings-view.js";
+import { createPermissions } from "./permissions-view.js";
 import { initRecording } from "./recording.js";
 import { ICON, api, el, errorText, fillModels, segmentedGroup } from "./ui.js";
 
@@ -22,6 +23,18 @@ let defaultModel = null; // {id, label, term_limit} from /api/models, or null
 let settings = null; // the last /api/settings answer
 let shortcuts = { hold: null, toggle: null };
 let recordingsCount = 0;
+
+// The Mac's real window controls share the toolbar. Browser windows keep their
+// own chrome; only the native bridge adds the space and follows text scaling.
+window.addEventListener("pywebviewready", () => {
+  if (!window.pywebview.api.layout_titlebar) return;
+  document.documentElement.classList.add("native-mac");
+  const tabs = document.querySelector(".toolbar > .segmented");
+  new ResizeObserver(() => {
+    const box = tabs.getBoundingClientRect();
+    window.pywebview.api.layout_titlebar((box.top + box.height / 2) * 2);
+  }).observe(document.querySelector(".toolbar"));
+});
 
 // ---- Preferences kept in this window: theme, text size, hints ----
 function applyTheme(theme) {
@@ -76,6 +89,7 @@ function showView(name) {
   views[name].scrollTop = 0;
   if (name === "history") loadHistory().catch((err) => { status.textContent = errorText(err); });
   if (name === "settings" && sections.agents.hasAttribute("data-active")) settingsView.refreshCorrections();
+  permissionsView.setActive(name === "settings" && sections.general.hasAttribute("data-active"));
 }
 function show(name) { selectTab(name); showView(name); }
 
@@ -84,6 +98,7 @@ const selectSection = segmentedGroup({ general: el("sec-general"), providers: el
 function showSection(name) {
   for (const key in sections) sections[key].toggleAttribute("data-active", key === name);
   if (name === "agents") settingsView.refreshCorrections();
+  permissionsView.setActive(name === "general" && views.settings.hasAttribute("data-active"));
 }
 function openSettings(section) { show("settings"); selectSection(section); showSection(section); }
 
@@ -276,6 +291,7 @@ historyList.addEventListener("click", async (e) => {
 
 // ---- Wire the views, then load the saved configuration ----
 const dictionary = createDictionary({ getModel: () => defaultModel, getSettings: () => settings });
+const permissionsView = createPermissions();
 const settingsView = createSettings({
   async onLoaded(next) {
     settings = next;
