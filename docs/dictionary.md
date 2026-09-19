@@ -1,32 +1,39 @@
 # The dictionary file
 
-`dictionary.json` in the data directory. Three sections, each with `terms`
-(a list of strings) and `replacements` (an object of heard → meant):
+`dictionary.json` in the data directory. Two sections; an entry list has
+`terms` (a list of strings) and `replacements` (an object of heard → meant):
 
 ```json
 {
   "pinned":  {"terms": ["Dictum"], "replacements": {"dictum app": "Dictum"}},
-  "agents":  {"terms": [], "replacements": {"cloud code": "Claude Code"}},
-  "learned": {"terms": ["AssemblyAI", "Soniox"], "replacements": {}}
+  "learned": {
+    "assemblyai/universal-3-5-pro": {"terms": ["Soniox"], "replacements": {}},
+    "local/small.en": {"terms": [], "replacements": {"sonic's": "Soniox"}}
+  }
 }
 ```
 
-- **pinned** is the user's: entered by hand, or pinned from a proposal. A
-  model never changes it.
-- **agents** holds corrections the user's agents sent after confirming a
-  mistranscription with the user (see [the agents' API](agents-api.md)). A
-  model never changes these either.
-- **learned** is what a model proposed from the history and the user
-  accepted; the next build replaces it.
+- **pinned** is the user's: entered by hand, pinned from a proposal, or
+  sent by the user's agents after confirming a mistranscription with the
+  user (see [the agents' API](agents-api.md)). A model never changes it,
+  and it applies to every speech model. There is no other list for all
+  models: what should apply everywhere is pinned.
+- **learned** is kept per speech model (`provider/model`, the id the API
+  uses): what a language model proposed from that model's own transcripts
+  and the user accepted. One model's mishearings are not another's, so a
+  local model's list never touches a cloud model's output. The next build
+  for that model replaces its list. The Dictionary tab shows and builds the
+  default model's list; the file holds them all.
 
-What is applied is the union of the three: `terms` go to the provider as
+What is applied to a transcript is pinned and the learned list of the
+model that produced it: `terms` go to the provider as
 its vocabulary hint (each adapter caps them at the provider's documented
 limit; the local models take them as the prompt), and `replacements` are
 applied to every transcript as whole words or phrases, matched regardless
 of case, longest phrase first, in one pass over the original text, so one
 rule's output is never rewritten by another; the replacement is inserted
-exactly as written. On a conflict, pinned wins over agents over learned,
-and the same phrase in a different capitalisation is the same rule. The
+exactly as written. On a conflict, pinned wins over learned, and the same
+phrase in a different capitalisation is the same rule. The
 provider's raw text is kept next to the corrected one, and no dictionary
 failure ever loses a transcript.
 
@@ -35,16 +42,30 @@ is written to a temporary file and renamed into place, and the page and
 the agents' corrections write under one lock, each naming the version they
 edited (the API's `ETag`), so nothing added meanwhile is dropped. The
 first release stored one flat `{"terms", "replacements"}` object; that form
-is still read, as pinned.
+is still read, as pinned. Two later forms are read and rewritten once: an
+`agents` section (corrections the user confirmed) is folded into pinned, and
+a `learned` section that was one list for every model moves under the
+default model, which the app needs set to read such a file (issue #30).
 
-Known limit (issue #30, the next piece of work): the build reads every
-transcript in history regardless of which model produced it, and the
-replacements apply to every provider. With local models in use, whose
-mishearings differ from the cloud models', the dictionary should learn and
-apply per provider.
+**Size is enforced, not advised** (issue #83). Every provider declares how
+many terms it takes as a vocabulary hint: AssemblyAI 100 on the endpoint
+dictation uses, Soniox 100, the local Whisper models 60 and Groq 50 (what
+fits Whisper's 224-token prompt), and Parakeet none, since its engine takes
+no hint. Pinned terms count against every model's limit, because every
+model carries them. A build is told how many terms still fit for that model
+and asked for the most valuable first; the proposal is cut to that number,
+so the file never holds terms a model cannot use, and for Parakeet the build
+asks for replacements only. When pinned terms alone fill a model's limit,
+the Dictionary tab says so: remove some to make room for new ones.
+Replacements have no limit; applying a thousand takes a fifth of a second,
+and the cost of a bad one is a wrong word, so the prompt keeps them few and
+multi-word.
 
-**Build from history** sends the recent raw transcripts (at most 300, or
-40,000 characters), the pinned and agents sections as approved, and the
-previous learned section to revise, to the model chosen in Settings, at high
-reasoning effort. The reply becomes a proposal shown as added and removed
-entries; nothing is saved until Accept.
+**Build from history** sends the default speech model's recent raw
+transcripts (at most 300, or 40,000 characters), the pinned section as
+approved and as evidence of who the user is and what they talk about, and
+that model's previous learned list to revise, to the language
+model chosen in Settings (with no choice, the suggested model of the first
+provider with a key), at high reasoning effort. The reply becomes a
+proposal for that speech model, shown as added and removed entries; nothing
+is saved until Accept.

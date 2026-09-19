@@ -9,15 +9,17 @@ from typing import Any
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from dictum import __version__
-from dictum.audio import extension_for
+from dictum import __version__, llm, shortcuts
+from dictum.audio import extension_for, safe_mime
 from dictum.service import DictionaryChanged, Dictum, NoDefaultModel, UnknownModel
 from dictum.store import Recording
 
@@ -27,7 +29,7 @@ WEB_DIR = Path(__file__).parent / "web"
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # an hour of 16-bit WAV at 24 kHz is about 170 MB
 
 
-class LocalOnly(BaseHTTPMiddleware):
+class LocalOnly:
     """Refuse state-changing requests that a web page from elsewhere could make.
 
     The server binds to localhost, but any page open in a browser on this machine can
@@ -36,22 +38,45 @@ class LocalOnly(BaseHTTPMiddleware):
     curl, the app's own window and the page it serves do not, or send our own origin.
     """
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope)
         host = request.headers.get("host", "")
         if not _loopback(host):
             # A DNS-rebinding page reaches a localhost server with its own Host header;
             # every route, reads included, is refused unless the host is this machine.
-            return _bad("Requests must be addressed to localhost", 403)
+            await _bad("Requests must be addressed to localhost", 403)(scope, receive, send)
+            return
         if request.method in ("POST", "PUT", "DELETE"):
             origin = request.headers.get("origin")
             if origin is not None and origin.lower() != f"http://{host}".lower():
                 # "null" (a sandboxed frame, a file: page) is refused too: the window
                 # is served over http and sends its real loopback origin.
-                return _bad("Requests from other origins are refused", 403)
+                await _bad("Requests from other origins are refused", 403)(scope, receive, send)
+                return
             length = request.headers.get("content-length")
             if length and length.isdigit() and int(length) > MAX_UPLOAD_BYTES:
-                return _bad("Request too large", 413)
-        return await call_next(request)
+                await _bad("Request too large", 413)(scope, receive, send)
+                return
+        received = 0
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > MAX_UPLOAD_BYTES:
+                    # Count the actual stream, including chunked uploads, before the
+                    # body reaches JSON parsing or multipart's temporary files.
+                    raise HTTPException(413, "Request too large")
+            return message
+
+        await self.app(scope, limited_receive, send)
 
 
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
@@ -88,15 +113,17 @@ def _shortcuts_json(app: Dictum) -> dict[str, str | None]:
     }
 
 
-def _text(value: object) -> str | None:
-    return value if isinstance(value, str) else None
+def _optional_text(value: object, name: str) -> str | None:
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"{name} must be a string or null")
+    return value
 
 
 def create_app(app: Dictum) -> Starlette:
     async def index(_: Request) -> Response:
         return FileResponse(WEB_DIR / "index.html")
 
-    async def get_settings(_: Request) -> Response:
+    def get_settings(_: Request) -> Response:
         return JSONResponse(
             {
                 "providers": [
@@ -129,19 +156,53 @@ def create_app(app: Dictum) -> Starlette:
     async def put_settings(request: Request) -> Response:
         try:
             body = await request.json()
+        except ValueError as exc:
+            return _bad(str(exc))
+        return await run_in_threadpool(update_settings, body)
+
+    def update_settings(body: object) -> Response:
+        try:
             if not isinstance(body, dict):
                 raise ValueError("Body must be a JSON object")
-            for provider_id, key in (body.get("keys") or {}).items():
-                app.set_key(provider_id, key if isinstance(key, str) else "")
+            keys = body.get("keys", {})
+            if not isinstance(keys, dict):
+                raise ValueError("keys must be an object")
+            for provider_id, key in keys.items():
+                if provider_id not in {p.id for p in app.providers} | llm.LLM_PROVIDERS.keys():
+                    raise ValueError(f"Unknown provider: {provider_id}")
+                if not isinstance(key, str) or not key.strip():
+                    raise ValueError(f"Empty or invalid key for {provider_id}")
+            default_model = _optional_text(body.get("defaultModel"), "defaultModel")
+            if default_model is not None and app.resolve(default_model) is None:
+                raise UnknownModel(default_model)
+            dictionary_model = _optional_text(body.get("dictionaryModel"), "dictionaryModel")
+            if dictionary_model:
+                provider, separator, model = dictionary_model.partition(":")
+                if not separator or provider not in llm.LLM_PROVIDERS or not model.strip():
+                    raise ValueError(
+                        "dictionaryModel must be provider:model for Anthropic or OpenAI"
+                    )
+            if "fastMode" in body and not isinstance(body["fastMode"], bool):
+                raise ValueError("fastMode must be a boolean")
+            shortcut_settings = body.get("shortcuts", {})
+            if not isinstance(shortcut_settings, dict):
+                raise ValueError("shortcuts must be an object")
+            hold = _optional_text(shortcut_settings.get("hold"), "shortcuts.hold")
+            toggle = _optional_text(shortcut_settings.get("toggle"), "shortcuts.toggle")
+            shortcuts.parse(hold, toggle)
+
+            # Validate the complete request before storing any field: a bad shortcut
+            # or model must not leave a seemingly failed Save with some keys changed.
+            for provider_id, key in keys.items():
+                app.set_key(provider_id, key)
             if "defaultModel" in body:
-                app.set_default_model(body["defaultModel"])
+                app.set_default_model(default_model)
             if "dictionaryModel" in body:
-                app.set_dictionary_model(_text(body["dictionaryModel"]) or None)
+                app.set_dictionary_model(dictionary_model or None)
             if "fastMode" in body:
-                app.set_fast_mode(bool(body["fastMode"]))
-            shortcuts = body.get("shortcuts")
-            if isinstance(shortcuts, dict):
-                app.set_shortcuts(_text(shortcuts.get("hold")), _text(shortcuts.get("toggle")))
+                app.set_fast_mode(body["fastMode"])
+            if "shortcuts" in body:
+                app.set_shortcuts(hold, toggle)
         except UnknownModel as exc:
             return _bad(f"Unknown model: {exc}")
         except ValueError as exc:
@@ -149,13 +210,14 @@ def create_app(app: Dictum) -> Starlette:
         return JSONResponse({"ok": True})
 
     def _dictionary_response(app: Dictum) -> Response:
+        text, version = app.dictionary_snapshot()
         return PlainTextResponse(
-            app.dictionary_text(),
+            text,
             media_type="application/json",
-            headers={"ETag": f'"{app.dictionary_version()}"'},
+            headers={"ETag": f'"{version}"'},
         )
 
-    async def get_dictionary(_: Request) -> Response:
+    def get_dictionary(_: Request) -> Response:
         try:
             return _dictionary_response(app)
         except ValueError as exc:
@@ -164,7 +226,8 @@ def create_app(app: Dictum) -> Starlette:
     async def put_dictionary(request: Request) -> Response:
         expected = request.headers.get("if-match")
         try:
-            app.set_dictionary(
+            await run_in_threadpool(
+                app.set_dictionary,
                 (await request.body()).decode("utf-8"),
                 expected.strip('"') if expected else None,
             )
@@ -172,7 +235,10 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc), 409)
         except ValueError as exc:
             return _bad(str(exc))
-        return _dictionary_response(app)
+        return await run_in_threadpool(_dictionary_response, app)
+
+    def received_corrections(_: Request) -> Response:
+        return JSONResponse([asdict(c) for c in app.store.list_corrections()])
 
     async def agent_corrections(request: Request) -> Response:
         try:
@@ -180,7 +246,7 @@ def create_app(app: Dictum) -> Starlette:
         except ValueError:
             return _bad("Body must be JSON")
         try:
-            added = app.add_agent_corrections(body)
+            added = await run_in_threadpool(app.add_agent_corrections, body)
         except ValueError as exc:
             return _bad(str(exc))
         return JSONResponse({"added": added.as_json()})
@@ -204,7 +270,7 @@ def create_app(app: Dictum) -> Starlette:
         app.cancel_capture()
         return JSONResponse({"ok": True})
 
-    async def status(_: Request) -> Response:
+    def status(_: Request) -> Response:
         return JSONResponse(
             {
                 "version": __version__,
@@ -219,27 +285,39 @@ def create_app(app: Dictum) -> Starlette:
             return _bad("No desktop app is running to show a window", 409)
         return JSONResponse({"ok": True})
 
-    async def models(_: Request) -> Response:
+    def models(_: Request) -> Response:
         return JSONResponse([asdict(m) for m in app.available_models()])
 
-    async def list_recordings(_: Request) -> Response:
-        recordings = await run_in_threadpool(app.store.list_recordings)
-        return JSONResponse([_recording_json(r) for r in recordings])
+    def list_recordings(request: Request) -> Response:
+        try:
+            limit = int(request.query_params["limit"]) if "limit" in request.query_params else None
+            before = (
+                int(request.query_params["before"]) if "before" in request.query_params else None
+            )
+            if (limit is not None and not 1 <= limit <= 200) or (before is not None and before < 1):
+                raise ValueError
+        except ValueError:
+            return _bad("limit must be 1-200; before must be a positive recording id")
+        version = f'"{app.store.history_version()}-{limit}-{before}"'
+        headers = {"ETag": version, "Cache-Control": "no-cache"}
+        if request.headers.get("if-none-match") == version:
+            return Response(status_code=304, headers=headers)
+        recordings = app.store.list_recordings(limit=limit, before=before)
+        return JSONResponse([_recording_json(r) for r in recordings], headers=headers)
 
     async def create_recording(request: Request) -> Response:
-        form = await request.form()
-        audio = form.get("audio")
-        if not isinstance(audio, UploadFile):
-            return _bad("No audio in request")
-        data = await audio.read()
-        if not data:
-            return _bad("No audio in request")
-        model = form.get("model")
-        ref = model if isinstance(model, str) and model else None
+        async with request.form() as form:
+            audio = form.get("audio")
+            if not isinstance(audio, UploadFile):
+                return _bad("No audio in request")
+            data = await audio.read()
+            if not data:
+                return _bad("No audio in request")
+            label = audio.content_type
+            model = form.get("model")
+            ref = model if isinstance(model, str) and model else None
         try:
-            recording = await run_in_threadpool(
-                app.record_and_transcribe, data, audio.content_type, ref
-            )
+            recording = await run_in_threadpool(app.record_and_transcribe, data, label, ref)
         except NoDefaultModel as exc:
             return _bad(str(exc))
         except UnknownModel as exc:
@@ -247,17 +325,22 @@ def create_app(app: Dictum) -> Starlette:
         return JSONResponse(_recording_json(recording))
 
     async def retry(request: Request) -> Response:
-        recording = app.store.get_recording(int(request.path_params["id"]))
+        recording = await run_in_threadpool(app.store.get_recording, int(request.path_params["id"]))
         if recording is None:
             return _bad("No such recording", 404)
-        body = await request.json()
-        ref = app.resolve(body.get("model")) if isinstance(body.get("model"), str) else None
+        try:
+            body = await request.json()
+        except ValueError:
+            return _bad("Body must be JSON")
+        if not isinstance(body, dict):
+            return _bad("Body must be a JSON object")
+        ref = app.resolve(body["model"]) if isinstance(body.get("model"), str) else None
         if ref is None:
             return _bad(f"Unknown model: {body.get('model')}")
         updated = await run_in_threadpool(app.transcribe, recording, ref)
         return JSONResponse(_recording_json(updated))
 
-    async def local_models(_: Request) -> Response:
+    def local_models(_: Request) -> Response:
         return JSONResponse([asdict(m) for m in app.local_models()])
 
     async def download_local_model(request: Request) -> Response:
@@ -274,18 +357,19 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc), 404)
         return JSONResponse({"ok": True})
 
-    async def metrics(_: Request) -> Response:
+    def metrics(_: Request) -> Response:
         return JSONResponse([asdict(m) for m in app.metrics()])
 
-    async def audio(request: Request) -> Response:
+    def audio(request: Request) -> Response:
         recording = app.store.get_recording(int(request.path_params["id"]))
         if recording is None:
             return _bad("No such recording", 404)
         return FileResponse(
             app.store.audio_path(recording),
-            media_type=recording.mime,
+            media_type=safe_mime(recording.mime),
             filename=f"dictum-{recording.id}.{extension_for(recording.mime)}",
             content_disposition_type="inline",
+            headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"},
         )
 
     return Starlette(
@@ -298,6 +382,7 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/dictionary", put_dictionary, methods=["PUT"]),
             Route("/api/dictionary/build", build_dictionary, methods=["POST"]),
             Route("/api/dictionary/corrections", agent_corrections, methods=["POST"]),
+            Route("/api/dictionary/corrections", received_corrections, methods=["GET"]),
             Route("/api/capture", start_capture, methods=["POST"]),
             Route("/api/capture", capture_status, methods=["GET"]),
             Route("/api/capture", cancel_capture, methods=["DELETE"]),

@@ -39,7 +39,13 @@ def sniff_mime(data: bytes) -> str | None:
 
 def identify(data: bytes, label: str | None) -> str:
     """The MIME type to store for a clip: sniffed if possible, else the given label."""
-    return sniff_mime(data) or label or FALLBACK_MIME
+    return sniff_mime(data) or safe_mime(label)
+
+
+def safe_mime(label: str | None) -> str:
+    """Only audio containers may be served inline from the application's origin."""
+    base = (label or "").split(";", 1)[0].strip().lower()
+    return base if base in _EXTENSIONS else FALLBACK_MIME
 
 
 def extension_for(mime: str) -> str:

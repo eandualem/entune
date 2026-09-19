@@ -1,139 +1,153 @@
-// Dictum's window: history, recording from here, settings. Plain DOM code against
-// the local API; no framework, no build step.
+// Dictum's window: history, dictionary, settings, and recording from here. Plain DOM
+// code against the local API; no framework, no build step. Layout and tokens follow
+// the design of 2026-09-18; every colour and size lives in tokens.css.
 
-const el = (id) => document.getElementById(id);
-const recordBtn = el("record");
-const recTimer = el("rec-timer");
-const modelSelect = el("model");
+import { createHistory } from "./history.js";
+import { renderCard } from "./history-card.js";
+import { createDictionary } from "./dictionary-view.js";
+import { createSettings } from "./settings-view.js";
+import { initRecording } from "./recording.js";
+import { ICON, api, el, errorText, fillModels, segmentedGroup } from "./ui.js";
+
 const status = el("status");
+const modelSelect = el("model");
+const fastWrap = el("fast-mode-wrap");
+const fastInput = el("fast-mode");
 const historyList = el("history");
-const historyLabel = el("history-label");
 const emptyState = el("empty");
-const emptyHint = el("empty-hint");
-const settingsForm = el("settings-form");
-const keysGroup = el("keys");
-const llmKeysGroup = el("llm-keys");
-const dictionaryModelInput = el("dictionary-model");
-const fastModeInput = el("fast-mode");
-const fastModeRow = el("fast-mode-row");
-const metricsSection = el("metrics");
-const metricsRows = el("metrics-rows");
-let streamingProviders = new Set();
-const dictionaryModels = el("dictionary-models");
-const dictionaryModelChip = el("dictionary-model-chip");
-const defaultSelect = el("default-model");
-const settingsStatus = el("settings-status");
-const shortcutHold = el("shortcut-hold");
-const shortcutToggle = el("shortcut-toggle");
-const shortcutStatus = el("shortcut-status");
-
-const ICON = {
-  copy: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>',
-  check: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>',
-  download: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v8m-3.5-3L8 11l3.5-3.5M3 13.5h10"/></svg>',
-  chevron: '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2 6.5 5 3.5 8"/></svg>',
-  warn: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 1.5 11 10H1L6 1.5ZM6 5v2.2M6 8.6v.1"/></svg>',
-};
+const stepsList = el("steps");
 
 let models = [];
+let defaultModel = null; // {id, label, term_limit} from /api/models, or null
+let settings = null; // the last /api/settings answer
 let shortcuts = { hold: null, toggle: null };
+let recordingsCount = 0;
 
-async function api(path, init) {
-  const res = await fetch(path, init);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-// ---- Appearance: a per-window preference, applied before first paint by index.html ----
+// ---- Preferences kept in this window: theme, text size, hints ----
 function applyTheme(theme) {
   if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
   else delete document.documentElement.dataset.theme;
-  try {
-    if (theme === "system") localStorage.removeItem("theme");
-    else localStorage.setItem("theme", theme);
-  } catch (e) {}
+  try { theme === "system" ? localStorage.removeItem("theme") : localStorage.setItem("theme", theme); } catch (e) {}
 }
 {
   let saved = "system";
   try { saved = localStorage.getItem("theme") || "system"; } catch (e) {}
-  for (const radio of settingsForm.querySelectorAll("input[name=appearance]")) {
+  for (const radio of document.querySelectorAll("input[name=appearance]")) {
     radio.checked = radio.value === saved;
     radio.addEventListener("change", () => applyTheme(radio.value));
   }
 }
 
-// ---- Tabs ----
-const tabs = { history: el("tab-history"), dictionary: el("tab-dictionary"), settings: el("tab-settings") };
+const SCALES = ["small", "default", "large", "larger"];
+const currentScale = () => document.documentElement.dataset.scale ?? "default";
+function applyScale(scale) {
+  if (scale === "default") delete document.documentElement.dataset.scale;
+  else document.documentElement.dataset.scale = scale;
+  try { scale === "default" ? localStorage.removeItem("scale") : localStorage.setItem("scale", scale); } catch (e) {}
+  for (const radio of document.querySelectorAll("input[name=scale]")) radio.checked = radio.value === scale;
+}
+for (const radio of document.querySelectorAll("input[name=scale]")) {
+  radio.checked = radio.value === currentScale();
+  radio.addEventListener("change", () => applyScale(radio.value));
+}
+document.addEventListener("keydown", (e) => {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+  const step = e.key === "=" || e.key === "+" ? 1 : e.key === "-" ? -1 : e.key === "0" ? 0 : null;
+  if (step === null) return;
+  e.preventDefault();
+  const at = SCALES.indexOf(currentScale());
+  applyScale(step === 0 ? "default" : SCALES[Math.max(0, Math.min(SCALES.length - 1, at + step))]);
+});
+
+const hintsInput = el("hints");
+hintsInput.checked = document.documentElement.dataset.hints !== "off";
+hintsInput.addEventListener("change", () => {
+  if (hintsInput.checked) delete document.documentElement.dataset.hints;
+  else document.documentElement.dataset.hints = "off";
+  try { hintsInput.checked ? localStorage.removeItem("hints") : localStorage.setItem("hints", "off"); } catch (e) {}
+  if (!hintsInput.checked) dictionary.showHelp(false);
+});
+
+// ---- Views and the settings rail ----
 const views = { history: el("view-history"), dictionary: el("view-dictionary"), settings: el("view-settings") };
-function show(name) {
-  for (const key in tabs) {
-    tabs[key].setAttribute("aria-selected", String(key === name));
-    if (key === name) views[key].setAttribute("data-active", "");
-    else views[key].removeAttribute("data-active");
-  }
-  document.querySelector(".content").scrollTop = 0;
+const selectTab = segmentedGroup({ history: el("tab-history"), dictionary: el("tab-dictionary"), settings: el("tab-settings") }, showView);
+function showView(name) {
+  for (const key in views) views[key].toggleAttribute("data-active", key === name);
+  views[name].scrollTop = 0;
+  if (name === "history") loadHistory().catch((err) => { status.textContent = errorText(err); });
+  if (name === "settings" && sections.agents.hasAttribute("data-active")) settingsView.refreshCorrections();
 }
-tabs.history.addEventListener("click", () => show("history"));
-tabs.dictionary.addEventListener("click", () => show("dictionary"));
-tabs.settings.addEventListener("click", () => show("settings"));
+function show(name) { selectTab(name); showView(name); }
 
-// ---- Models ----
-function fillModels(select, selected, emptyLabel) {
-  select.replaceChildren();
-  if (models.length === 0) {
-    select.append(new Option(emptyLabel, "", true, true));
-    select.disabled = true;
-    return;
-  }
-  select.disabled = false;
-  for (const m of models) select.append(new Option(m.label, m.id, false, m.id === selected));
+const sections = { general: el("settings-general"), providers: el("settings-providers"), local: el("settings-local"), agents: el("settings-agents") };
+const selectSection = segmentedGroup({ general: el("sec-general"), providers: el("sec-providers"), local: el("sec-local"), agents: el("sec-agents") }, showSection);
+function showSection(name) {
+  for (const key in sections) sections[key].toggleAttribute("data-active", key === name);
+  if (name === "agents") settingsView.refreshCorrections();
 }
+function openSettings(section) { show("settings"); selectSection(section); showSection(section); }
 
+// ---- Models: one default, picked in the toolbar; it applies at once ----
 async function loadModels() {
   models = await api("/api/models");
-  const def = models.find((m) => m.default)?.id ?? null;
-  fillModels(modelSelect, def, "No models: add a key or download one");
-  fillModels(defaultSelect, def, "Add a key or download a model first");
-  if (def === null && models.length > 0) {
-    defaultSelect.prepend(new Option("Not set", "", true, true));
-    modelSelect.prepend(new Option("Pick a model", "", true, true));
+  defaultModel = models.find((m) => m.default) ?? null;
+  fillModels(models, modelSelect, defaultModel?.id ?? null, "No models: add a key or download one");
+  if (!defaultModel && models.length > 0) modelSelect.prepend(new Option("Pick a model", "", true, true));
+  const provider = defaultModel?.id.split("/")[0];
+  const streams = (settings?.providers ?? []).some((p) => p.id === provider && p.streams);
+  fastInput.disabled = !streams;
+  fastWrap.classList.toggle("off", !streams);
+  fastWrap.title = streams
+    ? "Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop"
+    : "Fast mode: only AssemblyAI takes the audio while you record; pick it to use fast mode";
+  if (!status.textContent || status.textContent === "Ready") status.textContent = defaultModel ? "Ready" : "";
+  await dictionary.load();
+  renderStart();
+  // A model change only changes the pickers, never the cards or their audio.
+  for (const select of historyList.querySelectorAll(".retry-model")) {
+    fillModels(models, select, select.value, "No models");
+    const retry = select.nextElementSibling;
+    if (!retry.dataset.busy) retry.disabled = select.disabled;
   }
-  showFastModeIfSupported();
-  loadHistory(true).catch(() => {}); // the cards' retry pickers list these models too
 }
 
-// Fast mode only means something for a provider that takes the audio while it is recorded.
-function showFastModeIfSupported() {
-  const provider = defaultSelect.value.split("/")[0];
-  fastModeRow.hidden = !streamingProviders.has(provider);
-}
-// One default model, picked in the toolbar or in Settings: it applies at once and is what
-// the shortcut, the Record button and a plain "transcribe" use. Save never touches it.
-async function chooseDefaultModel(select, statusTarget) {
-  const chosen = select.value || null;
-  const label = select.selectedOptions[0]?.textContent ?? chosen;
+modelSelect.addEventListener("change", async () => {
+  const chosen = modelSelect.value || null;
   try {
     await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ defaultModel: chosen }) });
-    if (statusTarget === status) status.textContent = chosen ? `Using ${label}` : "";
-    else flash(statusTarget, chosen ? `Default model: ${label}` : "No default model", "ok");
+    status.textContent = chosen ? `Using ${modelSelect.selectedOptions[0]?.textContent}` : "";
   } catch (err) {
-    if (statusTarget === status) status.textContent = String(err.message ?? err);
-    else flash(statusTarget, String(err.message ?? err), "err");
+    status.textContent = errorText(err);
   }
   await loadModels();
-  showFastModeIfSupported();
+});
+
+fastInput.addEventListener("change", () => settingsView.save({ fastMode: fastInput.checked }, null));
+
+// ---- Performance by model: a popover behind the chart button ----
+const metricsPopover = el("metrics");
+const metricsToggle = el("metrics-toggle");
+const metricsRows = el("metrics-rows");
+function showMetrics(open) {
+  metricsPopover.hidden = !open;
+  metricsToggle.setAttribute("aria-expanded", String(open));
 }
-defaultSelect.addEventListener("change", () => chooseDefaultModel(defaultSelect, settingsStatus));
-modelSelect.addEventListener("change", () => chooseDefaultModel(modelSelect, status));
+metricsToggle.addEventListener("click", () => showMetrics(metricsPopover.hidden));
+document.addEventListener("click", (e) => {
+  if (!metricsPopover.hidden && !metricsPopover.contains(e.target) && !metricsToggle.contains(e.target)) showMetrics(false);
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !metricsPopover.hidden) showMetrics(false); });
 
 async function loadMetrics() {
   const rows = await api("/api/metrics");
-  metricsSection.hidden = rows.length === 0;
-  const cell = (text) => Object.assign(document.createElement("td"), { textContent: text });
+  metricsToggle.hidden = rows.length === 0;
+  if (rows.length === 0) showMetrics(false);
+  const cell = (text) => Object.assign(document.createElement("span"), { textContent: text });
   metricsRows.replaceChildren(
     ...rows.map((m) => {
-      const tr = document.createElement("tr");
-      tr.append(
+      const row = document.createElement("div");
+      row.className = "perf-grid";
+      row.append(
         cell(`${m.provider} / ${m.model}`),
         cell(m.fast ? "fast" : "plain"),
         cell(m.ok === m.runs ? String(m.runs) : `${m.ok} of ${m.runs} ok`),
@@ -141,763 +155,108 @@ async function loadMetrics() {
         cell(m.median_wait === null ? "–" : `${m.median_wait.toFixed(1)} s`),
         cell(m.speed === null ? "–" : `${m.speed.toFixed(0)}× realtime`),
       );
-      return tr;
+      return row;
     }),
   );
 }
 
-// ---- Settings ----
-function keyRow(provider) {
-  const row = document.createElement("div");
-  row.className = "row";
-  const label = document.createElement("label");
-  label.htmlFor = `key-${provider.id}`;
-  label.textContent = provider.name;
-  const field = document.createElement("div");
-  field.className = "field";
-  const input = document.createElement("input");
-  input.className = "input";
-  input.id = `key-${provider.id}`;
-  input.type = "password";
-  input.name = `key:${provider.id}`;
-  input.autocomplete = "off";
-  input.placeholder = provider.keyHint ? `saved ${provider.keyHint} · type to replace` : "Not set";
-  field.append(input);
-  row.append(label, field);
-  return row;
-}
-
-// A local provider has no key: its models are files, fetched with a button.
-let localPoll = null;
-function localRow(provider) {
-  const row = document.createElement("div");
-  row.className = "row top";
-  const lbl = document.createElement("div");
-  lbl.className = "lbl";
-  const hint = provider.id === "parakeet"
-    ? "NVIDIA's Parakeet on Apple's MLX, the most accurate offline. Its engine is installed once from a terminal; Dictum then finds it."
-    : "whisper.cpp on this machine, no key, nothing leaves it. Download a model once; it then appears in the model lists.";
-  lbl.innerHTML = `<label>${provider.name}</label><span class="hint">${hint}</span>`;
-  const field = document.createElement("div");
-  field.className = "field local-models";
-  field.id = `local-${provider.id}`;
-  row.append(lbl, field);
-  return row;
-}
-
-async function loadLocalModels() {
-  const fields = [...document.querySelectorAll(".local-models")];
-  if (fields.length === 0) return;
-  const list = await api("/api/local/models");
-  for (const field of fields) {
-    const provider = field.id.slice("local-".length);
-    field.replaceChildren(...list.filter((m) => m.provider === provider).map(localModelLine));
+// ---- Getting started: the empty history, as steps that tick themselves off ----
+function renderStart() {
+  const kbd = (keys) => Object.assign(document.createElement("kbd"), { textContent: keys });
+  const haveModel = models.length > 0;
+  const haveDefault = Boolean(defaultModel);
+  const dictate = [];
+  if (shortcuts.hold || shortcuts.toggle) {
+    dictate.push("Anywhere, ");
+    if (shortcuts.hold) dictate.push("hold ", kbd(shortcuts.hold));
+    if (shortcuts.hold && shortcuts.toggle) dictate.push(" or ");
+    if (shortcuts.toggle) dictate.push("press ", kbd(shortcuts.toggle));
+    dictate.push(" and speak; the text is typed where you are and copied. Or press Record above.");
+  } else {
+    dictate.push("Press Record above and speak. A shortcut in Settings lets you dictate into any app.");
   }
-  const busy = list.some((m) => m.state === "downloading");
-  if (busy && !localPoll) localPoll = setInterval(() => loadLocalModels().catch(() => {}), 1500);
-  if (!busy && localPoll) {
-    clearInterval(localPoll);
-    localPoll = null;
-    await loadModels(); // a model that just finished downloading is now offered
-  }
-}
-
-function localModelLine(m) {
-      const line = document.createElement("div");
-      line.className = "local-model";
-      const name = document.createElement("span");
-      name.className = "local-name";
-      name.textContent = m.label;
-      const meta = document.createElement("span");
-      meta.className = "local-meta";
-      const size = m.size_bytes >= 1073741824 ? `${(m.size_bytes / 1073741824).toFixed(1)} GB` : `${(m.size_bytes / 1048576).toFixed(0)} MB`;
-      if (m.state === "downloading") meta.textContent = `${Math.round(m.progress * 100)}% of ${size}`;
-      else if (m.state === "ready") meta.textContent = `ready · ${size}`;
-      else if (m.state === "error") meta.textContent = `failed: ${m.error}`;
-      else if (m.state === "unavailable") meta.innerHTML = `${size} · ${m.note}. Engine not installed; in a terminal run <code>uv tool install parakeet-mlx</code>, then reopen Settings.`;
-      else meta.textContent = `${size} · ${m.note}`;
-      if (m.state === "unavailable") {
-        line.append(name, meta);
-        return line;
-      }
+  const step = (done, what, how, action) => {
+    const li = document.createElement("li");
+    li.className = done ? "step done" : "step";
+    const mark = document.createElement("span");
+    mark.className = "mark";
+    mark.innerHTML = ICON.check;
+    const text = document.createElement("span");
+    text.className = "what";
+    text.append(what);
+    const hint = document.createElement("span");
+    hint.className = "how";
+    hint.append(...how);
+    text.append(hint);
+    li.append(mark, text);
+    if (action && !done) {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "btn sm";
-      button.dataset.model = m.name;
-      if (m.state === "ready") {
-        button.textContent = "Remove";
-        button.dataset.action = "remove";
-      } else {
-        button.textContent = m.state === "downloading" ? "Downloading…" : m.state === "error" ? "Retry" : "Download";
-        button.dataset.action = "download";
-        button.disabled = m.state === "downloading";
-      }
-      line.append(name, meta, button);
-      return line;
-}
-
-keysGroup.addEventListener("click", async (e) => {
-  const button = e.target.closest("button[data-model]");
-  if (!button) return;
-  const { model, action } = button.dataset;
-  try {
-    if (action === "download") await api(`/api/local/models/${model}/download`, { method: "POST" });
-    else if (action === "remove") await api(`/api/local/models/${model}`, { method: "DELETE" });
-    await loadLocalModels();
-    if (action === "remove") await loadModels();
-  } catch (err) {
-    flash(settingsStatus, String(err.message ?? err), "err");
-  }
-});
-
-async function loadSettings() {
-  const s = await api("/api/settings");
-  keysGroup.replaceChildren(...s.providers.map((p) => (p.local ? localRow(p) : keyRow(p))));
-  loadLocalModels().catch(() => {});
-  llmKeysGroup.replaceChildren(...s.llmProviders.map(keyRow));
-  dictionaryModels.replaceChildren(
-    ...s.llmProviders.flatMap((p) => p.models.map((m) => new Option(`${m.name}${m.id === p.defaultModel ? " (suggested)" : ""}`, m.id))),
-  );
-  dictionaryModelInput.value = s.dictionaryModel ?? "";
-  fastModeInput.checked = Boolean(s.fastMode);
-  streamingProviders = new Set(s.providers.filter((p) => p.streams).map((p) => p.id));
-  dictionaryModelChip.textContent = s.dictionaryModel ?? "no model set";
-  shortcuts = s.shortcuts;
-  shortcutHold.value = s.shortcuts.hold ?? "";
-  shortcutToggle.value = s.shortcuts.toggle ?? "";
-  updateEmptyHint();
-  await Promise.all([loadModels(), loadDictionary()]);
-}
-
-function flash(target, message, kind) {
-  target.textContent = message;
-  target.className = `save-status show ${kind}`;
-  clearTimeout(target._timer);
-  target._timer = setTimeout(() => target.classList.remove("show"), kind === "ok" ? 1800 : 6000);
-}
-
-settingsForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const keys = {};
-  for (const input of settingsForm.querySelectorAll("input[type=password]")) {
-    if (input.value.trim()) keys[input.name.slice("key:".length)] = input.value.trim();
-  }
-  const body = { keys, dictionaryModel: dictionaryModelInput.value.trim() || null, fastMode: fastModeInput.checked };
-  try {
-    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    flash(settingsStatus, "Saved", "ok");
-    await loadSettings();
-  } catch (err) {
-    flash(settingsStatus, String(err.message ?? err), "err");
-  }
-});
-
-// ---- Dictionary tab ----
-// `dict` mirrors dictionary.json: pinned (the user's, never changed by the model) and
-// learned (the model's last accepted proposal). Every change is saved whole.
-let dict = { pinned: { terms: [], replacements: {} }, agents: { terms: [], replacements: {} }, learned: { terms: [], replacements: {} } };
-let proposal = null;
-const dictionaryBox = el("dictionary");
-const dictionaryStatus = el("dictionary-status");
-const buildStatus = el("build-status");
-const buildBtn = el("build-dictionary");
-const proposalPanel = el("proposal");
-const proposalBody = el("proposal-body");
-
-let dictVersion = null; // the server's ETag for the document we edit; null after a failed load
-
-async function loadDictionary() {
-  const res = await fetch("/api/dictionary");
-  const text = await res.text();
-  if (!res.ok) { dictVersion = null; flash(dictionaryStatus, text, "err"); return; }
-  dict = JSON.parse(text);
-  dictVersion = res.headers.get("etag");
-  renderDictionary(text);
-}
-
-// Every edit sends the whole document, named with the version it was made on. The
-// server refuses a save on a stale version (an agent or a hand edit got there first)
-// and the fresh document is shown instead. After a failed load there is no version:
-// the JSON editor can then repair a broken file.
-async function saveDictionary(next) {
-  const headers = { "content-type": "application/json" };
-  if (dictVersion) headers["if-match"] = dictVersion;
-  const res = await fetch("/api/dictionary", { method: "PUT", headers, body: JSON.stringify(next) });
-  const text = await res.text();
-  if (res.status === 409) {
-    await loadDictionary();
-    flash(dictionaryStatus, `${text} Reloaded; please redo that change.`, "err");
-    return false;
-  }
-  if (!res.ok) { flash(dictionaryStatus, text, "err"); flash(buildStatus, text, "err"); return false; }
-  dict = JSON.parse(text);
-  dictVersion = res.headers.get("etag");
-  renderDictionary(text);
-  return true;
-}
-
-function entryRow(section, kind, heard, meant) {
-  const row = document.createElement("div");
-  row.className = "entry";
-  const kindEl = document.createElement("span");
-  kindEl.className = "kind";
-  kindEl.textContent = kind;
-  const what = document.createElement("span");
-  what.className = "what";
-  if (kind === "term") {
-    what.textContent = heard;
-  } else {
-    const arrow = document.createElement("span");
-    arrow.className = "arrow";
-    arrow.textContent = "→";
-    const m = document.createElement("span");
-    m.className = "meant";
-    m.textContent = meant;
-    what.append(heard, arrow, m);
-  }
-  const actions = document.createElement("span");
-  actions.className = "actions";
-  if (section !== "pinned") {
-    const pin = document.createElement("button");
-    pin.type = "button";
-    pin.className = "btn sm";
-    pin.textContent = "Pin";
-    pin.title = "Keep it: the model will not change it";
-    pin.addEventListener("click", () => moveToPinned(section, kind, heard, meant));
-    actions.append(pin);
-  }
-  const remove = document.createElement("button");
-  remove.type = "button";
-  remove.className = "btn sm";
-  remove.textContent = "Remove";
-  remove.addEventListener("click", () => removeEntry(section, kind, heard));
-  actions.append(remove);
-  row.append(kindEl, what, actions);
-  return row;
-}
-
-function renderEntries(container, section) {
-  const entries = dict[section];
-  container.replaceChildren(
-    ...entries.terms.map((t) => entryRow(section, "term", t)),
-    ...Object.entries(entries.replacements).map(([h, m]) => entryRow(section, "replace", h, m)),
-  );
-}
-
-function renderDictionary(jsonText) {
-  renderEntries(el("pinned-entries"), "pinned");
-  renderEntries(el("agents-entries"), "agents");
-  renderEntries(el("learned-entries"), "learned");
-  const learnedCount = dict.learned.terms.length + Object.keys(dict.learned.replacements).length;
-  el("pin-all").hidden = learnedCount === 0;
-  buildBtn.textContent = learnedCount ? "Refine from history" : "Build from history";
-  if (jsonText !== undefined) dictionaryBox.value = jsonText;
-}
-
-function clone() {
-  return JSON.parse(JSON.stringify(dict));
-}
-
-async function addToPinned(kind, heard, meant) {
-  const next = clone();
-  if (kind === "term") {
-    if (!next.pinned.terms.includes(heard)) next.pinned.terms.push(heard);
-  } else {
-    next.pinned.replacements[heard] = meant;
-  }
-  return saveDictionary(next);
-}
-
-async function removeEntry(section, kind, heard) {
-  const next = clone();
-  if (kind === "term") next[section].terms = next[section].terms.filter((t) => t !== heard);
-  else delete next[section].replacements[heard];
-  await saveDictionary(next);
-}
-
-async function moveToPinned(section, kind, heard, meant) {
-  const next = clone();
-  if (kind === "term") {
-    next[section].terms = next[section].terms.filter((t) => t !== heard);
-    if (!next.pinned.terms.includes(heard)) next.pinned.terms.push(heard);
-  } else {
-    delete next[section].replacements[heard];
-    next.pinned.replacements[heard] = meant;
-  }
-  await saveDictionary(next);
-}
-
-el("add-term-btn").addEventListener("click", async () => {
-  const term = el("add-term").value.trim();
-  if (!term) return;
-  if (await addToPinned("term", term)) el("add-term").value = "";
-});
-el("add-term").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el("add-term-btn").click(); } });
-el("add-replacement-btn").addEventListener("click", async () => {
-  const heard = el("add-heard").value.trim();
-  const meant = el("add-meant").value.trim();
-  if (!heard || !meant) return;
-  if (await addToPinned("replace", heard, meant)) { el("add-heard").value = ""; el("add-meant").value = ""; }
-});
-el("add-meant").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el("add-replacement-btn").click(); } });
-el("pin-all").addEventListener("click", async () => {
-  const next = clone();
-  for (const t of next.learned.terms) if (!next.pinned.terms.includes(t)) next.pinned.terms.push(t);
-  Object.assign(next.pinned.replacements, next.learned.replacements);
-  next.learned = { terms: [], replacements: {} };
-  await saveDictionary(next);
-});
-
-el("save-dictionary").addEventListener("click", async () => {
-  let parsed;
-  try { parsed = JSON.parse(dictionaryBox.value); } catch (err) { flash(dictionaryStatus, `Not valid JSON: ${err.message}`, "err"); return; }
-  if (await saveDictionary(parsed)) flash(dictionaryStatus, "Saved", "ok");
-});
-
-// Build: the model proposes a learned section; nothing changes until Accept.
-function chips(list, cls) {
-  const box = document.createElement("div");
-  box.className = "chips";
-  for (const text of list) {
-    const c = document.createElement("span");
-    c.className = `chip ${cls}`;
-    c.textContent = text;
-    box.append(c);
-  }
-  return box;
-}
-
-function renderProposal(p) {
-  proposalBody.replaceChildren();
-  const sections = [
-    ["Added terms", p.added.terms, "add"],
-    ["Added replacements", Object.entries(p.added.replacements).map(([h, m]) => `${h} → ${m}`), "add"],
-    ["Removed terms", p.removed.terms, "remove"],
-    ["Removed replacements", Object.entries(p.removed.replacements).map(([h, m]) => `${h} → ${m}`), "remove"],
-  ];
-  let any = false;
-  for (const [title, items, cls] of sections) {
-    if (items.length === 0) continue;
-    any = true;
-    const h = document.createElement("h3");
-    h.textContent = `${title} (${items.length})`;
-    proposalBody.append(h, chips(items, cls));
-  }
-  if (!any) {
-    const p2 = document.createElement("p");
-    p2.className = "nothing";
-    p2.textContent = "The model proposed no changes to what is learned.";
-    proposalBody.append(p2);
-  }
-  proposalPanel.hidden = false;
-}
-
-buildBtn.addEventListener("click", async () => {
-  buildBtn.disabled = true;
-  buildStatus.className = "save-status show";
-  buildStatus.textContent = "Asking the model… this can take a minute.";
-  try {
-    const res = await fetch("/api/dictionary/build", { method: "POST" });
-    const text = await res.text();
-    if (!res.ok) throw new Error(text);
-    proposal = JSON.parse(text);
-    buildStatus.classList.remove("show");
-    renderProposal(proposal);
-  } catch (err) {
-    flash(buildStatus, String(err.message ?? err), "err");
-  } finally {
-    buildBtn.disabled = false;
-  }
-});
-el("accept-proposal").addEventListener("click", async () => {
-  if (!proposal) return;
-  const next = clone();
-  next.learned = proposal.learned;
-  if (await saveDictionary(next)) {
-    proposal = null;
-    proposalPanel.hidden = true;
-    flash(buildStatus, "Accepted", "ok");
-  }
-});
-el("discard-proposal").addEventListener("click", () => {
-  proposal = null;
-  proposalPanel.hidden = true;
-});
-
-// ---- Shortcuts: recorded by pressing them ----
-// The menu-bar app's global listener captures the keys (it is the only thing that
-// can see fn); the page polls for the result and saves it. Without the app, the
-// page captures what the browser lets it see.
-async function saveShortcuts() {
-  const body = { keys: {}, shortcuts: { hold: shortcutHold.value.trim(), toggle: shortcutToggle.value.trim() } };
-  try {
-    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    shortcutStatus.textContent = "Saved.";
-    shortcuts = { hold: shortcutHold.value.trim() || null, toggle: shortcutToggle.value.trim() || null };
-    updateEmptyHint();
-  } catch (err) {
-    shortcutStatus.textContent = String(err.message ?? err);
-  }
-}
-
-async function captureShortcut(input, button) {
-  const previous = input.value;
-  input.value = "";
-  input.placeholder = "Press keys…";
-  button.disabled = true;
-  shortcutStatus.textContent = "";
-  try {
-    const res = await fetch("/api/capture", { method: "POST" });
-    if (res.status === 409) {
-      input.value = await captureInPage(input);
-    } else if (!res.ok) {
-      throw new Error(await res.text());
-    } else {
-      const deadline = Date.now() + 15000;
-      let keys = null;
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 120));
-        const state = await api("/api/capture");
-        if (state.state === "done") { keys = state.keys; break; }
-        if (state.state === "idle") break;
-      }
-      if (keys === null) {
-        await fetch("/api/capture", { method: "DELETE" });
-        throw new Error("Nothing pressed.");
-      }
-      input.value = keys;
+      button.className = "btn ghost sm";
+      button.textContent = action.label;
+      button.addEventListener("click", action.go);
+      li.append(button);
     }
-    await saveShortcuts();
-  } catch (err) {
-    input.value = previous;
-    shortcutStatus.textContent = String(err.message ?? err);
-  } finally {
-    input.placeholder = "Not set";
-    button.disabled = false;
-  }
-}
-
-function captureInPage(input) {
-  return new Promise((resolve, reject) => {
-    const names = { Meta: "cmd", Control: "ctrl", Alt: "alt", Shift: "shift", " ": "space", Enter: "enter", Escape: "esc", Tab: "tab", Backspace: "backspace", ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
-    const keys = [];
-    const down = new Set();
-    const nameOf = (e) => names[e.key] ?? e.key.toLowerCase();
-    const onDown = (e) => {
-      e.preventDefault();
-      const name = nameOf(e);
-      if (!keys.includes(name)) keys.push(name);
-      down.add(name);
-    };
-    const onUp = (e) => {
-      down.delete(nameOf(e));
-      if (keys.length && down.size === 0) { cleanup(); resolve(keys.join("+")); }
-    };
-    const cleanup = () => { window.removeEventListener("keydown", onDown, true); window.removeEventListener("keyup", onUp, true); };
-    window.addEventListener("keydown", onDown, true);
-    window.addEventListener("keyup", onUp, true);
-    setTimeout(() => { if (keys.length === 0) { cleanup(); reject(new Error("Nothing pressed.")); } }, 15000);
-    input.focus();
-  });
-}
-
-for (const button of settingsForm.querySelectorAll("button.capture")) {
-  button.addEventListener("click", () => captureShortcut(el(button.dataset.target), button));
-}
-for (const button of settingsForm.querySelectorAll("button.clear")) {
-  button.addEventListener("click", async () => { el(button.dataset.target).value = ""; await saveShortcuts(); });
-}
-
-function updateEmptyHint() {
-  const parts = [];
-  if (shortcuts.hold) parts.push(`hold ${shortcuts.hold}`);
-  if (shortcuts.toggle) parts.push(`press ${shortcuts.toggle}`);
-  emptyHint.replaceChildren();
-  if (parts.length) {
-    emptyHint.append("Anywhere, ");
-    parts.forEach((p, i) => {
-      const [verb, keys] = p.split(" ");
-      const kbd = document.createElement("kbd");
-      kbd.textContent = keys;
-      emptyHint.append(`${i ? " or " : ""}${verb} `, kbd);
-    });
-    emptyHint.append(" and speak. Or press Record above.");
-  } else {
-    emptyHint.textContent = "Press Record above and speak, or set a shortcut in Settings.";
-  }
-}
-
-// ---- Recording from this window ----
-let recorder = null;
-let recTick = null;
-
-function setRecording(on) {
-  recordBtn.setAttribute("aria-pressed", String(on));
-  recordBtn.querySelector(".label").textContent = on ? "Stop" : "Record";
-  recTimer.hidden = !on;
-  clearInterval(recTick);
-  if (on) {
-    const start = Date.now();
-    recTimer.textContent = "0:00";
-    recTick = setInterval(() => {
-      const s = Math.floor((Date.now() - start) / 1000);
-      recTimer.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-    }, 250);
-  }
-}
-
-// The page records raw PCM and wraps it as WAV, like the shortcut does, so every
-// recording is one container that every provider, cloud or local, takes without
-// a decoder. (MediaRecorder would give WebM, which the local engines cannot read
-// without ffmpeg.)
-let starting = false; // between the click and the microphone answering
-
-recordBtn.addEventListener("click", async () => {
-  if (recorder) {
-    recorder.stop();
-    return;
-  }
-  if (starting) return; // a second click before permission resolves would open a second mic
-  starting = true;
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch (err) {
-    starting = false;
-    status.textContent = `Microphone unavailable: ${err.message ?? err}`;
-    return;
-  }
-  starting = false;
-  const context = new AudioContext();
-  const source = context.createMediaStreamSource(stream);
-  const tap = context.createScriptProcessor(4096, 1, 1);
-  const chunks = [];
-  tap.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-  source.connect(tap);
-  tap.connect(context.destination);
-  recorder = {
-    stop() {
-      tap.disconnect();
-      source.disconnect();
-      stream.getTracks().forEach((t) => t.stop());
-      const rate = context.sampleRate;
-      context.close();
-      recorder = null;
-      setRecording(false);
-      upload(wavBlob(chunks, rate));
-    },
+    return li;
   };
-  setRecording(true);
-  status.textContent = "";
-});
-
-function wavBlob(chunks, rate) {
-  const length = chunks.reduce((n, c) => n + c.length, 0);
-  const buffer = new ArrayBuffer(44 + length * 2);
-  const view = new DataView(buffer);
-  const ascii = (offset, text) => [...text].forEach((ch, i) => view.setUint8(offset + i, ch.charCodeAt(0)));
-  ascii(0, "RIFF");
-  view.setUint32(4, 36 + length * 2, true);
-  ascii(8, "WAVE");
-  ascii(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, 1, true); // mono
-  view.setUint32(24, rate, true);
-  view.setUint32(28, rate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  ascii(36, "data");
-  view.setUint32(40, length * 2, true);
-  let offset = 44;
-  for (const chunk of chunks) {
-    for (const sample of chunk) {
-      const s = Math.max(-1, Math.min(1, sample));
-      view.setInt16(offset, s < 0 ? s * 32768 : s * 32767, true);
-      offset += 2;
-    }
-  }
-  return new Blob([buffer], { type: "audio/wav" });
+  stepsList.replaceChildren(
+    step(haveModel, "Add a provider", ["A key, or a downloaded model."], { label: "Providers", go: () => openSettings("providers") }),
+    step(haveDefault, "Pick the default model", ["The picker in the toolbar; it applies at once."], null),
+    step(recordingsCount > 0, "Dictate", dictate, shortcuts.hold || shortcuts.toggle ? null : { label: "Set a shortcut", go: () => openSettings("general") }),
+  );
 }
 
-async function upload(audio) {
-  const form = new FormData();
-  form.append("audio", audio, "clip");
-  const label = modelSelect.selectedOptions[0]?.textContent ?? "default model";
-  status.textContent = `Transcribing with ${label}…`;
-  try {
-    await api("/api/recordings", { method: "POST", body: form });
-    status.textContent = "";
-  } catch (err) {
-    status.textContent = err.message ?? String(err);
-  }
-  show("history");
-  await loadHistory(true);
-}
-
-// ---- History ----
-function attemptLabel(t) {
-  return t.provider === "none" ? "no model set" : `${t.provider} / ${t.model}`;
-}
-
-function chip(text) {
-  const span = document.createElement("span");
-  span.className = "model-chip";
-  span.textContent = text;
-  return span;
-}
-
-function transcriptBlock(t) {
-  const block = document.createElement("div");
-  const failed = t.status !== "ok";
-  block.className = failed ? "transcript error failed" : t.text ? "transcript" : "transcript empty";
-  block.dataset.copy = failed ? t.error ?? "" : t.text ?? "";
-  block.title = block.dataset.copy ? "Click to copy" : "";
-  if (failed) {
-    const label = document.createElement("div");
-    label.className = "error-label";
-    label.innerHTML = `${ICON.warn} Transcription failed`;
-    block.append(label, t.error ?? "");
-  } else {
-    block.append(t.text || "(no speech detected)");
-  }
-  const toast = document.createElement("span");
-  toast.className = "copied-toast";
-  toast.textContent = "Copied";
-  const copy = document.createElement("button");
-  copy.type = "button";
-  copy.className = "btn-icon copy";
-  copy.setAttribute("aria-label", failed ? "Copy error" : "Copy transcript");
-  copy.innerHTML = ICON.copy;
-  copy.disabled = !block.dataset.copy;
-  block.append(toast, copy);
-  return block;
-}
-
-function renderCard(r) {
-  const card = document.createElement("article");
-  card.className = "card";
-  card.dataset.id = r.id;
-  const [latest, ...earlier] = r.transcriptions;
-
-  const head = document.createElement("div");
-  head.className = "card-head";
-  const when = document.createElement("time");
-  when.className = "when";
-  when.dateTime = r.created_at;
-  when.textContent = new Date(r.created_at).toLocaleString();
-  head.append(when);
-  if (latest) head.append(chip(attemptLabel(latest)));
-  const spacer = document.createElement("span");
-  spacer.className = "spacer";
-  const audioRow = document.createElement("div");
-  audioRow.className = "audio-row";
-  const audio = document.createElement("audio");
-  audio.controls = true;
-  audio.preload = "none";
-  audio.src = `/api/recordings/${r.id}/audio`;
-  audio.setAttribute("aria-label", `Recording ${when.textContent}`);
-  const download = document.createElement("a");
-  download.className = "btn-icon";
-  download.href = `/api/recordings/${r.id}/audio`;
-  download.download = "";
-  download.title = "Download audio";
-  download.setAttribute("aria-label", "Download audio");
-  download.innerHTML = ICON.download;
-  audioRow.append(audio, download);
-  head.append(spacer, audioRow);
-  card.append(head);
-
-  if (latest) card.append(transcriptBlock(latest));
-
-  // Any recording can be transcribed again with another model.
-  const foot = document.createElement("div");
-  foot.className = "card-foot";
-  const select = document.createElement("select");
-  select.className = "select sm retry-model";
-  select.setAttribute("aria-label", "Model for re-transcription");
-  const current = latest ? `${latest.provider}/${latest.model}` : null;
-  fillModels(select, models.find((m) => m.id !== current)?.id ?? models[0]?.id ?? null, "No models: add an API key");
-  const retry = document.createElement("button");
-  retry.type = "button";
-  retry.className = "btn sm retry";
-  retry.textContent = latest?.status === "error" ? "Try again" : "Transcribe again";
-  retry.disabled = select.disabled;
-  const foot_status = document.createElement("span");
-  foot_status.className = "status";
-  foot.append(select, retry, foot_status);
-  card.append(foot);
-
-  if (earlier.length > 0) {
-    const details = document.createElement("details");
-    details.className = "attempts";
-    const summary = document.createElement("summary");
-    summary.innerHTML = `${ICON.chevron} ${earlier.length} earlier attempt${earlier.length === 1 ? "" : "s"}`;
-    details.append(summary);
-    for (const t of earlier) {
-      const attempt = document.createElement("div");
-      attempt.className = "attempt";
-      const p = document.createElement("p");
-      p.className = t.status === "ok" ? "" : "err";
-      p.textContent = t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
-      attempt.append(chip(attemptLabel(t)), p);
-      details.append(attempt);
-    }
-    card.append(details);
-  }
-  return card;
-}
-
-// Dictations made with the shortcut arrive while this page is open, so it keeps
-// itself current: it re-reads the history every few seconds while visible and
-// re-renders only when something changed.
-let historySnapshot = "";
+// Poll only the visible History page. The controller keeps one bounded page and
+// preserves unchanged cards, including playback and a retry already in progress.
 const HISTORY_POLL_MS = 3000;
-
-async function loadHistory(force = false) {
-  const recordings = await api("/api/recordings");
-  const snapshot = JSON.stringify(recordings);
-  if (!force && snapshot === historySnapshot) return;
-  historySnapshot = snapshot;
-  historyList.replaceChildren(...recordings.map(renderCard));
-  loadMetrics().catch(() => {});
-  emptyState.hidden = recordings.length > 0;
-  historyLabel.hidden = recordings.length === 0;
-}
+const history = createHistory({
+  list: historyList, newer: el("history-newer"), older: el("history-older"), renderCard: (recording) => renderCard(recording, models),
+  onChange(recordings) {
+    loadMetrics().catch(() => {});
+    recordingsCount = recordings.length;
+    emptyState.hidden = recordings.length > 0;
+    if (recordings.length === 0) renderStart();
+  },
+  onError(err) { status.textContent = errorText(err); },
+});
+const loadHistory = (force = false) => history.refresh(force);
+const historyVisible = () => document.visibilityState === "visible" && views.history.hasAttribute("data-active");
 
 setInterval(() => {
-  if (document.visibilityState === "visible") loadHistory().catch(() => {});
+  if (historyVisible()) loadHistory().catch(() => {});
 }, HISTORY_POLL_MS);
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") loadHistory().catch(() => {});
+  if (historyVisible()) loadHistory().catch(() => {});
 });
 
-// Copy (whole block or its icon) and re-transcribe, delegated so re-renders need no rebinding.
+// Copy (click on the transcript) and re-transcribe, delegated so re-renders need no rebinding.
 historyList.addEventListener("click", async (e) => {
-  const block = e.target.closest(".transcript");
-  if (block && block.dataset.copy) {
-    const button = block.querySelector(".copy");
-    const toast = block.querySelector(".copied-toast");
+  const block = e.target.closest(".transcript, .failed");
+  if (block) {
+    const card = block.closest(".card");
+    if (!card.dataset.copy) return;
+    const tag = card.querySelector(".copied-tag");
     try {
-      await navigator.clipboard.writeText(block.dataset.copy);
-      toast.textContent = "Copied";
-      button.innerHTML = ICON.check;
+      await navigator.clipboard.writeText(card.dataset.copy);
+      tag.textContent = "Copied";
     } catch (err) {
-      toast.textContent = `Copy failed: ${err.message ?? err}`;
+      tag.textContent = `Copy failed: ${errorText(err)}`;
     }
-    block.classList.add("copied");
-    setTimeout(() => { block.classList.remove("copied"); button.innerHTML = ICON.copy; }, 1500);
+    card.classList.add("copied");
+    clearTimeout(card._copied);
+    card._copied = setTimeout(() => card.classList.remove("copied"), 1400);
     return;
   }
   const retry = e.target.closest(".retry");
   if (retry) {
     const card = retry.closest(".card");
-    const foot_status = card.querySelector(".card-foot .status");
+    const rowStatus = card.querySelector(".card-row .status");
     const select = card.querySelector(".retry-model");
     const label = select.selectedOptions[0]?.textContent ?? "";
     retry.disabled = true;
-    foot_status.className = "status";
-    foot_status.textContent = `Transcribing with ${label}…`;
+    retry.dataset.busy = "true";
+    rowStatus.className = "status";
+    rowStatus.textContent = `Transcribing with ${label}…`;
     try {
       await api(`/api/recordings/${card.dataset.id}/transcriptions`, {
         method: "POST",
@@ -905,17 +264,34 @@ historyList.addEventListener("click", async (e) => {
         body: JSON.stringify({ model: select.value }),
       });
     } catch (err) {
-      foot_status.className = "status err";
-      foot_status.textContent = err.message ?? String(err);
+      rowStatus.className = "status err";
+      rowStatus.textContent = errorText(err);
       retry.disabled = false;
+      delete retry.dataset.busy;
       return;
     }
     await loadHistory(true);
   }
 });
 
-// ---- Start ----
-await loadSettings();
-if (models.length === 0 || location.hash === "#settings") show("settings");
+// ---- Wire the views, then load the saved configuration ----
+const dictionary = createDictionary({ getModel: () => defaultModel, getSettings: () => settings });
+const settingsView = createSettings({
+  async onLoaded(next) {
+    settings = next;
+    loadMetrics().catch(() => {});
+    await loadModels();
+  },
+  onModelsChanged: loadModels,
+  onShortcutsChanged(next) { shortcuts = next; renderStart(); },
+  onError(message) { status.textContent = message; },
+});
+initRecording({
+  getModelLabel: () => modelSelect.selectedOptions[0]?.textContent ?? "default model",
+  onStatus(message) { status.textContent = message; },
+  async onUploaded() { show("history"); await history.latest(); },
+});
+await settingsView.load();
+if (location.hash === "#settings") show("settings");
 else if (location.hash === "#dictionary") show("dictionary");
-await loadHistory(true);
+else show("history");

@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +37,7 @@ REPO = "https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3/resolve/main"
 FILES = (("config.json", 244_093), ("model.safetensors", 2_508_288_736))  # sizes on 2026-09-18
 INSTALL_COMMAND = "uv tool install parakeet-mlx"
 HELPER = Path(__file__).with_name("parakeet_helper.py")
+HELPER_TIMEOUT_SECONDS = 300.0
 
 
 def engine_python() -> Path | None:
@@ -59,6 +62,7 @@ def engine_python() -> Path | None:
 class Parakeet:
     id: str = "parakeet"
     name: str = "Parakeet (local)"
+    term_limit: int | None = None  # the engine takes no vocabulary hint
 
     def __init__(
         self,
@@ -74,7 +78,7 @@ class Parakeet:
         self._download: Download | None = None
         self._helper: subprocess.Popen[str] | None = None
         self._loaded = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     @property
     def models(self) -> tuple[str, ...]:
@@ -124,7 +128,9 @@ class Parakeet:
     def warm(self, name: str) -> None:
         _check(name)
         if self._ready() and self.engine() is not None:
-            self._ensure_loaded()
+            answer = self._ensure_loaded()
+            if "error" in answer:
+                raise OSError(str(answer["error"]))
 
     def transcribe(
         self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
@@ -144,10 +150,13 @@ class Parakeet:
             handle.write(data)
             path = handle.name
         try:
-            answer = self._ensure_loaded()
-            if "error" in answer:
-                return Failure(f"Could not load {MODEL}: {answer['error']}")
-            answer = self._ask({"op": "transcribe", "path": path})
+            with self._lock:
+                # A default-model change must not kill the loaded helper before the
+                # following request. Keep this operation atomic with unload/remove.
+                answer = self._ensure_loaded()
+                if "error" in answer:
+                    return Failure(f"Could not load {MODEL}: {answer['error']}")
+                answer = self._ask_locked({"op": "transcribe", "path": path})
         except OSError as exc:
             return Failure(f"Parakeet helper: {type(exc).__name__}: {exc}")
         finally:
@@ -171,23 +180,39 @@ class Parakeet:
             self._loaded = "error" not in answer
             return answer
 
-    def _ask(self, request: dict[str, Any]) -> dict[str, Any]:
-        with self._lock:
-            return self._ask_locked(request)
-
     def _ask_locked(self, request: dict[str, Any]) -> dict[str, Any]:
         helper = self._helper
         if helper is None or helper.poll() is not None:
+            self._stop_helper()
             helper = self._helper = self._spawn()
             self._loaded = False
         assert helper.stdin is not None and helper.stdout is not None
-        helper.stdin.write(json.dumps(request) + "\n")
-        helper.stdin.flush()
-        line = helper.stdout.readline()
-        if not line:
+        try:
+            helper.stdin.write(json.dumps(request) + "\n")
+            helper.stdin.flush()
+            deadline = time.monotonic() + HELPER_TIMEOUT_SECONDS
+            line = bytearray()
+            while b"\n" not in line:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([helper.stdout], [], [], remaining)[0]:
+                    raise OSError(
+                        f"the helper did not answer within {HELPER_TIMEOUT_SECONDS:g} seconds"
+                    )
+                # readline() can block forever after select sees only the first byte.
+                chunk = os.read(helper.stdout.fileno(), 65536)
+                if not chunk:
+                    raise OSError("the helper process exited")
+                line.extend(chunk)
+            answer: Any = json.loads(line)
+            if not isinstance(answer, dict) or not (
+                isinstance(answer.get("error"), str)
+                or (request["op"] == "load" and answer.get("ok") is True)
+                or (request["op"] == "transcribe" and isinstance(answer.get("text"), str))
+            ):
+                raise ValueError("invalid helper answer")
+        except (OSError, ValueError) as exc:
             self._stop_helper()
-            raise OSError("the helper process exited")
-        answer: dict[str, Any] = json.loads(line)
+            raise OSError(str(exc)) from exc
         return answer
 
     def _spawn(self) -> subprocess.Popen[str]:
@@ -204,6 +229,11 @@ class Parakeet:
     def _stop_helper(self) -> None:
         if self._helper is not None:
             self._helper.kill()
+            self._helper.wait()
+            if self._helper.stdin is not None:
+                self._helper.stdin.close()
+            if self._helper.stdout is not None:
+                self._helper.stdout.close()
             self._helper = None
         self._loaded = False
 

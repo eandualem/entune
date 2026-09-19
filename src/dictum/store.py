@@ -44,6 +44,13 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     fast INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS transcriptions_by_recording ON transcriptions(recording_id);
+CREATE TABLE IF NOT EXISTS corrections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    heard TEXT NOT NULL,
+    meant TEXT,
+    source TEXT
+);
 """
 
 # Columns added after the first release; applied to databases that predate them.
@@ -77,6 +84,17 @@ class Transcription:
     audio_seconds: float | None = None  # how long the clip is, when its container says
     elapsed_seconds: float | None = None  # how long the provider took to answer
     fast: bool = False  # transcribed from fast mode's stream (issue #20)
+
+
+@dataclass(frozen=True)
+class Correction:
+    """One entry an agent sent and Dictum pinned: a term (no `meant`) or a replacement."""
+
+    id: int
+    created_at: str
+    heard: str
+    meant: str | None
+    source: str | None
 
 
 @dataclass(frozen=True)
@@ -199,24 +217,75 @@ class Store:
             ).fetchone()
             return None if row is None else self._recording(row)
 
-    def list_recordings(self) -> list[Recording]:
-        """Every recording, newest first, each with its attempts newest first."""
+    def history_version(self) -> str:
+        """An inexpensive revision for the append-only recording and attempt history."""
         with self._lock:
-            rows = self._db.execute(
-                "SELECT id, created_at, file, mime FROM recordings ORDER BY id DESC"
-            ).fetchall()
-            return [self._recording(row) for row in rows]
+            recording = self._db.execute("SELECT MAX(id) FROM recordings").fetchone()[0] or 0
+            attempt = self._db.execute("SELECT MAX(id) FROM transcriptions").fetchone()[0] or 0
+        return f"{recording}-{attempt}"
 
-    def recent_transcripts(self, limit: int) -> list[str]:
-        """Provider text of the latest successful transcriptions, newest first, raw when kept."""
+    def list_recordings(
+        self, limit: int | None = None, before: int | None = None
+    ) -> list[Recording]:
+        """Newest first, optionally a page older than `before`, with all its attempts.
+
+        Two queries for the whole page, instead of one extra query per recording.
+        The unpaged call remains available to callers that need the complete history.
+        """
+        query = "SELECT id, created_at, file, mime FROM recordings"
+        params: list[int] = []
+        if before is not None:
+            query += " WHERE id < ?"
+            params.append(before)
+        query += " ORDER BY id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self._lock:
+            rows = self._db.execute(query, params).fetchall()
+            if not rows:
+                return []
+            attempts = self._db.execute(
+                f"SELECT * FROM transcriptions WHERE recording_id IN (SELECT id FROM ({query}))"
+                " ORDER BY id DESC",
+                params,
+            ).fetchall()
+        grouped: dict[int, list[Transcription]] = {}
+        for attempt in attempts:
+            grouped.setdefault(attempt["recording_id"], []).append(_transcription(attempt))
+        return [Recording(**dict(row), transcriptions=grouped.get(row["id"], [])) for row in rows]
+
+    def recent_transcripts(self, provider: str, model: str, limit: int) -> list[str]:
+        """That model's text from its latest successful transcriptions, newest first, raw
+        when kept."""
         with self._lock:
             rows = self._db.execute(
                 "SELECT COALESCE(raw_text, text) AS text FROM transcriptions"
-                " WHERE status = 'ok' AND COALESCE(raw_text, text) <> ''"
+                " WHERE status = 'ok' AND provider = ? AND model = ?"
+                " AND COALESCE(raw_text, text) <> ''"
                 " ORDER BY id DESC LIMIT ?",
-                (limit,),
+                (provider, model, limit),
             ).fetchall()
         return [str(row["text"]) for row in rows]
+
+    # Corrections agents sent, so the Agents page can show what arrived and from whom.
+
+    def add_corrections(
+        self, terms: tuple[str, ...], replacements: dict[str, str], source: str | None
+    ) -> None:
+        rows = [(heard, None) for heard in terms] + list(replacements.items())
+        with self._lock, self._db:
+            self._db.executemany(
+                "INSERT INTO corrections (created_at, heard, meant, source) VALUES (?, ?, ?, ?)",
+                [(_now(), heard, meant, source) for heard, meant in rows],
+            )
+
+    def list_corrections(self, limit: int = 100) -> list[Correction]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM corrections ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [Correction(**dict(row)) for row in rows]
 
     def _recording(self, row: sqlite3.Row) -> Recording:
         attempts = self._db.execute(

@@ -54,6 +54,9 @@ class Clip:
 class Provider(Protocol):
     id: str
     name: str
+    term_limit: int | None
+    """How many dictionary terms the provider takes as a vocabulary hint, or None when it
+    takes none: the dictionary never holds terms for such a model (issue #83)."""
 
     @property
     def models(self) -> tuple[str, ...]: ...

@@ -21,6 +21,7 @@ class StubProvider:
     id: str = "stub"
     name: str = "Stub"
     models: tuple[str, ...] = ("good", "bad")
+    term_limit: int | None = 3
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
@@ -62,8 +63,8 @@ def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
     assert settings["providers"][0]["keyHint"] == "••••1234"
     assert settings["defaultModel"] == "stub/good"
     assert client.get("/api/models").json() == [
-        {"id": "stub/good", "label": "Stub / good", "default": True},
-        {"id": "stub/bad", "label": "Stub / bad", "default": False},
+        {"id": "stub/good", "label": "Stub / good", "default": True, "term_limit": 3},
+        {"id": "stub/bad", "label": "Stub / bad", "default": False, "term_limit": 3},
     ]
 
 
@@ -186,25 +187,42 @@ def test_dictionary_round_trip_terms_reach_the_provider_and_replacements_apply(
     empty: dict[str, object] = {"terms": [], "replacements": {}}
     assert client.get("/api/dictionary").json() == {
         "pinned": empty,
-        "agents": empty,
-        "learned": empty,
+        "learned": {},
     }
     bad = client.put("/api/dictionary", content='{"pinned": {"terms": "x"}}')
     assert bad.status_code == 400 and "pinned.terms must be a list" in bad.text
     saved = client.put(
         "/api/dictionary",
         content='{"pinned": {"terms": ["Claude Code"],'
-        ' "replacements": {"cloud code": "Claude Code"}}, "learned": {"terms": ["Soniox"]}}',
+        ' "replacements": {"cloud code": "Claude Code"}},'
+        ' "learned": {"stub/good": {"terms": ["Soniox"]}, "stub/bad": {"terms": ["Elsewhere"]}}}',
     )
     assert saved.status_code == 200
-    assert saved.json()["learned"] == {"terms": ["Soniox"], "replacements": {}}
+    assert saved.json()["learned"]["stub/good"] == {"terms": ["Soniox"], "replacements": {}}
 
     client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     attempt = rec["transcriptions"][0]
-    assert stub.terms == ("Claude Code", "Soniox")
+    assert stub.terms == ("Claude Code", "Soniox")  # this model's learned terms, not stub/bad's
     assert attempt["raw_text"] == "hello there, I use cloud code"
     assert attempt["text"] == "hello there, I use Claude Code"
+
+
+def test_a_single_learned_list_moves_under_the_default_model_once(
+    client: TestClient, tmp_path: Path
+) -> None:
+    legacy = '{"pinned": {"terms": ["Dictum"]}, "learned": {"terms": ["Soniox"]}}'
+    assert client.put("/api/dictionary", content=legacy).status_code == 400
+    (tmp_path / "dictionary.json").write_text(legacy, encoding="utf-8")
+    unusable = client.get("/api/dictionary")
+    assert unusable.status_code == 500 and "set a default model" in unusable.text
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    moved = client.get("/api/dictionary").json()
+    assert moved["learned"] == {"stub/good": {"terms": ["Soniox"], "replacements": {}}}
+    assert moved["pinned"]["terms"] == ["Dictum"]
+    assert '"stub/good"' in (tmp_path / "dictionary.json").read_text(encoding="utf-8")
+    imported = client.put("/api/dictionary", content=legacy)
+    assert imported.status_code == 200 and imported.json() == moved
 
 
 def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
@@ -219,17 +237,14 @@ def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     assert settings["dictionaryModel"] is None
     bad = client.put("/api/settings", json={"dictionaryModel": "gemini:pro"})
     assert bad.status_code == 400 and "provider:model" in bad.text
-    ok = client.put(
-        "/api/settings",
-        json={
-            "keys": {"anthropic": "sk-ant-1234"},
-            "dictionaryModel": "anthropic:claude-fable-5-1",
-        },
-    )
+    ok = client.put("/api/settings", json={"keys": {"openai": "sk-1", "anthropic": "sk-ant-1234"}})
     assert ok.status_code == 200
     settings = client.get("/api/settings").json()
+    # A key is enough: the suggested model of the first provider with one is the default.
     assert settings["dictionaryModel"] == "anthropic:claude-fable-5-1"
     assert settings["llmProviders"][0]["keyHint"] == "••••1234"
+    client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
+    assert client.get("/api/settings").json()["dictionaryModel"] == "openai:gpt-6-astra"
 
 
 def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
@@ -240,20 +255,30 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     async def fake(provider: str, api_key: str, model: str, system: str, user: str) -> str:
         calls.append((model, api_key))
         assert "hello there, I use cloud code" in user
-        return '{"terms": ["Claude Code", "Soniox"], "replacements": {"cloud code": "Claude Code"}}'
+        assert "from another model" not in user  # only the default model's transcripts
+        assert "takes at most 3 terms; 1 are pinned already, so propose at most 2" in user
+        return (
+            '{"terms": ["Claude Code", "Soniox", "Groq", "Deepgram"],'
+            ' "replacements": {"cloud code": "Claude Code"}}'
+        )
 
     dictum = Dictum(Store(tmp_path), [stub], llm_call=fake)
     client = TestClient(create_app(dictum), base_url="http://localhost")
     res = client.post("/api/dictionary/build")
-    assert res.status_code == 400 and "Pick a model" in res.text
+    assert res.status_code == 400 and "Add an Anthropic or OpenAI key" in res.text
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
     res = client.post("/api/dictionary/build")
     assert res.status_code == 400 and "No API key set for OpenAI" in res.text
-    client.put(
-        "/api/settings", json={"keys": {"openai": "sk-1", "stub": "k"}, "defaultModel": "stub/good"}
-    )
+    client.put("/api/settings", json={"keys": {"openai": "sk-1", "stub": "k"}})
     res = client.post("/api/dictionary/build")
-    assert res.status_code == 400 and "Nothing to learn from yet" in res.text
+    assert res.status_code == 400 and "Pick a default model first" in res.text
+    client.put("/api/settings", json={"defaultModel": "stub/good"})
+    rec = client.post(
+        "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}, data={"model": "stub/bad"}
+    ).json()
+    dictum.store.add_transcription(rec["id"], "stub", "other", "ok", "from another model", None)
+    res = client.post("/api/dictionary/build")
+    assert res.status_code == 400 and "no transcripts from Stub / good" in res.text
 
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
     client.put("/api/dictionary", content='{"pinned": {"terms": ["Claude Code"]}}')
@@ -261,13 +286,16 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     assert res.status_code == 200, res.text
     proposal = res.json()
     assert calls == [("openai:gpt-6-astra", "sk-1")]
-    assert proposal["learned"] == {
-        "terms": ["Soniox"],
+    assert proposal["model"] == "stub/good"
+    assert proposal["learned"] == {  # cut to the two terms that fit beside the pinned one
+        "terms": ["Soniox", "Groq"],
         "replacements": {"cloud code": "Claude Code"},
     }
-    assert proposal["added"]["terms"] == ["Soniox"]
+    assert proposal["added"]["terms"] == ["Soniox", "Groq"]
+    assert proposal["budget"] == {"limit": 3, "pinned": 1, "room": 2}
+    assert proposal["dropped_terms"] == 1
     # Nothing is saved until the page accepts.
-    assert client.get("/api/dictionary").json()["learned"] == {"terms": [], "replacements": {}}
+    assert client.get("/api/dictionary").json()["learned"] == {}
 
 
 def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvider) -> None:
@@ -288,15 +316,23 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
         },
     )
     assert res.status_code == 200
-    # What the user already pinned is not added again; the rest lands in the agents section.
+    # What the user already pinned is not added again; the rest is pinned.
     assert res.json() == {
         "added": {"terms": ["Soniox"], "replacements": {"whisper flow": "Wispr Flow"}}
     }
     stored = client.get("/api/dictionary").json()
-    assert stored["agents"] == {"terms": ["Soniox"], "replacements": {"whisper flow": "Wispr Flow"}}
-    assert stored["pinned"]["replacements"] == {"cloud code": "Claude Code"}
+    assert stored["pinned"] == {
+        "terms": ["Soniox"],
+        "replacements": {"cloud code": "Claude Code", "whisper flow": "Wispr Flow"},
+    }
     again = client.post("/api/dictionary/corrections", json={"terms": ["soniox"]})
     assert again.json() == {"added": {"terms": [], "replacements": {}}}
+    # What arrived is kept, newest first, with its source, for the Agents page.
+    received = client.get("/api/dictionary/corrections").json()
+    assert [(c["heard"], c["meant"], c["source"]) for c in received] == [
+        ("whisper flow", "Wispr Flow", "dictum-agent"),
+        ("Soniox", None, "dictum-agent"),
+    ]
 
     client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
@@ -306,6 +342,75 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
 def test_settings_rejects_bad_json_with_400(client: TestClient) -> None:
     assert client.put("/api/settings", content="{not json").status_code == 400
     assert client.put("/api/settings", content="[]").status_code == 400
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"keys": "wrong"},
+        {"defaultModel": 123},
+        {"dictionaryModel": "invalid"},
+        {"fastMode": "false"},
+        {"shortcuts": {"hold": "cmd+space"}},
+    ],
+)
+def test_invalid_settings_do_not_partly_apply(
+    client: TestClient, invalid: dict[str, object]
+) -> None:
+    before = client.get("/api/settings").json()
+    response = client.put("/api/settings", json={"keys": {"stub": "new-key"}, **invalid})
+    assert response.status_code == 400
+    assert client.get("/api/settings").json() == before
+
+
+def test_streamed_requests_cannot_bypass_the_size_limit(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("dictum.server.MAX_UPLOAD_BYTES", 64)
+    body = b'{"terms":["' + b"a" * 100 + b'"]}'
+    response = client.post("/api/dictionary/corrections", content=iter([body[:50], body[50:]]))
+    assert response.status_code == 413
+    assert client.get("/api/dictionary").json()["pinned"]["terms"] == []
+    multipart = (
+        b'--clip\r\nContent-Disposition: form-data; name="audio"; filename="clip.webm"\r\n'
+        b"Content-Type: audio/webm\r\n\r\n" + WEBM_HEADER + b"\r\n--clip--\r\n"
+    )
+    response = client.post(
+        "/api/recordings",
+        content=iter([multipart[:50], multipart[50:]]),
+        headers={"content-type": "multipart/form-data; boundary=clip"},
+    )
+    assert response.status_code == 413
+    assert client.get("/api/recordings").json() == []
+
+
+def test_audio_response_cannot_execute_uploaded_or_legacy_html(
+    client: TestClient, tmp_path: Path, stub: StubProvider
+) -> None:
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    body = b"<html><script>document.title='not audio'</script></html>"
+    recording = client.post("/api/recordings", files={"audio": ("clip", body, "text/html")}).json()
+    assert recording["mime"] == "application/octet-stream"
+    store = Store(tmp_path / "legacy")
+    legacy = store.create_recording(body, "audio/wav")
+    with store._db:
+        store._db.execute("UPDATE recordings SET mime = 'text/html' WHERE id = ?", (legacy.id,))
+    legacy_client = TestClient(create_app(Dictum(store, [stub])), base_url="http://localhost")
+    for app_client, identifier in ((client, recording["id"]), (legacy_client, legacy.id)):
+        response = app_client.get(f"/api/recordings/{identifier}/audio")
+        assert response.content == body
+        assert response.headers["content-type"] == "application/octet-stream"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["content-security-policy"] == "sandbox"
+    store.close()
+
+
+def test_retry_rejects_malformed_request_bodies(client: TestClient) -> None:
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    recording = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
+    for body in ("{broken", "[]", "null"):
+        response = client.post(f"/api/recordings/{recording['id']}/transcriptions", content=body)
+        assert response.status_code == 400
 
 
 def test_requests_from_other_origins_are_refused(client: TestClient) -> None:
@@ -459,14 +564,74 @@ def test_a_stale_dictionary_save_is_refused_and_a_fresh_one_accepted(client: Tes
         headers={"if-match": version},
     )
     assert stale.status_code == 409 and "changed" in stale.text
-    assert "Soniox" in client.get("/api/dictionary").json()["agents"]["terms"]
+    assert "Soniox" in client.get("/api/dictionary").json()["pinned"]["terms"]
     fresh_version = client.get("/api/dictionary").headers["etag"]
     assert fresh_version != version
     ok = client.put(
         "/api/dictionary",
         content='{"pinned": {"terms": ["Dictum"]}, "agents": {"terms": ["Soniox"]}}',
         headers={"if-match": fresh_version},
-    )
+    )  # an agents section, from the earlier form, is folded into pinned
     assert ok.status_code == 200 and ok.headers["etag"] != fresh_version
+    assert ok.json()["pinned"]["terms"] == ["Dictum", "Soniox"] and "agents" not in ok.json()
     # Without a version (curl, or a page repairing a broken file) the write goes through.
     assert client.put("/api/dictionary", content='{"pinned": {"terms": []}}').status_code == 200
+
+
+def test_history_pages_and_conditional_refresh_include_new_attempts(
+    tmp_path: Path, stub: StubProvider
+) -> None:
+    store = Store(tmp_path)
+    first, second, third = [store.create_recording(WEBM_HEADER) for _ in range(3)]
+    with TestClient(create_app(Dictum(store, [stub])), base_url="http://localhost") as client:
+        page = client.get("/api/recordings?limit=2")
+        assert [r["id"] for r in page.json()] == [third.id, second.id]
+        headers = {"if-none-match": page.headers["etag"]}
+        unchanged = client.get("/api/recordings?limit=2", headers=headers)
+        assert unchanged.status_code == 304 and unchanged.content == b""
+        older = client.get(f"/api/recordings?limit=2&before={second.id}", headers=headers)
+        assert [r["id"] for r in older.json()] == [first.id]
+        store.add_transcription(second.id, "stub", "good", "ok", "new text", None)
+        changed = client.get("/api/recordings?limit=2", headers=headers)
+        assert changed.status_code == 200 and changed.headers["etag"] != headers["if-none-match"]
+        assert changed.json()[1]["transcriptions"][0]["text"] == "new text"
+        store.create_recording(WEBM_HEADER)
+        assert (
+            client.get(
+                "/api/recordings?limit=2", headers={"if-none-match": changed.headers["etag"]}
+            ).status_code
+            == 200
+        )
+        assert len(client.get("/api/recordings").json()) == 4  # existing unpaged API
+        for query in ("limit=0", "limit=201", "limit=no", "before=0"):
+            assert client.get(f"/api/recordings?{query}").status_code == 400
+
+
+def test_slow_settings_catalogue_does_not_block_other_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from dictum.service import ProviderStatus
+
+    app = Dictum(Store(tmp_path), [])
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_catalogue() -> list[ProviderStatus]:
+        entered.set()
+        assert release.wait(3)
+        return []
+
+    monkeypatch.setattr(app, "llm_provider_statuses", slow_catalogue)
+    with (
+        TestClient(create_app(app), base_url="http://localhost") as client,
+        ThreadPoolExecutor(2) as pool,
+    ):
+        waiting = pool.submit(client.get, "/api/settings")
+        try:
+            assert entered.wait(1)
+            assert pool.submit(client.get, "/api/status").result(timeout=1).status_code == 200
+        finally:
+            release.set()
+        assert waiting.result(timeout=1).status_code == 200
