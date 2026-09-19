@@ -90,7 +90,7 @@ export function renderCard(r, models) {
 
   const row = document.createElement("div");
   row.className = "card-row";
-  row.append(player(`/api/recordings/${r.id}/audio`, `Recording ${when.textContent}`, latest?.audio_seconds));
+  row.append(player(`/api/recordings/${r.id}/audio`, `Recording ${when.title}`, latest?.audio_seconds));
   const download = document.createElement("a");
   download.className = "btn-icon";
   download.href = `/api/recordings/${r.id}/audio`;
@@ -118,7 +118,10 @@ export function renderCard(r, models) {
       attempt.className = "attempt";
       const meta = document.createElement("div");
       meta.className = "meta";
-      meta.textContent = `${attemptLabel(t)} · ${whenLabel(t.created_at)}`;
+      const time = document.createElement("time");
+      time.dateTime = t.created_at;
+      time.textContent = whenLabel(t.created_at);
+      meta.append(`${attemptLabel(t)} · `, time);
       const text = document.createElement("div");
       text.className = t.status === "ok" ? "text" : "text err";
       text.textContent = t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";

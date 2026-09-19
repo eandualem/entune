@@ -1,5 +1,7 @@
 // A bounded history page. Refreshes are conditional and never overlap; unchanged
 // cards retain their player, retry selection and expanded attempts.
+import { whenLabel } from "./ui.js";
+
 export function createHistory({ list, newer, older, renderCard, onChange, onError }) {
   const size = 25;
   const cursors = [];
@@ -8,8 +10,14 @@ export function createHistory({ list, newer, older, renderCard, onChange, onErro
   let flight = null;
   let lastId = null;
   let snapshots = new Map();
+  let labelDay = new Date().toDateString();
 
   async function refresh(force = false) {
+    const today = new Date().toDateString();
+    if (labelDay !== today) {
+      for (const time of list.querySelectorAll("time[datetime]")) time.textContent = whenLabel(time.dateTime);
+      labelDay = today;
+    }
     if (flight) {
       await flight;
       if (force) return refresh(true);
