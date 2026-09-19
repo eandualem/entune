@@ -250,3 +250,43 @@ def test_assemblyai_streaming_upload_is_used_only_past_the_sync_limit() -> None:
     assert short.finish(5.0) is None
     short._thread.join(2.0)
     assert len(uploads) == 1
+
+
+def test_failed_streaming_upload_stops_collecting_recorded_audio() -> None:
+    from dictum.providers.assemblyai import StreamingUpload
+
+    class Offline(httpx.BaseTransport):
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("offline", request=request)
+
+    with httpx.Client(transport=Offline()) as client:
+        upload = StreamingUpload(client, "k", 16_000)
+        upload._thread.join(2)
+        assert upload.error and "offline" in upload.error
+        upload.feed(b"still recording")
+        assert upload._queue.empty()
+
+
+def test_aborting_an_upload_discards_audio_waiting_for_a_slow_connection() -> None:
+    import threading
+
+    from dictum.providers.assemblyai import StreamingUpload
+
+    proceed = threading.Event()
+    sent: list[bytes] = []
+
+    class SlowConnection(httpx.BaseTransport):
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            assert proceed.wait(2)
+            assert isinstance(request.stream, httpx.SyncByteStream)
+            sent.extend(request.stream)
+            return httpx.Response(200, json={"upload_url": "https://example.com/audio"})
+
+    with httpx.Client(transport=SlowConnection()) as client:
+        upload = StreamingUpload(client, "k", 16_000)
+        upload.feed(b"queued audio")
+        upload.abort()
+        proceed.set()
+        upload._thread.join(2)
+        assert not upload._thread.is_alive()
+        assert sent == [] and upload._queue.empty()

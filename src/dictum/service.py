@@ -94,7 +94,7 @@ class Dictum:
         self,
         store: Store,
         providers: list[Provider],
-        llm_call: llm.Caller = llm.call_assistant_runtime,
+        llm_call: llm.Caller = llm.call_model,
     ) -> None:
         self.store = store
         self.providers = providers

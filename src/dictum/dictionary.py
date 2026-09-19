@@ -56,13 +56,13 @@ class Dictionary:
 
     def with_agent_corrections(self, corrections: Entries) -> tuple[Dictionary, Entries]:
         """Pin corrections an agent sent; the second value is what was new."""
-        new_terms = tuple(
-            t for t in corrections.terms if t.lower() not in {x.lower() for x in self.pinned.terms}
-        )
+        pinned_terms = {t.lower() for t in self.pinned.terms}
+        pinned_replacements = {_key(h): m for h, m in self.pinned.replacements.items()}
+        new_terms = tuple(t for t in corrections.terms if t.lower() not in pinned_terms)
         new_replacements = {
             h: m
-            for h, m in corrections.replacements.items()
-            if self.pinned.replacements.get(h) != m
+            for h, m in _merge(corrections.replacements).items()
+            if pinned_replacements.get(_key(h)) != m
         }
         pinned = Entries(
             tuple(dict.fromkeys((*self.pinned.terms, *new_terms))),
@@ -269,11 +269,11 @@ def propose(current: Dictionary, proposed: Entries, model: str, budget: TermBudg
     is asked to put the most valuable first), then diff against what was learned for
     that model. Nothing beyond what the speech model can use is ever proposed."""
     pinned_terms = {t.lower() for t in current.pinned.terms}
-    pinned_heard = {h.lower() for h in current.pinned.replacements}
+    pinned_heard = {_key(h) for h in current.pinned.replacements}
     terms = tuple(t for t in proposed.terms if t.lower() not in pinned_terms)
     learned = Entries(
         terms[: budget.room],
-        {h: m for h, m in proposed.replacements.items() if h.lower() not in pinned_heard},
+        {h: m for h, m in proposed.replacements.items() if _key(h) not in pinned_heard},
     )
     old = current.learned_for(model)
     added = Entries(
