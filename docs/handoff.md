@@ -4,6 +4,46 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-19: memory retention and Fn+Escape cancellation
+
+Elias reported a whole-Mac freeze around 4 p.m., requiring a reboot, and a
+later PortAudio -9986 microphone-open failure that cleared after reopening
+Dictum. The freeze's cause remains unproven: the 11:25 a.m. memory-pressure
+report predates it, and the 4:24 p.m. shutdown-stall snapshot was taken only
+60 seconds after a boot. Neither identifies the frozen session's culprit.
+
+Observed the live Parakeet helper at **4.3 GiB physical footprint** despite
+small RSS; most was GPU allocation. Its working-buffer cache persisted
+between calls, and our direct inference bypassed the engine's file chunking.
+The helper now caps unused cache at 64 MiB, clears it after every request,
+and uses 120-second chunks with 15-second overlap and the engine's token
+mergers. Weights remain loaded while selected. A sequential synthetic
+1/3/5/1-second probe retained 817.65 MiB of cache before and zero after;
+active weights were about 1,236 MiB. A fixed 126-second silence probe peaked
+at 2,754 MiB active allocation, returning to zero cached memory afterward.
+These checks do not prove the earlier freeze's cause or speech accuracy at
+chunk boundaries. Recording buffers and the persistence worker's last PCM
+reference are released after use; cancelled fast uploads drop queued audio
+immediately. A minute of synthetic PCM retained 5,760,000 bytes after stop
+before the fix and zero after it.
+
+Fn+Escape discards an active **shortcut** recording without saving,
+transcribing, copying or pasting it. Escape alone continues recording.
+With hold=Fn, stopping hands-free via Fn now happens on release, allowing
+Fn+Escape to cancel before submission. The chord is reserved; Settings and
+the README describe it. Earlier submitted dictations remain unaffected.
+The window's separate Record button is not controlled by this global shortcut.
+
+Verified 171 tests, ruff lint/format, strict mypy, real small/long Parakeet
+probes and in-memory Quartz event translation through the actual listener.
+No keys were injected into the user's desktop and no microphone or provider
+API was used in the probes. The frozen app was smoke-tested on scratch data.
+Detailed evidence and delivery status: `.backbone/reviews/memory-cancel-20260919/`.
+
+Delivery is into `develop`, followed by rebuilding/installing. Next: Elias
+quits and reopens Dictum, checks Fn+Escape in his normal workflow and reports
+any repeat freeze with its time. CI remains blocked on billing (#39).
+
 ## 2026-09-19: release review reaches its stopping point
 
 The second native Codex pass used GPT-6 Astra at `high`, reviewing `21f01d9`

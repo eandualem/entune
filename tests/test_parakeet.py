@@ -57,8 +57,8 @@ def test_the_helper_answers_over_the_pipe_and_reports_a_missing_engine(tmp_path:
     clip = Clip(wav_bytes(b"\x00\x00" * 48_000, sample_rate=48_000), "audio/wav")
     result = parakeet.transcribe(clip, MODEL, "")
     assert isinstance(result, Failure) and "Could not load" in result.error
-    assert "parakeet_mlx" in result.error
-    with pytest.raises(OSError, match="parakeet_mlx"):
+    assert "mlx" in result.error
+    with pytest.raises(OSError, match="mlx"):
         parakeet.warm(MODEL)
     parakeet.remove(MODEL)  # also stops the helper
 

@@ -286,6 +286,7 @@ def test_aborting_an_upload_discards_audio_waiting_for_a_slow_connection() -> No
         upload = StreamingUpload(client, "k", 16_000)
         upload.feed(b"queued audio")
         upload.abort()
+        assert upload._queue.qsize() == 1  # only the wake-up marker, before the network resumes
         proceed.set()
         upload._thread.join(2)
         assert not upload._thread.is_alive()
