@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import os
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
+from typing import Any
+
 import pytest
 
 from dictum import llm
@@ -93,3 +99,71 @@ def test_catalog_lists_the_strongest_model_first() -> None:
     assert llm.catalog("openai")[0].id == "openai:gpt-6-astra"
     assert all(c.id.startswith("openai:") for c in llm.catalog("openai"))
     assert not any("image" in c.id for c in llm.catalog("openai"))
+
+
+def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from assistant_runtime.services.llm import interface
+
+    seen: list[str] = []
+
+    class Service:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        async def start(self) -> None:
+            pass
+
+        async def execute_llm_call(self, **kwargs: Any) -> SimpleNamespace:
+            key = os.environ["OPENAI_API_KEY"]
+            await asyncio.sleep(0.02)
+            assert os.environ["OPENAI_API_KEY"] == key
+            seen.append(key)
+            return SimpleNamespace(content='{"terms": []}')
+
+        async def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr(interface, "LlmService", Service)
+    monkeypatch.setenv("OPENAI_API_KEY", "original")
+
+    def build(key: str) -> Entries:
+        return llm.propose_learned(
+            "openai", key, "openai:gpt-6-astra", Dictionary(), ["text"], "s/m", TermBudget(10, 0)
+        )
+
+    with ThreadPoolExecutor(3) as pool:
+        assert list(pool.map(build, ["one", "two", "three"])) == [Entries()] * 3
+    assert sorted(seen) == ["one", "three", "two"]
+    assert os.environ["OPENAI_API_KEY"] == "original"
+
+
+@pytest.mark.parametrize("fail_at", ["start", "stop"])
+def test_dictionary_service_failures_restore_the_environment(
+    monkeypatch: pytest.MonkeyPatch, fail_at: str
+) -> None:
+    from assistant_runtime.services.llm import interface
+
+    class Service:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        async def start(self) -> None:
+            if fail_at == "start":
+                raise RuntimeError("startup failed")
+
+        async def execute_llm_call(self, **kwargs: Any) -> SimpleNamespace:
+            return SimpleNamespace(content='{"terms": []}')
+
+        async def stop(self) -> None:
+            if fail_at == "stop":
+                raise RuntimeError("shutdown failed")
+
+    monkeypatch.setattr(interface, "LlmService", Service)
+    monkeypatch.setenv("OPENAI_API_KEY", "original")
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    with pytest.raises(RuntimeError, match="failed"):
+        asyncio.run(llm.call_assistant_runtime("openai", "temporary", "openai:gpt-6-astra", "", ""))
+    assert os.environ["OPENAI_API_KEY"] == "original"
+    assert "OPENAI_BASE_URL" not in os.environ
