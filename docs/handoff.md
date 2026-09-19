@@ -4,6 +4,37 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-19: microphone changes and quiet recordings
+
+Elias reported an empty transcript after a long recording, followed by PortAudio
+-9986 after putting on AirPods. He confirmed the AirPods came **after** the failed
+recording, so these are separate failures. Observation: recording 151 (517.56 s)
+contains about 98% zero samples and far less signal than the preceding successful
+clip. A local 20 dB amplification still returned no text; the original is preserved.
+The cause of the quiet capture remains unknown. A separate 501.92-second probe
+made from known speech returned 1,076 words with peak MLX allocation 2,887 MiB and
+zero cached memory afterward. This checks long inference, not a live microphone.
+
+PortAudio caches device/default information at initialization. Dictum now refreshes
+it between recordings, then opens the current input by its explicit index and native
+rate. Failed initialization can recover on the next attempt. Upload starts only
+after the microphone opens, and the selected input/rate are logged for diagnosis.
+An early warning is **derived** from Elias's report, "after recording for log time
+I got no speech detected": ten seconds of near-silence changes the recording pill
+and sends one notification per recording. The existing five-second timer checks it;
+audio is still saved/transcribed and normal indication returns with input.
+
+Verified 180 tests, ruff lint/format and strict mypy. Native enumeration/format checks
+accepted the connected AirPods at 24 kHz across three refreshes, without opening a
+microphone stream. Quiet analysis used 0.59 ms CPU per audio second. The original
+failed clip would have warned around 20 seconds. A real connect/disconnect recording
+cycle remains for Elias after reopening the rebuilt app. Evidence:
+`.backbone/reviews/audio-recovery-20260919/`. CI remains blocked on billing (#39).
+
+Separate observation for follow-up: the existing titlebar JS bridge logs pywebview
+"Main window failed to start" while the window is hidden; its return callback waits
+for a shown window. No audio link is established, and this patch does not change it.
+
 ## 2026-09-19: editable cancellation, permission setup and integrated Mac toolbar
 
 Elias restarted the memory-fix build and reported normal memory use. Observed

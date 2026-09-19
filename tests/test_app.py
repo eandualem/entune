@@ -143,6 +143,7 @@ class FakeRecorder:
     def __init__(self, capture: Capture) -> None:
         self.capture = capture
         self.recording = False
+        self.quiet = False
 
     def start(self, sink_for_rate: SinkFactory | None = None) -> None:
         self.recording = True
@@ -257,6 +258,34 @@ def test_a_dictation_is_transcribed_copied_and_pasted(tmp_path: Path) -> None:
     assert platform.actions.clipboard == "hello from the fake"
     wait_for(lambda: platform.tray.states[-1] == "idle")
     assert dictum.store.list_recordings()[0].transcriptions[0].text == "hello from the fake"
+
+
+def test_quiet_microphone_warns_once_and_still_saves_the_recording(tmp_path: Path) -> None:
+    app, platform, dictum = make(tmp_path)
+    dictum.set_key("stub", "k")
+    dictum.set_default_model("stub/good")
+    dictum.report_status(lastError="microphone unavailable")
+    app.start_recording()
+    assert dictum.desktop_status()["lastError"] is None
+    assert isinstance(app.recorder, FakeRecorder)
+    app.recorder.quiet = True
+    app._recheck_permission()
+    app._recheck_permission()
+    assert platform.tray.states[-1] == "quiet"
+    assert len(platform.actions.notices) == 1
+    assert "Recording continues" in platform.actions.notices[0][1]
+    assert app.recorder.recording
+    app.recorder.quiet = False
+    app._recheck_permission()
+    assert platform.tray.states[-2:] == ["quiet", "recording"]
+    app.stop_recording()
+    wait_for(lambda: platform.actions.pasted == 1)
+    assert len(dictum.store.list_recordings()) == 1
+    app.start_recording()
+    app.recorder.quiet = True
+    app._recheck_permission()
+    assert len(platform.actions.notices) == 2
+    app.cancel_recording()
 
 
 def test_fast_mode_streams_the_recording_and_hands_the_upload_to_the_provider(
