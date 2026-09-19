@@ -134,7 +134,9 @@ class DictumApp:
             # Any settings or dictionary change lands here, including an agent's
             # corrections mid-dictation; a new engine would forget that a key is held.
             return
-        self.engine = ShortcutEngine(shortcuts, self.start_recording, self.stop_recording)
+        self.engine = ShortcutEngine(
+            shortcuts, self.start_recording, self.stop_recording, self.cancel_recording
+        )
         self.platform.hotkeys.start(self.engine)
         self._listening = True
         self._set_status(f"Dictate: {shortcuts.describe()}")
@@ -207,6 +209,19 @@ class DictumApp:
         self._later(self._refresh_state)
         self._captures.put((capture, upload))
 
+    def cancel_recording(self) -> None:
+        """Discard only the active microphone capture; earlier dictations keep their place."""
+        if not self._recording:
+            return
+        upload, self._upload = self._upload, None
+        try:
+            if upload is not None:
+                upload.abort()
+            self.recorder.stop(discard=True)
+        finally:
+            self._recording = False
+            self._later(self._refresh_state)
+
     def _persist(self) -> None:
         """Every stopped clip is written to disk and history at once, in order, so a quit
         during a slow provider call loses nothing; only the transcription waits."""
@@ -223,7 +238,9 @@ class DictumApp:
                 continue
             finally:
                 self._captures.task_done()
-            self._jobs.put((recording, capture.seconds, upload))
+                seconds = capture.seconds
+                del capture  # an idle worker must not keep the last clip's PCM alive
+            self._jobs.put((recording, seconds, upload))
 
     def _notify_later(self, title: str, message: str) -> None:
         self._later(lambda: self.platform.actions.notify(title, message))

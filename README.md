@@ -79,7 +79,10 @@ can be set:
 - **Hold to talk**: one key, for example `fn` or the right Option key.
   Record while held, release to stop.
 - **Hands-free**: a combination, for example `cmd+fn`. Press to start;
-  press again, or press the hold key, to stop.
+  press again, or press the hold key, to stop (release it to stop when that key is `fn`).
+
+**Cancel:** press `fn+esc` while dictating to discard the active recording,
+without saving, transcribing or pasting it. Escape alone does not cancel.
 
 While you record, a small "Recording" pill appears, in the bottom-left
 corner of the screen your pointer is on until you drag it somewhere else;

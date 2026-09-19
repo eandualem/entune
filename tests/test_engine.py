@@ -7,7 +7,10 @@ from dictum.desktop.engine import ShortcutEngine
 def make(hold: str | None, toggle: str | None) -> tuple[ShortcutEngine, list[str]]:
     events: list[str] = []
     engine = ShortcutEngine(
-        shortcuts.parse(hold, toggle), lambda: events.append("start"), lambda: events.append("stop")
+        shortcuts.parse(hold, toggle),
+        lambda: events.append("start"),
+        lambda: events.append("stop"),
+        lambda: events.append("cancel"),
     )
     return engine, events
 
@@ -80,9 +83,9 @@ def test_fn_is_always_the_way_to_stop() -> None:
     engine.release("fn")
     engine.release("cmd")
     assert events == ["start", "stop", "start"] and engine.recording
-    engine.press("fn")  # a plain press of fn stops the hands-free recording
-    assert events == ["start", "stop", "start", "stop"] and not engine.recording
-    engine.release("fn")  # and releasing it afterwards starts nothing
+    engine.press("fn")  # wait for release so fn+esc can still cancel
+    assert events == ["start", "stop", "start"] and engine.recording
+    engine.release("fn")
     assert events == ["start", "stop", "start", "stop"]
 
 
@@ -124,6 +127,7 @@ def test_the_hold_key_that_stops_a_hands_free_recording_does_not_restart_it() ->
         shortcuts.Shortcuts(hold=("fn",), toggle=("cmd", "fn")),
         lambda: events.append("start"),
         lambda: events.append("stop"),
+        lambda: events.append("cancel"),
     )
     engine.press("cmd")
     engine.press("fn")  # chord: hands-free
@@ -167,3 +171,39 @@ def test_injected_keys_such_as_our_own_paste_never_reach_the_engine() -> None:
     assert events == ["start"] and engine.recording  # not turned hands-free
     listener._on_release(Key.alt_r)
     assert events == ["start", "stop"] and not engine.recording
+
+
+@pytest.mark.parametrize("hands_free", [False, True])
+def test_fn_escape_cancels_without_submitting_or_restarting(hands_free: bool) -> None:
+    engine, events = make("fn", "cmd+fn")
+    if hands_free:
+        engine.press("cmd")
+    engine.press("fn")
+    if hands_free:
+        engine.release("fn")
+        engine.release("cmd")
+        engine.press("fn")
+    engine.press("esc")
+    engine.press("esc")  # repeat
+    engine.release("fn")
+    engine.press("fn")  # Escape still held: must not start again
+    engine.release("esc")
+    engine.release("fn")
+    assert events == ["start", "cancel"] and not engine.recording
+    engine.press("fn")
+    engine.release("fn")
+    assert events == ["start", "cancel", "start", "stop"]
+
+
+def test_escape_alone_does_not_cancel_and_fn_escape_works_with_other_shortcuts() -> None:
+    engine, events = make("alt_r", "cmd+d")
+    engine.press("cmd")
+    engine.press("d")
+    engine.release("d")
+    engine.release("cmd")
+    engine.press("esc")
+    assert events == ["start"] and engine.recording
+    engine.press("fn")  # either order completes cancellation
+    engine.release("fn")
+    engine.release("esc")
+    assert events == ["start", "cancel"] and not engine.recording

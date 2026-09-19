@@ -79,32 +79,40 @@ class Recorder:
             device = sounddevice.query_devices(kind="input")
             self._rate = int(device["default_samplerate"]) or FALLBACK_RATE
             self._sink = sink_for_rate(self._rate) if sink_for_rate else None
-            stream = sounddevice.RawInputStream(
-                samplerate=self._rate,
-                channels=CHANNELS,
-                dtype="int16",
-                callback=self._on_audio,
-            )
+            stream = None
             try:
+                stream = sounddevice.RawInputStream(
+                    samplerate=self._rate,
+                    channels=CHANNELS,
+                    dtype="int16",
+                    callback=self._on_audio,
+                )
                 stream.start()
             except Exception:
                 # A device mid-switch (Bluetooth) can refuse; nothing must be left half
                 # open, or the next attempt would think it is already recording.
-                stream.close()
+                if stream is not None:
+                    stream.close()
                 self._sink = None
+                self._chunks = []
                 raise
             self._stream = stream
 
-    def stop(self) -> Capture:
-        """Stop capturing and return what was recorded since `start`."""
+    def stop(self, *, discard: bool = False) -> Capture:
+        """Stop capturing and release the buffers; cancellation skips the PCM copy."""
         with self._lock:
             stream, self._stream = self._stream, None
             if stream is None:
                 return Capture(b"", self._rate)
-            stream.stop()
-            stream.close()
-            self._sink = None
-            return Capture(b"".join(self._chunks), self._rate)
+            try:
+                stream.stop()
+            finally:
+                try:
+                    stream.close()
+                finally:
+                    self._sink = None
+                    chunks, self._chunks = self._chunks, []
+            return Capture(b"" if discard else b"".join(chunks), self._rate)
 
     def _on_audio(self, indata: Any, frames: int, time: Any, status: Any) -> None:
         chunk = bytes(indata)

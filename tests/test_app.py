@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import weakref
 from collections.abc import Callable
 from pathlib import Path
 
@@ -139,9 +140,9 @@ class FakeRecorder:
         if sink is not None:
             sink(self.capture.pcm)
 
-    def stop(self) -> Capture:
+    def stop(self, *, discard: bool = False) -> Capture:
         self.recording = False
-        return self.capture
+        return Capture(b"", self.capture.sample_rate) if discard else self.capture
 
 
 class FakeUpload:
@@ -422,3 +423,43 @@ def test_quitting_right_after_a_recording_still_saves_it(tmp_path: Path) -> None
     app.quit()
     assert platform.quit_called
     assert len(dictum.store.list_recordings()) == 1
+
+
+def test_cancelling_discards_capture_and_upload_without_saving_or_pasting(tmp_path: Path) -> None:
+    app, platform, dictum = make(tmp_path)
+    dictum.set_key("stub", "k")
+    dictum.set_default_model("stub/good")
+    dictum.set_fast_mode(True)
+    dictum.set_shortcuts("fn", "cmd+fn")
+    engine = app.engine
+    assert engine is not None
+    engine.press("cmd")
+    engine.press("fn")
+    engine.release("fn")
+    engine.release("cmd")
+    upload = app._upload
+    assert isinstance(upload, FakeUpload)
+    engine.press("fn")
+    engine.press("esc")
+    engine.release("esc")
+    engine.release("fn")
+    assert upload.aborted and app._upload is None
+    assert not app._recording and not app.recorder.recording  # type: ignore[attr-defined]
+    assert platform.tray.states[-1] == "idle"
+    assert app._captures.empty() and app._jobs.empty() and app._pending == 0
+    assert dictum.store.list_recordings() == []
+    assert platform.actions.clipboard is None and platform.actions.pasted == 0
+    engine.press("fn")
+    engine.release("fn")
+    wait_for(lambda: platform.actions.pasted == 1)
+
+
+def test_persisted_audio_is_released_while_waiting_for_the_next_recording(tmp_path: Path) -> None:
+    app, _platform, dictum = make(tmp_path)
+    capture = Capture(b"\x00\x00" * 16_000, 16_000)
+    reference = weakref.ref(capture)
+    app._pending += 1
+    app._captures.put((capture, None))
+    del capture
+    wait_for(lambda: len(dictum.store.list_recordings()) == 1)
+    wait_for(lambda: reference() is None)

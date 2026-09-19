@@ -23,6 +23,7 @@ def test_parse_hold_and_toggle_together() -> None:
         ("banana", None, "Unknown key"),
         (None, "cmd+", "Empty key"),
         (None, "cmd+cmd", "given twice"),
+        (None, "fn+esc", "reserved"),
     ],
 )
 def test_rejects_unusable_shortcuts(hold: str | None, toggle: str | None, reason: str) -> None:
