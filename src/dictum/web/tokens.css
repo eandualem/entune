@@ -1,0 +1,165 @@
+/* Dictum design tokens: the one place a colour, size or depth is defined. Everything in
+   style.css references these; nothing else carries a raw value. Values from the design
+   (Claude Design project "Dictation app design prototypes", direction 3, 2026-09-18).
+
+   Colours: dark is the default, light overrides it, and the Theme setting pins either
+   with data-theme; with no setting the system's preference decides. Sizes are rem off
+   one root size so the Text size setting scales every component together. */
+
+:root {
+  font-size: 16px;
+
+  /* Type: 11 · 11.5 · 12 · 12.5 · 13 · 13.5 · 14 · 14.5 · 15 · 16 */
+  --fs-11: 0.6875rem;  --fs-11-5: 0.71875rem; --fs-12: 0.75rem;   --fs-12-5: 0.78125rem;
+  --fs-13: 0.8125rem;  --fs-13-5: 0.84375rem; --fs-14: 0.875rem;  --fs-14-5: 0.90625rem;
+  --fs-15: 0.9375rem;  --fs-16: 1rem;
+  --lh-caption: 1.45; --lh-body: 1.55; --lh-transcript: 1.7;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing: 2 4 6 8 10 12 14 16 20 24 28 32 */
+  --sp-2: 0.125rem; --sp-4: 0.25rem; --sp-6: 0.375rem; --sp-8: 0.5rem; --sp-10: 0.625rem;
+  --sp-12: 0.75rem; --sp-14: 0.875rem; --sp-16: 1rem; --sp-20: 1.25rem; --sp-24: 1.5rem;
+  --sp-28: 1.75rem; --sp-32: 2rem;
+
+  /* Radii: 6 segment · 7 control · 8 · 10 row/panel · 12 window · 14 card */
+  --r-6: 0.375rem; --r-7: 0.4375rem; --r-8: 0.5rem; --r-10: 0.625rem; --r-12: 0.75rem; --r-14: 0.875rem;
+
+  /* Control heights: 26 small · 28 default · 30 input · 32 nav. Icons: 12 · 13 · 14. */
+  --h-26: 1.625rem; --h-28: 1.75rem; --h-30: 1.875rem; --h-32: 2rem;
+  --i-12: 0.75rem; --i-13: 0.8125rem; --i-14: 0.875rem;
+  --toolbar: 3.25rem;      /* 52 */
+  --label-col: 10.625rem;  /* 170: the label column of a settings row */
+  --rail: 12.5rem;         /* 200: the settings side rail */
+  --content-max: 51.25rem; /* 820: settings content */
+}
+:root[data-scale="small"] { font-size: 14px; }
+:root[data-scale="large"] { font-size: 18px; }
+:root[data-scale="larger"] { font-size: 20px; }
+
+:root {
+  color-scheme: dark;
+  /* Ground and layers: "two close shades meeting", each layer one small step above the last. */
+  --surface: #1a1a1d;          /* window ground */
+  --surface-raised: #1f1f23;   /* toolbar, settings cards, dictionary table */
+  --surface-sunken: #1c1c1f;   /* settings side rail */
+  --card: #202024;             /* history recording card */
+  --well: #18181b;             /* inputs, segmented-control track: sits below its parent */
+  --well-deep: #141416;        /* JSON editor */
+  --control: #26262b;          /* select, popover, kbd */
+  --control-hover: #2a2a30;    /* secondary button ground; icon-button hover */
+  --control-active: #33333a;   /* secondary button hover */
+  --segment-on: #2c2c32;       /* active segment in a segmented control */
+  --track: #3a3a42;            /* empty progress track */
+  /* Lines: alpha over the layer beneath, so they read on every surface. */
+  --line: rgba(255, 255, 255, 0.06);
+  --line-soft: rgba(255, 255, 255, 0.05);
+  --line-faint: rgba(255, 255, 255, 0.04);
+  --line-strong: rgba(255, 255, 255, 0.08);   /* outlined buttons */
+  --hover-wash: rgba(255, 255, 255, 0.035);   /* hover on a transcript or list row */
+  /* Text */
+  --text: #e9e8e6;
+  --text-secondary: #c9c8cf;   /* code, JSON */
+  --text-soft: #b9b8bf;        /* earlier attempts, the "heard" half of a replacement */
+  --text-muted: #9a9aa3;       /* secondary labels, outlined-button text */
+  --text-dim: #8b8a92;         /* captions, status */
+  --text-faint: #6f6f78;       /* kind labels, idle icons, hints */
+  /* Accent: lavender, used as a wash, never a block. */
+  --accent: #a99cf2;
+  --accent-text: #c4baf7;                    /* text on an accent wash */
+  --accent-wash: rgba(169, 156, 242, 0.14);  /* primary button ground */
+  --accent-wash-hover: rgba(169, 156, 242, 0.22);
+  /* Semantic */
+  --ok: #8fd39a;                             /* ready dot */
+  --error: #e5857f;                          /* FAILED label */
+  --error-body: #d9c9c8;                     /* verbatim provider error text */
+  --error-wash: rgba(229, 101, 95, 0.07);
+  --recording: #e5655f;                      /* pulsing dot while recording */
+  --recording-wash: rgba(229, 101, 95, 0.14);/* Stop button ground */
+  /* Depth */
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.045) inset, 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --shadow-popover: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 16px 40px rgba(0, 0, 0, 0.5);
+  --shadow-segment: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-key: inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+  --focus: 0 0 0 2px var(--accent-wash-hover);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --surface: #f3f3f5;
+    --surface-raised: #f9f9fa;
+    --surface-sunken: #eeeef1;
+    --card: #ffffff;
+    --well: #e9e9ed;
+    --well-deep: #ffffff;
+    --control: #ffffff;
+    --control-hover: #ebebef;
+    --control-active: #e2e2e7;
+    --segment-on: #ffffff;
+    --track: #cfcfd6;
+    --line: rgba(0, 0, 0, 0.09);
+    --line-soft: rgba(0, 0, 0, 0.06);
+    --line-faint: rgba(0, 0, 0, 0.045);
+    --line-strong: rgba(0, 0, 0, 0.13);
+    --hover-wash: rgba(0, 0, 0, 0.03);
+    --text: #1c1c1f;
+    --text-secondary: #3a3a42;
+    --text-soft: #55555e;
+    --text-muted: #66666f;
+    --text-dim: #74747d;
+    --text-faint: #8e8e97;
+    --accent: #6c5cd8;
+    --accent-text: #5647bf;
+    --accent-wash: rgba(108, 92, 216, 0.12);
+    --accent-wash-hover: rgba(108, 92, 216, 0.2);
+    --ok: #3f9a52;
+    --error: #b8423c;
+    --error-body: #6b3a38;
+    --error-wash: rgba(217, 83, 79, 0.08);
+    --recording: #d9534f;
+    --recording-wash: rgba(217, 83, 79, 0.14);
+    --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
+    --shadow-popover: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.16);
+    --shadow-segment: 0 1px 2px rgba(0, 0, 0, 0.08);
+    --shadow-key: inset 0 -1px 0 rgba(0, 0, 0, 0.12);
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --surface: #f3f3f5;
+  --surface-raised: #f9f9fa;
+  --surface-sunken: #eeeef1;
+  --card: #ffffff;
+  --well: #e9e9ed;
+  --well-deep: #ffffff;
+  --control: #ffffff;
+  --control-hover: #ebebef;
+  --control-active: #e2e2e7;
+  --segment-on: #ffffff;
+  --track: #cfcfd6;
+  --line: rgba(0, 0, 0, 0.09);
+  --line-soft: rgba(0, 0, 0, 0.06);
+  --line-faint: rgba(0, 0, 0, 0.045);
+  --line-strong: rgba(0, 0, 0, 0.13);
+  --hover-wash: rgba(0, 0, 0, 0.03);
+  --text: #1c1c1f;
+  --text-secondary: #3a3a42;
+  --text-soft: #55555e;
+  --text-muted: #66666f;
+  --text-dim: #74747d;
+  --text-faint: #8e8e97;
+  --accent: #6c5cd8;
+  --accent-text: #5647bf;
+  --accent-wash: rgba(108, 92, 216, 0.12);
+  --accent-wash-hover: rgba(108, 92, 216, 0.2);
+  --ok: #3f9a52;
+  --error: #b8423c;
+  --error-body: #6b3a38;
+  --error-wash: rgba(217, 83, 79, 0.08);
+  --recording: #d9534f;
+  --recording-wash: rgba(217, 83, 79, 0.14);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  --shadow-popover: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.16);
+  --shadow-segment: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-key: inset 0 -1px 0 rgba(0, 0, 0, 0.12);
+}

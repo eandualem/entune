@@ -4,6 +4,48 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-18, late night: the Claude Design direction, implemented (issue #77)
+
+**Where it came from.** Elias explored with Claude Design from
+`docs/design-brief.md` and four reviewing agents, chose direction 3 and
+refined it ("significant UI improvement and usability change... not just
+UI change"). The project is "Dictation app design prototypes"
+(fb9e150c-f132-4365-9129-42bb716d76fd, `Dictum.dc.html` + `tokens.css`),
+read through the design connection after `/design-login`.
+
+**What changed.** `web/tokens.css` is the one place a colour, size or
+depth is defined (the design's tokens verbatim, sizes in rem); `style.css`
+only arranges them. Toolbar: views on the left, then status, the
+performance popover button, the default model, fast mode as a bolt (only
+when the provider streams), Record. History: soft cards with time and
+model, the transcript (click copies, "Copied" fades in), a quiet control
+row with a minimal player, download, earlier attempts behind a count,
+and re-transcribe as a quiet picker plus a button; failures as a FAILED
+block with the provider's text verbatim. Dictionary: one table (KIND,
+ENTRY, SOURCE) with an All / Pinned / Learned filter, one add panel (a
+word, or a recurring mistake), the term budget beside the filters, a
+"How the dictionary works" panel, Build/Refine and a `{ }` JSON editor.
+Settings: a side rail with General (shortcuts, theme, text size, a "Show
+helpful hints" switch that hides every caption marked `.hint`), Providers
+(speech keys with Save keys; the dictionary model as a summary line with
+Change, then provider, key and model), Local models (search, summary,
+Whisper and Parakeet cards with state dots, progress and "Check
+installation" with the install steps), and Agents (the endpoint and an
+example request with Copy, and the corrections received, newest first,
+with their source: a new `corrections` table and `GET
+/api/dictionary/corrections`). The pill takes the tokens' colours.
+
+**Left out of the design, on purpose.** Launch at login, Show in menu
+bar, Show in Dock, Reset settings, an "accept corrections" switch, an
+Ollama dictionary model, and cancelling a download: none exist in the
+app; each would be its own issue. The default model lives only in the
+toolbar now, as designed.
+
+**Verified (observations).** 123 tests, ruff and mypy pass. In Chrome on
+scratch folders: History (a failed card), Dictionary (empty and filtered),
+Settings General, Providers, Local models render as the design; no
+console errors. Elias's own look on the rebuilt app is the acceptance.
+
 ## 2026-09-18, night: UI improvements (issue #77), for Elias to inspect
 
 **Elias's brief, from Telegram, in his words.** "Take ur best judgement,
