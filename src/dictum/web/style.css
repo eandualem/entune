@@ -126,9 +126,8 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .record .timer { color: var(--text-dim); }
 
 /* Performance popover */
-.perf { position: relative; }
 .popover {
-  position: absolute; top: calc(var(--h-28) + var(--sp-6)); right: 0; z-index: 5; width: 40rem; max-width: calc(100vw - 2rem);
+  position: absolute; top: calc(100% + var(--sp-6)); right: var(--sp-16); z-index: 5; width: 40rem; max-width: calc(100vw - 2rem);
   background: var(--control); border-radius: var(--r-10); box-shadow: var(--shadow-popover); padding: var(--sp-6) 0;
 }
 .popover-head { display: flex; align-items: baseline; gap: var(--sp-8); padding: var(--sp-8) var(--sp-14) var(--sp-6); font-size: var(--fs-13); font-weight: 600; }

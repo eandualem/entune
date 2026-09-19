@@ -4,6 +4,33 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-19: release review, first Codex pass
+
+Elias requested Backbone's native `develop` → `main` review sequence and
+confirmed GPT-6 Astra at `max` effort first, then `high` for later warranted
+passes. Round one reviewed `9895e26` against `d3d45a8` in a clean detached,
+read-only checkout. It completed in 10m45s with one P1 and three P2 findings;
+all were verified, none rejected. Token attribution is unavailable: the
+ephemeral session is absent from Backbone's ledger and CLI usage counters
+were all zero despite the completed review.
+
+Fixed the legacy-dictionary upgrade path that could overwrite existing
+entries after an initial load error: model selection reloads the document,
+and edits require a successfully loaded revision. Also fixed the performance
+popover clipping at the default window width, dragged pill positions lost
+on the recording-to-transcribing transition, and Received corrections not
+refreshing when Agents opens. Corrected the dictionary example's model ID.
+Verified 161 tests, lint/format, strict types, JS syntax and scratch browser
+checks for each affected flow. Detailed report, triage, browser evidence
+and process logs are under the ignored
+`.backbone/reviews/20260919T124411Z-release-r1-max-attempt2/`;
+the failed outer-sandbox initialization attempt is preserved alongside it.
+
+Next: land these fixes into `develop`, rebuild/install, then run the second
+pass at `high` against `main`. The P1 finding warrants continuing under
+Backbone's findings-based rule. Open the release PR only after that sequence
+stops; no fixed number of rounds and no repeat merely to get a clean report.
+
 ## 2026-09-19: independent deep review and internal cleanup (issue #37)
 
 Elias confirmed the installed performance fix is “very smooth” and requested

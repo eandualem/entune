@@ -75,6 +75,7 @@ function showView(name) {
   for (const key in views) views[key].toggleAttribute("data-active", key === name);
   views[name].scrollTop = 0;
   if (name === "history") loadHistory().catch((err) => { status.textContent = errorText(err); });
+  if (name === "settings" && sections.agents.hasAttribute("data-active")) settingsView.refreshCorrections();
 }
 function show(name) { selectTab(name); showView(name); }
 
@@ -82,6 +83,7 @@ const sections = { general: el("settings-general"), providers: el("settings-prov
 const selectSection = segmentedGroup({ general: el("sec-general"), providers: el("sec-providers"), local: el("sec-local"), agents: el("sec-agents") }, showSection);
 function showSection(name) {
   for (const key in sections) sections[key].toggleAttribute("data-active", key === name);
+  if (name === "agents") settingsView.refreshCorrections();
 }
 function openSettings(section) { show("settings"); selectSection(section); showSection(section); }
 
@@ -99,7 +101,7 @@ async function loadModels() {
     ? "Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop"
     : "Fast mode: only AssemblyAI takes the audio while you record; pick it to use fast mode";
   if (!status.textContent || status.textContent === "Ready") status.textContent = defaultModel ? "Ready" : "";
-  dictionary.render();
+  await dictionary.load();
   renderStart();
   // A model change only changes the pickers, never the cards or their audio.
   for (const select of historyList.querySelectorAll(".retry-model")) {
@@ -278,7 +280,7 @@ const settingsView = createSettings({
   async onLoaded(next) {
     settings = next;
     loadMetrics().catch(() => {});
-    await Promise.all([loadModels(), dictionary.load()]);
+    await loadModels();
   },
   onModelsChanged: loadModels,
   onShortcutsChanged(next) { shortcuts = next; renderStart(); },
