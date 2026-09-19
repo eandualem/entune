@@ -504,3 +504,62 @@ def test_a_stale_dictionary_save_is_refused_and_a_fresh_one_accepted(client: Tes
     assert ok.json()["pinned"]["terms"] == ["Dictum", "Soniox"] and "agents" not in ok.json()
     # Without a version (curl, or a page repairing a broken file) the write goes through.
     assert client.put("/api/dictionary", content='{"pinned": {"terms": []}}').status_code == 200
+
+
+def test_history_pages_and_conditional_refresh_include_new_attempts(
+    tmp_path: Path, stub: StubProvider
+) -> None:
+    store = Store(tmp_path)
+    first, second, third = [store.create_recording(WEBM_HEADER) for _ in range(3)]
+    with TestClient(create_app(Dictum(store, [stub])), base_url="http://localhost") as client:
+        page = client.get("/api/recordings?limit=2")
+        assert [r["id"] for r in page.json()] == [third.id, second.id]
+        headers = {"if-none-match": page.headers["etag"]}
+        unchanged = client.get("/api/recordings?limit=2", headers=headers)
+        assert unchanged.status_code == 304 and unchanged.content == b""
+        older = client.get(f"/api/recordings?limit=2&before={second.id}", headers=headers)
+        assert [r["id"] for r in older.json()] == [first.id]
+        store.add_transcription(second.id, "stub", "good", "ok", "new text", None)
+        changed = client.get("/api/recordings?limit=2", headers=headers)
+        assert changed.status_code == 200 and changed.headers["etag"] != headers["if-none-match"]
+        assert changed.json()[1]["transcriptions"][0]["text"] == "new text"
+        store.create_recording(WEBM_HEADER)
+        assert (
+            client.get(
+                "/api/recordings?limit=2", headers={"if-none-match": changed.headers["etag"]}
+            ).status_code
+            == 200
+        )
+        assert len(client.get("/api/recordings").json()) == 4  # existing unpaged API
+        for query in ("limit=0", "limit=201", "limit=no", "before=0"):
+            assert client.get(f"/api/recordings?{query}").status_code == 400
+
+
+def test_slow_settings_catalogue_does_not_block_other_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from dictum.service import ProviderStatus
+
+    app = Dictum(Store(tmp_path), [])
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_catalogue() -> list[ProviderStatus]:
+        entered.set()
+        assert release.wait(3)
+        return []
+
+    monkeypatch.setattr(app, "llm_provider_statuses", slow_catalogue)
+    with (
+        TestClient(create_app(app), base_url="http://localhost") as client,
+        ThreadPoolExecutor(2) as pool,
+    ):
+        waiting = pool.submit(client.get, "/api/settings")
+        try:
+            assert entered.wait(1)
+            assert pool.submit(client.get, "/api/status").result(timeout=1).status_code == 200
+        finally:
+            release.set()
+        assert waiting.result(timeout=1).status_code == 200
