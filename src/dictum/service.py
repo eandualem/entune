@@ -10,9 +10,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from dictum import dictionary as dictionary_file
-from dictum import llm, shortcuts
+from dictum import jev, llm, shortcuts
 from dictum.audio import sniff_mime
-from dictum.dictionary import Dictionary, Entries, Proposal, TermBudget
+from dictum.dictionary import Dictionary, Entries, Proposal
 from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, resolve_model
 from dictum.providers.base import Downloadable, LocalModelStatus, Streams, Upload
 from dictum.shortcuts import Shortcuts
@@ -21,6 +21,9 @@ from dictum.store import Recording, Store, Transcription
 DEFAULT_MODEL_KEY = "default_model"
 DICTIONARY_MODEL_KEY = "dictionary_model"
 FAST_MODE_KEY = "fast_mode"
+JEV_PROVIDER = "typesafe"  # the key is stored like a speech provider's
+JEV_DICTIONARY_KEY = "jev_dictionary"
+JEV_FORMATTING_KEY = "jev_formatting"
 SHORTCUT_HOLD_KEY = "shortcut_hold"
 SHORTCUT_TOGGLE_KEY = "shortcut_toggle"
 SHORTCUT_CANCEL_KEY = "shortcut_cancel"
@@ -42,7 +45,35 @@ class ModelOption:
     id: str
     label: str
     default: bool
-    term_limit: int | None  # how many dictionary terms this model takes; None: none
+
+
+@dataclass(frozen=True)
+class JevStatus:
+    key_hint: str | None
+    dictionary: bool  # decide each dictionary match in context
+    formatting: bool  # paragraph breaks and bullets
+
+
+@dataclass(frozen=True)
+class JevSummary:
+    """What Jev has done in real use: the numbers that show what it adds and costs."""
+
+    transcriptions: int
+    fixed: int
+    kept: int
+    failed: int
+    median_seconds: float | None
+
+
+@dataclass(frozen=True)
+class Corrected:
+    """A transcript after the dictionary, with what Jev did to it, if anything."""
+
+    text: str
+    seconds: float | None = None
+    fixed: int | None = None
+    kept: int | None = None
+    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -229,6 +260,38 @@ class Dictum:
         self.store.set_setting(FAST_MODE_KEY, "1" if on else None)
         self._changed()
 
+    # Jev: a TypeSafe key, and two things it can do to every transcript, each opt-in.
+
+    def jev_status(self) -> JevStatus:
+        key = self.store.get_setting(key_setting(JEV_PROVIDER))
+        return JevStatus(
+            None if key is None else mask_key(key),
+            self.store.get_setting(JEV_DICTIONARY_KEY) == "1",
+            self.store.get_setting(JEV_FORMATTING_KEY) == "1",
+        )
+
+    def set_jev(self, dictionary: bool | None = None, formatting: bool | None = None) -> None:
+        """Turn a Jev use on or off; turning one on needs the key, so the setting never
+        promises what a dictation cannot do."""
+        if (dictionary or formatting) and self.store.get_setting(key_setting(JEV_PROVIDER)) is None:
+            raise ValueError("Save a TypeSafe API key first.")
+        if dictionary is not None:
+            self.store.set_setting(JEV_DICTIONARY_KEY, "1" if dictionary else None)
+        if formatting is not None:
+            self.store.set_setting(JEV_FORMATTING_KEY, "1" if formatting else None)
+        self._changed()
+
+    def jev_summary(self) -> JevSummary:
+        attempts = self.store.jev_transcriptions()
+        waits = sorted(a.jev_seconds for a in attempts if a.jev_seconds is not None)
+        return JevSummary(
+            transcriptions=len(attempts),
+            fixed=sum(a.jev_fixed or 0 for a in attempts),
+            kept=sum(a.jev_kept or 0 for a in attempts),
+            failed=sum(1 for a in attempts if a.jev_error),
+            median_seconds=statistics.median(waits) if waits else None,
+        )
+
     def begin_upload(self, sample_rate: int) -> Upload | None:
         """Fast mode's upload for a recording that starts now, when everything for it is
         set: the option, a default model whose provider streams, and its key."""
@@ -338,7 +401,11 @@ class Dictum:
         self._changed()
 
     def set_key(self, provider_id: str, key: str) -> None:
-        known = any(p.id == provider_id for p in self.providers) or provider_id in llm.LLM_PROVIDERS
+        known = (
+            any(p.id == provider_id for p in self.providers)
+            or provider_id in llm.LLM_PROVIDERS
+            or provider_id == JEV_PROVIDER
+        )
         if not known:
             raise ValueError(f"Unknown provider: {provider_id}")
         if not key.strip():
@@ -389,10 +456,9 @@ class Dictum:
     # Dictionary: read from disk each time so a hand edit of the file counts too.
 
     def dictionary(self) -> Dictionary:
-        # A file from before learned lists were kept per model goes under the default
-        # model (load rewrites it once); the next build for that model replaces it.
+        # A file in an earlier form is rewritten in the current one (load does it once).
         with self._dictionary_lock:
-            return dictionary_file.load(self.store.data_dir, self.default_model())
+            return dictionary_file.load(self.store.data_dir)
 
     def dictionary_text(self) -> str:
         return dictionary_file.dumps(self.dictionary())
@@ -412,7 +478,7 @@ class Dictum:
         """Validate and save the JSON form. Raises ValueError with the reason, and
         DictionaryChanged when `expected_version` is given and the file moved on since:
         an edit made on a stale copy would silently drop what was added meanwhile."""
-        parsed = dictionary_file.parse(text, self.default_model())
+        parsed = dictionary_file.parse(text)
         with self._dictionary_lock:
             if expected_version is not None and expected_version != self.dictionary_version():
                 raise DictionaryChanged(
@@ -426,15 +492,19 @@ class Dictum:
     def add_agent_corrections(self, data: object) -> Entries:
         """Pin corrections an agent sent after confirming them with the user.
 
-        `data` is the request body: terms and replacements, plus an optional `source`.
-        Returns what was actually new. Raises ValueError with the reason on bad input.
+        `data` is the request body: `entries` (spelling, description, heard), or the
+        earlier `terms` and `replacements`, plus an optional `source`. Returns what was
+        actually new. Raises ValueError with the reason on bad input.
         """
         if not isinstance(data, dict):
-            raise ValueError("Send a JSON object with terms and/or replacements")
-        body = {k: v for k, v in data.items() if k in ("terms", "replacements")}
-        corrections = dictionary_file.parse_entries(body, "corrections")
+            raise ValueError("Send a JSON object with entries")
+        if "entries" in data:
+            corrections = dictionary_file.parse_entries(data["entries"], "entries")
+        else:
+            body = {k: v for k, v in data.items() if k in ("terms", "replacements")}
+            corrections = dictionary_file.parse_entries(body, "corrections")
         if not corrections:
-            raise ValueError("Nothing to add: give terms and/or replacements")
+            raise ValueError("Nothing to add: give entries with a spelling and heard phrases")
         with self._dictionary_lock:
             current = self.dictionary()
             updated, added = current.with_agent_corrections(corrections)
@@ -442,9 +512,7 @@ class Dictum:
                 dictionary_file.save(self.store.data_dir, updated)
         if added:
             source = data.get("source")
-            self.store.add_corrections(
-                added.terms, added.replacements, source if isinstance(source, str) else None
-            )
+            self.store.add_corrections(added, source if isinstance(source, str) else None)
             self._changed()
         return added
 
@@ -474,11 +542,10 @@ class Dictum:
             raise ValueError(
                 f"Nothing to learn from yet: the history has no transcripts from {ref.label}."
             )
-        budget = TermBudget(ref.provider.term_limit, len(current.pinned.terms))
         learned = llm.propose_learned(
-            provider, api_key, model, current, transcripts, ref.id, budget, call=self._llm_call
+            provider, api_key, model, current, transcripts, ref.id, call=self._llm_call
         )
-        return dictionary_file.propose(current, learned, ref.id, budget)
+        return dictionary_file.propose(current, learned, ref.id)
 
     # Shortcut capture: the page asks, the menu-bar app's global listener records the keys.
 
@@ -533,9 +600,7 @@ class Dictum:
                 continue
             for model in provider.models:
                 ref = ModelRef(provider, model)
-                options.append(
-                    ModelOption(ref.id, ref.label, ref.id == default, provider.term_limit)
-                )
+                options.append(ModelOption(ref.id, ref.label, ref.id == default))
         return options
 
     # Transcription
@@ -573,11 +638,11 @@ class Dictum:
                 mime = recording.mime
                 if not mime.startswith("audio/"):
                     mime = sniff_mime(data) or mime
-                effective = self.dictionary().effective(ref.id)
+                entries = self.dictionary().effective(ref.id)  # a broken file: no call made
                 started = time.monotonic()  # before the stream is finished: that wait counts
                 stream, upload = upload, None  # from here the stream is finished or aborted
                 clip = Clip(data, mime, upload_url=_finish(stream, ref, Clip(data, mime)))
-                result = ref.provider.transcribe(clip, ref.model, api_key, terms=effective.terms)
+                result = ref.provider.transcribe(clip, ref.model, api_key)
                 timing = Timing(
                     clip.seconds, time.monotonic() - started, clip.upload_url is not None
                 )
@@ -586,28 +651,62 @@ class Dictum:
         if upload is not None:
             upload.abort()  # never reached _finish: a failure before it, or no key
         raw_text = result.text if isinstance(result, Transcript) else None
-        text = None
-        if raw_text is not None:
-            try:
-                text = dictionary_file.apply(self.dictionary().effective(ref.id), raw_text)
-            except Exception:  # a dictionary that fails, however, must not lose a transcript
-                text = raw_text
+        corrected = self.correct(raw_text, entries) if raw_text is not None else Corrected("")
         self.store.add_transcription(
             recording.id,
             provider=ref.provider.id,
             model=ref.model,
             status="ok" if isinstance(result, Transcript) else "error",
-            text=text,
+            text=corrected.text if raw_text is not None else None,
             error=result.error if isinstance(result, Failure) else None,
             raw_text=raw_text,
             audio_seconds=timing.audio_seconds,
             elapsed_seconds=timing.elapsed_seconds,
             fast=timing.fast,
+            jev_seconds=corrected.seconds,
+            jev_fixed=corrected.fixed,
+            jev_kept=corrected.kept,
+            jev_error=corrected.error,
         )
         self._release_after_use(ref)
         updated = self.store.get_recording(recording.id)
         assert updated is not None
         return updated
+
+    def correct(self, raw: str, entries: Entries) -> Corrected:
+        """The dictionary applied to a raw transcript, through Jev when that is on.
+
+        A Jev request that fails never loses the transcript: every match is replaced
+        instead, and the reason is kept with the transcription for the user to read.
+        """
+        found = dictionary_file.matches(entries, raw)
+        status = self.jev_status()
+        key = self.store.get_setting(key_setting(JEV_PROVIDER))
+        text = dictionary_file.replace(raw, found)
+        seconds: float | None = None
+        fixed = kept = None
+        errors = []
+        if status.dictionary and key is not None:
+            seconds, fixed, kept = 0.0, len(found), 0
+            if found:
+                try:
+                    decisions, elapsed = jev.decide(raw, found, key)
+                    text = dictionary_file.replace(raw, [d.match for d in decisions if d.replace])
+                    seconds, fixed = elapsed, sum(1 for d in decisions if d.replace)
+                    kept = len(decisions) - fixed
+                except jev.JevError as exc:
+                    errors.append(f"contextual dictionary: {exc}")
+        elif status.dictionary:
+            errors.append("contextual dictionary: no TypeSafe API key")
+        if status.formatting and key is not None:
+            try:
+                text, elapsed = jev.format_text(text, key)
+                seconds = (seconds or 0.0) + elapsed
+            except jev.JevError as exc:
+                errors.append(f"formatting: {exc}")
+        elif status.formatting:
+            errors.append("formatting: no TypeSafe API key")
+        return Corrected(text, seconds, fixed, kept, "; ".join(errors) or None)
 
     def record_and_transcribe(
         self, data: bytes, label: str | None, ref: str | None, upload: Upload | None = None

@@ -39,9 +39,6 @@ from dictum.recorder import wav_bytes
 
 SYNC_URL = "https://sync.assemblyai.com/transcribe"
 SYNC_LIMIT_SECONDS = 120.0  # documented limit of the sync endpoint
-SYNC_KEYTERMS_MAX = 100  # documented: 100 terms, 8000 characters, on the sync endpoint
-SYNC_KEYTERMS_CHARS = 8000
-LONG_KEYTERMS_MAX = 1000  # documented for the pre-recorded endpoint
 BASE = "https://api.assemblyai.com/v2"
 POLL_SECONDS = 2.0
 POLL_LIMIT_SECONDS = 900.0
@@ -50,7 +47,6 @@ POLL_LIMIT_SECONDS = 900.0
 class AssemblyAI:
     id: str = "assemblyai"
     name: str = "AssemblyAI"
-    term_limit: int | None = SYNC_KEYTERMS_MAX  # dictation goes to the sync endpoint
     models: tuple[str, ...] = ("universal-3-5-pro",)
 
     def __init__(
@@ -61,17 +57,11 @@ class AssemblyAI:
         self._client = client or httpx.Client(timeout=DEFAULT_TIMEOUT)
         self._sleep = sleep
 
-    def transcribe(
-        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
-    ) -> TranscribeResult:
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         seconds = clip.seconds
         if seconds is not None and seconds > SYNC_LIMIT_SECONDS:
-            return self._transcribe_long(clip, model, api_key, terms)
+            return self._transcribe_long(clip, model, api_key)
         files: dict[str, tuple[str, bytes, str]] = {"audio": (clip.filename, clip.data, clip.mime)}
-        keyterms = _cap(terms, SYNC_KEYTERMS_MAX, SYNC_KEYTERMS_CHARS)
-        if keyterms:
-            config = json.dumps({"keyterms_prompt": keyterms}).encode()
-            files["config"] = ("config.json", config, "application/json")
         response = self._client.post(
             SYNC_URL, headers={"Authorization": api_key, "X-AAI-Model": model}, files=files
         )
@@ -79,9 +69,7 @@ class AssemblyAI:
             return failure_from_response(response)
         return text_or_failure(response.json())
 
-    def _transcribe_long(
-        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...]
-    ) -> TranscribeResult:
+    def _transcribe_long(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         headers = {"Authorization": api_key}
         audio_url: object = clip.upload_url
         if audio_url is None:
@@ -98,9 +86,6 @@ class AssemblyAI:
                 return failure_from_body(body)
 
         request: dict[str, object] = {"audio_url": audio_url, "speech_models": [model]}
-        keyterms = _cap(terms, LONG_KEYTERMS_MAX, None)
-        if keyterms:
-            request["keyterms_prompt"] = keyterms
         created = self._client.post(f"{BASE}/transcript", headers=headers, json=request)
         if created.is_error:
             return failure_from_response(created)
@@ -237,15 +222,3 @@ class StreamingUpload:
                 self._queue.get_nowait()
             except queue.Empty:
                 break
-
-
-def _cap(terms: tuple[str, ...], max_terms: int, max_chars: int | None) -> list[str]:
-    """The first terms that fit the provider's documented limits."""
-    kept: list[str] = []
-    used = 0
-    for term in terms[:max_terms]:
-        if max_chars is not None and used + len(term) > max_chars:
-            break
-        kept.append(term)
-        used += len(term)
-    return kept

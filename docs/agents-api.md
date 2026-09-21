@@ -14,15 +14,20 @@ confirmed a mistranscription with them:
 ```sh
 curl -s -X POST localhost:4187/api/dictionary/corrections \
   -H 'content-type: application/json' \
-  -d '{"replacements": {"cloud code": "Claude Code"}, "terms": ["Dictum"], "source": "my-agent"}'
+  -d '{"entries": [{"spelling": "Claude Code", "description": "Anthropic'"'"'s coding agent", "heard": ["cloud code"]}], "source": "my-agent"}'
 ```
 
-Entries are pinned: they apply to every speech model and a build never
-changes them. Anything already pinned is not added again; the reply lists
-what was new:
+An entry is a `spelling`, a `description` (what the term means to this
+person, which Jev reads to decide each occurrence in context; optional but
+worth giving) and the phrases `heard` instead of it. The earlier shape,
+`"replacements": {"heard": "meant"}` and `"terms": [...]`, is still taken:
+a replacement becomes an entry with one heard phrase, a term an entry with
+none. Entries are pinned: they apply to every speech model and a build
+never changes them. A spelling already pinned gains only its new heard
+phrases; the reply lists what was new:
 
 ```json
-{"added": {"terms": ["Dictum"], "replacements": {"cloud code": "Claude Code"}}}
+{"added": [{"spelling": "Claude Code", "description": "Anthropic's coding agent", "heard": ["cloud code"]}]}
 ```
 
 A suggested instruction for the agents' shared prompt: when a word looks
@@ -35,13 +40,13 @@ silently if Dictum is not running.
 
 | Method and path | What |
 |---|---|
-| `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode; each provider says whether it `streams` (fast mode) or is `local` |
+| `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode, `jev` (key hint, `dictionary` and `formatting` on or off, and a summary of what Jev has done); each provider says whether it `streams` (fast mode) or is `local` |
 | `GET /api/models` | the models of every provider that has a key, plus the downloaded local ones |
 | `GET /api/metrics` | the performance table: per model and mode, runs, audio seconds, median wait, speed |
 | `GET /api/local/models` | the local models with size, state (absent, downloading with progress, ready, error, unavailable when the engine is not installed) |
 | `POST /api/local/models/{name}/download`, `DELETE /api/local/models/{name}` | fetch or remove one |
 | `GET /api/status` | version, shortcuts, default model, whether the desktop app runs and listens |
-| `GET /api/recordings` | the history, newest first, with every attempt |
+| `GET /api/recordings` | the history, newest first, with every attempt; each carries what Jev did to it (`jev_fixed`, `jev_kept`, `jev_seconds`, `jev_error`) when it ran |
 | `POST /api/recordings` | multipart `audio` (+ optional `model`): store and transcribe |
 | `POST /api/recordings/{id}/transcriptions` | `{"model": "provider/model"}`: transcribe again |
 | `GET /api/recordings/{id}/audio` | the clip |

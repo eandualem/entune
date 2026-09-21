@@ -12,18 +12,15 @@ class Provider(Protocol):
     @property
     def models(self) -> tuple[str, ...]: ...  # the model ids offered right now
 
-    def transcribe(
-        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
-    ) -> TranscribeResult: ...
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult: ...
 ```
 
 `Clip` carries the audio bytes, its MIME type and a filename, and
 `upload_url` when fast mode already streamed the same audio to this
-provider; `terms` is the user's dictionary vocabulary, to be passed on in
-whatever form the provider accepts; `term_limit` says how many the
-provider takes (the dictionary build never proposes more than fit beside
-the pinned ones), or `None` when it takes none, as Parakeet does. The result is either `Transcript(text)`
-or `Failure(error)`.
+provider. The result is either `Transcript(text)` or `Failure(error)`.
+Nothing from the dictionary goes to the provider: it transcribes the raw
+speech, and the dictionary is applied to what comes back (see
+[the dictionary file](dictionary.md)).
 
 Two optional protocols in `base.py`:
 
