@@ -30,8 +30,11 @@ LLM_PROVIDERS: dict[str, tuple[str, str]] = {
 # Older Claude models use a token budget; current models use high reasoning effort.
 THINKING_BUDGET = 32_000
 MAX_OUTPUT_TOKENS = 8192
-MAX_TRANSCRIPT_CHARS = 40_000
 MAX_TRANSCRIPTS = 300
+MAX_TRANSCRIPT_CHARS = 240_000
+# A long history goes to the model in several steps, each with this much transcript,
+# so no single request runs for many minutes and the list grows step by step.
+BATCH_CHARS = 24_000
 
 
 @dataclass(frozen=True)
@@ -97,30 +100,55 @@ on and how they speak: a pinned "Claude" heard as "cloud" says they talk about t
 assistant, not the sky, and that guides which of this model's mishearings are worth an
 entry. The previous "learned" section for this speech model is included; keep what still
 holds, improve descriptions, drop what does not.
+A long history arrives in several steps. The message says which step this is and
+lists the entries already proposed from the earlier steps of this build: do not repeat
+those unless this step's transcripts add a heard phrase or a better description for one
+of them, and propose only what this step's transcripts show. Every step's entries are
+combined afterwards.
 
 Reply with one JSON object only, no prose, no code fence:
 {"entries": [{"spelling": "...", "description": "...", "heard": ["...", "..."]}]}"""
 
 
-def build_user_prompt(current: Dictionary, transcripts: Sequence[str], speech_model: str) -> str:
-    kept: list[str] = []
-    used = 0
+def batches(transcripts: Sequence[str]) -> list[list[str]]:
+    """The newest transcripts, up to the limits, in steps of about `BATCH_CHARS`; a
+    transcript longer than a step is a step of its own."""
+    steps: list[list[str]] = []
+    used = total = 0
     for text in transcripts[:MAX_TRANSCRIPTS]:
         snippet = text.strip()
         if not snippet:
             continue
-        if used + len(snippet) > MAX_TRANSCRIPT_CHARS:
+        if total + len(snippet) > MAX_TRANSCRIPT_CHARS:
             break
-        kept.append(snippet)
+        if not steps or used + len(snippet) > BATCH_CHARS:
+            steps.append([])
+            used = 0
+        steps[-1].append(snippet)
         used += len(snippet)
+        total += len(snippet)
+    return steps
+
+
+def build_user_prompt(
+    current: Dictionary,
+    transcripts: Sequence[str],
+    speech_model: str,
+    proposed: Entries = (),
+    step: tuple[int, int] = (1, 1),
+) -> str:
+    """One step: `transcripts` is this step's share; `proposed` what earlier steps gave."""
+    number, count = step
     return (
         "Pinned by the user (approved, shared by every speech model, do not change):\n"
         f"{json.dumps([e.as_json() for e in current.pinned], ensure_ascii=False)}\n\n"
         f"Previously learned for {speech_model} (revise):\n"
         + json.dumps([e.as_json() for e in current.learned_for(speech_model)], ensure_ascii=False)
-        + "\n\n"
-        + f"Recent raw transcripts from {speech_model}, newest first ({len(kept)}):\n"
-        + "\n".join(f"- {t}" for t in kept)
+        + f"\n\nStep {number} of {count} of this build. Already proposed from the earlier"
+        " steps (do not repeat; add only a new heard phrase or a better description):\n"
+        + json.dumps([e.as_json() for e in proposed], ensure_ascii=False)
+        + f"\n\nRaw transcripts from {speech_model} for this step, newest first"
+        f" ({len(transcripts)}):\n" + "\n".join(f"- {t}" for t in transcripts)
     )
 
 
@@ -153,8 +181,12 @@ async def call_model(
 ) -> str:
     """One request, explicit key and official endpoint, without environment discovery.
 
-    No retries or fallback. Each call owns its client, so independent builds cannot
-    share credentials or require a process-wide lock.
+    Streamed: a reply at high reasoning effort takes minutes, and a connection that
+    carries nothing for a minute is cut on the way (observed 2026-09-21: every plain
+    request dropped after 61 s, the same request streamed completed in 202 s). The
+    events are read to the end and only the final text is used. No retries or fallback.
+    Each call owns its client, so independent builds cannot share credentials or
+    require a process-wide lock.
     """
     prefix, sep, name = model.partition(":")
     if not sep or prefix != provider or not name.strip():
@@ -168,6 +200,7 @@ async def call_model(
             "system": system_prompt,
             "messages": [{"role": "user", "content": user_prompt}],
             "max_tokens": MAX_OUTPUT_TOKENS,
+            "stream": True,
         }
         # Keep budget-based thinking for older/custom IDs supported before this
         # adapter; newer Claude families use adaptive thinking and reject a budget.
@@ -199,36 +232,70 @@ async def call_model(
             "input": user_prompt,
             "max_output_tokens": MAX_OUTPUT_TOKENS,
             "store": False,
+            "stream": True,
         }
         if name.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
             payload["reasoning"] = {"effort": "high"}
     else:
         raise ValueError(f"Unknown dictionary provider: {provider}")
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(1200, connect=5), trust_env=False) as client:
-        response = await client.post(url, headers=headers, json=payload)
-    if not response.is_success:
-        raise ValueError(f"HTTP {response.status_code}: {response.text}")
-    data = response.json()
-    if provider == "anthropic":
-        if data.get("stop_reason") != "end_turn":
-            raise ValueError(f"The model did not finish its reply: {response.text}")
-        blocks = data.get("content", [])
-        text_type = "text"
-    else:
-        if data.get("status") != "completed":
-            raise ValueError(f"The model did not finish its reply: {response.text}")
-        blocks = [
-            block
-            for item in data.get("output", [])
-            if item.get("type") == "message"
-            for block in item.get("content", [])
+    async with (
+        httpx.AsyncClient(timeout=httpx.Timeout(1200, connect=5), trust_env=False) as client,
+        client.stream("POST", url, headers=headers, json=payload) as response,
+    ):
+        if not response.is_success:
+            await response.aread()
+            raise ValueError(f"HTTP {response.status_code}: {response.text}")
+        events = [
+            json.loads(line[5:])
+            async for line in response.aiter_lines()
+            if line.startswith("data:") and line[5:].strip() not in ("", "[DONE]")
         ]
-        text_type = "output_text"
-    text = "\n".join(block["text"] for block in blocks if block.get("type") == text_type)
+    text = _anthropic_text(events) if provider == "anthropic" else _openai_text(events)
     if not text.strip():
-        raise ValueError(f"The model returned no text: {response.text}")
+        raise ValueError(f"The model returned no text: {json.dumps(events[-1:])[:2000]}")
     return text
+
+
+def _anthropic_text(events: list[dict[str, Any]]) -> str:
+    """The text blocks of a streamed message; thinking blocks are skipped."""
+    parts: list[str] = []
+    kinds: dict[int, str] = {}
+    stop_reason = None
+    for event in events:
+        kind = event.get("type")
+        if kind == "error":
+            raise ValueError(f"The model reported an error: {json.dumps(event)}")
+        if kind == "content_block_start":
+            kinds[event["index"]] = event["content_block"].get("type", "")
+        elif kind == "content_block_delta" and event["delta"].get("type") == "text_delta":
+            if kinds.get(event["index"]) == "text":
+                parts.append(event["delta"]["text"])
+        elif kind == "message_delta":
+            stop_reason = event.get("delta", {}).get("stop_reason")
+    if stop_reason != "end_turn":
+        raise ValueError(f"The model did not finish its reply: stop_reason {stop_reason!r}")
+    return "".join(parts)
+
+
+def _openai_text(events: list[dict[str, Any]]) -> str:
+    """The message text of the completed response; the stream's final event has it all."""
+    final = None
+    for event in events:
+        kind = event.get("type")
+        if kind == "error":
+            raise ValueError(f"The model reported an error: {json.dumps(event)}")
+        if kind in ("response.completed", "response.failed", "response.incomplete"):
+            final = event.get("response", {})
+    if final is None or final.get("status") != "completed":
+        raise ValueError(f"The model did not finish its reply: {json.dumps(final)[:2000]}")
+    blocks = [
+        block
+        for item in final.get("output", [])
+        if item.get("type") == "message"
+        for block in item.get("content", [])
+    ]
+    return "\n".join(block["text"] for block in blocks if block.get("type") == "output_text")
 
 
 def propose_learned(
@@ -242,11 +309,18 @@ def propose_learned(
 ) -> Entries:
     """Ask the model for a new `learned` section for `speech_model`, from its transcripts.
 
-    Raises ValueError carrying the provider's or the model's own words when it fails.
+    A long history goes in steps (`batches`), each seeing what the earlier steps
+    proposed; the steps' entries are combined, earlier descriptions winning and heard
+    phrases joined. Raises ValueError carrying the provider's or the model's own words
+    when a step fails; nothing partial is returned.
     """
-    user_prompt = build_user_prompt(current, transcripts, speech_model)
-    try:
-        reply = asyncio.run(call(provider, api_key, model, SYSTEM_PROMPT, user_prompt))
-    except Exception as exc:
-        raise ValueError(f"{type(exc).__name__}: {exc}") from exc
-    return parse_reply(reply)
+    proposed: Entries = ()
+    steps = batches(transcripts)
+    for number, step in enumerate(steps, 1):
+        user_prompt = build_user_prompt(current, step, speech_model, proposed, (number, len(steps)))
+        try:
+            reply = asyncio.run(call(provider, api_key, model, SYSTEM_PROMPT, user_prompt))
+        except Exception as exc:
+            raise ValueError(f"Step {number} of {len(steps)}: {type(exc).__name__}: {exc}") from exc
+        proposed = dictionary_file.merge(proposed, parse_reply(reply))
+    return proposed

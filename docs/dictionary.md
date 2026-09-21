@@ -103,11 +103,17 @@ with mixed results; it is off unless turned on.
 ## Build from history
 
 **Build from history** sends the default speech model's recent raw
-transcripts (at most 300, or 40,000 characters), the pinned section as
+transcripts (at most 300, or 240,000 characters), the pinned section as
 approved and as evidence of who the user is and what they talk about, and
 that model's previous learned list to revise, to the language model chosen
 in Settings (with no choice, the suggested model of the first provider with
-a key), at high reasoning effort. It is asked for entries with a concrete
+a key), at high reasoning effort. A long history goes in steps of about
+24,000 characters of transcript: each step sees what the earlier steps
+proposed and adds only what its own transcripts show, and the steps'
+entries are combined (heard phrases joined, the earlier description kept).
+Each request is streamed, because a reply at high effort takes minutes and
+a connection that carries nothing for a minute was observed to be cut on
+the way; a step that fails ends the build with the provider's words. It is asked for entries with a concrete
 description each, every consistent mishearing, and a heard phrase for a
 common English word only when the evidence is clear, since the description
 lets Jev keep it where it was meant literally. The reply becomes a proposal
