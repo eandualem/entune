@@ -255,8 +255,7 @@ uv run mypy             # types, strict
 Pull requests go into `develop`; `main` moves by a release pull request
 after a review of everything on `develop`. See
 [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md),
-[adding a provider](docs/providers.md) and, for where the work stands,
-[the handoff](docs/handoff.md).
+[adding a provider](docs/providers.md).
 
 ## Licence
 
