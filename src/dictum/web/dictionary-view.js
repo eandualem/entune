@@ -233,7 +233,7 @@ export function createDictionary({ getModel, getSettings }) {
   buildBtn.addEventListener("click", async () => {
     buildBtn.disabled = true;
     buildStatus.className = "caption save-status show";
-    buildStatus.textContent = "Asking the model… this can take a minute.";
+    buildStatus.textContent = "Asking the model… a long history goes in steps and can take several minutes.";
     try {
       const res = await fetch("/api/dictionary/build", { method: "POST" });
       const text = await res.text();
