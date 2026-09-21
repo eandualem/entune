@@ -119,8 +119,11 @@ requirement, not a preference.
 ## Where the work stands
 
 The current state, what was verified, the open decisions and the next
-steps are in `docs/handoff.md`, updated at every handoff. Read it after
-this file at a fresh start. The owner's priorities on 2026-09-18, in his
-words: "I'm changing my priorities now. I want the dictionary, like the
-issue about the dictionary, to be implemented. And I want also UI
-improvements." Not public yet.
+steps live in the agent memory at `.backbone/memory/` in the main checkout:
+ignored by Git, shared by every CLI, never tracked. `scratchpad.md` there is
+the compact active state, refreshed at every handoff; the other files are
+learnings and gotchas, `index.md` lists them, and `handoff-archive/` holds
+the retired `docs/handoff.md`. Read `scratchpad.md` after this file at a
+fresh start; from a task worktree under `.backbone/worktrees/`, the path is
+the main checkout's. Private continuity, personal instructions and session
+history go there, never into tracked files. Not public yet.

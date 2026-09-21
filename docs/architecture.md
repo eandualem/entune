@@ -74,5 +74,4 @@ Branches: pull requests go into `develop`; `main` moves by a release pull
 request after a deep review of everything on `develop`. Five Codex review
 rounds at ultra effort ran on 2026-09-18 over the whole codebase (37
 findings, all fixed, PRs #69, #70, #72, #73, #74, #75); their evidence is
-under the ignored `.backbone/reviews/`. The current state and next steps
-are in [the handoff](handoff.md).
+under the ignored `.backbone/reviews/`.
