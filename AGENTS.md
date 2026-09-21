@@ -91,8 +91,19 @@ focused input and copies it to the clipboard. The history page stays as
 the place to browse, retry and copy.
 
 Also in scope since 2026-09-17 (issue #22): a personal dictionary, and a
-language model that builds it from the history on request. The model
+language model that builds it from the history on request. That model
 never touches a transcript on its way to the user; that stays out.
+
+In scope since 2026-09-21, the owner's decision after a measured trial:
+Jev, TypeSafe's decision model, on every transcript, as the feature that
+sets Dictum apart. The dictionary is entries with a description each and
+every phrase heard instead, unlimited in size, and Jev decides each match
+in context; a second switch has it place paragraph breaks and bullets.
+Jev generates nothing, so no generated text ever reaches the user. Nothing
+from the dictionary goes to the speech provider any more: the provider
+transcribes the raw speech and the dictionary is applied afterwards. Both
+Jev uses are settings, each with its measured cost in time shown, and the
+numbers that show the improvement are kept (`docs/dictionary.md`).
 
 In scope since 2026-09-18 (issue #20): fast mode as an opt-in setting that
 streams the recording to the provider while it is made, never changing the
@@ -100,7 +111,7 @@ plain path; local models (whisper.cpp, and Parakeet through a user-installed
 engine) with a Download button, taking memory only while selected; and the
 performance table built from every transcription's timing.
 
-Out of scope for now: streaming endpoints, LLM cleanup or formatting passes,
+Out of scope for now: streaming endpoints, generative cleanup or rewriting passes,
 multi-user, authentication, cloud storage, platforms other than macOS
 (Windows is the last step before sharing, issue #36). Simplicity is a
 requirement, not a preference.

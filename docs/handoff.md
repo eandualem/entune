@@ -4,6 +4,52 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-21: Jev decides the dictionary, entries with descriptions
+
+Elias ran the isolated Jev experiment against his real history and decided Jev is
+Dictum's differentiating feature, to be merged into `develop`, not an experiment.
+Observed first: on 181 Parakeet transcripts of the real history (391 minutes) the
+experiment's prompt applied none of 48 dictionary matches and was confidently wrong
+on "Jeff" meaning JEV (6 of 48 against intent labels; plain replacement 42 of 48).
+TypeSafe's docs say to give the model named state fields, contrastive criteria with
+what the term means, and to gate on probabilities per action. A redesign with a
+description per entry, only the matched entries in the request and a veto rule
+(replace unless Jev puts the literal reading at 0.8 or more) got 48 of 48 at any
+threshold from 0.5 to 0.9, median 0.40 s per request, about 1,400 tokens. Formatting
+on the autoformat-cookbook pattern changed 61 of 162 clips at the 0.6 bar with every
+word kept but uneven quality. Evidence and scripts: `.backbone/reviews/jev-history-20260921/`
+(run 1 and `v2/`). The 48 intent labels are one person's reading of the context.
+
+Delivered on this basis, in Elias's words: the dictionary schema is an entry per
+term with a clear description and a list of heard phrases, no size limit, pinned
+shared by every model and learned per model as before; the vocabulary hint to speech
+providers is gone ("give the model the full opportunity to do the transcription of
+the raw data and then we'll do the fixing"), so `Provider.transcribe` takes no terms
+and every adapter lost its cap; matching is one indexed pass (`Matcher`, first-word
+index, built once per dictionary version, 10,000 entries in well under a second);
+Jev is a first-class setting under Settings › Providers: a TypeSafe key, a
+Contextual dictionary switch and a Formatting switch, each saying what it adds in
+time, and a line summing up what Jev has done; each transcription stores
+`jev_seconds`, `jev_fixed`, `jev_kept`, `jev_error`, and the history card shows
+them; the build prompt asks for entries with descriptions; the agents' API takes
+`entries` and still takes the earlier `terms`/`replacements`; earlier dictionary
+files are converted once. The improvement is recorded in `docs/dictionary.md` and
+the README so it can be shown. Assumptions made without asking: the veto bar 0.8 and
+the formatting bars 0.6/0.3 come from the benchmark margins; a heard phrase must
+start with a letter or digit; the experiment's manual preview page was not carried
+over; turning a Jev switch on needs the key saved first.
+
+Verified 190 tests, ruff lint/format, strict mypy and JavaScript syntax. A scratch
+instance on a copy of the database transcribed a real clip with Parakeet through
+Jev (see below). Not verified: a real dictionary build with the new prompt (no paid
+call was made); Elias regenerates the dictionary himself. Elias asked for his
+dictionary to be emptied so he can regenerate it in the new structure; the old file
+is kept under `.backbone/reviews/jev-history-20260921/dictionary-before-reset.json`.
+Next: Elias builds the dictionary per model, turns the Jev switches on, and reads
+the summary line and history cards after a day of use. The `experiment/jev` branch
+and its worktree are superseded and can be deleted; the package-name batch on
+`chore/public-package-name` is separate and needs a rebase onto this.
+
 ## 2026-09-19: microphone changes and quiet recordings
 
 Elias reported an empty transcript after a long recording, followed by PortAudio

@@ -20,7 +20,13 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from dictum import __version__, llm, shortcuts
 from dictum.audio import extension_for, safe_mime
-from dictum.service import DictionaryChanged, Dictum, NoDefaultModel, UnknownModel
+from dictum.service import (
+    JEV_PROVIDER,
+    DictionaryChanged,
+    Dictum,
+    NoDefaultModel,
+    UnknownModel,
+)
 from dictum.store import Recording
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -151,6 +157,7 @@ def create_app(app: Dictum) -> Starlette:
                 ],
                 "dictionaryModel": app.dictionary_model(),
                 "fastMode": app.fast_mode(),
+                "jev": {**asdict(app.jev_status()), "summary": asdict(app.jev_summary())},
             }
         )
 
@@ -168,8 +175,9 @@ def create_app(app: Dictum) -> Starlette:
             keys = body.get("keys", {})
             if not isinstance(keys, dict):
                 raise ValueError("keys must be an object")
+            known = {p.id for p in app.providers} | llm.LLM_PROVIDERS.keys() | {JEV_PROVIDER}
             for provider_id, key in keys.items():
-                if provider_id not in {p.id for p in app.providers} | llm.LLM_PROVIDERS.keys():
+                if provider_id not in known:
                     raise ValueError(f"Unknown provider: {provider_id}")
                 if not isinstance(key, str) or not key.strip():
                     raise ValueError(f"Empty or invalid key for {provider_id}")
@@ -185,6 +193,18 @@ def create_app(app: Dictum) -> Starlette:
                     )
             if "fastMode" in body and not isinstance(body["fastMode"], bool):
                 raise ValueError("fastMode must be a boolean")
+            jev_settings = body.get("jev", {})
+            if not isinstance(jev_settings, dict) or not all(
+                k in ("dictionary", "formatting") and isinstance(v, bool)
+                for k, v in jev_settings.items()
+            ):
+                raise ValueError("jev must be an object of dictionary and formatting booleans")
+            if (
+                any(jev_settings.values())
+                and JEV_PROVIDER not in keys
+                and app.jev_status().key_hint is None
+            ):
+                raise ValueError("Save a TypeSafe API key first.")
             shortcut_settings = body.get("shortcuts", {})
             if not isinstance(shortcut_settings, dict):
                 raise ValueError("shortcuts must be an object")
@@ -205,6 +225,8 @@ def create_app(app: Dictum) -> Starlette:
                 app.set_dictionary_model(dictionary_model or None)
             if "fastMode" in body:
                 app.set_fast_mode(body["fastMode"])
+            if jev_settings:
+                app.set_jev(jev_settings.get("dictionary"), jev_settings.get("formatting"))
             if "shortcuts" in body:
                 app.set_shortcuts(hold, toggle, cancel)
         except UnknownModel as exc:
@@ -253,7 +275,7 @@ def create_app(app: Dictum) -> Starlette:
             added = await run_in_threadpool(app.add_agent_corrections, body)
         except ValueError as exc:
             return _bad(str(exc))
-        return JSONResponse({"added": added.as_json()})
+        return JSONResponse({"added": [e.as_json() for e in added]})
 
     async def build_dictionary(_: Request) -> Response:
         try:

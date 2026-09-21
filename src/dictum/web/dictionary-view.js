@@ -6,9 +6,10 @@ export function createDictionary({ getModel, getSettings }) {
   // ---- Dictionary ----
   // `dict` mirrors dictionary.json: pinned (the user's, including what their agents sent;
   // never changed by the model) and learned (the last accepted proposal, keyed by the
-  // speech model it was learned for). The table shows pinned and the default model's
-  // learned list, filtered; every change is saved whole.
-  let dict = { pinned: { terms: [], replacements: {} }, learned: {} };
+  // speech model it was learned for). An entry is a spelling, a description and the
+  // phrases heard instead. The table shows pinned and the default model's learned list,
+  // filtered; every change is saved whole.
+  let dict = { pinned: [], learned: {} };
   let dictVersion = null; // the server's ETag for the document we edit; null after a failed load
   let proposal = null;
   let filter = "all";
@@ -17,7 +18,6 @@ export function createDictionary({ getModel, getSettings }) {
   const buildStatus = el("build-status");
   const proposalPanel = el("proposal");
   const proposalBody = el("proposal-body");
-  const empty = () => ({ terms: [], replacements: {} });
 
   segmentedGroup({ all: el("filter-all"), pinned: el("filter-pinned"), learned: el("filter-learned") }, (name) => { filter = name; renderDictionary(); });
 
@@ -61,25 +61,22 @@ export function createDictionary({ getModel, getSettings }) {
   // The default model's learned list, made if absent. Pinned is shared by every model.
   function learnedOf(doc) {
     const model = getModel();
-    if (!model) return empty();
-    return (doc.learned[model.id] ??= empty());
+    if (!model) return [];
+    return (doc.learned[model.id] ??= []);
   }
   const clone = () => JSON.parse(JSON.stringify(dict));
+  const same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
-  function entryRow(source, kind, heard, meant) {
+  function entryRow(source, entry) {
     const row = document.createElement("div");
     row.className = "entry-row";
-    const kindEl = document.createElement("span");
-    kindEl.className = "kind";
-    kindEl.textContent = kind === "term" ? "TERM" : "REPLACE";
     const what = document.createElement("span");
     what.className = "what";
-    if (kind === "term") what.textContent = heard;
-    else {
-      what.innerHTML = `<span class="heard"></span><span class="arrow">→</span><span class="meant"></span>`;
-      what.querySelector(".heard").textContent = heard;
-      what.querySelector(".meant").textContent = meant;
-    }
+    what.innerHTML = `<span class="meant"></span><span class="arrow">←</span><span class="heard"></span><span class="desc"></span>`;
+    what.querySelector(".meant").textContent = entry.spelling;
+    what.querySelector(".heard").textContent = entry.heard.length ? entry.heard.join(", ") : "(only ever spelled right)";
+    what.querySelector(".desc").textContent = entry.description;
+    what.querySelector(".desc").hidden = !entry.description;
     const src = document.createElement("span");
     src.className = source === "learned" ? "source learned" : "source";
     src.textContent = source === "learned" ? "Learned" : "Pinned";
@@ -91,7 +88,7 @@ export function createDictionary({ getModel, getSettings }) {
       pin.className = "btn ghost sm";
       pin.textContent = "Pin";
       pin.title = "Pin: keep it for every model";
-      pin.addEventListener("click", () => moveToPinned(kind, heard, meant));
+      pin.addEventListener("click", () => moveToPinned(entry));
       actions.append(pin);
     }
     const remove = document.createElement("button");
@@ -100,9 +97,9 @@ export function createDictionary({ getModel, getSettings }) {
     remove.title = "Remove";
     remove.setAttribute("aria-label", "Remove");
     remove.innerHTML = ICON.remove;
-    remove.addEventListener("click", () => removeEntry(source, kind, heard));
+    remove.addEventListener("click", () => removeEntry(source, entry));
     actions.append(remove);
-    row.append(kindEl, what, src, actions);
+    row.append(what, src, actions);
     return row;
   }
 
@@ -111,14 +108,8 @@ export function createDictionary({ getModel, getSettings }) {
     const dictionaryModel = getSettings()?.dictionaryModel;
     const learned = learnedOf(dict);
     const rows = [];
-    if (filter !== "learned") {
-      rows.push(...dict.pinned.terms.map((t) => entryRow("pinned", "term", t)));
-      rows.push(...Object.entries(dict.pinned.replacements).map(([h, m]) => entryRow("pinned", "replace", h, m)));
-    }
-    if (filter !== "pinned") {
-      rows.push(...learned.terms.map((t) => entryRow("learned", "term", t)));
-      rows.push(...Object.entries(learned.replacements).map(([h, m]) => entryRow("learned", "replace", h, m)));
-    }
+    if (filter !== "learned") rows.push(...dict.pinned.map((e) => entryRow("pinned", e)));
+    if (filter !== "pinned") rows.push(...learned.map((e) => entryRow("learned", e)));
     if (rows.length === 0) {
       const none = document.createElement("div");
       none.className = "entry-row none";
@@ -126,86 +117,60 @@ export function createDictionary({ getModel, getSettings }) {
       rows.push(none);
     }
     el("dict-rows").replaceChildren(...rows);
-    const learnedCount = learned.terms.length + Object.keys(learned.replacements).length;
     el("filter-learned").textContent = model ? `Learned · ${model.label.replace(" / ", " · ")}` : "Learned";
-    el("pin-all").hidden = learnedCount === 0;
-    buildBtn.textContent = learnedCount ? "Refine from history" : "Build from history";
+    el("pin-all").hidden = learned.length === 0;
+    buildBtn.textContent = learned.length ? "Refine from history" : "Build from history";
     buildBtn.title = dictionaryModel
       ? `Send this model's recent transcripts to ${dictionaryModel} and review a proposal; nothing is saved before Accept`
       : "Needs an Anthropic or OpenAI key in Settings › Providers";
-    const budget = termBudgetText(learned);
-    el("term-budget").textContent = budget;
-    el("term-budget-row").hidden = !budget;
     if (jsonText !== undefined) dictionaryBox.value = jsonText;
   }
 
-  function termBudgetText(learned) {
-    const model = getModel();
-    if (!model) return "";
-    const limit = model.term_limit;
-    const pinned = dict.pinned.terms.length;
-    const inUse = pinned + learned.terms.length;
-    if (limit === null) return `${model.label.split(" / ")[0]} takes no terms · replacements only · ${inUse} pinned words unused here`;
-    const line = `${inUse} of ${limit} terms in use · ${pinned} pinned`;
-    if (pinned >= limit) return `${line} · full: remove pinned terms to make room`;
-    if (inUse >= limit) return `${line} · full`;
-    return line;
+  // Pinning merges by spelling: new heard phrases join an existing pinned entry.
+  function pinInto(list, entry) {
+    const existing = list.find((e) => same(e.spelling, entry.spelling));
+    if (!existing) { list.push(entry); return; }
+    for (const h of entry.heard) if (!existing.heard.some((x) => same(x, h))) existing.heard.push(h);
+    if (!existing.description) existing.description = entry.description;
   }
-
-  async function addToPinned(kind, heard, meant) {
+  async function addToPinned(entry) {
     const next = clone();
-    if (kind === "term") { if (!next.pinned.terms.includes(heard)) next.pinned.terms.push(heard); }
-    else next.pinned.replacements[heard] = meant;
+    pinInto(next.pinned, entry);
     return saveDictionary(next);
   }
-  async function removeEntry(source, kind, heard) {
+  async function removeEntry(source, entry) {
     const next = clone();
     const from = source === "pinned" ? next.pinned : learnedOf(next);
-    if (kind === "term") from.terms = from.terms.filter((t) => t !== heard);
-    else delete from.replacements[heard];
+    from.splice(from.findIndex((e) => same(e.spelling, entry.spelling)), 1);
     await saveDictionary(next);
   }
-  async function moveToPinned(kind, heard, meant) {
+  async function moveToPinned(entry) {
     const next = clone();
     const from = learnedOf(next);
-    if (kind === "term") {
-      from.terms = from.terms.filter((t) => t !== heard);
-      if (!next.pinned.terms.includes(heard)) next.pinned.terms.push(heard);
-    } else {
-      delete from.replacements[heard];
-      next.pinned.replacements[heard] = meant;
-    }
+    from.splice(from.findIndex((e) => same(e.spelling, entry.spelling)), 1);
+    pinInto(next.pinned, entry);
     await saveDictionary(next);
   }
   el("pin-all").addEventListener("click", async () => {
     const model = getModel();
     if (!model) return;
     const next = clone();
-    const learned = learnedOf(next);
-    for (const t of learned.terms) if (!next.pinned.terms.includes(t)) next.pinned.terms.push(t);
-    Object.assign(next.pinned.replacements, learned.replacements);
+    for (const entry of learnedOf(next)) pinInto(next.pinned, entry);
     delete next.learned[model.id];
     await saveDictionary(next);
   });
 
-  // Add: a word, or a heard → meant fix; both are pinned.
-  segmentedGroup({ word: el("add-word-mode"), fix: el("add-fix-mode") }, (name) => {
-    el("add-word-row").hidden = name !== "word";
-    el("add-fix-row").hidden = name !== "fix";
+  // Add: what was heard → what you meant, with an optional description; pinned.
+  el("add-entry-btn").addEventListener("click", async () => {
+    const heard = el("add-heard").value.split(",").map((h) => h.trim()).filter(Boolean);
+    const spelling = el("add-meant").value.trim();
+    if (!spelling) return;
+    const entry = { spelling, description: el("add-description").value.trim(), heard };
+    if (await addToPinned(entry)) for (const id of ["add-heard", "add-meant", "add-description"]) el(id).value = "";
   });
-  el("add-term-btn").addEventListener("click", async () => {
-    const term = el("add-term").value.trim();
-    if (!term) return;
-    if (await addToPinned("term", term)) el("add-term").value = "";
-  });
-  el("add-term").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el("add-term-btn").click(); } });
-  el("add-replacement-btn").addEventListener("click", async () => {
-    const heard = el("add-heard").value.trim();
-    const meant = el("add-meant").value.trim();
-    if (!heard || !meant) return;
-    if (await addToPinned("replace", heard, meant)) { el("add-heard").value = ""; el("add-meant").value = ""; }
-  });
-  el("add-meant").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el("add-replacement-btn").click(); } });
+  for (const id of ["add-heard", "add-meant", "add-description"]) {
+    el(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el("add-entry-btn").click(); } });
+  }
 
   // JSON editor and help panel
   el("json-toggle").addEventListener("click", () => {
@@ -231,25 +196,22 @@ export function createDictionary({ getModel, getSettings }) {
 
   // Build: the model proposes a learned list for the default speech model, from that
   // model's transcripts; nothing changes until Accept.
+  const label = (e) => (e.heard.length ? `${e.spelling} ← ${e.heard.join(", ")}` : e.spelling);
   function chips(list, cls) {
     const box = document.createElement("div");
     box.className = "chips";
-    for (const text of list) {
+    for (const entry of list) {
       const c = document.createElement("span");
       c.className = `chip ${cls}`;
-      c.textContent = text;
+      c.textContent = label(entry);
+      if (entry.description) c.title = entry.description;
       box.append(c);
     }
     return box;
   }
   function renderProposal(p) {
     proposalBody.replaceChildren();
-    const groups = [
-      ["Added terms", p.added.terms, "add"],
-      ["Added replacements", Object.entries(p.added.replacements).map(([h, m]) => `${h} → ${m}`), "add"],
-      ["Removed terms", p.removed.terms, "remove"],
-      ["Removed replacements", Object.entries(p.removed.replacements).map(([h, m]) => `${h} → ${m}`), "remove"],
-    ];
+    const groups = [["Added", p.added, "add"], ["Removed", p.removed, "remove"]];
     let any = false;
     for (const [title, items, cls] of groups) {
       if (items.length === 0) continue;
@@ -263,12 +225,6 @@ export function createDictionary({ getModel, getSettings }) {
       p2.className = "nothing";
       p2.textContent = "The model proposed no changes to what is learned.";
       proposalBody.append(p2);
-    }
-    if (p.dropped_terms > 0) {
-      const note = document.createElement("p");
-      note.className = "nothing";
-      note.textContent = `${p.dropped_terms} more proposed terms did not fit: this model takes ${p.budget.limit} and ${p.budget.pinned} are pinned. Remove some to make room.`;
-      proposalBody.append(note);
     }
     proposalPanel.hidden = false;
   }

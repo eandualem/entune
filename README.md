@@ -143,7 +143,7 @@ A local model takes memory only while it is the selected model: it is loaded
 when you pick it, freed when you pick something else, and a model used for a
 single retry is freed right after.
 Measured on 2026-09-18 on an M5: base.en transcribes 25 s of speech in
-under a second. Your dictionary terms are passed as the prompt.
+under a second.
 
 **Parakeet** was the most accurate offline model in our tests, but its
 engine (Apple's MLX and the `parakeet-mlx` package, about 480 MB, Apple
@@ -167,19 +167,40 @@ provider's response verbatim.
 
 ## Personal dictionary
 
-The Dictionary tab holds **terms** the provider should expect (names,
-products, identifiers), sent along with every clip, and **replacements**
-(heard → meant) applied to every transcript. Edit it by hand, or click
-**Build from history** to have a language model of your choice, Anthropic
-or OpenAI on your own key, read your recent transcripts and propose
-additions, which you review before anything is saved. What it learns is
-kept per speech model, from that model's own transcripts, since a local
-model's mishearings are not AssemblyAI's. Entries you add or pin are shared
-by every model and never changed by the language model. If you dictate to
-AI agents, they can post corrections once you have confirmed a
-mistranscription with them.
+Speech models mishear the words that matter most to you: names, products,
+your own tools. The Dictionary tab holds an entry per term: how you spell
+it, what it means to you, and every phrase a model has written instead of
+it. Each heard phrase is fixed in every transcript afterwards. There is no
+limit on the list; it is meant to grow, and matching stays fast however
+long it gets. Edit it by hand, or click **Build from history** to have a
+language model of your choice, Anthropic or OpenAI on your own key, read
+your recent transcripts and propose entries with descriptions, which you
+review before anything is saved. What it learns is kept per speech model,
+from that model's own transcripts, since a local model's mishearings are
+not AssemblyAI's. Entries you add or pin are shared by every model and
+never changed by the language model. If you dictate to AI agents, they can
+post corrections once you have confirmed a mistranscription with them.
 The suggested models, Claude Fable 5.1 and GPT-6 Astra, are the current
 strongest from each provider; any model id the provider accepts works.
+
+### Jev decides each match in context
+
+A plain replacement cannot tell "Jeff" the person from "JEV" the model.
+With a [TypeSafe](https://typesafe.ai) key saved under Settings ›
+Providers, Dictum sends each transcript, the entries that matched and
+their descriptions to **Jev**, TypeSafe's decision model, and asks one
+question per match: did the speaker mean the term, or the words as heard?
+Jev answers with probabilities in about 0.4 s and never writes text; a
+match is replaced unless Jev is sure the words were meant literally. It
+costs a fraction of a cent per dictation on your own key.
+
+Measured on 2026-09-21 over 181 real Parakeet transcripts and their 48
+dictionary matches, labelled by the intended reading: plain replacement
+got 42 right, Jev with descriptions got 48, including a wrong dictionary
+entry it refused every time. Each history card shows what Jev fixed and
+kept, and Settings sums it up. A second switch, **Formatting**, asks Jev
+where a paragraph or a bullet point begins and inserts only line breaks:
+every word stays.
 
 Details: [the dictionary file](docs/dictionary.md) and
 [the agents' API](docs/agents-api.md).

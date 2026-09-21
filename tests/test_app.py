@@ -178,7 +178,6 @@ class FakeUpload:
 
 class StubProvider:
     id: str = "stub"
-    term_limit: int | None = 100
     name: str = "Stub"
     models: tuple[str, ...] = ("good", "bad")
 
@@ -186,9 +185,7 @@ class StubProvider:
         self.clips: list[Clip] = []
         self.uploads: list[FakeUpload] = []
 
-    def transcribe(
-        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
-    ) -> TranscribeResult:
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         self.clips.append(clip)
         return Failure("HTTP 401\n{}") if model == "bad" else Transcript("hello from the fake")
 

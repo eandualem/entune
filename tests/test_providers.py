@@ -181,7 +181,8 @@ def test_assemblyai_short_wav_stays_on_the_sync_endpoint() -> None:
     )
 
 
-def test_terms_are_passed_in_each_providers_own_shape(clip: Clip) -> None:
+def test_no_vocabulary_hint_goes_to_any_provider(clip: Clip) -> None:
+    """The dictionary is applied after the transcript, never sent ahead of the audio."""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -197,17 +198,13 @@ def test_terms_are_passed_in_each_providers_own_shape(clip: Clip) -> None:
             return httpx.Response(200, json={"id": "t1", "status": "completed"})
         return httpx.Response(200, json={"text": "ok"})
 
-    terms = ("Dictum", "Wispr Flow")
-    AssemblyAI(mock_client(handler)).transcribe(clip, "universal-3-5-pro", "k", terms)
-    assert (
-        b'name="config"' in seen[-1].content
-        and b'"keyterms_prompt": ["Dictum", "Wispr Flow"]' in seen[-1].content
-    )
-    Groq(mock_client(handler)).transcribe(clip, "whisper-large-v3-turbo", "k", terms)
-    assert b'name="prompt"\r\n\r\nDictum, Wispr Flow' in seen[-1].content
-    Soniox(mock_client(handler)).transcribe(clip, "stt-async-v5", "k", terms)
+    AssemblyAI(mock_client(handler)).transcribe(clip, "universal-3-5-pro", "k")
+    assert b'name="config"' not in seen[-1].content and b"keyterms" not in seen[-1].content
+    Groq(mock_client(handler)).transcribe(clip, "whisper-large-v3-turbo", "k")
+    assert b'name="prompt"' not in seen[-1].content
+    Soniox(mock_client(handler)).transcribe(clip, "stt-async-v5", "k")
     create = next(r for r in seen if r.url.path == "/v1/transcriptions" and r.method == "POST")
-    assert json.loads(create.content)["context"] == {"terms": ["Dictum", "Wispr Flow"]}
+    assert "context" not in json.loads(create.content)
 
 
 def test_assemblyai_streaming_upload_is_used_only_past_the_sync_limit() -> None:

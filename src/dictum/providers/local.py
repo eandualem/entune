@@ -34,7 +34,6 @@ from dictum.providers.base import (
 
 MODELS_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 WHISPER_RATE = 16_000
-PROMPT_CHARS = 800  # whisper's prompt window is about 224 tokens
 LEADING_PUNCTUATION = " .,;:!?"  # whisper.cpp also starts a first segment with ". " at times
 DOWNLOAD_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 
@@ -66,7 +65,6 @@ CATALOGUE: tuple[ModelSpec, ...] = (
 class Local:
     id: str = "local"
     name: str = "Local"
-    term_limit: int | None = 60  # what fits whisper's 224-token prompt with room to spare
 
     def __init__(
         self,
@@ -165,9 +163,7 @@ class Local:
 
     # ---- transcription
 
-    def transcribe(
-        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
-    ) -> TranscribeResult:
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         if not self._path(model).exists():
             return Failure(f"Model {model} is not downloaded. Settings > Local has the button.")
         try:
@@ -184,9 +180,6 @@ class Local:
             params: dict[str, Any] = {
                 "language": "en" if model.endswith(".en") else "auto",
                 "print_progress": False,
-                # Always set: the bindings keep parameters between calls, so a prompt
-                # from an earlier call would otherwise outlive deleted terms.
-                "initial_prompt": _prompt(terms),
             }
             try:
                 segments = engine.transcribe(audio, **params)
@@ -204,16 +197,6 @@ def _spec(name: str) -> ModelSpec:
         if spec.name == name:
             return spec
     raise ValueError(f"Unknown local model: {name}")
-
-
-def _prompt(terms: tuple[str, ...]) -> str:
-    prompt = ""
-    for term in terms:
-        candidate = f"{prompt}, {term}" if prompt else term
-        if len(candidate) > PROMPT_CHARS:
-            break
-        prompt = candidate
-    return prompt
 
 
 def _load_whisper(path: str) -> Any:
