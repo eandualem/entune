@@ -66,6 +66,10 @@ export function createDictionary({ getModel, getSettings }) {
   }
   const clone = () => JSON.parse(JSON.stringify(dict));
   const same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const drop = (list, spelling) => {
+    const at = list.findIndex((e) => same(e.spelling, spelling));
+    if (at >= 0) list.splice(at, 1);
+  };
 
   function entryRow(source, entry) {
     const row = document.createElement("div");
@@ -140,14 +144,12 @@ export function createDictionary({ getModel, getSettings }) {
   }
   async function removeEntry(source, entry) {
     const next = clone();
-    const from = source === "pinned" ? next.pinned : learnedOf(next);
-    from.splice(from.findIndex((e) => same(e.spelling, entry.spelling)), 1);
+    drop(source === "pinned" ? next.pinned : learnedOf(next), entry.spelling);
     await saveDictionary(next);
   }
   async function moveToPinned(entry) {
     const next = clone();
-    const from = learnedOf(next);
-    from.splice(from.findIndex((e) => same(e.spelling, entry.spelling)), 1);
+    drop(learnedOf(next), entry.spelling);
     pinInto(next.pinned, entry);
     await saveDictionary(next);
   }
