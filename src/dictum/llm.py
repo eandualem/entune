@@ -2,8 +2,9 @@
 
 The model never touches a transcript on its way to the user. It reads one speech
 model's recent raw transcripts and the current dictionary and proposes the `learned`
-section for that speech model; the user's `pinned` entries are handed to it as approved
-and off limits, and as evidence of who the user is.
+section for that speech model: spellings, what they mean, and how this model mishears
+them; the user's `pinned` entries are handed to it as approved and off limits, and as
+evidence of who the user is.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import Any
 import httpx
 
 from dictum import dictionary as dictionary_file
-from dictum.dictionary import Dictionary, Entries, TermBudget
+from dictum.dictionary import Dictionary, Entries
 
 # Providers we route to, with the model suggested first. The dictionary is built rarely
 # and its mistakes compound, so the strongest model of each provider is the default.
@@ -67,36 +68,41 @@ SYSTEM_PROMPT = """You maintain a personal dictation dictionary for one person.
 
 You receive recent raw transcripts of their dictation from one speech-to-text model,
 exactly as that model returned them, plus the current dictionary. Produce the `learned`
-section for that speech model:
-- "terms": words the speech model should be told to expect: names of people, products,
-  companies, tools, code identifiers, acronyms, and any specialised vocabulary that appears
-  in the transcripts. Use the spelling that is evidently intended; when the same name is
-  spelled several ways, pick the correct one. The speech model takes a limited number of
-  terms and the user's pinned ones already use part of it; the message says how many
-  more fit. Propose at most that many, the most valuable first, and none when it says the
-  model takes no terms: then only replacements help.
-- "replacements": corrections for phrases this speech model consistently mishears, as
-  {"heard": "meant"}. Only when the evidence is clear from context and the fix is safe as a
-  whole-word, case-insensitive replacement applied to every future transcript. Never map a
-  common English word to something else unless the transcripts make the mistake unmistakable.
-  Prefer multi-word phrases; keep the list short.
+section for that speech model: a list of entries, each
+- "spelling": a term as this person spells it: a name of a person, product, company,
+  tool, file, code identifier, acronym, or any specialised word they use. When the
+  transcripts spell it several ways, pick the correct one.
+- "description": one or two sentences saying what the term means for this person and
+  when they use it, written so that a reader who has only the surrounding sentence can
+  tell it from the ordinary words it is misheard as. Name what the ordinary words would
+  mean when that helps: "Jev, TypeSafe's decision model the speaker integrates; not a
+  person named Jeff." A decision model reads this description for every occurrence and
+  decides whether the term was meant, so make it concrete.
+- "heard": every phrase this speech model writes instead of the term, exactly as it
+  appears in the transcripts, as a list. Whole words or phrases; case does not matter.
+  An entry may have an empty list when the term is only ever spelled right, which
+  still tells the next build what this person's vocabulary is.
+
+Every consistent mishearing is worth an entry: the list may be long, and it gets more
+useful as it grows. Only propose a heard phrase when the transcripts make the mistake
+evident from context. A common English word may be a heard phrase when the evidence is
+clear, because the description lets the decision model keep it where it was meant
+literally.
 
 The "pinned" section is the user's own, already approved (by hand, or confirmed through
 their assistants), and applies to every speech model. Do not alter, remove or contradict
-it; do not repeat its entries. Do read it as evidence of who this person is, what they
-work on and how they speak: a pinned "cloud" to "Claude" says they talk about the
-assistant, not the sky, and that guides which of this model's mishearings are worth a
-rule. Build on top of it.
-The previous "learned" section for this speech model is included; keep what still holds,
-drop what does not.
+it; do not repeat its entries, but do propose new heard phrases for a pinned spelling as
+an entry with that spelling. Read it as evidence of who this person is, what they work
+on and how they speak: a pinned "Claude" heard as "cloud" says they talk about the
+assistant, not the sky, and that guides which of this model's mishearings are worth an
+entry. The previous "learned" section for this speech model is included; keep what still
+holds, improve descriptions, drop what does not.
 
 Reply with one JSON object only, no prose, no code fence:
-{"terms": [...], "replacements": {"heard": "meant"}}"""
+{"entries": [{"spelling": "...", "description": "...", "heard": ["...", "..."]}]}"""
 
 
-def build_user_prompt(
-    current: Dictionary, transcripts: Sequence[str], speech_model: str, budget: TermBudget
-) -> str:
+def build_user_prompt(current: Dictionary, transcripts: Sequence[str], speech_model: str) -> str:
     kept: list[str] = []
     used = 0
     for text in transcripts[:MAX_TRANSCRIPTS]:
@@ -107,20 +113,13 @@ def build_user_prompt(
             break
         kept.append(snippet)
         used += len(snippet)
-    if budget.limit is None:
-        room = f"{speech_model} takes no terms: propose none, only replacements."
-    else:
-        room = (
-            f"{speech_model} takes at most {budget.limit} terms; {budget.pinned} are pinned"
-            f" already, so propose at most {budget.room}, the most valuable first."
-        )
     return (
-        f"Term budget: {room}\n\n"
         "Pinned by the user (approved, shared by every speech model, do not change):\n"
-        f"{json.dumps(current.pinned.as_json(), ensure_ascii=False)}\n\n"
+        f"{json.dumps([e.as_json() for e in current.pinned], ensure_ascii=False)}\n\n"
         f"Previously learned for {speech_model} (revise):\n"
-        f"{json.dumps(current.learned_for(speech_model).as_json(), ensure_ascii=False)}\n\n"
-        f"Recent raw transcripts from {speech_model}, newest first ({len(kept)}):\n"
+        + json.dumps([e.as_json() for e in current.learned_for(speech_model)], ensure_ascii=False)
+        + "\n\n"
+        + f"Recent raw transcripts from {speech_model}, newest first ({len(kept)}):\n"
         + "\n".join(f"- {t}" for t in kept)
     )
 
@@ -140,7 +139,9 @@ def parse_reply(content: str) -> Entries:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ValueError(f"The model's JSON did not parse: {exc.msg}\n{content[:500]}") from None
-    return dictionary_file.parse_entries(data, "the model's reply")
+    if not isinstance(data, dict) or "entries" not in data:
+        raise ValueError(f"The model's JSON has no entries list:\n{content[:500]}")
+    return dictionary_file.parse_entries(data["entries"], "the model's reply")
 
 
 Caller = Callable[[str, str, str, str, str], Coroutine[Any, Any, str]]
@@ -237,14 +238,13 @@ def propose_learned(
     current: Dictionary,
     transcripts: Sequence[str],
     speech_model: str,
-    budget: TermBudget,
     call: Caller = call_model,
 ) -> Entries:
     """Ask the model for a new `learned` section for `speech_model`, from its transcripts.
 
     Raises ValueError carrying the provider's or the model's own words when it fails.
     """
-    user_prompt = build_user_prompt(current, transcripts, speech_model, budget)
+    user_prompt = build_user_prompt(current, transcripts, speech_model)
     try:
         reply = asyncio.run(call(provider, api_key, model, SYSTEM_PROMPT, user_prompt))
     except Exception as exc:

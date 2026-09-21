@@ -44,6 +44,19 @@ function player(url, label, seconds) {
   return box;
 }
 
+// What Jev did to this transcript, when it was on: counts and time, or why it was skipped.
+function jevLine(t) {
+  if (t.jev_seconds === null && !t.jev_error) return null;
+  const line = document.createElement("div");
+  line.className = t.jev_error ? "jev err" : "jev";
+  const parts = ["Jev"];
+  if (t.jev_fixed !== null) parts.push(`${t.jev_fixed} fixed`, `${t.jev_kept} kept as heard`);
+  if (t.jev_seconds !== null) parts.push(`+${t.jev_seconds.toFixed(1)} s`);
+  if (t.jev_error) parts.push(`skipped: ${t.jev_error}`);
+  line.textContent = parts.join(" · ");
+  return line;
+}
+
 export function renderCard(r, models) {
   const card = document.createElement("article");
   card.className = "card";
@@ -86,6 +99,8 @@ export function renderCard(r, models) {
     block.title = latest.text ? "Click to copy" : "";
     card.append(block);
     card.dataset.copy = latest.text ?? "";
+    const jev = jevLine(latest);
+    if (jev) card.append(jev);
   }
 
   const row = document.createElement("div");

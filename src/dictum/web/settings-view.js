@@ -110,6 +110,35 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     }
   });
 
+  // Jev: its key, the two things it can do to every transcript, and what it has done.
+  const jev = { dictionary: el("jev-dictionary"), formatting: el("jev-formatting"), key: el("key-typesafe") };
+  function renderJev() {
+    const j = settings.jev;
+    jev.key.value = "";
+    jev.key.placeholder = j.key_hint ? `saved ${j.key_hint} · type to replace` : "Not set";
+    jev.dictionary.checked = j.dictionary;
+    jev.formatting.checked = j.formatting;
+    const s = j.summary;
+    const parts = [];
+    if (s.transcriptions) {
+      parts.push(`${s.transcriptions} transcriptions with Jev`, `${s.fixed} fixed`, `${s.kept} kept as heard`);
+      if (s.median_seconds !== null) parts.push(`median +${s.median_seconds.toFixed(1)} s`);
+      if (s.failed) parts.push(`${s.failed} skipped after an error`);
+    }
+    el("jev-summary").textContent = parts.join(" · ") || (j.key_hint ? "" : "Add a TypeSafe key to turn either on.");
+  }
+  el("jev-key-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const key = jev.key.value.trim();
+    if (!key) { flash(el("jev-key-status"), "Nothing to save", "ok"); return; }
+    if (await saveSetting({ keys: { typesafe: key } }, el("jev-key-status"))) await loadSettings();
+  });
+  for (const name of ["dictionary", "formatting"]) {
+    jev[name].addEventListener("change", async () => {
+      if (!(await saveSetting({ jev: { [name]: jev[name].checked } }, el("jev-key-status")))) jev[name].checked = !jev[name].checked;
+    });
+  }
+
   // Local models: a card per local provider, rows with size, state and one button.
   let localPoll = null;
   let localList = [];
@@ -169,7 +198,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const name = document.createElement("div");
     name.innerHTML = `<div class="name"></div><div class="note"></div>`;
     name.querySelector(".name").textContent = m.label;
-    name.querySelector(".note").textContent = isParakeet ? `${m.note} · takes no words, replacements only` : m.note;
+    name.querySelector(".note").textContent = m.note;
     const size = document.createElement("span");
     size.className = "size";
     size.textContent = gb(m.size_bytes);
@@ -247,7 +276,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   function renderAgents() {
     const endpoint = `${location.origin}/api/dictionary/corrections`;
     el("agent-endpoint").textContent = endpoint;
-    el("agent-curl").textContent = `curl -s -m 2 -X POST ${endpoint} \\\n  -H 'content-type: application/json' \\\n  -d '{"replacements": {"cloud code": "Claude Code"}, "terms": ["Dictum"], "source": "my-agent"}'`;
+    el("agent-curl").textContent = `curl -s -m 2 -X POST ${endpoint} \\\n  -H 'content-type: application/json' \\\n  -d '{"entries": [{"spelling": "Claude Code", "description": "Anthropic\'s coding agent", "heard": ["cloud code"]}], "source": "my-agent"}'`;
   }
   for (const button of document.querySelectorAll(".copy-btn")) {
     button.addEventListener("click", async () => {
@@ -299,6 +328,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     el("shortcut-toggle").textContent = settings.shortcuts.toggle ?? "";
     el("shortcut-cancel").textContent = settings.shortcuts.cancel ?? "";
     renderDictionaryModel();
+    renderJev();
     renderAgents();
     loadLocalModels().catch(() => {});
     loadCorrections().catch(() => {});

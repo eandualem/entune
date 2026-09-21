@@ -19,7 +19,7 @@ const emptyState = el("empty");
 const stepsList = el("steps");
 
 let models = [];
-let defaultModel = null; // {id, label, term_limit} from /api/models, or null
+let defaultModel = null; // {id, label} from /api/models, or null
 let settings = null; // the last /api/settings answer
 let shortcuts = { hold: null, toggle: null };
 let recordingsCount = 0;

@@ -13,7 +13,10 @@ src/dictum/
                   base.py also has the optional Streams (fast mode) and Downloadable
                   (local models) protocols; local.py is whisper.cpp in-process,
                   parakeet.py runs parakeet_helper.py inside a separate engine
-  dictionary.py   shared pinned entries and per-model learned entries, replacements, proposals
+  dictionary.py   shared pinned entries and per-model learned entries (spelling, description,
+                  heard phrases), the indexed matcher, proposals
+  jev.py          Jev, TypeSafe's decision model: one request per transcript deciding each
+                  dictionary match in context, and one for paragraph breaks and bullets
   llm.py          dictionary prompts, model choices and direct Anthropic/OpenAI HTTP calls
   shortcuts.py    shortcut strings: hold key, hands-free chord
   recorder.py     microphone -> WAV at the device's rate (sounddevice); a sink gets
@@ -38,8 +41,9 @@ src/dictum/
 Data flow for a dictation: the hotkey listener's thread feeds the engine;
 the engine starts and stops the recorder; on stop, a persist worker writes
 the clip to disk and history at once, and one transcription worker takes
-clips in the order they were spoken: dictionary terms in, provider call,
-dictionary replacements applied, timing stored. The transcript is copied and
+clips in the order they were spoken: provider call, dictionary matches
+found and, with Jev on, decided in context (else all replaced), formatting
+if on, timing stored. The transcript is copied and
 pasted on the main thread, because HIToolbox insists on it. With fast mode
 on, the recorder's chunks are streamed to AssemblyAI while recording and a
 clip over two minutes is transcribed from that upload. A local model is

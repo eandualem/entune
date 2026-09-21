@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 from dictum.audio import extension_for, identify
+from dictum.dictionary import Entries
 
 Status = Literal["ok", "error"]
 
@@ -41,7 +42,11 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     raw_text TEXT,
     audio_seconds REAL,
     elapsed_seconds REAL,
-    fast INTEGER NOT NULL DEFAULT 0
+    fast INTEGER NOT NULL DEFAULT 0,
+    jev_seconds REAL,
+    jev_fixed INTEGER,
+    jev_kept INTEGER,
+    jev_error TEXT
 );
 CREATE INDEX IF NOT EXISTS transcriptions_by_recording ON transcriptions(recording_id);
 CREATE TABLE IF NOT EXISTS corrections (
@@ -67,6 +72,10 @@ MIGRATIONS = [
         "fast",
         "ALTER TABLE transcriptions ADD COLUMN fast INTEGER NOT NULL DEFAULT 0",
     ),
+    ("transcriptions", "jev_seconds", "ALTER TABLE transcriptions ADD COLUMN jev_seconds REAL"),
+    ("transcriptions", "jev_fixed", "ALTER TABLE transcriptions ADD COLUMN jev_fixed INTEGER"),
+    ("transcriptions", "jev_kept", "ALTER TABLE transcriptions ADD COLUMN jev_kept INTEGER"),
+    ("transcriptions", "jev_error", "ALTER TABLE transcriptions ADD COLUMN jev_error TEXT"),
 ]
 
 
@@ -84,6 +93,10 @@ class Transcription:
     audio_seconds: float | None = None  # how long the clip is, when its container says
     elapsed_seconds: float | None = None  # how long the provider took to answer
     fast: bool = False  # transcribed from fast mode's stream (issue #20)
+    jev_seconds: float | None = None  # time Jev added, when it ran
+    jev_fixed: int | None = None  # dictionary matches replaced
+    jev_kept: int | None = None  # dictionary matches Jev kept as recognised
+    jev_error: str | None = None  # why Jev was skipped; the transcript went on without it
 
 
 @dataclass(frozen=True)
@@ -180,13 +193,18 @@ class Store:
         audio_seconds: float | None = None,
         elapsed_seconds: float | None = None,
         fast: bool = False,
+        jev_seconds: float | None = None,
+        jev_fixed: int | None = None,
+        jev_kept: int | None = None,
+        jev_error: str | None = None,
     ) -> None:
         with self._lock, self._db:
             self._db.execute(
                 "INSERT INTO transcriptions"
                 " (recording_id, provider, model, status, text, error, created_at, raw_text,"
-                "  audio_seconds, elapsed_seconds, fast)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  audio_seconds, elapsed_seconds, fast, jev_seconds, jev_fixed, jev_kept,"
+                "  jev_error)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     recording_id,
                     provider,
@@ -199,6 +217,10 @@ class Store:
                     audio_seconds,
                     elapsed_seconds,
                     int(fast),
+                    jev_seconds,
+                    jev_fixed,
+                    jev_kept,
+                    jev_error,
                 ),
             )
 
@@ -207,6 +229,15 @@ class Store:
         with self._lock:
             rows = self._db.execute(
                 "SELECT * FROM transcriptions WHERE elapsed_seconds IS NOT NULL ORDER BY id"
+            ).fetchall()
+        return [_transcription(row) for row in rows]
+
+    def jev_transcriptions(self) -> list[Transcription]:
+        """Every attempt on which Jev ran or was tried, for the summary in Settings."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM transcriptions"
+                " WHERE jev_seconds IS NOT NULL OR jev_error IS NOT NULL ORDER BY id"
             ).fetchall()
         return [_transcription(row) for row in rows]
 
@@ -270,10 +301,11 @@ class Store:
 
     # Corrections agents sent, so the Agents page can show what arrived and from whom.
 
-    def add_corrections(
-        self, terms: tuple[str, ...], replacements: dict[str, str], source: str | None
-    ) -> None:
-        rows = [(heard, None) for heard in terms] + list(replacements.items())
+    def add_corrections(self, entries: Entries, source: str | None) -> None:
+        """One row per heard phrase; an entry without any is a row with its spelling."""
+        rows = [(heard, entry.spelling) for entry in entries for heard in entry.heard] + [
+            (entry.spelling, None) for entry in entries if not entry.heard
+        ]
         with self._lock, self._db:
             self._db.executemany(
                 "INSERT INTO corrections (created_at, heard, meant, source) VALUES (?, ?, ?, ?)",

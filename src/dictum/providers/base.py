@@ -54,17 +54,12 @@ class Clip:
 class Provider(Protocol):
     id: str
     name: str
-    term_limit: int | None
-    """How many dictionary terms the provider takes as a vocabulary hint, or None when it
-    takes none: the dictionary never holds terms for such a model (issue #83)."""
 
     @property
     def models(self) -> tuple[str, ...]: ...
 
-    def transcribe(
-        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
-    ) -> TranscribeResult:
-        """`terms`: the user's vocabulary, passed on in whatever form the provider accepts."""
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
+        """The provider's transcript of the clip, or its error verbatim; nothing else."""
         ...
 
 

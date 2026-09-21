@@ -9,47 +9,48 @@ import httpx
 import pytest
 
 from dictum import llm
-from dictum.dictionary import Dictionary, Entries, TermBudget
+from dictum.dictionary import Dictionary, Entries, Entry
+
+REPLY = (
+    '{"entries": [{"spelling": "Claude Code", "description": "the agent",'
+    ' "heard": ["cloud code"]}]}'
+)
+PARSED = (Entry("Claude Code", "the agent", ("cloud code",)),)
 
 
 def test_user_prompt_carries_pinned_and_one_models_learned_list() -> None:
     current = Dictionary(
-        pinned=Entries(("Dictum",)),
-        learned={"stub/good": Entries(("Soniox",)), "local/small.en": Entries(("Elsewhere",))},
+        pinned=(Entry("Dictum", "the app"),),
+        learned={"stub/good": (Entry("Soniox"),), "local/small.en": (Entry("Elsewhere"),)},
     )
     long = "x" * (llm.MAX_TRANSCRIPT_CHARS - 10)
-    prompt = llm.build_user_prompt(
-        current, [" first ", "", long, "never included"], "stub/good", TermBudget(100, 1)
-    )
-    assert "takes at most 100 terms; 1 are pinned already, so propose at most 99" in prompt
-    assert '"terms": ["Dictum"]' in prompt and '"terms": ["Soniox"]' in prompt
+    prompt = llm.build_user_prompt(current, [" first ", "", long, "never included"], "stub/good")
+    assert '"spelling": "Dictum", "description": "the app"' in prompt
+    assert '"spelling": "Soniox"' in prompt
     assert "Previously learned for stub/good" in prompt and "Elsewhere" not in prompt
     assert "transcripts from stub/good" in prompt
     assert "- first" in prompt and "never included" not in prompt
     assert "(2)" in prompt
-    none = llm.build_user_prompt(current, ["x"], "parakeet/p", TermBudget(None, 1))
-    assert "parakeet/p takes no terms: propose none, only replacements." in none
+    assert "terms" not in llm.SYSTEM_PROMPT.split("Reply with")[1]
 
 
 @pytest.mark.parametrize(
     "reply",
-    [
-        '{"terms": ["Dictum"], "replacements": {"cloud code": "Claude Code"}}',
-        'Sure! ```json\n{"terms": ["Dictum"], "replacements": {"cloud code": "Claude Code"}}\n```',
-        'Here you go:\n{"terms": ["Dictum"], "replacements": {"cloud code": "Claude Code"}} thanks',
-    ],
+    [REPLY, f"Sure! ```json\n{REPLY}\n```", f"Here you go:\n{REPLY} thanks"],
 )
 def test_reply_is_parsed_with_or_without_decoration(reply: str) -> None:
-    assert llm.parse_reply(reply) == Entries(("Dictum",), {"cloud code": "Claude Code"})
+    assert llm.parse_reply(reply) == PARSED
 
 
 def test_bad_replies_are_errors_with_the_reply_quoted() -> None:
     with pytest.raises(ValueError, match="did not return JSON"):
         llm.parse_reply("I cannot help with that.")
     with pytest.raises(ValueError, match="did not parse"):
-        llm.parse_reply('{"terms": [}')
-    with pytest.raises(ValueError, match=r"the model's reply\.terms must be a list"):
-        llm.parse_reply('{"terms": "Dictum"}')
+        llm.parse_reply('{"entries": [}')
+    with pytest.raises(ValueError, match="has no entries list"):
+        llm.parse_reply('{"terms": ["Dictum"]}')
+    with pytest.raises(ValueError, match=r"the model's reply\[0\].spelling must be"):
+        llm.parse_reply('{"entries": [{"spelling": 1}]}')
 
 
 def test_propose_learned_calls_the_model_with_the_prompts() -> None:
@@ -57,7 +58,7 @@ def test_propose_learned_calls_the_model_with_the_prompts() -> None:
 
     async def fake(provider: str, api_key: str, model: str, system: str, user: str) -> str:
         seen.update(provider=provider, api_key=api_key, model=model, system=system, user=user)
-        return '{"terms": ["AssemblyAI"], "replacements": {}}'
+        return REPLY
 
     learned = llm.propose_learned(
         "anthropic",
@@ -66,10 +67,9 @@ def test_propose_learned_calls_the_model_with_the_prompts() -> None:
         Dictionary(),
         ["hello"],
         "s/m",
-        TermBudget(10, 0),
         call=fake,
     )
-    assert learned == Entries(("AssemblyAI",), {})
+    assert learned == PARSED
     assert seen["provider"] == "anthropic" and seen["model"] == "anthropic:claude-fable-5-1"
     assert seen["system"] == llm.SYSTEM_PROMPT and "- hello" in seen["user"]
 
@@ -80,14 +80,7 @@ def test_provider_failures_surface_verbatim() -> None:
 
     with pytest.raises(ValueError, match="RuntimeError: status_code: 401"):
         llm.propose_learned(
-            "openai",
-            "k",
-            "openai:gpt-5.6-terra",
-            Dictionary(),
-            ["x"],
-            "s/m",
-            TermBudget(10, 0),
-            call=failing,
+            "openai", "k", "openai:gpt-5.6-terra", Dictionary(), ["x"], "s/m", call=failing
         )
 
 
@@ -119,7 +112,7 @@ def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
                 "output": [
                     {
                         "type": "message",
-                        "content": [{"type": "output_text", "text": '{"terms": []}'}],
+                        "content": [{"type": "output_text", "text": '{"entries": []}'}],
                     }
                 ],
             },
@@ -135,11 +128,11 @@ def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
 
     def build(key: str) -> Entries:
         return llm.propose_learned(
-            "openai", key, "openai:gpt-6-astra", Dictionary(), ["text"], "s/m", TermBudget(10, 0)
+            "openai", key, "openai:gpt-6-astra", Dictionary(), ["text"], "s/m"
         )
 
     with ThreadPoolExecutor(3) as pool:
-        assert list(pool.map(build, ["one", "two", "three"])) == [Entries()] * 3
+        assert list(pool.map(build, ["one", "two", "three"])) == [()] * 3
     assert sorted(seen) == ["Bearer one", "Bearer three", "Bearer two"]
     assert os.environ["OPENAI_API_KEY"] == "original"
     assert os.environ["OPENAI_BASE_URL"] == "https://elsewhere.invalid"
