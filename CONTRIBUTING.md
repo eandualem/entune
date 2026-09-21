@@ -31,8 +31,7 @@ from `main` after each release.
 - `src/dictum/desktop/`: the desktop app; `app.py` is the behaviour, `platform.py` the
   protocols it needs, `macos/` the macOS implementation.
 - `docs/`: [architecture](docs/architecture.md), [dictionary](docs/dictionary.md),
-  [agents' API](docs/agents-api.md), [packaging](docs/packaging.md), and
-  [the handoff](docs/handoff.md): where the work stands and what comes next.
+  [agents' API](docs/agents-api.md) and [packaging](docs/packaging.md).
 
 ## Constraints
 
