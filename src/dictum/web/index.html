@@ -84,21 +84,21 @@
             <div class="row-actions">
               <button type="button" class="btn accent" id="save-dictionary">Save JSON</button>
               <span class="caption save-status" id="dictionary-status" role="status"></span>
-              <span class="caption hint">The file is <code>dictionary.json</code> in Dictum's data folder. Replacements are whole words, matched regardless of case; the longest phrase wins.</span>
+              <span class="caption hint">The file is <code>dictionary.json</code> in Dictum's data folder. Heard phrases are whole words, matched regardless of case; the longest phrase wins.</span>
             </div>
           </div>
 
           <div class="help-panel" id="help-panel" hidden>
             <div class="defs">
-              <b>Word</b><span>A name or term the speech model should expect: <i>Dictum</i>, <i>CLAUDE.md</i>. Sent to the model before it listens.</span>
-              <b>Replacement</b><span>What it heard → what you meant, fixed in every transcript afterwards: <i>cloud code → Claude Code</i>.</span>
+              <b>Entry</b><span>A term as you spell it, what it means to you, and the phrases speech models write instead: <i>Claude Code ← cloud code</i>. Every heard phrase is fixed in every transcript afterwards.</span>
+              <b>Description</b><span>With Jev on (Settings › Providers), each match is decided in context from this description: <i>Jeff</i> becomes <i>JEV</i> in a note about the model and stays in a note about a person.</span>
               <b>Pinned</b><span>Entered by you. Used with every model. Never changed by a machine.</span>
               <b>Learned</b><span>Proposed from one model's own transcripts and accepted by you. Used only with that model.</span>
             </div>
             <div class="defs more" id="help-more" hidden>
               <b>Refine</b><span>Sends this model's recent transcripts, with your pinned list as context, to the dictionary model set in Settings. You get a proposal, entries to add and to drop, and nothing is saved until you press Accept.</span>
               <b>Agents</b><span>Agents you dictate to can post a confirmed correction to Dictum's local API. It arrives here as Pinned; remove it if they got it wrong.</span>
-              <b>Limits</b><span>Every provider caps how many words it takes; Parakeet takes none and uses replacements only. The count beside the filters shows what is in use.</span>
+              <b>Size</b><span>There is no limit. The list is meant to grow, and matching stays fast however long it gets.</span>
             </div>
             <button type="button" class="btn link" id="help-more-toggle">More detail</button>
           </div>
@@ -115,26 +115,20 @@
           </div>
 
           <div class="add-panel">
-            <div class="segmented" role="tablist" aria-label="Add">
-              <button type="button" role="tab" id="add-word-mode" aria-selected="true">Add a word</button>
-              <button type="button" role="tab" id="add-fix-mode" aria-selected="false">Fix a recurring mistake</button>
-            </div>
-            <div class="add-row" id="add-word-row">
-              <input class="input" id="add-term" type="text" placeholder="A name, product or identifier the model should expect" spellcheck="false" />
-              <button type="button" class="btn fill" id="add-term-btn">Pin word</button>
-            </div>
-            <div class="add-row fix" id="add-fix-row" hidden>
-              <input class="input" id="add-heard" type="text" placeholder="What it heard" spellcheck="false" />
+            <div class="add-row fix">
+              <input class="input" id="add-heard" type="text" placeholder="What it heard (comma-separated when several)" spellcheck="false" />
               <span class="arrow" aria-hidden="true">→</span>
               <input class="input" id="add-meant" type="text" placeholder="What you meant" spellcheck="false" />
-              <button type="button" class="btn fill" id="add-replacement-btn">Pin replacement</button>
+              <button type="button" class="btn fill" id="add-entry-btn">Pin entry</button>
+            </div>
+            <div class="add-row">
+              <input class="input" id="add-description" type="text" placeholder="What it means to you, so Jev can tell it from the ordinary words (optional)" spellcheck="true" />
             </div>
           </div>
 
           <div class="dict-table">
-            <div class="entry-row head"><span>KIND</span><span>ENTRY</span><span>SOURCE</span><span class="actions"><button type="button" class="btn ghost sm" id="pin-all" title="Pin every learned entry: keep them for every model" hidden>Pin all</button></span></div>
+            <div class="entry-row head"><span>ENTRY</span><span>SOURCE</span><span class="actions"><button type="button" class="btn ghost sm" id="pin-all" title="Pin every learned entry: keep them for every model" hidden>Pin all</button></span></div>
             <div id="dict-rows"></div>
-            <div class="entry-row foot" id="term-budget-row" hidden><span class="caption" id="term-budget"></span></div>
           </div>
         </div>
       </section>
@@ -249,6 +243,23 @@
                   <div class="srow"><span class="name">Model</span><div class="field"><select class="select" id="dm-model"></select><input class="input mono" id="dm-model-custom" type="text" placeholder="model id, as the provider names it" spellcheck="false" autocomplete="off" hidden /></div></div>
                   <div class="srow foot"><button type="submit" class="btn accent">Save</button><button type="button" class="btn ghost" id="dm-cancel">Cancel</button><span class="caption save-status" id="dm-status" role="status"></span></div>
                 </form>
+              </div>
+
+              <div class="scard" id="jev-card">
+                <div class="scard-head"><div class="name strong">Jev <span class="caption">· TypeSafe</span></div><div class="caption hint">A decision model that reads each transcript after the speech model and answers questions about it; it never writes text. On your own key, about $0.04 per million tokens: a dictation costs a fraction of a cent.</div></div>
+                <form id="jev-key-form">
+                  <div class="srow"><label class="name" for="key-typesafe">API key</label><input class="input field" id="key-typesafe" type="password" autocomplete="off" placeholder="Not set" /></div>
+                  <div class="srow foot"><button type="submit" class="btn accent">Save key</button><span class="caption save-status" id="jev-key-status" role="status"></span></div>
+                </form>
+                <label class="srow check">
+                  <div><div class="name">Contextual dictionary</div><div class="caption">Each dictionary match is replaced only when Jev reads it as your term; off, every match is replaced. Adds about half a second when a transcript has a match.</div></div>
+                  <input type="checkbox" id="jev-dictionary" />
+                </label>
+                <label class="srow check">
+                  <div><div class="name">Formatting</div><div class="caption">Paragraph breaks and bullet points where the dictation clearly has them. Every word stays. Adds about half a second to every transcript.</div></div>
+                  <input type="checkbox" id="jev-formatting" />
+                </label>
+                <div class="srow note"><span></span><span class="caption" id="jev-summary" role="status"></span></div>
               </div>
             </div>
 

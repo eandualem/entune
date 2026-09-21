@@ -31,7 +31,6 @@ POLL_LIMIT_SECONDS = 120.0
 class Soniox:
     id: str = "soniox"
     name: str = "Soniox"
-    term_limit: int | None = 100  # the documented limit is 8,000 tokens of context in all
     models: tuple[str, ...] = ("stt-async-v5",)
 
     def __init__(
@@ -42,9 +41,7 @@ class Soniox:
         self._client = client or httpx.Client(timeout=DEFAULT_TIMEOUT)
         self._sleep = sleep
 
-    def transcribe(
-        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
-    ) -> TranscribeResult:
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         headers = {"Authorization": f"Bearer {api_key}"}
 
         upload = self._client.post(
@@ -58,8 +55,6 @@ class Soniox:
 
         try:
             request: dict[str, object] = {"file_id": file_id, "model": model}
-            if terms:
-                request["context"] = {"terms": list(terms)}
             created = self._client.post(f"{BASE}/transcriptions", headers=headers, json=request)
             if created.is_error:
                 return failure_from_response(created)

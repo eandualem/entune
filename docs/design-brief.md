@@ -70,9 +70,10 @@ under the latest. The list refreshes itself as shortcut dictations arrive.
 When there is nothing yet, a three-step getting started list (add a
 provider, pick the model, dictate) that ticks itself off.
 
-**Dictionary.** Two kinds of entry: *terms* the speech model should
-expect (names, products, identifiers), and *replacements* (heard →
-meant) applied to every transcript. Two sections: *Pinned by you*, entered
+**Dictionary.** An entry is a term as the person spells it, what it means
+to them, and the phrases speech models write instead; every heard phrase
+is fixed in every transcript, and with Jev on each match is decided in
+context from the description. Two sections: *Pinned by you*, entered
 by hand or pinned from a proposal, shared by every model, never changed by
 a machine; and *Learned for <the current model>*, what a language model
 proposed from that model's own transcripts and the person accepted. A
@@ -80,9 +81,8 @@ Build (or Refine) from history button sends that model's recent
 transcripts, with the pinned list as approved context, to a language model
 of the person's choice and shows a proposal as added and removed entries
 with Accept and Discard; nothing is saved before Accept. Each learned entry
-has Pin and Remove; Pin all. A line says how many terms the current model
-can take and how many are in use, since every provider has a limit and one
-local engine takes none. Add rows for a term and for a replacement. An
+has Pin and Remove; Pin all. There is no limit on the list's size. One add
+row: what was heard, what was meant, and an optional description. An
 "Edit as JSON" editor for the whole file. Agents the person dictates to can
 post confirmed corrections through a local API; they land in Pinned.
 
@@ -96,7 +96,9 @@ recording, offered only for the provider that supports it; two shortcuts,
 hold-to-talk (one key, records while held) and hands-free (a combination,
 press to start and again to stop), each set by pressing the keys, with
 Clear. *Dictionary model*: Anthropic and OpenAI keys and a model field
-with suggestions, used only for the Build button. *Appearance*: theme
+with suggestions, used only for the Build button. *Jev*: a TypeSafe key
+and two switches, contextual dictionary and formatting, each saying what
+it adds in time, and a line summing up what Jev has done. *Appearance*: theme
 (system, light, dark) and text size (four steps, also cmd+ cmd− cmd0).
 Everything applies as soon as it is changed, except keys.
 
@@ -104,5 +106,5 @@ Everything applies as soon as it is changed, except keys.
 
 Provider (a company or engine), model (one of its speech models), default
 model (the one dictation uses), transcript, raw text (what the model
-returned before replacements), pinned, learned, term, replacement,
-proposal, fast mode, hold-to-talk, hands-free.
+returned before the dictionary), pinned, learned, entry (spelling,
+description, heard), proposal, Jev, fast mode, hold-to-talk, hands-free.

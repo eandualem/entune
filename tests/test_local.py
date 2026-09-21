@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from dictum.providers.base import Clip, Failure, Transcript
-from dictum.providers.local import CATALOGUE, Local, _prompt, pcm16k
+from dictum.providers.local import CATALOGUE, Local, pcm16k
 from dictum.recorder import wav_bytes
 from tests.conftest import mock_client
 
@@ -113,7 +113,7 @@ class FakeEngine:
         return [type("Seg", (), {"text": text})() for text in texts]
 
 
-def test_transcribe_resamples_prompts_with_terms_and_needs_the_file(tmp_path: Path) -> None:
+def test_transcribe_resamples_and_needs_the_file(tmp_path: Path) -> None:
     engine = FakeEngine()
     loaded: list[str] = []
 
@@ -123,15 +123,15 @@ def test_transcribe_resamples_prompts_with_terms_and_needs_the_file(tmp_path: Pa
 
     local = Local(tmp_path, load_model=load_model)
     clip = Clip(wav_bytes(b"\x00\x00" * 48_000, sample_rate=48_000), "audio/wav")  # 1 s
-    missing = local.transcribe(clip, "base.en", "", terms=("Dictum",))
+    missing = local.transcribe(clip, "base.en", "")
     assert isinstance(missing, Failure) and "not downloaded" in missing.error
     (tmp_path / "ggml-base.en.bin").write_bytes(b"model")
-    result = local.transcribe(clip, "base.en", "", terms=("Dictum", "AssemblyAI"))
+    result = local.transcribe(clip, "base.en", "")
     assert result == Transcript("hello there")
     assert loaded == [str(tmp_path / "ggml-base.en.bin")]
     assert engine.calls[0]["samples"] == 16_000
     assert engine.calls[0]["language"] == "en"
-    assert engine.calls[0]["initial_prompt"] == "Dictum, AssemblyAI"
+    assert "initial_prompt" not in engine.calls[0]
     local.transcribe(clip, "base.en", "")
     assert len(loaded) == 1  # the engine is kept
 
@@ -139,8 +139,6 @@ def test_transcribe_resamples_prompts_with_terms_and_needs_the_file(tmp_path: Pa
 def test_pcm16k_mixes_stereo_and_keeps_16k_as_is() -> None:
     mono = pcm16k(Clip(wav_bytes(b"\x00\x40" * 16_000, sample_rate=16_000), "audio/wav"))
     assert len(mono) == 16_000 and abs(float(mono[0]) - 0.5) < 0.01
-    assert _prompt(()) == ""
-    assert len(_prompt(tuple("term" for _ in range(500)))) <= 800
 
 
 def test_warm_loads_a_downloaded_model_once_and_ignores_the_rest(tmp_path: Path) -> None:

@@ -62,7 +62,6 @@ def engine_python() -> Path | None:
 class Parakeet:
     id: str = "parakeet"
     name: str = "Parakeet (local)"
-    term_limit: int | None = None  # the engine takes no vocabulary hint
 
     def __init__(
         self,
@@ -132,9 +131,7 @@ class Parakeet:
             if "error" in answer:
                 raise OSError(str(answer["error"]))
 
-    def transcribe(
-        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
-    ) -> TranscribeResult:
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         if self.engine() is None:
             return Failure(f"Parakeet's engine is not installed. Run: {INSTALL_COMMAND}")
         if not self._ready():
