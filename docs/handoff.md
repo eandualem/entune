@@ -4,6 +4,34 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-21, later: the dictionary build streams and goes in steps
+
+Elias's first build with the new prompt failed: "Server disconnected without sending
+a response". Observed: a tiny request to the same model and key answered in 3 s; the
+exact build request, replayed outside the app, was cut after 61 s every time; the same
+request with `stream: true` completed in 202 s (41 entries, 6,254 output tokens). So
+something on the way cuts a connection that carries no bytes for about a minute, and
+the new prompt's longer reply (descriptions for every entry) pushed the build past it.
+No proxy is configured on this Mac; the cause was not located further.
+
+Both dictionary providers are now streamed and the events read to the end; only the
+final text is used, and a cut stream, an error event or an unfinished reply is a
+visible error, no retry. At Elias's suggestion a long history goes to the model in
+steps of about 24,000 characters of transcript (`llm.BATCH_CHARS`), each step seeing
+what the earlier steps proposed and adding only what its own transcripts show; the
+steps' entries are combined, heard phrases joined and the earlier description kept;
+the window is now 300 transcripts or 240,000 characters, so a whole history counts.
+The page says a long history takes several minutes; there is no progress indicator
+between steps yet, which is the next small improvement if the wait feels blind.
+
+Verified 194 tests, ruff lint/format, strict mypy, and the app's own build path on the
+real AssemblyAI history: 148 transcripts, 123,092 characters, 6 steps of 92, 123, 104,
+113, 94 and 49 s, 575 s in all, 109 entries. Observation on that reply: many entries
+carry no heard phrase (vocabulary such as "AI", "API", "Mac") and one looks wrong ("AI
+allowed" heard as "AI Claude"); the proposal is reviewed before Accept, and the prompt
+could ask for fewer bare vocabulary entries if that bloats the list. The Anthropic
+stream format is covered by tests against the documented events, not by a live call.
+
 ## 2026-09-21: Jev decides the dictionary, entries with descriptions
 
 Elias ran the isolated Jev experiment against his real history and decided Jev is
