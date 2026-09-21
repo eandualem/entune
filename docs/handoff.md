@@ -4,6 +4,59 @@ Where Dictum stands, what was verified, what is open. Updated at every
 handoff; the newest entry first. Observations are marked as such; the rest
 is what the code and the issues say.
 
+## 2026-09-21, evening: whole-history benchmark with the generated dictionary
+
+Where things stand: Jev is merged (#99) and the build streams in steps (#100). The
+owner regenerated the Parakeet dictionary through the app: 45 entries, every one with
+a description, 18 with heard phrases (24 phrases in all). The OpenAI account ran out
+of credits during the day (the agent's three test builds spent the remainder), which
+was the cause of one failed build; the app shows the provider's message verbatim.
+This entry names no person and quotes no one: the owner asked today that this file
+stop recording who said what, since the repository will be public.
+
+The test (scripts and results under the ignored `.backbone/reviews/jev-history-20260921/v3/`:
+`bench3.py`, `summarize3.py`, `results3.json`, `labels.json`, `summary.txt`): all 199
+recordings, 422 minutes of audio, transcribed locally with Parakeet; for each clip the
+raw text, the plain replacement with the effective Parakeet dictionary, and the
+Jev-decided replacement, all from one Jev request per clip that has a match. 97 matches
+on 42 clips; the intended reading of each match was labelled from its context by the
+agent (one ambiguous, left out). Results against those 96 labels: raw 11, plain
+replacement 85, Jev 90. Timing: Parakeet median 0.76 s per clip; Jev median 0.38 s and
+at most 1.41 s, only on the 42 clips with a match; no Jev errors. Word error rate against
+the AssemblyAI transcripts as a proxy: 11.0% raw, 10.5% for plain and for Jev alike, so
+that proxy cannot separate the two. For comparison, the earlier run with hand-written
+descriptions (`v2/`) scored 48 of 48 on its 48 matches: description quality is the lever.
+
+Where Jev was wrong, six cases, five of them "cloud" to "Claude": three in one recording
+that discusses the word itself (unfair), one "cloud models" kept at 0.98, one vetoed at
+0.84 where the neighbouring "cell lie" had not yet been fixed to "CLI" so the context
+read as nonsense; and one "Dick Team" replaced to "Dick theme" where the real term was
+Dictum misheard as two words, a dictionary gap. Near misses: correct replacements at
+0.62 to 0.77, just under the 0.8 veto bar ("alias" to the owner's name three times, the
+model's name twice in a recording about another project, "cloud" once), because the
+generated descriptions describe the term's use in these transcripts rather than what
+the term is. Distribution of P(recognised) over the 97: 73 below 0.3, 17 between 0.5
+and 0.9, 7 at 0.9 or above.
+
+Direction for tomorrow, the owner's, in order:
+1. The build prompt must produce definitions: what the term is and how it is used, in
+   general, not the one context the transcripts show. This is what lets other users
+   leverage the dictionary without hand editing, which is not the intended path.
+2. Refine must be able to edit existing entries, not only add: improve a description,
+   add heard variants, remove an entry that no longer holds. Today each build proposes
+   the learned list afresh with the previous list as context and the steps only add;
+   the design is open (a full revised list per step, or edit operations applied in code).
+3. Decide matches with the other matches already applied as context (one more pass,
+   no extra request), so a fixed neighbour helps the decision.
+4. Keep the veto bar at 0.8: the wrong vetoes were at 0.84 and 0.98, so lowering it
+   would not have helped, and the near misses are a description problem.
+5. Dictionary gaps to add by hand for now: "dick team" and "dicktime" for Dictum.
+6. Formatting was unimpressive on a long dictation and was not measured today; it
+   needs its own look.
+7. Later: editing entries in the page.
+Rerun `bench3.py` after each change and compare with 90 of 96; the table above is the
+shape of the public claim once refined. No code changed after #100 today.
+
 ## 2026-09-21, later: the dictionary build streams and goes in steps
 
 Elias's first build with the new prompt failed: "Server disconnected without sending
