@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -15,6 +16,7 @@ from dictum.recorder import wav_bytes
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store
+from tests.dictionary_samples import proposed
 from tests.test_server import StubProvider
 
 
@@ -121,8 +123,9 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
         assert "I use cloud code for work." in user
         assert "PinnedName" in user and "OtherOnly" not in user
         return (
-            '{"entries": [{"spelling": "Claude Code", "description": "coding agent",'
-            ' "heard": ["cloud code"]}]}'
+            json.dumps(proposed("I use cloud code for work."))
+            if len(prompts) == 1
+            else '{"groups": [], "remove": []}'
         )
 
     monkeypatch.setattr(stub, "transcribe", transcribe)
@@ -169,7 +172,7 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
         ).status_code
         == 200
     )
-    assert client.get("/api/dictionary").json()["pinned"] == [pinned]
+    assert client.get("/api/dictionary").json()["pinned"] == before.json()["pinned"]
     assert client.delete("/api/dictionary/audio/build").status_code == 200
     assert client.get("/api/dictionary/audio/build").json() == {"phase": "idle"}
     assert store.list_recordings() == [] and store.timed_transcriptions() == []
@@ -189,7 +192,7 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
 
     async def fake(provider: str, key: str, model: str, system: str, user: str) -> str:
         prompts.append(user)
-        return '{"entries": []}'
+        return '{"groups": [], "remove": []}'
 
     store = Store(tmp_path)
     client = TestClient(

@@ -1,17 +1,18 @@
 """Build and refine the dictionary in bounded steps with the chosen language model.
 
 The model never touches a transcript on its way to the user. It reads one speech
-model's recent raw transcripts and the current dictionary and proposes the `learned`
-section for that speech model: spellings, what they mean, and how this model mishears
-them; the user's `pinned` entries are handed to it as approved and off limits, and as
-evidence of who the user is.
+model's recent raw transcripts and proposes confusion groups for that model, with
+explicit form-to-meaning associations and textual provenance. Pinned knowledge is
+shared and protected; it does not take priority over competing meanings.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
+import uuid
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -20,7 +21,7 @@ import httpx
 
 from dictum import dictionary as dictionary_file
 from dictum import prompts
-from dictum.dictionary import Dictionary, Entries
+from dictum.dictionary import Dictionary, Groups, key
 
 # Providers we route to, with a reasonably priced model suggested first.
 LLM_PROVIDERS: dict[str, tuple[str, str]] = {
@@ -93,7 +94,7 @@ def build_user_prompt(
     current: Dictionary,
     transcripts: Sequence[str],
     speech_model: str,
-    proposed: Entries | None = None,
+    proposed: Groups | None = None,
     step: tuple[int, int] = (1, 1),
 ) -> str:
     """One step's evidence and the working dictionary after all earlier edits."""
@@ -112,46 +113,170 @@ def build_user_prompt(
             ensure_ascii=False,
         ),
         transcript_count=str(len(transcripts)),
-        transcripts=json.dumps(list(transcripts), ensure_ascii=False),
+        transcripts=json.dumps(sources(transcripts), ensure_ascii=False),
     )
 
 
-def parse_reply(content: str, proposed: Entries = ()) -> Entries:
-    """Apply the model's additions, replacements and explicit removals to learned entries."""
+def sources(transcripts: Sequence[str]) -> dict[str, str]:
+    """Stable snippet references; only hashes/offsets survive normal audio builds."""
+    return {"s_" + hashlib.sha256(text.encode()).hexdigest()[:24]: text for text in transcripts}
+
+
+def parse_reply(
+    content: str, proposed: Groups = (), *, transcripts: Sequence[str] = (), pinned: Groups = ()
+) -> Groups:
+    """Validate provenance and apply explicit group revisions without discarding meanings."""
     text = content.strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.DOTALL)
+    fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.DOTALL)
     if fenced:
         text = fenced.group(1)
-    elif not text.startswith("{"):
-        start, end = text.find("{"), text.rfind("}")
-        if start < 0 or end < 0:
-            raise ValueError(f"The model did not return JSON:\n{content[:500]}")
-        text = text[start : end + 1]
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"The model's JSON did not parse: {exc.msg}\n{content[:500]}") from None
-    if not isinstance(data, dict) or "entries" not in data:
-        raise ValueError(f"The model's JSON has no entries list:\n{content[:500]}")
-    entries = dictionary_file.parse_entries(data["entries"], "the model's reply")
-    removals = data.get("remove", [])
-    if not isinstance(removals, list) or not all(
-        isinstance(s, str) and s.strip() for s in removals
-    ):
-        raise ValueError("The model's remove list must contain non-empty spellings")
-    if any(not entry.description for entry in entries):
-        raise ValueError("Each proposed entry must have a description")
-
-    def key(spelling: str) -> str:
-        return " ".join(spelling.split()).lower()
-
-    removed = {key(s) for s in removals}
-    updated = {key(e.spelling): e for e in proposed if key(e.spelling) not in removed}
-    for entry in entries:
-        if key(entry.spelling) in removed:
-            raise ValueError(f"The model both removed and revised {entry.spelling!r}")
-        updated[key(entry.spelling)] = entry
-    return dictionary_file.merge(tuple(updated.values()))
+        raise ValueError(f"The model's JSON did not parse: {exc.msg}") from None
+    if not isinstance(data, dict) or set(data) != {"groups", "remove"}:
+        raise ValueError("The model must return groups and remove lists")
+    revised = dictionary_file.parse_groups(data["groups"], "the model's reply")
+    removed = data["remove"]
+    old = {g.id: g for g in proposed}
+    if not isinstance(removed, list) or not all(isinstance(v, str) and v in old for v in removed):
+        raise ValueError("remove must name existing learned group IDs")
+    if set(removed) & {g.id for g in revised}:
+        raise ValueError("A group cannot be revised and removed together")
+    known_groups = {g.id for g in (*pinned, *proposed)}
+    known_meanings = {m.id: m for g in (*pinned, *proposed) for m in g.meanings}
+    known_links: dict[tuple[str, str], list[dictionary_file.Association]] = {}
+    for group in (*pinned, *proposed):
+        for form in group.recognized_forms:
+            for association in form.associations:
+                known_links.setdefault((key(form.text), association.meaning_id), []).append(
+                    association
+                )
+    approved = {
+        (g.id, key(f.text)): (f.direct, f.direct_reason)
+        for g in proposed
+        for f in g.recognized_forms
+        if f.direct
+    }
+    supplied = sources(transcripts)
+    # New temporary IDs are assigned once by code. Revisions keep persisted IDs.
+    ids: dict[str, str] = {}
+    seen_meanings = list(known_meanings.values())
+    for group in revised:
+        if group.id not in known_groups:
+            if not group.id.startswith("new_"):
+                raise ValueError("New group IDs must start with new_")
+            if group.id in ids:
+                raise ValueError("New groups and meanings need distinct temporary IDs")
+            ids[group.id] = "g_" + uuid.uuid4().hex
+        for m in group.meanings:
+            if m.id not in known_meanings:
+                if not m.id.startswith("new_"):
+                    raise ValueError("New meaning IDs must start with new_")
+                if m.id in ids and ids[m.id].startswith("g_"):
+                    raise ValueError("New groups and meanings need distinct temporary IDs")
+                if any(
+                    m.id != old.id
+                    and key(m.spelling) == key(old.spelling)
+                    and m.meaning == old.meaning
+                    and m.personal_context == old.personal_context
+                    and m.casing == old.casing
+                    for old in seen_meanings
+                ):
+                    raise ValueError(
+                        "Reuse the existing ID for the same meaning; "
+                        "case alone is not a new meaning"
+                    )
+                ids.setdefault(m.id, "m_" + uuid.uuid4().hex)
+                seen_meanings.append(m)
+    meanings = {**known_meanings, **{m.id: m for g in revised for m in g.meanings}}
+    preview = (
+        *pinned,
+        *(g for g in proposed if g.id not in set(removed) | {r.id for r in revised}),
+        *revised,
+    )
+    forms = [f for g in preview for f in g.recognized_forms]
+    confused_forms = {
+        key(f.text)
+        for f in forms
+        if any(
+            a.meaning_id in meanings and key(f.text) != key(meanings[a.meaning_id].spelling)
+            for a in f.associations
+        )
+    }
+    connected = {
+        a.meaning_id for f in forms if key(f.text) in confused_forms for a in f.associations
+    }
+    for group in revised:
+        for form in group.recognized_forms:
+            approval = (form.direct, form.direct_reason)
+            if form.direct and approved.get((group.id, key(form.text))) != approval:
+                raise ValueError("The generator cannot approve direct replacements")
+            for link in form.associations:
+                meaning = meanings.get(link.meaning_id)
+                previous = known_links.get((key(form.text), link.meaning_id), [])
+                if meaning is None or (not meaning.meaning and link not in previous):
+                    raise ValueError("Every new association needs a defined meaning")
+                if link.basis == "literal":
+                    if key(form.text) != key(meaning.spelling) or link.evidence:
+                        raise ValueError(
+                            "Literal associations preserve spelling and need no inferred evidence"
+                        )
+                    continue
+                if link.basis != "text" and link not in previous:
+                    raise ValueError("New generated associations need textual evidence")
+                for evidence in link.evidence:
+                    if any(evidence in old.evidence for old in previous):
+                        continue
+                    source = supplied.get(evidence.source)
+                    if source is None or evidence.end > len(source):
+                        raise ValueError("Evidence references an unavailable source occurrence")
+                    heard = source[evidence.start : evidence.end]
+                    if (
+                        key(heard) != key(form.text)
+                        or (evidence.start and re.match(r"\w", source[evidence.start - 1]))
+                        or (evidence.end < len(source) and re.match(r"\w", source[evidence.end]))
+                    ):
+                        raise ValueError("Evidence must reference the exact whole recognized form")
+                if link.basis == "text" and not link.evidence:
+                    raise ValueError("Textual associations need a referenced source occurrence")
+        # Relevant literal competitors can live beside a protected pinned group.
+        if any(m.id not in known_meanings and m.id not in connected for m in group.meanings):
+            raise ValueError(
+                "New meanings must belong to an evidenced confusion, not a vocabulary glossary"
+            )
+    raw_groups = [g.as_json() for g in revised]
+    for record in raw_groups:
+        record["id"] = ids.get(record["id"], record["id"])
+        for meaning in record["meanings"]:
+            meaning["id"] = ids.get(meaning["id"], meaning["id"])
+        for form in record["recognized_forms"]:
+            for link in form["associations"]:
+                link["meaning_id"] = ids.get(link["meaning_id"], link["meaning_id"])
+    revised = dictionary_file.parse_groups(raw_groups, "the model's reply")
+    updated = {gid: group for gid, group in old.items() if gid not in removed}
+    updated.update({g.id: g for g in revised})
+    result = tuple(updated.values())
+    for (gid, surface), approval in approved.items():
+        assert approval[0] is not None
+        current = next(
+            (
+                f
+                for g in result
+                if g.id == gid
+                for f in g.recognized_forms
+                if key(f.text) == surface
+            ),
+            None,
+        )
+        if (
+            current is None
+            or (current.direct, current.direct_reason) != approval
+            or meanings[approval[0]] != known_meanings[approval[0]]
+        ):
+            raise ValueError("The generator cannot remove or change an approved direct mapping")
+    dictionary_file.validate(Dictionary(pinned, {"working": result}))
+    return result
 
 
 Caller = Callable[[str, str, str, str, str], Coroutine[Any, Any, str]]
@@ -283,7 +408,7 @@ def propose_learned(
     transcripts: Sequence[str],
     speech_model: str,
     call: Caller = call_model,
-) -> Entries:
+) -> Groups:
     """Ask the model for a new `learned` section for `speech_model`, from its transcripts.
 
     A long history goes in steps (`batches`), each seeing what the earlier steps
@@ -299,7 +424,7 @@ def propose_learned(
             reply = asyncio.run(
                 call(provider, api_key, model, prompts.text("dictionary-system.txt"), user_prompt)
             )
-            proposed = parse_reply(reply, proposed)
+            proposed = parse_reply(reply, proposed, transcripts=step, pinned=current.pinned)
         except Exception as exc:
             raise ValueError(f"Step {number} of {len(steps)}: {type(exc).__name__}: {exc}") from exc
     return proposed

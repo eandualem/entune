@@ -6,19 +6,19 @@ import time
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from dictum import dictionary as dictionary_file
-from dictum import jev
-from dictum.dictionary import Entries
+from dictum import jev, matching
+from dictum.dictionary import Groups
 
 
 @dataclass(frozen=True)
 class Stage:
     status: Literal["pending", "succeeded", "failed", "skipped", "disabled"]
-    method: Literal["contextual", "unconditional", "formatting"]
+    method: Literal["contextual", "deterministic", "unconditional", "formatting"]
     seconds: float = 0.0
     attempts: int = 0
     decisions: int = 0
     replacements: int = 0
+    direct_replacements: int = 0
     preserved: int = 0
     abstained: int = 0
     error: str | None = None
@@ -34,7 +34,7 @@ class Processed:
 def pending(raw: str, *, contextual: bool, formatting: bool) -> Processed:
     return Processed(
         raw,
-        Stage("pending", "contextual" if contextual else "unconditional"),
+        Stage("pending", "contextual" if contextual else "deterministic"),
         Stage("pending" if formatting else "disabled", "formatting"),
     )
 
@@ -65,7 +65,7 @@ def notice(correction: Stage | None, formatting: Stage | None) -> str | None:
 
 def process_text(
     raw: str,
-    entries: Entries,
+    groups: Groups,
     *,
     contextual: bool,
     formatting: bool,
@@ -79,24 +79,47 @@ def process_text(
     initial = pending(raw, contextual=contextual, formatting=formatting)
     call = jev.Call(client, key or "", policy, deadline)
     try:
-        found = dictionary_file.matches(entries, raw)
+        components = matching.components(matching.matches(groups, raw))
         if contextual:
-            decisions = jev.decide(raw, found, call)
-            selected = [d.match for d in decisions if d.replace]
-            text = dictionary_file.replace(raw, selected)
-            correction = Stage(
-                "succeeded" if found else "skipped",
-                "contextual",
-                attempts=call.attempts,
-                decisions=len(decisions),
-                replacements=len(selected),
-                preserved=len(decisions) - len(selected),
-            )
+            decisions = jev.decide(raw, components, call)
         else:
-            text = dictionary_file.replace(raw, found)
-            correction = Stage(
-                "succeeded" if found else "skipped", "unconditional", replacements=len(found)
-            )
+            decisions = []
+            for component in components:
+                direct = component.direct_choice(raw)
+                if direct:
+                    decisions.append(
+                        jev.Decision(
+                            component,
+                            matching.Edit(
+                                component.start, component.end, component.output(raw, direct)
+                            ),
+                            "direct",
+                        )
+                    )
+                else:
+                    unchanged = component.interpretations and all(
+                        component.output(raw, p) == raw[component.start : component.end]
+                        for p in component.interpretations
+                    )
+                    decisions.append(
+                        jev.Decision(component, None, "unchanged" if unchanged else "uncertain")
+                    )
+        edits = tuple(
+            d.edit
+            for d in decisions
+            if d.edit is not None and d.edit.text != raw[d.edit.start : d.edit.end]
+        )
+        text = matching.apply(raw, edits)
+        correction = Stage(
+            "succeeded" if components else "skipped",
+            "contextual" if contextual else "deterministic",
+            attempts=call.attempts,
+            decisions=call.decisions,
+            replacements=len(edits),
+            direct_replacements=sum(d.method == "direct" and d.edit in edits for d in decisions),
+            preserved=sum(d.method != "uncertain" and d.edit not in edits for d in decisions),
+            abstained=sum(d.method == "uncertain" for d in decisions),
+        )
     except Exception as exc:
         result = failed(raw, initial, _error(exc, key), time.monotonic() - started)
         return replace(result, correction=replace(result.correction, attempts=call.attempts))

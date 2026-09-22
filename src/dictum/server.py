@@ -289,6 +289,41 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc))
         return await run_in_threadpool(_dictionary_response, app)
 
+    async def pin_meaning(request: Request) -> Response:
+        try:
+            body = await request.json()
+            version = request.headers.get("if-match")
+            if (
+                not isinstance(body, dict)
+                or set(body) not in ({"model"}, {"model", "group", "meaning"})
+                or not all(isinstance(v, str) and v for v in body.values())
+                or not version
+            ):
+                raise ValueError(
+                    "Pinning needs a model, optional group and meaning IDs, and If-Match"
+                )
+            await run_in_threadpool(
+                app.pin_meaning,
+                body["model"],
+                body.get("group"),
+                body.get("meaning"),
+                version.strip('"'),
+            )
+        except DictionaryChanged as exc:
+            return _bad(str(exc), 409)
+        except ValueError as exc:
+            return _bad(str(exc))
+        return await run_in_threadpool(_dictionary_response, app)
+
+    async def safe_mapping_recovery(request: Request) -> Response:
+        try:
+            result = await run_in_threadpool(
+                app.safe_mapping_recovery, request.path_params["id"], request.path_params["attempt"]
+            )
+        except ValueError as exc:
+            return _bad(str(exc))
+        return JSONResponse(result)
+
     def received_corrections(_: Request) -> Response:
         return JSONResponse([asdict(c) for c in app.store.list_corrections()])
 
@@ -543,6 +578,12 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/exports/audio", export_audio),
             Route("/api/exports/transcripts", export_transcripts),
             Route("/api/dictionary", get_dictionary, methods=["GET"]),
+            Route("/api/dictionary/pin", pin_meaning, methods=["POST"]),
+            Route(
+                "/api/recordings/{id:int}/transcriptions/{attempt:int}/safe-copy",
+                safe_mapping_recovery,
+                methods=["POST"],
+            ),
             Route("/api/dictionary", put_dictionary, methods=["PUT"]),
             Route("/api/dictionary/build", build_dictionary, methods=["POST"]),
             Route("/api/dictionary/audio", dictionary_audio, methods=["GET"]),

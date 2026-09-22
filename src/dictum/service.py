@@ -13,7 +13,8 @@ from dataclasses import asdict, dataclass, replace
 from dictum import dictionary as dictionary_file
 from dictum import jev, llm, processing, shortcuts
 from dictum.audio import sniff_mime
-from dictum.dictionary import Dictionary, Entries, Proposal
+from dictum.dictionary import Dictionary, Groups, Proposal
+from dictum.dictionary_legacy import Correction, add_corrections, read_entries
 from dictum.processing import Processed, Stage, process_text
 from dictum.providers.cloud.contracts import Streams, Upload
 from dictum.providers.contracts import Clip, Failure, Provider, Transcript
@@ -68,6 +69,7 @@ class StageSummary:
     pending: int
     decisions: int
     replacements: int
+    direct_replacements: int
     preserved: int
     abstained: int
     retries: int
@@ -310,7 +312,7 @@ class Dictum:
             stage for a in attempts for stage in (a.correction, a.formatting) if stage is not None
         ]
         summaries = {}
-        for method in ("contextual", "unconditional", "formatting"):
+        for method in ("contextual", "deterministic", "unconditional", "formatting"):
             group = [s for s in stages if s.method == method]
             waits = [s.seconds for s in group if s.status in ("succeeded", "failed")]
             summaries[method] = StageSummary(
@@ -321,6 +323,7 @@ class Dictum:
                 pending=sum(s.status == "pending" for s in group),
                 decisions=sum(s.decisions for s in group),
                 replacements=sum(s.replacements for s in group),
+                direct_replacements=sum(s.direct_replacements for s in group),
                 preserved=sum(s.preserved for s in group),
                 abstained=sum(s.abstained for s in group),
                 retries=sum(max(0, s.attempts - 1) for s in group),
@@ -530,7 +533,46 @@ class Dictum:
         self._changed()
         return parsed
 
-    def add_agent_corrections(self, data: object) -> Entries:
+    def pin_meaning(self, model: str, group: str | None, meaning: str | None, version: str) -> None:
+        with self._dictionary_lock:
+            current = self.dictionary()
+            if group is None or meaning is None:
+                updated = Dictionary(
+                    dictionary_file.merge(current.pinned, current.learned_for(model)),
+                    {m: gs for m, gs in current.learned.items() if m != model},
+                )
+            else:
+                updated = dictionary_file.pin(current, model, group, meaning)
+            self.set_dictionary(dictionary_file.dumps(updated), version)
+
+    def safe_mapping_recovery(self, recording_id: int, attempt_id: int) -> dict[str, object]:
+        recording = self.store.get_recording(recording_id)
+        attempt = (
+            next((a for a in recording.transcriptions if a.id == attempt_id), None)
+            if recording
+            else None
+        )
+        if attempt is None or attempt.status != "ok" or attempt.raw_text is None:
+            raise ValueError("No original successful transcription for that attempt")
+        # An ephemeral derived result: never mutate history or paste into another app.
+        result = process_text(
+            attempt.raw_text,
+            self.dictionary().effective(f"{attempt.provider}/{attempt.model}"),
+            contextual=False,
+            formatting=False,
+            key=None,
+            client=self._jev_client,
+            policy=self.jev_policy(),
+        )
+        if result.correction.status == "failed":
+            raise ValueError(result.correction.error)
+        return {
+            "text": result.text,
+            "replacements": result.correction.replacements,
+            "unresolved": result.correction.abstained,
+        }
+
+    def add_agent_corrections(self, data: object) -> tuple[Correction, ...]:
         """Pin corrections an agent sent after confirming them with the user.
 
         `data` is the request body: `entries` (spelling, description, heard), or the
@@ -540,15 +582,15 @@ class Dictum:
         if not isinstance(data, dict):
             raise ValueError("Send a JSON object with entries")
         if "entries" in data:
-            corrections = dictionary_file.parse_entries(data["entries"], "entries")
+            corrections = read_entries(data["entries"], "entries")
         else:
             body = {k: v for k, v in data.items() if k in ("terms", "replacements")}
-            corrections = dictionary_file.parse_entries(body, "corrections")
+            corrections = read_entries(body, "corrections")
         if not corrections:
             raise ValueError("Nothing to add: give entries with a spelling and heard phrases")
         with self._dictionary_lock:
             current = self.dictionary()
-            updated, added = current.with_agent_corrections(corrections)
+            updated, added = add_corrections(current, corrections)
             if added:
                 dictionary_file.save(self.store.data_dir, updated)
         if added:
@@ -576,7 +618,8 @@ class Dictum:
             raise ValueError(
                 "Pick a default model first: the dictionary is learned per speech model."
             ) from None
-        current = self.dictionary()
+        with self._dictionary_lock:
+            current, version = self.dictionary(), self.dictionary_version()
         transcripts = self.store.recent_transcripts(ref.provider.id, ref.model, llm.MAX_TRANSCRIPTS)
         if not transcripts:
             raise ValueError(
@@ -585,7 +628,7 @@ class Dictum:
         learned = llm.propose_learned(
             provider, api_key, model, current, transcripts, ref.id, call=self._llm_call
         )
-        return dictionary_file.propose(current, learned, ref.id)
+        return dictionary_file.propose(current, learned, ref.id, f'"{version}"')
 
     def audio_dictionary_status(self) -> dict[str, object]:
         with self._audio_build_lock:
@@ -842,10 +885,10 @@ class Dictum:
                 except Exception as exc:
                     self.report_status(lastError=f"Model cleanup: {type(exc).__name__}: {exc}")
 
-    def correct(self, raw: str, entries: Entries, status: JevStatus) -> Processed:
+    def correct(self, raw: str, groups: Groups, status: JevStatus) -> Processed:
         return process_text(
             raw,
-            entries,
+            groups,
             contextual=status.dictionary,
             formatting=status.formatting,
             key=self.store.get_setting(key_setting(JEV_PROVIDER)),

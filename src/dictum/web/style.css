@@ -164,7 +164,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .failed { margin-top: var(--sp-10); padding: var(--sp-12) var(--sp-14); border-radius: var(--r-10); background: var(--error-wash); }
 .failed .label { font-size: var(--fs-11); font-weight: 600; letter-spacing: 0.04em; color: var(--error); margin-bottom: var(--sp-6); }
 .failed pre { margin: 0; font: var(--fs-13)/1.55 var(--mono); color: var(--error-body); white-space: pre-wrap; word-break: break-word; -webkit-user-select: text; user-select: text; }
-.card-row { display: flex; align-items: center; gap: var(--sp-4); margin: var(--sp-10) 0 0 calc(-1 * var(--sp-6)); padding-top: var(--sp-10); border-top: 1px solid var(--line-soft); }
+.card-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); margin: var(--sp-10) 0 0 calc(-1 * var(--sp-6)); padding-top: var(--sp-10); border-top: 1px solid var(--line-soft); }
 .card-row .status { font-size: var(--fs-12); color: var(--text-dim); margin-left: var(--sp-6); }
 .card-row .status.err { color: var(--error); }
 .player { display: inline-flex; align-items: center; gap: var(--sp-8); height: var(--h-28); padding: 0 var(--sp-10) 0 var(--sp-2); color: var(--text-faint); font-size: var(--fs-11-5); font-variant-numeric: tabular-nums; }
@@ -324,3 +324,14 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
   .toolbar { height: auto; flex-wrap: wrap; padding: var(--sp-8) var(--sp-12); }
   .history, .dict { padding-left: var(--sp-12); padding-right: var(--sp-12); }
 }
+
+/* Confusion groups keep meanings and their explicit recognized-form links together. */
+.confusion-group { padding: var(--sp-14); border-bottom: 1px solid var(--line-soft); overflow-wrap: anywhere; }
+.group-title { cursor: pointer; }
+.group-title .caption { display: block; margin-top: var(--sp-4); }
+.group-meaning, .group-form-editor { margin: var(--sp-12) 0; padding: var(--sp-12); border: 1px solid var(--line-soft); border-radius: var(--r-10); min-width: 0; }
+.group-meaning p, .group-form { margin: var(--sp-4) 0; }
+.group-editor { margin-top: var(--sp-12); }
+.group-field { display: grid; gap: var(--sp-4); margin: var(--sp-8) 0; font-size: var(--fs-12); }
+.group-field .input { width: 100%; min-width: 0; }
+.group-candidate { display: flex; align-items: start; gap: var(--sp-4); font-size: var(--fs-12); margin: var(--sp-4) 0; }

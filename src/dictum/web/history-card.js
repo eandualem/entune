@@ -58,7 +58,8 @@ function processingLines(t) {
     } else if (name === "Dictionary" && stage.status === "succeeded") {
       parts.push(`${stage.replacements} replacement${stage.replacements === 1 ? "" : "s"}`);
       if (stage.method === "contextual") parts.push(`${stage.preserved} preserved`, `${stage.decisions} contextual decision${stage.decisions === 1 ? "" : "s"}`);
-      else parts.push("without context");
+      else parts.push(stage.method === "unconditional" ? "historical unconditional" : "approved direct mappings only");
+      parts.push(`${stage.direct_replacements ?? 0} direct`, `${stage.abstained} unresolved`);
     }
     if (stage.attempts > 1) parts.push(`${stage.attempts - 1} ${stage.attempts === 2 ? "retry" : "retries"}`);
     if (stage.seconds) parts.push(`+${stage.seconds.toFixed(1)} s`);
@@ -142,6 +143,14 @@ export function renderCard(r, models) {
     copy.title = "Copy the untouched speech-provider result";
     card.dataset.raw = latest.raw_text;
     row.append(copy);
+    if (latest.correction?.status === "failed") {
+      const recover = document.createElement("button"); recover.type = "button";
+      recover.className = "btn ghost safe-copy"; recover.textContent = "Apply safe mappings and copy";
+      recover.dataset.attempt = latest.id;
+      recover.title = "Use only explicitly approved direct mappings. Ambiguous words stay original; history and already-pasted text are unchanged.";
+      row.append(recover);
+    }
+
   }
   let attempts = null;
   if (earlier.length > 0) {

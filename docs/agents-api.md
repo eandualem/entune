@@ -17,14 +17,13 @@ curl -s -X POST localhost:4187/api/dictionary/corrections \
   -d '{"entries": [{"spelling": "Claude Code", "description": "Anthropic'"'"'s coding agent", "heard": ["cloud code"]}], "source": "my-agent"}'
 ```
 
-An entry is a `spelling`, a `description` (what the term means to this
-person, which Jev reads to decide each occurrence in context; optional but
-worth giving) and the phrases `heard` instead of it. The earlier shape,
-`"replacements": {"heard": "meant"}` and `"terms": [...]`, is still taken:
-a replacement becomes an entry with one heard phrase, a term an entry with
-none. Entries are pinned: they apply to every speech model and a build
-never changes them. A spelling already pinned gains only its new heard
-phrases; the reply lists what was new:
+This confirmed-correction boundary still accepts `spelling`, optional `description`,
+and `heard`, or `replacements`/`terms`, and returns the same `added` shape. A definition
+is needed for contextual selection; otherwise the retained meaning is marked for review.
+Corrections create pinned knowledge shared across models. Pinning protects that knowledge
+from generation but grants neither semantic precedence nor direct-replacement approval.
+A uniquely identified pinned meaning gains new forms; spelling alone never merges two
+existing senses. Repeated submissions are idempotent. The reply lists what was new:
 
 ```json
 {"added": [{"spelling": "Claude Code", "description": "Anthropic's coding agent", "heard": ["cloud code"]}]}
@@ -50,7 +49,9 @@ silently if Dictum is not running.
 | `POST /api/recordings` | multipart `audio` (+ optional `model`): store and transcribe |
 | `POST /api/recordings/{id}/transcriptions` | `{"model": "provider/model"}`: transcribe again |
 | `GET /api/recordings/{id}/audio` | the clip |
-| `GET /api/dictionary`, `PUT /api/dictionary` | the whole dictionary as JSON; the `ETag` names its version, and a `PUT` with `If-Match` set to a stale one gets 409 instead of overwriting what was added meanwhile |
+| `GET /api/dictionary`, `PUT /api/dictionary` | the whole version-2 confusion-group dictionary as JSON; the `ETag` names its version, and a `PUT` with `If-Match` set to a stale one gets 409 instead of overwriting what was added meanwhile |
+| `POST /api/dictionary/pin` | `{"model", "group", "meaning"}` IDs plus `If-Match`: share one meaning and its associations; `{"model"}` explicitly pins all learned knowledge for that model |
+| `POST /api/recordings/{id}/transcriptions/{attempt}/safe-copy` | derive text from original using only approved direct mappings for the original speech model; returns text, replacements and unresolved count, without saving or pasting |
 | `GET /api/dictionary/corrections` | what agents sent and Dictum pinned, newest first, with the `source` each gave |
-| `POST /api/dictionary/build` | ask the configured language model for a proposal for the default speech model, from its transcripts only (nothing saved); the reply names the `model` |
+| `POST /api/dictionary/build` | ask the configured language model for a proposal for the default speech model, from its transcripts only (nothing saved); the reply names the `model`, complete proposed groups, added/removed groups, and the original revision `version` |
 | `POST /api/capture`, `GET`, `DELETE` | record a shortcut by pressing it (needs the menu-bar app) |

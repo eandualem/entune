@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 from dictum.audio import extension_for, identify
-from dictum.dictionary import Entries
+from dictum.dictionary_legacy import Correction as SubmittedCorrection
 from dictum.processing import Processed, Stage, failed
 
 Status = Literal["ok", "error"]
@@ -371,7 +371,7 @@ class Store:
 
     # Corrections agents sent, so the Agents page can show what arrived and from whom.
 
-    def add_corrections(self, entries: Entries, source: str | None) -> None:
+    def add_corrections(self, entries: tuple[SubmittedCorrection, ...], source: str | None) -> None:
         """One row per heard phrase; an entry without any is a row with its spelling."""
         rows = [(heard, entry.spelling) for entry in entries for heard in entry.heard] + [
             (entry.spelling, None) for entry in entries if not entry.heard

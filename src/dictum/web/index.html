@@ -84,21 +84,21 @@
             <div class="row-actions">
               <button type="button" class="btn accent" id="save-dictionary">Save JSON</button>
               <span class="caption save-status" id="dictionary-status" role="status"></span>
-              <span class="caption hint">The file is <code>dictionary.json</code> in Dictum's data folder. Heard phrases are whole words, matched regardless of case; the longest phrase wins.</span>
+              <span class="caption hint">The file is <code>dictionary.json</code> in Dictum's data folder. Forms match whole words regardless of case. Context resolves eligible meanings and overlapping phrases.</span>
             </div>
           </div>
 
           <div class="help-panel" id="help-panel" hidden>
             <div class="defs">
-              <b>Entry</b><span>A term as you spell it, what it means to you, and the phrases speech models write instead: <i>Claude Code ← cloud code</i>. Every heard phrase is fixed in every transcript afterwards.</span>
-              <b>Description</b><span>With Jev on (Settings › Providers), each match is decided in context from this description: <i>Jeff</i> becomes <i>JEV</i> in a note about the model and stays in a note about a person.</span>
-              <b>Pinned</b><span>Entered by you. Used with every model. Never changed by a machine.</span>
+              <b>Group</b><span>Recognized forms linked to possible meanings. For <i>cloud</i>, Claude and a literal cloud can compete; Jev chooses the meaning and Dictum applies its stored spelling.</span>
+              <b>Meaning</b><span>A general definition, optional personal usage, and exact output spelling. Uncertain or missing meanings leave the original words untouched.</span>
+              <b>Pinned</b><span>Shared with every model and protected from builds. Pinning a meaning shares its associations; context still decides among competitors.</span>
               <b>Learned</b><span>Proposed from one model's own transcripts and accepted by you. Used only with that model.</span>
             </div>
             <div class="defs more" id="help-more" hidden>
-              <b>Refine</b><span>Sends this model's recent transcripts, with your pinned list as context, to the dictionary model set in Settings. You get a proposal, entries to add and to drop, and nothing is saved until you press Accept.</span>
+              <b>Refine</b><span>Sends this model's recent transcripts, with your pinned list as context, to the dictionary model set in Settings. You get a proposal, groups to add, revise or remove, and nothing is saved until you press Accept.</span>
               <b>Agents</b><span>Agents you dictate to can post a confirmed correction to Dictum's local API. It arrives here as Pinned; remove it if they got it wrong.</span>
-              <b>Size</b><span>There is no limit. The list is meant to grow, and matching stays fast however long it gets.</span>
+              <b>Size</b><span>Lookup retains competing forms. Unusually complex overlaps are left unresolved; larger dictionaries are not guaranteed to be faster.</span>
             </div>
             <button type="button" class="btn link" id="help-more-toggle">More detail</button>
           </div>
@@ -136,15 +136,15 @@
               <input class="input" id="add-heard" type="text" placeholder="What it heard (comma-separated when several)" spellcheck="false" />
               <span class="arrow" aria-hidden="true">→</span>
               <input class="input" id="add-meant" type="text" placeholder="What you meant" spellcheck="false" />
-              <button type="button" class="btn fill" id="add-entry-btn">Pin entry</button>
+              <button type="button" class="btn fill" id="add-entry-btn">Add pinned meaning</button>
             </div>
             <div class="add-row">
-              <input class="input" id="add-description" type="text" placeholder="What it means to you, so Jev can tell it from the ordinary words (optional)" spellcheck="true" />
+              <input class="input" id="add-description" type="text" placeholder="General definition (required); add competing meanings by editing the group" spellcheck="true" />
             </div>
           </div>
 
           <div class="dict-table">
-            <div class="entry-row head"><span>ENTRY</span><span>SOURCE</span><span class="actions"><button type="button" class="btn ghost sm" id="pin-all" title="Pin every learned entry: keep them for every model" hidden>Pin all</button></span></div>
+            <div class="entry-row head"><span>CONFUSION GROUPS</span><span></span><span class="actions"><button type="button" class="btn ghost sm" id="pin-all" title="Share every learned meaning and association with every speech model" hidden>Pin all</button></span></div>
             <div id="dict-rows"></div>
           </div>
         </div>
@@ -250,7 +250,7 @@
               </form>
 
               <div class="scard">
-                <div class="scard-head"><div class="name strong">Dictionary model</div><div class="caption hint">Optional. Only Build from history uses it; dictation, pinned entries and manual editing work without it.</div></div>
+                <div class="scard-head"><div class="name strong">Dictionary model</div><div class="caption hint">Optional. Dictionary builds from history or audio use it; dictation and manual editing work without it.</div></div>
                 <div class="srow summary" id="dm-summary">
                   <div><div class="name" id="dm-title">No model</div><div class="caption" id="dm-caption"></div></div>
                   <div class="field right"><button type="button" class="btn" id="dm-change">Change</button></div>
@@ -270,7 +270,7 @@
                   <div class="srow foot"><button type="submit" class="btn accent">Save key</button><span class="caption save-status" id="jev-key-status" role="status"></span></div>
                 </form>
                 <label class="srow check">
-                  <div><div class="name">Contextual dictionary</div><div class="caption">Each dictionary match is replaced only when Jev reads it as your term; off, every match is replaced. Adds about half a second when a transcript has a match.</div></div>
+                  <div><div class="name">Contextual dictionary</div><div class="caption">Jev chooses among eligible meanings using the original context. Off, only explicitly approved direct mappings apply; ambiguous forms stay unchanged.</div></div>
                   <input type="checkbox" id="jev-dictionary" />
                 </label>
                 <label class="srow check">
