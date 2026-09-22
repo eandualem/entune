@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -60,6 +61,39 @@ def test_terminate_runs_the_quit_path_and_allows_termination() -> None:
     delegate = BrowserView.AppDelegate.alloc().init()
     assert delegate.applicationShouldTerminate_(None) == 1  # NSTerminateNow
     assert calls == ["quit"]
+
+
+def test_folder_input_opens_a_directory_picker(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("AppKit", reason="macOS only")
+    import webview
+    from webview.platforms.cocoa import BrowserView
+
+    from dictum.desktop.webview import _allow_directory_uploads
+
+    dialogs: list[object] = []
+
+    def open_dialog(kind: object, *args: object, **kwargs: object) -> tuple[str]:
+        dialogs.append(kind)
+        return ("/tmp/audio",)
+
+    instance = SimpleNamespace(create_file_dialog=open_dialog)
+    instance.webview = None
+    monkeypatch.setattr(BrowserView, "instances", {"test": instance})
+    _allow_directory_uploads()
+    delegate: Any = BrowserView.BrowserDelegate
+    choose = (
+        delegate.webView_runOpenPanelWithParameters_initiatedByFrame_completionHandler_.callable
+    )
+    for folder, expected in ((True, webview.FileDialog.FOLDER), (False, webview.FileDialog.OPEN)):
+        parameters = SimpleNamespace(
+            allowsDirectories=lambda value=folder: value,
+            allowsMultipleSelection=lambda: True,
+            _acceptedMIMETypes=tuple,
+        )
+        chosen: list[object] = []
+        choose(None, None, parameters, None, chosen.append)
+        assert dialogs[-1] == expected
+        assert len(chosen) == 1
 
 
 def test_native_quit_stops_and_saves_an_active_dictation(

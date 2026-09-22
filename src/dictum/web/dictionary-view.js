@@ -1,4 +1,5 @@
 import { ICON, el, errorText, flash, segmentedGroup } from "./ui.js";
+import { createAudioOnboarding } from "./audio-onboarding.js";
 
 // The dictionary owns its document, revision and pending proposal. Model selection
 // stays in the app; getters read the current selection when an action is made.
@@ -18,6 +19,11 @@ export function createDictionary({ getModel, getSettings }) {
   const buildStatus = el("build-status");
   const proposalPanel = el("proposal");
   const proposalBody = el("proposal-body");
+  const onboarding = createAudioOnboarding({
+    getModel, getSettings,
+    onProposal(value) { proposal = value; renderProposal(value); },
+    onBusy(value) { buildBtn.disabled = value; },
+  });
 
   segmentedGroup({ all: el("filter-all"), pinned: el("filter-pinned"), learned: el("filter-learned") }, (name) => { filter = name; renderDictionary(); });
 
@@ -29,6 +35,7 @@ export function createDictionary({ getModel, getSettings }) {
     dict = JSON.parse(text);
     dictVersion = res.headers.get("etag");
     renderDictionary(text);
+    await onboarding.load();
   }
 
   // Every edit sends the whole document, named with the version it was made on. The
@@ -212,6 +219,7 @@ export function createDictionary({ getModel, getSettings }) {
     return box;
   }
   function renderProposal(p) {
+    el("proposal-title").textContent = `Proposed for ${p.model}`;
     proposalBody.replaceChildren();
     const groups = [["Added", p.added, "add"], ["Removed", p.removed, "remove"]];
     let any = false;
@@ -231,6 +239,7 @@ export function createDictionary({ getModel, getSettings }) {
     proposalPanel.hidden = false;
   }
   buildBtn.addEventListener("click", async () => {
+    onboarding.setHistoryBusy(true);
     buildBtn.disabled = true;
     buildStatus.className = "caption save-status show";
     buildStatus.textContent = "Asking the model… a long history goes in steps and can take several minutes.";
@@ -244,20 +253,29 @@ export function createDictionary({ getModel, getSettings }) {
     } catch (err) {
       flash(buildStatus, errorText(err), "err");
     } finally {
-      buildBtn.disabled = false;
+      onboarding.setHistoryBusy(false);
     }
   });
   el("accept-proposal").addEventListener("click", async () => {
     if (!proposal) return;
+    if (proposal.version && proposal.version !== dictVersion) {
+      flash(buildStatus, "The dictionary changed during this build. Discard this proposal and build again.", "err");
+      return;
+    }
     const next = clone();
     next.learned[proposal.model] = proposal.learned;
     if (await saveDictionary(next)) {
+      if (proposal.version) await onboarding.dismiss();
       proposal = null;
       proposalPanel.hidden = true;
       flash(buildStatus, "Accepted", "ok");
     }
   });
-  el("discard-proposal").addEventListener("click", () => { proposal = null; proposalPanel.hidden = true; });
+  el("discard-proposal").addEventListener("click", async () => {
+    if (proposal?.version) await onboarding.dismiss();
+    proposal = null;
+    proposalPanel.hidden = true;
+  });
 
   return { load: loadDictionary, showHelp };
 }

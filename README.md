@@ -183,6 +183,18 @@ post corrections once you have confirmed a mistranscription with them.
 The suggested models, Claude Fable 5.1 and GPT-6 Astra, are the current
 strongest from each provider; any model id the provider accepts works.
 
+**Build from your audio**, in the Dictionary tab, imports original audio from
+Wispr Flow on this Mac (including its local backups) or an audio folder. Other
+applications' transcripts are ignored. Dictum keeps a local copy of each distinct
+audio file in `dictionary-audio/`, separate from recording history, and can reuse
+it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
+up to 199 MB can be uploaded; the chosen provider must support the audio format
+and length. A build uses the speech and dictionary models selected when it starts.
+Fresh transcripts stay in memory only for that build, which proposes entries for
+that speech model. Review and accept the proposal to change your dictionary;
+pinned entries remain shared. Provider failures stop the build visibly, without
+fallback or a partial dictionary. Audio already imported is kept.
+
 ### Jev decides each match in context
 
 A plain replacement cannot tell "Jeff" the person from "JEV" the model.
@@ -232,7 +244,7 @@ points. Nothing leaves your machine except:
 
 - the audio clip, sent to the speech-to-text provider you picked for that
   recording;
-- when you click "Build from history", your recent transcripts, sent to the
+- when you build from history or imported audio, the relevant transcripts, sent to the
   language-model provider you chose in Settings.
 
 No telemetry, no accounts, no cloud storage.

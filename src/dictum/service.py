@@ -16,7 +16,7 @@ from dictum.dictionary import Dictionary, Entries, Proposal
 from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, resolve_model
 from dictum.providers.base import Downloadable, LocalModelStatus, Streams, Upload
 from dictum.shortcuts import Shortcuts
-from dictum.store import Recording, Store, Transcription
+from dictum.store import DictionaryAudio, Recording, Store, Transcription
 
 DEFAULT_MODEL_KEY = "default_model"
 DICTIONARY_MODEL_KEY = "dictionary_model"
@@ -143,6 +143,8 @@ class Dictum:
         self._desktop_status: dict[str, object] = {"desktop": False}
         self._capture_lock = threading.Lock()
         self._capture = CaptureStatus("idle", None)
+        self._audio_build_lock = threading.Lock()
+        self._audio_build: dict[str, object] = {"phase": "idle"}
 
     # What the desktop app reports about itself, for /api/status and for diagnosis.
 
@@ -516,13 +518,7 @@ class Dictum:
             self._changed()
         return added
 
-    def build_dictionary(self) -> Proposal:
-        """Ask the configured language model for a new learned section for the default
-        speech model, from that model's transcripts only. Nothing is saved.
-
-        Raises ValueError with the reason when unconfigured, or with the provider's or
-        model's own words when the call or its reply fails.
-        """
+    def _dictionary_builder(self) -> tuple[str, str, str]:
         model = self.dictionary_model()
         if model is None:
             raise ValueError("Add an Anthropic or OpenAI key under Settings first.")
@@ -530,6 +526,11 @@ class Dictum:
         api_key = self.store.get_setting(key_setting(provider))
         if api_key is None:
             raise ValueError(f"No API key set for {llm.LLM_PROVIDERS[provider][0]}.")
+        return provider, api_key, model
+
+    def build_dictionary(self) -> Proposal:
+        """Propose a learned section from this speech model's history. Nothing is saved."""
+        provider, api_key, model = self._dictionary_builder()
         try:
             ref = self.choose_model(None)
         except NoDefaultModel:
@@ -546,6 +547,93 @@ class Dictum:
             provider, api_key, model, current, transcripts, ref.id, call=self._llm_call
         )
         return dictionary_file.propose(current, learned, ref.id)
+
+    def audio_dictionary_status(self) -> dict[str, object]:
+        with self._audio_build_lock:
+            return dict(self._audio_build)
+
+    def dismiss_audio_dictionary(self) -> None:
+        with self._audio_build_lock:
+            if self._audio_build["phase"] in ("transcribing", "building"):
+                raise ValueError("An audio dictionary build is still running.")
+            self._audio_build = {"phase": "idle"}
+
+    def start_audio_dictionary(self) -> None:
+        """Freeze the selected models and audio list; keep fresh transcripts only in memory."""
+        builder = self._dictionary_builder()
+        try:
+            ref = self.choose_model(None)
+        except NoDefaultModel as exc:
+            raise ValueError(str(exc)) from None
+        speech_key = self.store.get_setting(key_setting(ref.provider.id))
+        if isinstance(ref.provider, Downloadable):
+            speech_key = ""
+        if speech_key is None:
+            raise ValueError(f"No API key set for {ref.provider.name}.")
+        audio = self.store.dictionary_audio()
+        if not audio:
+            raise ValueError("Import audio from Wispr Flow or a folder first.")
+        with self._dictionary_lock:
+            current, version = self.dictionary(), self.dictionary_version()
+        with self._audio_build_lock:
+            if self._audio_build["phase"] in ("transcribing", "building"):
+                raise ValueError("An audio dictionary build is already running.")
+            self._audio_build = {
+                "phase": "transcribing",
+                "completed": 0,
+                "total": len(audio),
+                "model": ref.id,
+                "dictionaryModel": builder[2],
+            }
+        threading.Thread(
+            target=self._build_audio_dictionary,
+            args=(ref, speech_key, builder, audio, current, version),
+            daemon=True,
+        ).start()
+
+    def _build_audio_dictionary(
+        self,
+        ref: ModelRef,
+        speech_key: str,
+        builder: tuple[str, str, str],
+        audio: list[DictionaryAudio],
+        current: Dictionary,
+        version: str,
+    ) -> None:
+        transcripts: list[str] = []
+        try:
+            for number, item in enumerate(audio, 1):
+                try:
+                    data = self.store.dictionary_audio_path(item).read_bytes()
+                    if hashlib.sha256(data).hexdigest() != item.id:
+                        raise ValueError("The imported audio changed on disk; import it again.")
+                    result = ref.provider.transcribe(Clip(data, item.mime), ref.model, speech_key)
+                    if isinstance(result, Failure):
+                        raise ValueError(result.error)
+                    if result.text.strip():
+                        transcripts.append(result.text)
+                except Exception as exc:
+                    raise ValueError(f"Audio {number}/{len(audio)} ({item.name}): {exc}") from exc
+                with self._audio_build_lock:
+                    self._audio_build["completed"] = number
+            if not transcripts:
+                raise ValueError("The selected speech model returned no text from this audio.")
+            with self._audio_build_lock:
+                self._audio_build["phase"] = "building"
+            provider, api_key, model = builder
+            learned = llm.propose_learned(
+                provider, api_key, model, current, transcripts, ref.id, call=self._llm_call
+            )
+            proposal = dictionary_file.propose(current, learned, ref.id).as_json()
+            proposal["version"] = f'"{version}"'
+            with self._audio_build_lock:
+                self._audio_build.update(phase="done", proposal=proposal)
+        except Exception as exc:
+            with self._audio_build_lock:
+                self._audio_build.update(phase="error", error=str(exc))
+        finally:
+            transcripts.clear()
+            self._release_after_use(ref)
 
     # Shortcut capture: the page asks, the menu-bar app's global listener records the keys.
 
