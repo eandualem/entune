@@ -15,7 +15,7 @@ def test_prompt_values_stay_literal_and_rendering_does_not_mutate_resources() ->
     assert literal in question["instructions"]
     question["criteria"]["unresolved"] = "modified result"
     again = prompts.render_json("jev-dictionary.json", occurrence="o1")
-    assert again["criteria"]["unresolved"] != "modified result"
+    assert again["criteria"] == {}
     assert "o1" in again["instructions"]
 
     prompt = llm.build_user_prompt(

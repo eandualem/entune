@@ -534,9 +534,8 @@ class Dictum:
         with self._dictionary_lock:
             current = self.dictionary()
             if group is None or meaning is None:
-                updated = Dictionary(
-                    dictionary_file.merge(current.pinned, current.learned_for(model)),
-                    {m: gs for m, gs in current.learned.items() if m != model},
+                updated = dictionary_file.share(
+                    current, {m.id for g in current.learned_for(model) for m in g.meanings}
                 )
             else:
                 updated = dictionary_file.pin(current, model, group, meaning)
@@ -627,8 +626,10 @@ class Dictum:
                         "Discard this proposal and rebuild from the current dictionary."
                     )
                 current = self.dictionary()
-                updated = Dictionary(
-                    current.pinned, {**current.learned, proposal.model: proposal.learned}
+                updated = dictionary_file.refined(
+                    current,
+                    dictionary_file.merge(proposal.pinned, proposal.learned),
+                    proposal.model,
                 )
                 self.set_dictionary(dictionary_file.dumps(updated), proposal.version.strip('"'))
 

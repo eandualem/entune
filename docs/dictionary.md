@@ -4,8 +4,8 @@
 stable meaning IDs and explicit recognized-form associations. `pinned` is shared;
 `learned` is keyed by the unchanged speech model identifier (`provider/model`).
 Pinning protects knowledge from generation, but context decides among eligible
-competitors. The editor pins one meaning and its associations; other meanings and
-associations in that group remain local to the speech model. The explicit Pin all
+competitors. The editor pins one meaning and all its associations across groups and models;
+competing meanings remain local to their speech model. The explicit Pin all
 action shares the model's entire learned section.
 
 ```json
@@ -36,7 +36,10 @@ An association makes one meaning eligible for one recognized form. Being in the 
 group does not create other associations or reverse a confusion. Two groups sharing
 a form contribute all eligible meanings. An ID identifies a meaning independently
 of spelling: edits retain IDs, and two senses may share an output spelling. A learned
-extension can reference a pinned meaning without changing it or sharing new local edges.
+extension may add variants to a pinned meaning; those variants are shared too.
+Generation may propose definition/context updates for review, but cannot delete a pinned
+meaning, change its output spelling/casing or remove an existing variant. These checks
+apply to whole-group rewrites as well as explicit removals. Manual owner edits remain allowed.
 
 Definitions describe general meaning; optional personal usage is supporting context,
 not a condition. The hypothetical Jeff above supplies no personal fact about the user.
@@ -57,18 +60,14 @@ can offer the whole multiword name or compatible word-level meanings. Literal me
 are ordinary candidates: selecting the computing or weather meaning of cloud outputs
 cloud; selecting Claude outputs Claude. There is no semantic replace/keep choice.
 
-Dictum separately supports application uncertainty when a meaning is missing or context
-is insufficient. The `unresolved` response option is an abstention control, never a
-stored meaning. Invalid responses fail the stage; valid uncertain occurrences remain
-untouched while independent supported occurrences can change. Confidence is not an
-acoustic accuracy score and cannot guarantee the candidate set is complete.
-
-The initial, uncalibrated policy requires at least 0.70 support for an output and a
-0.15 margin over any different output or uncertainty. Probabilities for interpretations
-that produce identical text are summed: two cloud senses at 0.35 each beat Claude at
-0.30 without claiming which cloud sense was resolved. Conservative abstention can miss
-a correction that the former aggressive binary veto made correctly. Paid comparisons
-require separate authorization; cached binary scores below do not validate this policy.
+A valid response always selects its highest-scoring eligible interpretation, even
+when probabilities are close. Distinct meanings never pool probability merely because
+they output the same spelling. Exact ties honor Jev's declared choice after validating
+that it is tied for highest. There is no generic uncertainty candidate or confidence
+threshold for dictionary choices. Invalid/failed responses fail the stage; missing
+usable definitions or overly complex overlaps remain visibly unresolved without an
+invented meaning. Scores are not acoustic accuracy measurements or proof of complete
+candidate coverage. Offline fixtures test these contracts, not live model quality.
 
 Code applies only stored spellings, once against disjoint original offsets. Fixed names
 and acronyms use exact casing (Jev, GIF, GitHub). Ordinary literal selections preserve
