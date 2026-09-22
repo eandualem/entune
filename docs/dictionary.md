@@ -94,15 +94,16 @@ approving the revised mapping.
 
 Direct-only dictation needs no contextual request (cleanup/formatting may make their own).
 Mixed dictation still makes one request. Exact unchanged outputs need no decision call.
-When contextual correction is off, only eligible approved direct mappings apply;
-ambiguous/unapproved spans remain original. Historical unconditional results retain
+When dictionary correction is off, the entire dictionary stage is disabled, including
+approved direct mappings. Explicit safe-copy recovery is a separate user action. Historical unconditional results retain
 their old method label and are not represented as approved direct work.
 
 Speech success and untouched provider text are saved before dictionary processing.
 Failure of contextual correction delivers the exact original, skips cleanup/formatting
 and shows a noninterrupting notice. Cleanup runs before formatting; failure of either
-preserves that stage's input. Both report their exact changes, latency and failures
-separately from dictionary replacements. Raw text remains available through Copy original.
+preserves that stage's input and skips all later enabled stages. Both report their exact changes, latency and failures
+separately from dictionary replacements. Raw text and completed stage outputs/provenance persist internally. History publishes
+only the final text after processing; pending results cannot be copied as final text.
 History and Settings separate decisions, direct replacements, unresolved occurrences,
 retries, failures, preserved spans and timings. Replacements count edited disjoint
 components, not words proven correct. Old combined counters remain in exports under
@@ -113,6 +114,8 @@ across correction, cleanup and formatting, **3 seconds per attempt**, and **2 at
 per request**. These are configurable defaults, not measured provider
 service guarantees. Transient connection/read failures, timeouts and HTTP
 408/429/500/502/503/504/529 can retry with 0.15-second exponential backoff.
+Explicit insufficient-credit/quota and invalid-credential responses are terminal even
+when encoded as 429. Malformed successful responses fail without an invented decision.
 `Retry-After` is respected only when another attempt fits the remaining
 budget; longer waits return the original immediately. Authentication,
 request-validation and malformed-answer failures are not retried.

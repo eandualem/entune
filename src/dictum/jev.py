@@ -31,6 +31,29 @@ class JevError(Exception):
     """The request failed or the answer was not usable; the transcript goes on without Jev."""
 
 
+def terminal_error(response: httpx.Response) -> bool:
+    """Funding/auth failures cannot be repaired by an immediate retry, even on 429."""
+    if response.status_code in {401, 402, 403}:
+        return True
+    detail = response.text[:8192].lower().replace("_", " ").replace("-", " ")
+    return any(
+        code in detail
+        for code in (
+            "insufficient quota",
+            "insufficient credit",
+            "insufficient funds",
+            "credit balance",
+            "credits exhausted",
+            "exhausted credits",
+            "out of credits",
+            "billing hard limit",
+            "billing not active",
+            "invalid api key",
+            "invalid credential",
+        )
+    )
+
+
 @dataclass(frozen=True)
 class Policy:
     total_seconds: float = 5.0
@@ -117,7 +140,15 @@ class Client:
                     return _answers(data, questions)
                 detail = response.text.replace(call.key, "")[:300]
                 error = f"HTTP {response.status_code}: {detail}"
-                if response.status_code not in {408, 429, 500, 502, 503, 504, 529}:
+                if terminal_error(response) or response.status_code not in {
+                    408,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504,
+                    529,
+                }:
                     raise JevError(error)
                 delay = max(delay, _retry_after(response.headers.get("Retry-After")))
             except (

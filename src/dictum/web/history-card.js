@@ -114,7 +114,13 @@ export function renderCard(r, models) {
   head.append(when, model, spacer, copied);
   card.append(head);
 
-  if (latest && latest.status !== "ok") {
+  if (latest?.processing_state === "processing") {
+    const pending = document.createElement("div");
+    pending.className = "status";
+    pending.setAttribute("role", "status");
+    pending.textContent = "Processing… Final text will appear when complete.";
+    card.append(pending);
+  } else if (latest && latest.status !== "ok") {
     const failed = document.createElement("div");
     failed.className = "failed";
     const label = document.createElement("div");
@@ -150,7 +156,7 @@ export function renderCard(r, models) {
   const rowSpacer = document.createElement("span");
   rowSpacer.className = "spacer";
   row.append(download, rowStatus, rowSpacer);
-  if (latest?.raw_text !== null && latest?.raw_text !== undefined) {
+  if (latest?.processing_state !== "processing" && latest?.raw_text !== null && latest?.raw_text !== undefined) {
     const copy = document.createElement("button");
     copy.type = "button";
     copy.className = "btn ghost copy-raw";
@@ -188,8 +194,9 @@ export function renderCard(r, models) {
       meta.append(`${attemptLabel(t)} · `, time);
       const text = document.createElement("div");
       text.className = t.status === "ok" ? "text" : "text err";
-      text.textContent = t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
-      attempt.append(meta, text, ...processingLines(t));
+      const pending = t.processing_state === "processing";
+      text.textContent = pending ? "Processing…" : t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
+      attempt.append(meta, text, ...(pending ? [] : processingLines(t)));
       attempts.append(attempt);
     }
     toggle.addEventListener("click", () => {

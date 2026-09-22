@@ -531,15 +531,14 @@ def test_correction_failure_delivers_raw_with_a_noninterrupting_notice(tmp_path:
     app, platform, dictum = make(tmp_path)
     dictum.set_key("stub", "k")
     dictum.set_default_model("stub/good")
+    dictum.store.set_setting("jev_dictionary", "1")
     (tmp_path / "dictionary.json").write_text("{broken")
     recording = dictum.store_recording(b"audio", "audio/wav")
     app._pending = 1
     app._transcribe_and_deliver(recording, 1.0)
     assert platform.actions.clipboard == "hello from the fake"
     assert platform.actions.pasted == 1 and not platform.window.shown
-    assert any(
-        "Original transcription delivered" in message for _, message in platform.actions.notices
-    )
+    assert any("Last completed text retained" in message for _, message in platform.actions.notices)
     assert not any("transcription failed" in title for title, _ in platform.actions.notices)
     assert app._pending == 0
 
