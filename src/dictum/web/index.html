@@ -103,10 +103,27 @@
             <button type="button" class="btn link" id="help-more-toggle">More detail</button>
           </div>
 
+          <details class="audio-onboarding" id="audio-onboarding">
+            <summary>Build from your audio</summary>
+            <p class="caption">Bring audio from Wispr Flow or a folder. Original audio stays on this Mac for reuse with another model. Fresh transcripts are used only for this build and are not saved to history.</p>
+            <div class="audio-actions">
+              <button type="button" class="btn" id="import-wispr">Import Wispr Flow audio</button>
+              <button type="button" class="btn" id="choose-audio-folder">Choose audio folder</button>
+              <input type="file" id="audio-folder" webkitdirectory multiple hidden />
+            </div>
+            <p class="caption">Wispr imports retained audio from this Mac and its local Flow backups. Folders support WAV, MP3, M4A, FLAC, OGG and WebM, up to 199 MB per file.</p>
+            <p class="caption" id="audio-import-status" role="status"></p>
+            <p class="caption" id="audio-count"></p>
+            <p class="caption" id="audio-models"></p>
+            <p class="caption">Keep Dictum running until the proposal is ready. Closing the app discards build progress; your imported audio stays saved.</p>
+            <button type="button" class="btn accent" id="build-audio-dictionary" disabled>Build from saved audio</button>
+            <p class="caption" id="audio-build-status" role="status"></p>
+          </details>
+
           <div class="proposal" id="proposal" hidden>
             <div class="proposal-head">
-              <span class="proposal-title">Proposed by the model</span>
-              <span class="caption hint">Nothing is saved until you accept.</span>
+              <span class="proposal-title" id="proposal-title">Proposed by the model</span>
+              <span class="caption hint">Your dictionary changes only when you accept.</span>
               <span class="spacer"></span>
               <button type="button" class="btn accent" id="accept-proposal">Accept</button>
               <button type="button" class="btn ghost" id="discard-proposal">Discard</button>

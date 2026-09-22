@@ -18,7 +18,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from dictum import __version__, llm, shortcuts
+from dictum import __version__, llm, onboarding, shortcuts
 from dictum.audio import extension_for, safe_mime
 from dictum.service import (
     JEV_PROVIDER,
@@ -284,6 +284,49 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc))
         return JSONResponse(proposal.as_json())
 
+    def dictionary_audio(_: Request) -> Response:
+        return JSONResponse({"count": len(app.store.dictionary_audio())})
+
+    async def import_dictionary_audio(request: Request) -> Response:
+        async with request.form() as form:
+            audio = form.get("audio")
+            if not isinstance(audio, UploadFile):
+                return _bad("No audio file in request")
+            try:
+                added = await run_in_threadpool(
+                    onboarding.import_audio,
+                    app.store,
+                    await audio.read(),
+                    audio.filename or "audio",
+                )
+            except (ValueError, OSError) as exc:
+                return _bad(str(exc))
+        return JSONResponse({"added": added})
+
+    async def import_wispr(_: Request) -> Response:
+        try:
+            result = await run_in_threadpool(onboarding.import_wispr, app.store)
+        except (ValueError, OSError) as exc:
+            return _bad(str(exc))
+        return JSONResponse(result)
+
+    def audio_build_status(_: Request) -> Response:
+        return JSONResponse(app.audio_dictionary_status())
+
+    async def start_audio_build(_: Request) -> Response:
+        try:
+            await run_in_threadpool(app.start_audio_dictionary)
+        except ValueError as exc:
+            return _bad(str(exc))
+        return JSONResponse(app.audio_dictionary_status(), status_code=202)
+
+    def dismiss_audio_build(_: Request) -> Response:
+        try:
+            app.dismiss_audio_dictionary()
+        except ValueError as exc:
+            return _bad(str(exc), 409)
+        return JSONResponse({"ok": True})
+
     async def start_capture(_: Request) -> Response:
         if not app.can_capture():
             return _bad("Recording a shortcut needs the menu-bar app; type the keys instead.", 409)
@@ -421,6 +464,12 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/dictionary", get_dictionary, methods=["GET"]),
             Route("/api/dictionary", put_dictionary, methods=["PUT"]),
             Route("/api/dictionary/build", build_dictionary, methods=["POST"]),
+            Route("/api/dictionary/audio", dictionary_audio, methods=["GET"]),
+            Route("/api/dictionary/audio", import_dictionary_audio, methods=["POST"]),
+            Route("/api/dictionary/audio/wispr", import_wispr, methods=["POST"]),
+            Route("/api/dictionary/audio/build", audio_build_status, methods=["GET"]),
+            Route("/api/dictionary/audio/build", start_audio_build, methods=["POST"]),
+            Route("/api/dictionary/audio/build", dismiss_audio_build, methods=["DELETE"]),
             Route("/api/dictionary/corrections", agent_corrections, methods=["POST"]),
             Route("/api/dictionary/corrections", received_corrections, methods=["GET"]),
             Route("/api/capture", start_capture, methods=["POST"]),

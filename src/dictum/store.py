@@ -6,6 +6,7 @@ data directory on this machine.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import threading
 import uuid
@@ -55,6 +56,11 @@ CREATE TABLE IF NOT EXISTS corrections (
     heard TEXT NOT NULL,
     meant TEXT,
     source TEXT
+);
+CREATE TABLE IF NOT EXISTS dictionary_audio (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    mime TEXT NOT NULL
 );
 """
 
@@ -119,6 +125,13 @@ class Recording:
     transcriptions: list[Transcription] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class DictionaryAudio:
+    id: str  # SHA-256 of the original bytes; repeated imports share one copy
+    name: str
+    mime: str
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -180,6 +193,44 @@ class Store:
                 (created_at, file, mime),
             )
         return Recording(id=int(cursor.lastrowid or 0), created_at=created_at, file=file, mime=mime)
+
+    def dictionary_audio_path(self, audio: DictionaryAudio) -> Path:
+        return self.data_dir / "dictionary-audio" / f"{audio.id}.{extension_for(audio.mime)}"
+
+    def import_dictionary_audio(self, data: bytes, name: str, mime: str) -> bool:
+        """Keep original audio outside history. Return whether it was newly imported."""
+        audio = DictionaryAudio(hashlib.sha256(data).hexdigest(), Path(name).name, mime)
+        path = self.dictionary_audio_path(audio)
+        with self._lock, self._db:
+            exists = self._db.execute(
+                "SELECT 1 FROM dictionary_audio WHERE id = ?", (audio.id,)
+            ).fetchone()
+            if (
+                exists
+                and path.is_file()
+                and hashlib.sha256(path.read_bytes()).hexdigest() == audio.id
+            ):
+                return False
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            temporary = path.with_suffix(".tmp")
+            try:
+                temporary.write_bytes(data)
+                temporary.chmod(0o600)
+                temporary.replace(path)
+                self._db.execute(
+                    "INSERT OR IGNORE INTO dictionary_audio (id, name, mime) VALUES (?, ?, ?)",
+                    (audio.id, audio.name, audio.mime),
+                )
+            finally:
+                temporary.unlink(missing_ok=True)
+        return True
+
+    def dictionary_audio(self) -> list[DictionaryAudio]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, name, mime FROM dictionary_audio ORDER BY rowid"
+            ).fetchall()
+        return [DictionaryAudio(row["id"], row["name"], row["mime"]) for row in rows]
 
     def add_transcription(
         self,
