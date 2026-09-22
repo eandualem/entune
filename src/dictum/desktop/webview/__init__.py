@@ -1,8 +1,7 @@
 """The desktop shell: pywebview for the window, pystray for the tray icon.
 
-Both run on each operating system's own web engine and tray, so this is the one
-implementation for every platform; only the hotkeys, actions and permissions
-underneath are per OS (macOS today, #36 for the rest). Issue #35.
+Currently wired for macOS only. Cocoa compatibility hooks live in macos/webview.py;
+portable window/tray libraries alone do not provide native support on other systems.
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ import pystray
 import webview
 from PIL import Image
 
-from dictum.desktop.macos.hotkeys import HotkeyListener as _MacHotkeys
 from dictum.desktop.platform import Actions, Hotkeys, Permissions, State, Tray, Window
 
 ASSETS = Path(__file__).resolve().parents[2] / "assets"
@@ -58,16 +56,22 @@ class WebviewPlatform:
         _on_ui_thread(action)
 
     def call_later(self, delay: float, action: Callable[[], None]) -> None:
-        threading.Timer(delay, lambda: _on_ui_thread(action)).start()
+        def run() -> None:
+            if not self._quitting:
+                action()
+
+        timer = threading.Timer(delay, lambda: _on_ui_thread(run))
+        timer.daemon = True
+        timer.start()
 
     def every(self, interval: float, action: Callable[[], None]) -> None:
         def tick() -> None:
             if self._quitting:
                 return
-            _on_ui_thread(action)
-            threading.Timer(interval, tick).start()
+            action()
+            self.call_later(interval, tick)
 
-        threading.Timer(interval, tick).start()
+        self.call_later(interval, tick)
 
     def run(self) -> None:
         """The tray runs detached; pywebview owns the main thread until quit."""
@@ -84,14 +88,17 @@ class WebviewPlatform:
         window = self.window
         assert isinstance(window, _Window)
         webview.settings["SHOW_DEFAULT_MENUS"] = True
-        webview.settings["ALLOW_DOWNLOADS"] = True  # the history's download button, to ~/Downloads
+        webview.settings["ALLOW_DOWNLOADS"] = True  # WebKit presents a native Save panel
         webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
-        if sys.platform == "darwin":
-            _grant_media_capture()
-            _allow_directory_uploads()
-            _terminate_through(tray._quit)
+        from dictum.desktop.macos.webview import CocoaWebview
+
         window.create()
-        webview.start(private_mode=False)  # the page keeps its appearance choice
+        cocoa = CocoaWebview(self.url, window._window.uid, tray._quit, self.actions.notify)
+        cocoa.install()
+        try:
+            webview.start(private_mode=False)  # the page keeps its appearance choice
+        finally:
+            cocoa.close()
 
     def quit(self) -> None:
         self._quitting = True
@@ -172,6 +179,7 @@ class _Window:
         self._window: Any = None
         self._pending: str | None = None
         self._toolbar_height = 52.0
+        self._destroying = False
 
     def create(self) -> None:
         self._window = webview.create_window(
@@ -201,31 +209,9 @@ class _Window:
         _on_ui_thread(self._layout_titlebar)
 
     def _layout_titlebar(self) -> None:
-        import AppKit
+        from dictum.desktop.macos.webview import layout_titlebar
 
-        window = self._window.native
-        if window.styleMask() & AppKit.NSWindowStyleMaskFullScreen:
-            return  # AppKit owns the controls in the full-screen menu strip.
-        close = window.standardWindowButton_(AppKit.NSWindowCloseButton)
-        titlebar = close.superview()
-        container = titlebar.superview()
-        frame = container.frame()
-        frame.origin.y += frame.size.height - self._toolbar_height
-        frame.size.height = self._toolbar_height
-        container.setFrame_(frame)
-        titlebar.setFrameSize_((titlebar.frame().size.width, self._toolbar_height))
-        for index, kind in enumerate(
-            (
-                AppKit.NSWindowCloseButton,
-                AppKit.NSWindowMiniaturizeButton,
-                AppKit.NSWindowZoomButton,
-            )
-        ):
-            button = window.standardWindowButton_(kind)
-            button.setHidden_(False)
-            button.setFrameOrigin_(
-                (14 + index * 20, (self._toolbar_height - button.frame().size.height) / 2)
-            )
+        layout_titlebar(self._window.native, self._toolbar_height)
 
     def show(self, fragment: str = "") -> None:
         if self._window is None:
@@ -242,6 +228,7 @@ class _Window:
         self._window.show()
 
     def destroy(self) -> None:
+        self._destroying = True
         if self._window is not None:
             self._window.destroy()
 
@@ -252,6 +239,8 @@ class _Window:
 
     def _on_closing(self) -> bool:
         """Close hides; the tray keeps the app alive. Returning False cancels the close."""
+        if self._destroying:
+            return True
         if self._window is not None:
             self._window.hide()
         if sys.platform == "darwin":
@@ -272,7 +261,9 @@ def _set_dock_icon() -> None:
 
 def _hotkeys() -> Hotkeys:
     if sys.platform == "darwin":
-        return _MacHotkeys()
+        from dictum.desktop.macos.hotkeys import HotkeyListener
+
+        return HotkeyListener()
     raise NotImplementedError("Global shortcuts are implemented for macOS only so far (#36)")
 
 
@@ -289,110 +280,4 @@ def _permissions() -> Permissions:
         from dictum.desktop.macos import _Permissions
 
         return _Permissions()
-    return _NoPermissions()
-
-
-class _NoPermissions:
-    settings_hint = ""
-
-    def can_listen(self) -> bool:
-        return True
-
-    def can_post(self) -> bool:
-        return True
-
-    def request_listen(self) -> None:
-        pass
-
-    def request_post(self) -> None:
-        pass
-
-    def microphone_status(self) -> str:
-        return "granted"
-
-    def request_microphone(self) -> None:
-        pass
-
-    def open_settings(self, permission: str) -> None:
-        pass
-
-
-def _grant_media_capture() -> None:
-    """Answer WKWebView's own microphone question for the page's recorder.
-
-    Without this WebKit asks before every getUserMedia call, so every press of the
-    record button brought a dialog. macOS's Microphone permission for the app is a
-    separate, one-time prompt and still applies.
-    """
-    import objc
-    from webview.platforms.cocoa import BrowserView
-
-    def decide(self: Any, view: Any, origin: Any, frame: Any, kind: int, handler: Any) -> None:
-        handler(1)  # WKPermissionDecisionGrant
-
-    objc.classAddMethods(
-        BrowserView.BrowserDelegate,
-        [
-            objc.selector(
-                decide,
-                selector=b"webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:",
-                signature=b"v@:@@@q@?",
-            )
-        ],
-    )
-
-
-def _allow_directory_uploads() -> None:
-    """pywebview's Cocoa file-input handler ignores WebKit's directory-selection flag."""
-    import objc
-    from Foundation import NSURL
-    from webview.platforms.cocoa import BrowserView
-
-    def choose(self: Any, view: Any, parameters: Any, frame: Any, handler: Any) -> None:
-        instance = next(i for i in BrowserView.instances.values() if i.webview == view)
-        kind = (
-            webview.FileDialog.FOLDER if parameters.allowsDirectories() else webview.FileDialog.OPEN
-        )
-        files = instance.create_file_dialog(
-            kind,
-            "",
-            parameters.allowsMultipleSelection(),
-            "",
-            parameters._acceptedMIMETypes(),
-            main_thread=True,
-        )
-        handler([NSURL.fileURLWithPath_(path) for path in files] if files else None)
-
-    objc.classAddMethods(
-        BrowserView.BrowserDelegate,
-        [
-            objc.selector(
-                choose,
-                selector=b"webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:",
-                signature=b"v@:@@@@?",
-            )
-        ],
-    )
-
-
-def _terminate_through(quit_app: Callable[[], None]) -> None:
-    """pywebview answers the application's terminate request by asking each window's
-    closing handlers, and ours hides the window (the tray keeps Dictum alive), which
-    turned Cmd+Q, the Quit menu item and a logout into a hidden window. Termination
-    now runs the real quit path instead.
-    """
-    import objc
-    from webview.platforms.cocoa import BrowserView
-
-    def should_terminate(self: Any, app: Any) -> int:
-        quit_app()
-        return 1  # NSTerminateNow
-
-    objc.classAddMethods(
-        BrowserView.AppDelegate,
-        [
-            objc.selector(
-                should_terminate, selector=b"applicationShouldTerminate:", signature=b"I@:@"
-            )
-        ],
-    )
+    raise NotImplementedError("Native permissions are implemented for macOS only (#36)")

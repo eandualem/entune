@@ -40,10 +40,11 @@ src/dictum/
                   (tray, window, hotkeys, actions, permissions, UI-thread scheduling);
                   engine.py: press/release -> start/stop, pure;
                   webview/: the shell, window (pywebview) and tray (pystray), one
-                  implementation for every OS on its native web engine;
+                  implementation currently wired for macOS;
                   macos/: what is macOS-specific underneath: pynput listener with
                   the fn key (injected keystrokes ignored), pbcopy/osascript, Quartz
-                  permissions, the recording pill (indicator.py), the .app bundle
+                  permissions, the recording pill (indicator.py), the .app bundle;
+                  webview.py owns Cocoa delegate hooks and native title-bar layout
 ```
 
 Data flow for a dictation: the hotkey listener's thread feeds the engine;
@@ -61,7 +62,8 @@ keeps the exact raw text and skips formatting; a formatter failure keeps the
 preceding text. History polling invalidates on processing updates as well as
 new recordings. Dictum owns a lazy Jev event loop and HTTP pool: cancellable
 requests share one processing deadline, including bounded retries, and the
-CLI closes the client at shutdown. Speech and processing failures are distinct.
+desktop owner (or CLI in browser mode) closes the client at shutdown. Speech and
+processing failures are distinct.
 
 History/audio builds share one job owner; only a server-held proposal can be accepted
 against its original dictionary revision. A job snapshots source records, speech/model
@@ -79,6 +81,15 @@ before Jev processing. A background clip must release resources before proceedin
 proposal is published until generation clients and inference leases exit and transient text
 is cleared. Failed background cleanup fails the build; foreground cleanup reports a warning
 without erasing already-persisted speech.
+
+Native Quit first stops shortcuts and active shortcut capture, waits up to three seconds
+for queued captures to reach disk, and then closes the service. Close-to-hide remains
+separate; explicit window destruction allows the WebView loop to end. The same idempotent
+cleanup runs if the desktop loop returns or fails. Pending transcription work does not
+start or paste after quit begins. A capture-save failure or timeout is logged and notified;
+force exit cannot promise to save a clip that has not reached disk. The page's Record
+button owns browser memory until Stop/upload; it does not participate in this native
+capture flush. Stop it before quitting or closing a browser tab.
 
 Shutdown rejects new work, cancels generation and owns worker/client/upload/download/helper
 cleanup. Jev has a separate two-second close bound; builds and speech resources share a further

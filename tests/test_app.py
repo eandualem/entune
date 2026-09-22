@@ -542,3 +542,111 @@ def test_correction_failure_delivers_raw_with_a_noninterrupting_notice(tmp_path:
     )
     assert not any("transcription failed" in title for title, _ in platform.actions.notices)
     assert app._pending == 0
+
+
+def test_quit_discards_pending_delivery_and_does_not_restart_shortcuts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, platform, dictum = make(tmp_path)
+    dictum.set_shortcuts("alt_r", None)
+    callbacks: list[Callable[[], None]] = []
+    monkeypatch.setattr(platform, "run_on_ui_thread", callbacks.append)
+    app._later(lambda: app._deliver("late result"))
+    app.quit()
+    for callback in callbacks:
+        callback()
+    app.start_recording()
+    app._recheck_permission()
+    app.apply_shortcut()
+    assert platform.actions.clipboard is None and platform.actions.pasted == 0
+    assert not platform.hotkeys.running and not app._recording
+
+
+def test_quit_reports_capture_save_failure_and_still_closes_resources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, platform, dictum = make(tmp_path)
+    closed: list[bool] = []
+    close = dictum.close
+
+    def cleanup() -> bool:
+        closed.append(True)
+        return close()
+
+    def fail_save(*args: object) -> None:
+        raise OSError("test disk is full")
+
+    monkeypatch.setattr(dictum, "store_recording", fail_save)
+    monkeypatch.setattr(dictum, "close", cleanup)
+    app.start_recording()
+    app.quit()
+    app.close()
+    assert closed == [True] and platform.quit_called
+    assert any("test disk is full" in message for _, message in platform.actions.notices)
+
+
+def test_capture_flush_wait_is_bounded_and_timeout_visible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    from dictum.desktop import app as desktop
+
+    app, platform, dictum = make(tmp_path)
+    release = threading.Event()
+    save = dictum.store_recording
+
+    def slow_save(data: bytes, mime: str) -> Recording:
+        assert release.wait(2)
+        return save(data, mime)
+
+    from dictum.store import Recording
+
+    monkeypatch.setattr(dictum, "store_recording", slow_save)
+    monkeypatch.setattr(desktop, "QUIT_FLUSH_SECONDS", 0.04)
+    try:
+        app.start_recording()
+        started = time.monotonic()
+        app.quit()
+        assert time.monotonic() - started < 0.5
+        assert platform.quit_called
+        assert any("quit deadline" in message for _, message in platform.actions.notices)
+    finally:
+        release.set()
+    wait_for(lambda: len(dictum.store.list_recordings()) == 1)
+
+
+def test_quit_waits_for_capture_start_then_saves_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    app, platform, dictum = make(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    start = app.recorder.start
+
+    def slow_start(sink_for_rate: SinkFactory | None = None) -> None:
+        entered.set()
+        assert release.wait(2)
+        start(sink_for_rate)
+
+    monkeypatch.setattr(app.recorder, "start", slow_start)
+    capture = threading.Thread(target=app.start_recording)
+    quitting = threading.Thread(target=app.quit)
+    capture.start()
+    assert entered.wait(1)
+    try:
+        quitting.start()
+        quitting.join(0.05)
+        assert not platform.quit_called
+    finally:
+        release.set()
+        capture.join(2)
+        quitting.join(2)
+    assert not capture.is_alive() and not quitting.is_alive()
+    assert platform.quit_called and not app._recording
+    assert len(dictum.store.list_recordings()) == 1

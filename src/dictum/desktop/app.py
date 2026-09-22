@@ -5,6 +5,7 @@ Written against `platform.Platform` only; no operating-system code lives here.
 
 from __future__ import annotations
 
+import logging
 import queue
 import socket
 import threading
@@ -46,6 +47,10 @@ class DictumApp:
         self._upload: Upload | None = None  # fast mode's stream for the current recording
         self._recording = False
         self._quiet_notified = False
+        self._capture_error: str | None = None
+        self._quitting = False
+        self._closed = False
+        self._close_lock = threading.RLock()
         self._pending = 0  # transcriptions still running; the tray state is derived
         self._captures: queue.Queue[tuple[Capture, Upload | None]] = queue.Queue()
         self._jobs: queue.Queue[tuple[Recording, float, Upload | None]] = queue.Queue()
@@ -81,15 +86,41 @@ class DictumApp:
         self.platform.window.show("#settings")
 
     def quit(self) -> None:
-        self.platform.hotkeys.stop()
-        if self._recording:
-            self.stop_recording()
-        # A clip stopped a moment ago may still be on its way to disk; it takes
-        # milliseconds, and nothing recorded is lost to a quit. Transcription can wait.
-        deadline = time.monotonic() + QUIT_FLUSH_SECONDS
-        while self._captures.unfinished_tasks and time.monotonic() < deadline:
-            time.sleep(0.02)
+        self.close()
         self.platform.quit()
+
+    def close(self) -> None:
+        """Drain capture and close processing before AppKit can terminate Python.
+
+        Also used when the desktop loop returns or fails. The lock makes repeated
+        quit requests wait for the same cleanup rather than exiting ahead of it.
+        """
+        with self._close_lock:
+            if self._closed:
+                return
+            self._quitting = True
+            self.platform.hotkeys.stop()
+            try:
+                if self._recording:
+                    self.stop_recording()
+                deadline = time.monotonic() + QUIT_FLUSH_SECONDS
+                while self._captures.unfinished_tasks and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                if self._captures.unfinished_tasks:
+                    self._shutdown_warning(
+                        "Audio could not finish saving before the quit deadline."
+                    )
+                elif self._capture_error is not None:
+                    self._shutdown_warning(f"Could not save audio: {self._capture_error}")
+            finally:
+                if not self.dictum.close():
+                    self._shutdown_warning("Some processing resources could not finish closing.")
+            self._closed = True
+
+    def _shutdown_warning(self, message: str) -> None:
+        logging.getLogger(__name__).warning(message)
+        self.dictum.report_status(lastError=message)
+        self.platform.actions.notify("Dictum: shutdown", message)
 
     def _show_window_when_served(self, started: float) -> None:
         """Open the window once the local server answers, so it never shows a connection error."""
@@ -112,6 +143,8 @@ class DictumApp:
     # Shortcut
 
     def apply_shortcut(self) -> None:
+        if self._quitting:
+            return
         shortcuts = self.dictum.shortcuts()
         permissions = self.platform.permissions
         unchanged = self.engine is not None and self.engine.shortcuts == shortcuts
@@ -201,6 +234,8 @@ class DictumApp:
 
     def begin_capture(self) -> None:
         """Settings asked for a shortcut to be pressed: record it with the global listener."""
+        if self._quitting:
+            return
         if not self.platform.permissions.can_listen():
             self.platform.permissions.request_listen()
             self.dictum.cancel_capture()
@@ -210,6 +245,8 @@ class DictumApp:
 
     def _recheck_permission(self) -> None:
         """Start listening as soon as Input Monitoring is granted, without a restart."""
+        if self._quitting:
+            return
         if self._recording:
             self._refresh_state()
         shortcuts = self.dictum.shortcuts()
@@ -230,53 +267,58 @@ class DictumApp:
     # Recording, called from the keyboard listener's thread
 
     def start_recording(self) -> None:
-        self._upload = None
-        try:
-            self.recorder.start(self._begin_upload)
-        except Exception as exc:  # the user needs to know why nothing happens
-            message = f"{type(exc).__name__}: {exc}"
-            self.dictum.report_status(lastError=message)
-            self._later(lambda: self.platform.actions.notify("Dictum: microphone", message))
-            if self.engine is not None:
-                self.engine.recording = False
-            if self._upload is not None:  # begun before the microphone refused
-                self._upload.abort()
-                self._upload = None
-            return
-        self.dictum.report_status(lastRecordingStarted=time.time(), lastError=None)
-        self._quiet_notified = False
-        self._recording = True
-        self._later(self._refresh_state)
+        with self._close_lock:
+            if self._quitting:
+                return
+            self._upload = None
+            try:
+                self.recorder.start(self._begin_upload)
+            except Exception as exc:  # the user needs to know why nothing happens
+                message = f"{type(exc).__name__}: {exc}"
+                self.dictum.report_status(lastError=message)
+                self._later(lambda: self.platform.actions.notify("Dictum: microphone", message))
+                if self.engine is not None:
+                    self.engine.recording = False
+                if self._upload is not None:  # begun before the microphone refused
+                    self._upload.abort()
+                    self._upload = None
+                return
+            self.dictum.report_status(lastRecordingStarted=time.time(), lastError=None)
+            self._quiet_notified = False
+            self._recording = True
+            self._later(self._refresh_state)
 
     def _begin_upload(self, sample_rate: int) -> Sink | None:
         self._upload = self.dictum.begin_upload(sample_rate)
         return self._upload.feed if self._upload is not None else None
 
     def stop_recording(self) -> None:
-        capture = self.recorder.stop()
-        upload, self._upload = self._upload, None
-        self._recording = False
-        if capture.seconds < MIN_CLIP_SECONDS:
-            if upload is not None:
-                upload.abort()
+        with self._close_lock:
+            capture = self.recorder.stop()
+            upload, self._upload = self._upload, None
+            self._recording = False
+            if capture.seconds < MIN_CLIP_SECONDS:
+                if upload is not None:
+                    upload.abort()
+                self._later(self._refresh_state)
+                return
+            self._pending += 1
             self._later(self._refresh_state)
-            return
-        self._pending += 1
-        self._later(self._refresh_state)
-        self._captures.put((capture, upload))
+            self._captures.put((capture, upload))
 
     def cancel_recording(self) -> None:
         """Discard only the active microphone capture; earlier dictations keep their place."""
-        if not self._recording:
-            return
-        upload, self._upload = self._upload, None
-        try:
-            if upload is not None:
-                upload.abort()
-            self.recorder.stop(discard=True)
-        finally:
-            self._recording = False
-            self._later(self._refresh_state)
+        with self._close_lock:
+            if not self._recording:
+                return
+            upload, self._upload = self._upload, None
+            try:
+                if upload is not None:
+                    upload.abort()
+                self.recorder.stop(discard=True)
+            finally:
+                self._recording = False
+                self._later(self._refresh_state)
 
     def _persist(self) -> None:
         """Every stopped clip is written to disk and history at once, in order, so a quit
@@ -286,7 +328,9 @@ class DictumApp:
             try:
                 recording = self.dictum.store_recording(capture.wav(), "audio/wav")
             except Exception as exc:
-                self._notify_later("Dictum: could not save", f"{type(exc).__name__}: {exc}")
+                self._capture_error = f"{type(exc).__name__}: {exc}"
+                logging.getLogger(__name__).exception("Could not save captured audio")
+                self._notify_later("Dictum: could not save", self._capture_error)
                 if upload is not None:
                     upload.abort()
                 self._pending -= 1
@@ -306,6 +350,11 @@ class DictumApp:
         they were spoken, whichever provider answers first."""
         while True:
             recording, seconds, upload = self._jobs.get()
+            if self._quitting:
+                if upload is not None:
+                    upload.abort()
+                self._pending -= 1
+                continue  # audio is already saved; do not start another request at quit
             self._transcribe_and_deliver(recording, seconds, upload)
 
     def _refresh_state(self) -> None:
@@ -397,4 +446,8 @@ class DictumApp:
             time.sleep(0.02)
 
     def _later(self, action: Callable[[], None]) -> None:
-        self.platform.run_on_ui_thread(action)
+        def run() -> None:
+            if not self._quitting:
+                action()
+
+        self.platform.run_on_ui_thread(run)

@@ -189,7 +189,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       const isParakeet = provider.id === "parakeet";
       head.innerHTML = isParakeet
         ? `<div class="name strong">Parakeet <span class="caption">· NVIDIA on Apple MLX</span></div><div class="caption hint">The most accurate offline model. Its engine is installed outside Dictum, once; Dictum then finds it.</div>`
-        : `<div class="name strong">Whisper <span class="caption">· whisper.cpp</span></div><div class="caption hint">Downloaded inside Dictum with one click. Runs on this machine; nothing leaves it.</div>`;
+        : `<div class="name strong">Whisper <span class="caption">· whisper.cpp</span></div><div class="caption hint">Downloaded inside Dictum with one click. Speech recognition runs on this machine. Enabled Jev features still send text to TypeSafe.</div>`;
       card.append(head, ...mine.map((m) => localRow(m, isParakeet)));
       const missing = mine.find((m) => m.state === "unavailable");
       if (isParakeet && missing) card.append(engineNote(missing));
