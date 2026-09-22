@@ -454,34 +454,80 @@ def refined(current: Dictionary, working: Groups, model: str) -> Dictionary:
 
 
 @dataclass(frozen=True)
+class ProposalChange:
+    id: str
+    before: Group | None
+    after: Group | None
+
+    @property
+    def kind(self) -> str:
+        return "add" if self.before is None else "remove" if self.after is None else "update"
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "before": self.before.as_json() if self.before else None,
+            "after": self.after.as_json() if self.after else None,
+        }
+
+
+@dataclass(frozen=True)
 class Proposal:
     model: str
-    learned: Groups
-    added: Groups
-    removed: Groups
+    working: Groups
+    changes: tuple[ProposalChange, ...]
     version: str = ""
-    pinned: Groups = ()
 
     def as_json(self) -> dict[str, object]:
         return {
             "model": self.model,
             "version": self.version,
-            **{
-                name: [g.as_json() for g in getattr(self, name)]
-                for name in ("learned", "added", "removed", "pinned")
-            },
+            "changes": [change.as_json() for change in self.changes],
         }
 
 
 def propose(current: Dictionary, proposed: Groups, model: str, version: str = "") -> Proposal:
     updated = refined(current, proposed, model)
     old = {g.id: g for g in current.effective(model)}
-    new = {g.id: g for g in proposed}
+    new = {g.id: g for g in updated.effective(model)}
     return Proposal(
         model,
-        updated.learned_for(model),
-        tuple(g for k, g in new.items() if old.get(k) != g),
-        tuple(g for k, g in old.items() if new.get(k) != g),
+        tuple(new.values()),
+        tuple(
+            ProposalChange(identity, old.get(identity), new.get(identity))
+            for identity in dict.fromkeys((*new, *old))
+            if old.get(identity) != new.get(identity)
+        ),
         version,
-        updated.pinned,
     )
+
+
+def review(current: Dictionary, proposal: Proposal, selected: object = None) -> Dictionary:
+    """Apply included proposals only; dismissal never removes existing knowledge."""
+    changes = {c.id: c for c in proposal.changes}
+    if selected is None:
+        selected = [
+            {"id": c.id, "after": c.after.as_json() if c.after else None} for c in proposal.changes
+        ]
+    working = {g.id: g for g in current.effective(proposal.model)}
+    seen: set[str] = set()
+    for item in _list(selected, "selected proposals"):
+        item = _object(item, "proposal", {"id", "after"})
+        identity = item.get("id")
+        if not isinstance(identity, str) or identity not in changes or identity in seen:
+            raise ValueError("Select each proposed change at most once by its current ID")
+        seen.add(identity)
+        change = changes[identity]
+        if change.after is None:
+            if item.get("after") is not None:
+                raise ValueError("A removal can only be included or dismissed")
+            working.pop(identity, None)
+        else:
+            groups = parse_groups([item.get("after")], "edited proposal")
+            if groups[0].id != identity:
+                raise ValueError("Keep the proposal's group ID while editing")
+            working[identity] = groups[0]
+    if working == {g.id: g for g in current.effective(proposal.model)}:
+        return current
+    return refined(current, tuple(working.values()), proposal.model)

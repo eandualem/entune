@@ -53,8 +53,7 @@ Data flow for a dictation: the hotkey listener's thread feeds the engine;
 the engine starts and stops the recorder; on stop, a persist worker writes
 the clip to disk and history at once, and one transcription worker takes
 clips in the order they were spoken: provider call, raw success persisted,
-eligible meanings/spans retrieved and decided in original context (else only approved
-direct mappings apply), opt-in filler reduction then formatting, independent stage
+eligible meanings/spans retrieved and decided in original context when enabled, opt-in filler reduction then formatting, independent stage
 outcomes and exact changes stored. The transcript is copied and
 pasted on the main thread, because HIToolbox insists on it. With fast mode
 on, the recorder's chunks are streamed to AssemblyAI while recording and a
@@ -62,7 +61,7 @@ clip over two minutes is transcribed from that upload. A local model is
 loaded while it is the selected default and freed when it is not; Parakeet
 lives in a helper process that exits on unload. Failed contextual correction
 keeps the exact raw text and skips cleanup/formatting; a failure in either later stage
-keeps its input. No model generates text or deletion offsets. Code validates its own
+keeps its input and skips remaining enhancements. No model generates text or deletion offsets. Code validates its own
 proposed spans before applying edits; original speech and operation counts remain separate.
 History polling invalidates on processing updates as well as
 new recordings. Dictum owns a lazy Jev event loop and HTTP pool: cancellable
@@ -70,21 +69,21 @@ requests share one processing deadline, including bounded retries, and the
 desktop owner (or CLI in browser mode) closes the client at shutdown. Speech and
 processing failures are distinct.
 
-History/audio builds share one job owner; only a server-held proposal can be accepted
-against its original dictionary revision. A job snapshots source records, speech/model
-keys and groups before starting. Its worker never reads changing Settings or the history
-store. Audio bytes are read one clip at a time and verified against the imported hash.
-Temporary transcripts stay in memory; neither cancellation nor restart adds a resume cache.
-Generation uses one cancellable event loop for sequential steps, with a 20-minute total
-limit per generation step. Status counts all prompt characters, including the growing
-working dictionary. This is not a token estimate or a guarantee against provider limits.
+History/audio learning and dictation share one exclusive operation owner. Dictation
+holds it from recording through the queued main-thread delivery; learning holds it
+through proposal review, apply or discard. Manual dictionary writes are blocked during
+learning. A job snapshots model/input/dictionary state and keeps each validated batch
+checkpoint. Stop/failure retains partial proposals and exact fully covered input IDs;
+accepting actual changes stores per-model coverage and a small run receipt. Empty
+application consumes nothing. Temporary audio transcripts survive retries in memory
+only; applying, discarding, replacing or closing the workflow clears them.
 
 SpeechResources grants one local operation at a time; waiting dictation precedes background
-clips/warming. Cloud inference can proceed concurrently. Warm requests coalesce to the latest
+clips/warming. Cloud adapters are independent; the user-operation guard prevents overlapping dictation/learning calls. Warm requests coalesce to the latest
 selection. An in-use model stays alive through raw-transcript persistence, then releases
 before Jev processing. A background clip must release resources before proceeding. No
-proposal is published until generation clients and inference leases exit and transient text
-is cleared. Failed background cleanup fails the build; foreground cleanup reports a warning
+proposal is published until generation clients and inference leases exit. Successful temporary
+audio text remains in the workflow for Retry until apply/discard/replacement/close. Failed background cleanup fails the build; foreground cleanup reports a warning
 without erasing already-persisted speech.
 
 Native Quit first stops shortcuts and active shortcut capture, waits up to three seconds

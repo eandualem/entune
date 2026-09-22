@@ -4,16 +4,21 @@ from `desktop/webview`, with Cocoa adaptations isolated in this package."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from dictum.desktop.macos import actions as _actions
 from dictum.desktop.macos import permissions as _permissions
+from dictum.desktop.platform import Delivery
 
 
 class _Actions:
     def copy_to_clipboard(self, text: str) -> None:
         _actions.copy_to_clipboard(text)
 
-    def paste_into_focused_app(self) -> None:
-        _actions.paste_into_focused_app()
+    def paste_into_focused_app(
+        self, text: str, check: Callable[[], None] | None = None
+    ) -> Delivery:
+        return _actions.paste_into_focused_app(text, check)
 
     def notify(self, title: str, message: str) -> None:
         _actions.notify(title, message)

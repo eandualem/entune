@@ -14,7 +14,7 @@ import json
 import re
 import uuid
 from collections.abc import Callable, Coroutine, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -66,12 +66,30 @@ def catalog(provider: str) -> list[ModelChoice]:
     return [ModelChoice(f"{provider}:{model}", name) for model, name in _MODELS[provider]]
 
 
-def batches(transcripts: Sequence[str]) -> list[list[str]]:
-    """All supplied text in bounded steps; split long transcripts at word boundaries."""
-    steps: list[list[str]] = []
+@dataclass(frozen=True)
+class LearningText:
+    id: str
+    text: str
+    records: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Batch:
+    snippets: tuple[str, ...]
+    completed: tuple[str, ...]
+    records: dict[str, dict[str, object]]
+
+
+def learning_batches(inputs: Sequence[LearningText]) -> list[Batch]:
+    """Keep identity through splitting; only a final segment completes its source."""
+    result: list[Batch] = []
+    snippets: list[str] = []
+    completed: list[str] = []
+    records: dict[str, dict[str, object]] = {}
     used = 0
-    for text in transcripts:
-        remaining = text.strip()
+    for item in inputs:
+        remaining = item.text.lstrip()
+        offset = len(item.text) - len(remaining)
         while remaining:
             end = len(remaining)
             if end > BATCH_CHARS:
@@ -81,13 +99,40 @@ def batches(transcripts: Sequence[str]) -> list[list[str]]:
                 )
                 if end <= 0:
                     end = BATCH_CHARS
-            snippet, remaining = remaining[:end], remaining[end:].lstrip()
-            if not steps or used + len(snippet) > BATCH_CHARS:
-                steps.append([])
-                used = 0
-            steps[-1].append(snippet)
+            snippet, tail = remaining[:end], remaining[end:]
+            remaining = tail.lstrip()
+            if snippets and used + len(snippet) > BATCH_CHARS:
+                result.append(Batch(tuple(snippets), tuple(completed), records))
+                snippets, completed, records, used = [], [], {}, 0
+            snippets.append(snippet)
             used += len(snippet)
-    return steps
+            if item.records:
+                record = records.setdefault(item.id, {**item.records, "source_spans": []})
+                spans = record["source_spans"]
+                assert isinstance(spans, list)
+                spans.append(
+                    {
+                        "source": next(iter(sources([snippet]))),
+                        "start_in_input": offset,
+                        "end_in_input": offset + len(snippet),
+                    }
+                )
+            offset += len(snippet) + len(tail) - len(remaining)
+            if not remaining:
+                completed.append(item.id)
+    if snippets:
+        result.append(Batch(tuple(snippets), tuple(completed), records))
+    return result
+
+
+def batches(transcripts: Sequence[str]) -> list[list[str]]:
+    """Text batching helper; runtime learning retains source identities separately."""
+    return [
+        list(b.snippets)
+        for b in learning_batches(
+            [LearningText(str(i), text) for i, text in enumerate(transcripts)]
+        )
+    ]
 
 
 def build_user_prompt(
@@ -96,6 +141,7 @@ def build_user_prompt(
     speech_model: str,
     proposed: Groups | None = None,
     step: tuple[int, int] = (1, 1),
+    records: dict[str, dict[str, object]] | None = None,
 ) -> str:
     """One step's evidence and the working dictionary after all earlier edits."""
     number, count = step
@@ -114,6 +160,7 @@ def build_user_prompt(
         ),
         transcript_count=str(len(transcripts)),
         transcripts=json.dumps(sources(transcripts), ensure_ascii=False),
+        records=json.dumps(records or {}, ensure_ascii=False),
     )
 
 
@@ -412,27 +459,43 @@ async def propose_learned(
     call: Caller = call_model,
     *,
     progress: Callable[[int, int, int], None] | None = None,
+    inputs: Sequence[LearningText] | None = None,
+    checkpoint: Callable[[Groups, int, int, tuple[str, ...]], None] | None = None,
+    working: Groups | None = None,
+    resume: int = 0,
 ) -> Groups:
     """Ask the model for a new `learned` section for `speech_model`, from its transcripts.
 
     A long history goes in steps (`batches`), each seeing what the earlier steps
     changed; each step may add, revise or remove learned entries. Raises ValueError
     carrying the provider's or the model's own words
-    when a step fails; nothing partial is returned.
+    when a step fails; the checkpoint retains only fully validated completed batches.
     """
     current = dictionary_file.share(current, set())
-    proposed = current.effective(speech_model)
-    steps = batches(transcripts)
+    proposed = current.effective(speech_model) if working is None else working
+    steps = learning_batches(
+        inputs
+        if inputs is not None
+        else [LearningText(str(i), text) for i, text in enumerate(transcripts)]
+    )
     for number, step in enumerate(steps, 1):
+        if number <= resume:
+            continue
         await asyncio.sleep(0)  # cancellation between chunks even for immediate test callers
-        user_prompt = build_user_prompt(current, step, speech_model, proposed, (number, len(steps)))
+        user_prompt = build_user_prompt(
+            current, step.snippets, speech_model, proposed, (number, len(steps)), step.records
+        )
         system_prompt = prompts.text("dictionary-system.txt")
         if progress:
             progress(number, len(steps), len(system_prompt) + len(user_prompt))
         try:
             async with asyncio.timeout(1200):
                 reply = await call(provider, api_key, model, system_prompt, user_prompt)
-            proposed = parse_reply(reply, proposed, transcripts=step, pinned=current.pinned)
+            proposed = parse_reply(
+                reply, proposed, transcripts=step.snippets, pinned=current.pinned
+            )
+            if checkpoint:
+                checkpoint(proposed, number, len(steps), step.completed)
         except Exception as exc:
             raise ValueError(f"Step {number} of {len(steps)}: {type(exc).__name__}: {exc}") from exc
     return proposed

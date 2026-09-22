@@ -23,7 +23,7 @@ def test_parse_hold_and_toggle_together() -> None:
         ("banana", None, "Unknown key"),
         (None, "cmd+", "Empty key"),
         (None, "cmd+cmd", "given twice"),
-        (None, "fn+esc", "distinct combinations"),
+        (None, "fn+ctrl", "distinct combinations"),
     ],
 )
 def test_rejects_unusable_shortcuts(hold: str | None, toggle: str | None, reason: str) -> None:
@@ -40,3 +40,8 @@ def test_cancel_can_be_changed_or_disabled_without_conflicting_with_record() -> 
         shortcuts.parse("fn", None, "fn")
     with pytest.raises(ValueError, match="distinct combinations"):
         shortcuts.parse(None, "cmd+d", "cmd+d+esc")
+
+
+def test_unsafe_fn_escape_is_rejected_for_cancellation() -> None:
+    with pytest.raises(ValueError, match="foreground work"):
+        shortcuts.parse("fn", "fn+cmd", "esc+fn")

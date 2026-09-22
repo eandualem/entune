@@ -14,7 +14,8 @@ from typing import Literal, Protocol
 from dictum.desktop.engine import ShortcutEngine
 from dictum.recorder import Capture, SinkFactory
 
-State = Literal["idle", "recording", "quiet", "busy"]
+State = str  # operation stage, plus idle/quiet
+Delivery = Literal["inserted", "no_target", "unverified", "focus_moving"]
 
 
 class Tray(Protocol):
@@ -22,6 +23,7 @@ class Tray(Protocol):
 
     def set_state(self, state: State) -> None: ...
     def set_status(self, text: str) -> None: ...
+    def complete(self, text: str) -> None: ...
     def set_actions(
         self,
         open_window: Callable[[], None],
@@ -43,7 +45,9 @@ class Hotkeys(Protocol):
 
 class Actions(Protocol):
     def copy_to_clipboard(self, text: str) -> None: ...
-    def paste_into_focused_app(self) -> None: ...
+    def paste_into_focused_app(
+        self, text: str, check: Callable[[], None] | None = None
+    ) -> Delivery: ...
     def notify(self, title: str, message: str) -> None: ...
 
 

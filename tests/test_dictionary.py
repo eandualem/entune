@@ -82,8 +82,9 @@ def test_ids_survive_spelling_edits_and_pinned_definitions_cannot_conflict() -> 
         recognized_forms=(CLOUD.recognized_forms[0],),
     )
     proposal = dictionary.propose(Dictionary(learned={"m": (CLOUD,)}), (revised,), "m", "revision")
-    assert proposal.added == (revised,) and proposal.removed == (CLOUD,)
-    assert proposal.learned[0].meanings[0].id == CLOUD.meanings[0].id
+    assert len(proposal.changes) == 1 and proposal.changes[0].kind == "update"
+    assert proposal.changes[0].before == CLOUD and proposal.changes[0].after == revised
+    assert proposal.working[0].meanings[0].id == CLOUD.meanings[0].id
     assert proposal.as_json()["version"] == "revision"
     with pytest.raises(ValueError, match="conflicting definitions"):
         dictionary.validate(Dictionary((CLOUD,), {"m": (revised,)}))
@@ -118,7 +119,7 @@ def test_reviewed_pinned_updates_and_new_variants_keep_existing_links_in_all_mod
         recognized_forms=(*JEV.recognized_forms, Form("Jiff", (Association("a_jev"),))),
     )
     proposal = dictionary.propose(original, (revised,), "one")
-    assert proposal.pinned[0].meanings[0].meaning == "A context classifier."
+    assert proposal.working[0].meanings[0].meaning == "A context classifier."
     applied = dictionary.refined(original, (revised,), "one")
     assert applied.learned_for("unrelated") == (CLOUD,)
     assert len(matching.matches(applied.effective("new"), "Jeff Jiff GIF")) == 3

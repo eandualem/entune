@@ -337,3 +337,13 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .group-field { display: grid; gap: var(--sp-4); margin: var(--sp-8) 0; font-size: var(--fs-12); }
 .group-field .input { width: 100%; min-width: 0; }
 .group-candidate { display: flex; align-items: start; gap: var(--sp-4); font-size: var(--fs-12); margin: var(--sp-4) 0; }
+
+/* Learning review remains distinct from the locked active dictionary. */
+.proposal-change { border-top: 1px solid var(--line, #ddd); padding: 1rem 0; }
+.proposal-change.dismissed { opacity: .55; }
+.proposal-before { white-space: pre-wrap; font: inherit; color: var(--muted, #666); }
+.proposal-editor { margin-top: .75rem; }
+.proposal-editor .meaning-editor { display: grid; gap: .5rem; padding: .75rem 0; }
+.proposal-associations { display: grid; gap: .25rem; }
+.learning-audio-list { max-height: 18rem; overflow: auto; margin: .75rem 0; }
+.learning-audio-item { display: flex; align-items: start; gap: .5rem; padding: .4rem 0; }
