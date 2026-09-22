@@ -12,6 +12,7 @@ export function createDictionary({ getModel, getSettings }) {
   let building = false;
   let filter = "all";
   let proposalChanges = [];
+  let proposalModel = null;
   const dictionaryBox = el("dictionary");
   const buildBtn = el("build-dictionary");
   const buildStatus = el("build-status");
@@ -33,7 +34,6 @@ export function createDictionary({ getModel, getSettings }) {
   segmentedGroup({ all: el("filter-all"), pinned: el("filter-pinned"), learned: el("filter-learned") }, (name) => { filter = name; renderDictionary(); });
 
   async function loadDictionary(pollBuild = true) {
-    if (pollBuild) await builds.load();
     dictVersion = null;
     const res = await fetch("/api/dictionary");
     const text = await res.text();
@@ -42,6 +42,7 @@ export function createDictionary({ getModel, getSettings }) {
     dictVersion = res.headers.get("etag");
     renderDictionary(text);
     lockEditors();
+    if (pollBuild) await builds.load();
     await onboarding.load();
   }
 
@@ -275,6 +276,7 @@ export function createDictionary({ getModel, getSettings }) {
   const label = (g) => g ? `${g.meanings.map(m => m.spelling).join(" / ")} ← ${g.recognized_forms.map(f => f.text).join(", ")}` : "";
   const describe = g => g ? [...g.meanings.map(m => `${m.spelling}: ${m.meaning}${m.personal_context ? ` (${m.personal_context})` : ""}`), ...g.recognized_forms.map(f => `Recognized: ${f.text}`)].join("\n") : "";
   function renderProposal(p) {
+    proposalModel = p.model;
     proposalChanges = p.changes.map(c => ({...structuredClone(c), included: true}));
     el("proposal-title").textContent = `Proposed for ${p.model}`;
     drawProposal();
@@ -282,7 +284,7 @@ export function createDictionary({ getModel, getSettings }) {
   }
   function drawProposal() {
     proposalBody.replaceChildren();
-    const known = new Map([...dict.pinned, ...learnedOf(dict), ...proposalChanges.flatMap(c => c.after ? [c.after] : [])].flatMap(g => g.meanings).map(m => [m.id, m]));
+    const known = new Map([...dict.pinned, ...(dict.learned[proposalModel] ?? []), ...proposalChanges.flatMap(c => c.after ? [c.after] : [])].flatMap(g => g.meanings).map(m => [m.id, m]));
     const pinnedIds = new Set(dict.pinned.flatMap(g => g.meanings.map(m => m.id)));
     for (const [kind, title] of [["add", "Additions"], ["update", "Updates"], ["remove", "Proposed removals"]]) {
       const items = proposalChanges.filter(c => c.kind === kind);
