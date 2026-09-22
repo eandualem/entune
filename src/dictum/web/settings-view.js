@@ -56,7 +56,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const anyKey = settings.llmProviders.find((p) => p.keyHint);
     if (provider) {
       el("dm-title").textContent = `${provider.name} · ${modelId}`;
-      el("dm-caption").textContent = provider.keyHint ? `key saved ${provider.keyHint} · runs at high reasoning effort` : `no key for ${provider.name} yet: add one to build the dictionary`;
+      el("dm-caption").textContent = provider.keyHint ? `key saved ${provider.keyHint}` : `no key for ${provider.name} yet: add one to build the dictionary`;
     } else {
       el("dm-title").textContent = "No model";
       el("dm-caption").textContent = anyKey ? "" : "Add an Anthropic or OpenAI key to build the dictionary from your history.";

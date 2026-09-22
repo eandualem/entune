@@ -21,8 +21,9 @@ entries, and an entry is a `spelling`, a `description` and the phrases
 - **spelling** is the term as this person writes it. **heard** is every
   phrase speech models write instead; it may be empty for a term that is
   only ever spelled right, which still tells the next build what this
-  person's vocabulary is. **description** says what the term means for this
-  person and when they use it: it is what Jev reads to decide, per
+  person's vocabulary is. **description** defines what the term is and adds
+  the person's usage where known, without limiting it to one conversation
+  or project: it is what Jev reads to decide, per
   occurrence, whether the term was meant (see below). Without Jev, every
   heard phrase is replaced.
 - **pinned** is the user's: entered by hand, pinned from a proposal, or
@@ -94,6 +95,44 @@ literal use 0.93 or higher, so any threshold between 0.5 and 0.9 gives the
 same result. The same prompt without descriptions, sent to Jev the day
 before, got 6 of 48: the description is what makes the decision easy.
 
+On 2026-09-22, a larger private audio corpus was transcribed afresh with
+local Parakeet: 968 recordings, 20.8 hours, 11 empty results and no provider
+errors. A deterministic audio-hash split reserved 199 recordings before
+generation; 197 had text. The remaining 769 recordings supplied 760 nonempty
+training transcripts. Original third-party transcripts were not used.
+
+A 25-chunk build produced 313 entries, starting from the existing 45. It
+used GPT-6 Astra: high effort for the first 22 chunks and medium for the
+last three. Across the union of old and new dictionary matches in the
+held-out text, 436 occurrences were labelled from context; 16 unclear
+readings were excluded. Labels preceded their Jev requests. An intermediate
+22-chunk evaluation was inspected before completing the last three training
+chunks; the generation prompt stayed unchanged.
+
+| Output on the same 420 labelled occurrences | Correct |
+|---|---:|
+| Raw Parakeet | 299 |
+| Previous dictionary, plain replacement | 309 |
+| Previous dictionary, Jev | 310 |
+| Expanded dictionary, plain replacement | 113 |
+| Expanded dictionary, Jev | 405 |
+
+The expanded dictionary with Jev made ten wrong changes and missed five
+corrections. Six wrong changes collapsed plurals; two changed literal "me"
+to "main", one changed "pip" to "PyPI", and one changed "looks" to "logs".
+The median Jev request took 0.37 s across 124 clips with matches; decisions
+were reused when their full inputs were unchanged. On the separate, older 96-case
+regression set, it scored 87 versus the previous dictionary's 90. The
+experimental dictionary was therefore not adopted as the live default.
+
+These are **context-labelled candidate-occurrence scores**, not
+audio-verified full-transcript word error rates. They measure both needed
+corrections and literal words that must stay unchanged, but cannot count
+errors outside dictionary matches. The larger training corpus and changed
+generation process were evaluated together; this does not isolate the
+effect of the new prompt or demonstrate a uniform accuracy improvement.
+Personal audio, labels and reproducible evaluation outputs remain local.
+
 **Formatting** is the other opt-in: one question per sentence (continues,
 new paragraph, or list item) and only line breaks and bullets inserted, so
 every word stays. A sentence between two list items joins the list at a
@@ -103,14 +142,20 @@ with mixed results; it is off unless turned on.
 ## Build from history
 
 **Build from history** sends the default speech model's recent raw
-transcripts (at most 300, or 240,000 characters), the pinned section as
+transcripts (at most 300), the pinned section as
 approved and as evidence of who the user is and what they talk about, and
 that model's previous learned list to revise, to the language model chosen
 in Settings (with no choice, the suggested model of the first provider with
-a key), at high reasoning effort. A long history goes in steps of about
-24,000 characters of transcript: each step sees what the earlier steps
-proposed and adds only what its own transcripts show, and the steps'
-entries are combined (heard phrases joined, the earlier description kept).
+a key). The suggestions are Claude Sonnet 5 and GPT-5.4 mini, with medium
+reasoning effort where supported; older Claude models run without extended
+thinking. A long history goes in steps of about
+24,000 characters of transcript, splitting a long transcript at word
+boundaries. Every supplied transcript is processed. Each step sees the
+working dictionary, starting with this model's existing learned entries,
+and can add entries, replace descriptions and heard phrases, or explicitly
+remove mistaken entries. Unmentioned entries stay unchanged; absence from
+a chunk does not erase earlier knowledge. Only changes are returned, so a
+growing dictionary does not have to be repeated in every reply.
 Each request is streamed, because a reply at high effort takes minutes and
 a connection that carries nothing for a minute was observed to be cut on
 the way; a step that fails ends the build with the provider's words. It is asked for entries with a concrete

@@ -28,23 +28,27 @@ def test_user_prompt_carries_pinned_one_models_learned_list_and_the_step() -> No
         current, ["first", "second"], "stub/good", (Entry("Groq", heard=("grok",)),), (2, 3)
     )
     assert '"spelling": "Dictum", "description": "the app"' in prompt
-    assert '"spelling": "Soniox"' in prompt
-    assert "Previously learned for stub/good" in prompt and "Elsewhere" not in prompt
+    assert "Working learned dictionary for stub/good" in prompt
+    assert "Soniox" not in prompt and "Elsewhere" not in prompt
     assert "Step 2 of 3" in prompt and '"spelling": "Groq"' in prompt
     assert "transcripts from stub/good for this step" in prompt
-    assert "- first\n- second" in prompt and "(2)" in prompt
+    assert '["first", "second"]' in prompt and "(2)" in prompt
+    first = llm.build_user_prompt(current, ["first"], "stub/good")
+    assert '"spelling": "Soniox"' in first and "Elsewhere" not in first
+    cleared = llm.build_user_prompt(current, ["last"], "stub/good", (), (3, 3))
+    assert "Soniox" not in cleared
     assert "terms" not in llm.SYSTEM_PROMPT.split("Reply with")[1]
 
 
-def test_a_long_history_goes_in_steps_within_the_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_all_supplied_text_is_processed_in_bounded_steps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(llm, "BATCH_CHARS", 10)
-    monkeypatch.setattr(llm, "MAX_TRANSCRIPT_CHARS", 25)
-    monkeypatch.setattr(llm, "MAX_TRANSCRIPTS", 7)
-    assert llm.batches([" aaaa ", "", "bbbb", "cccccccccccc", "dd", "ee", "ff", "gg"]) == [
-        ["aaaa", "bbbb"],
-        ["cccccccccccc"],  # longer than a step: a step of its own
-        ["dd", "ee"],  # "ff" would pass 25 characters; "gg" is past the count
-    ]
+    transcripts = [" first second third\nfourth fifth ", "", "x" * 15, *["tail"] * 301]
+    steps = llm.batches(transcripts)
+    assert all(sum(map(len, step)) <= 10 for step in steps)
+    assert "".join("".join(t.split()) for step in steps for t in step) == "".join(
+        "".join(t.split()) for t in transcripts
+    )
+    assert steps[:2] == [["first"], ["second"]]  # whole words when they fit
     assert llm.batches([]) == [] and llm.batches(["", " "]) == []
 
 
@@ -65,6 +69,12 @@ def test_bad_replies_are_errors_with_the_reply_quoted() -> None:
         llm.parse_reply('{"terms": ["Dictum"]}')
     with pytest.raises(ValueError, match=r"the model's reply\[0\].spelling must be"):
         llm.parse_reply('{"entries": [{"spelling": 1}]}')
+    with pytest.raises(ValueError, match="must have a description"):
+        llm.parse_reply('{"entries": [{"spelling": "Groq"}]}')
+    with pytest.raises(ValueError, match="remove list"):
+        llm.parse_reply('{"entries": [], "remove": "Groq"}')
+    with pytest.raises(ValueError, match="both removed and revised"):
+        llm.parse_reply(REPLY[:-1] + ', "remove": ["claude code"]}')
 
 
 def test_propose_learned_calls_the_model_with_the_prompts() -> None:
@@ -85,44 +95,72 @@ def test_propose_learned_calls_the_model_with_the_prompts() -> None:
     )
     assert learned == PARSED
     assert seen["provider"] == "anthropic" and seen["model"] == "anthropic:claude-fable-5-1"
-    assert seen["system"] == llm.SYSTEM_PROMPT and "- hello" in seen["user"]
+    assert seen["system"] == llm.SYSTEM_PROMPT and '["hello"]' in seen["user"]
     assert "Step 1 of 1" in seen["user"]
 
 
-def test_steps_see_earlier_proposals_and_are_combined(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_steps_revise_descriptions_and_phrases_remove_mistakes_and_keep_other_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(llm, "BATCH_CHARS", 8)
     prompts: list[str] = []
     replies = [
-        '{"entries": [{"spelling": "Groq", "description": "a provider", "heard": ["grok"]}]}',
-        '{"entries": [{"spelling": "groq", "description": "again", "heard": ["crock"]},'
-        ' {"spelling": "Soniox", "heard": ["sonics"]}]}',
+        '{"entries": [{"spelling": "Groq", "description": "a provider",'
+        ' "heard": ["grok", "wrong phrase"]}]}',
+        '{"entries": [{"spelling": "groq", "description": "a clearer definition",'
+        ' "heard": ["grok", "crock"]},'
+        ' {"spelling": "Soniox", "description": "speech provider", "heard": ["sonics"]}],'
+        ' "remove": ["mistake"]}',
+        '{"entries": [], "remove": []}',
     ]
 
     async def fake(provider: str, api_key: str, model: str, system: str, user: str) -> str:
         prompts.append(user)
         return replies[len(prompts) - 1]
 
+    current = Dictionary(
+        pinned=(Entry("Pinned", "approved"),),
+        learned={
+            "s/m": (Entry("Keep", "still valid"), Entry("Mistake", "wrong")),
+            "other/model": (Entry("Elsewhere", "another model's term"),),
+        },
+    )
     learned = llm.propose_learned(
         "openai",
         "k",
         "openai:gpt-6-astra",
-        Dictionary(),
-        ["one two", "three four"],
+        current,
+        ["one two", "second", "third"],
         "s/m",
         call=fake,
     )
     assert learned == (
-        Entry("Groq", "a provider", ("grok", "crock")),  # joined; the first description kept
-        Entry("Soniox", heard=("sonics",)),
+        Entry("Keep", "still valid"),
+        Entry("groq", "a clearer definition", ("grok", "crock")),
+        Entry("Soniox", "speech provider", ("sonics",)),
     )
-    assert "Step 1 of 2" in prompts[0] and "- one two" in prompts[0] and "three" not in prompts[0]
-    assert "Step 2 of 2" in prompts[1] and "- three four" in prompts[1]
+    assert "Step 1 of 3" in prompts[0] and '["one two"]' in prompts[0]
+    assert "Step 2 of 3" in prompts[1] and '["second"]' in prompts[1]
     assert '"spelling": "Groq"' in prompts[1] and "one two" not in prompts[1]
+    assert "a clearer definition" in prompts[2] and "Mistake" not in prompts[2]
+    assert all("Elsewhere" not in prompt and '"spelling": "Pinned"' in prompt for prompt in prompts)
+    assert current.learned_for("s/m")[1].spelling == "Mistake"  # proposal only
+
+
+def test_a_later_step_failure_returns_no_partial_dictionary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(llm, "BATCH_CHARS", 8)
+    calls = 0
 
     async def failing(*_: str) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return REPLY
         raise RuntimeError("HTTP 529")
 
-    with pytest.raises(ValueError, match="Step 1 of 2: RuntimeError: HTTP 529"):
+    with pytest.raises(ValueError, match="Step 2 of 2: RuntimeError: HTTP 529"):
         llm.propose_learned(
             "openai",
             "k",
@@ -144,12 +182,10 @@ def test_provider_failures_surface_verbatim() -> None:
         )
 
 
-def test_catalog_lists_the_strongest_model_first() -> None:
+def test_catalog_lists_affordable_defaults_first() -> None:
     anthropic = llm.catalog("anthropic")
-    assert (
-        anthropic[0].id == "anthropic:claude-fable-5-1" and anthropic[0].name == "Claude Fable 5.1"
-    )
-    assert llm.catalog("openai")[0].id == "openai:gpt-6-astra"
+    assert anthropic[0].id == "anthropic:claude-sonnet-5" and anthropic[0].name == "Claude Sonnet 5"
+    assert llm.catalog("openai")[0].id == "openai:gpt-5.4-mini"
     assert all(c.id.startswith("openai:") for c in llm.catalog("openai"))
     assert not any("image" in c.id for c in llm.catalog("openai"))
 
@@ -213,8 +249,10 @@ def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
 @pytest.mark.parametrize(
     "model",
     [
+        "anthropic:claude-sonnet-5",
         "anthropic:claude-fable-5-1",
         "anthropic:claude-haiku-4-5",
+        "openai:gpt-5.4-mini",
         "openai:gpt-6-astra",
     ],
 )
@@ -234,11 +272,11 @@ def test_direct_request_keeps_prompts_model_and_reasoning(
             assert body["system"] == "system"
             assert body["messages"] == [{"role": "user", "content": "user"}]
             if "haiku" in model:
-                assert body["thinking"] == {"type": "enabled", "budget_tokens": 32000}
-                assert body["max_tokens"] == 40192
+                assert "thinking" not in body
             else:
                 assert body["thinking"] == {"type": "adaptive"}
-                assert body["output_config"] == {"effort": "high"}
+                assert body["output_config"] == {"effort": "medium"}
+            assert body["max_tokens"] == 8192
             return sse(
                 {"type": "message_start", "message": {"stop_reason": None}},
                 {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking"}},
@@ -267,7 +305,7 @@ def test_direct_request_keeps_prompts_model_and_reasoning(
                 {"type": "message_stop"},
             )
         assert body["instructions"] == "system" and body["input"] == "user"
-        assert body["reasoning"] == {"effort": "high"} and body["store"] is False
+        assert body["reasoning"] == {"effort": "medium"} and body["store"] is False
         assert body["max_output_tokens"] == 8192
         return openai_done("reply")
 
