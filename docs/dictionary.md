@@ -75,11 +75,39 @@ probabilities; a match is replaced unless Jev puts the literal reading at
 0.8 or above (`VETO_PROBABILITY` in `jev.py`). So "Jeff" becomes "JEV" in a
 note about the model and stays "Jeff" in a note about a person, and a bad
 entry such as "Dictum" heard as "Dictam" is refused instead of applied.
-The request is answered in about 0.4 s on a warm connection and costs a
-fraction of a cent; a failure (no network, a bad key, an unusable answer)
-falls back to replacing every match, and the reason is shown on the
-history card. Each transcription records what Jev did (`jev_fixed`,
-`jev_kept`, `jev_seconds`, `jev_error`), and Settings sums them up.
+The earlier warm-connection trial took about 0.4 s per request. Speech
+success and the untouched provider text are now saved before dictionary
+loading or Jev processing. If contextual correction remains unavailable,
+Dictum delivers that untouched text, skips formatting and shows a
+noninterrupting notice. Formatting failure keeps the preceding successful
+text. History records each stage independently, including its status,
+method, elapsed time, attempts, decisions and replacements. Replacement
+counts describe operations, not accuracy. The old combined Jev counters
+remain in existing databases and exports as `legacy_processing`, excluded
+from new summaries because failed corrections could inflate them.
+
+Settings > Providers exposes the initial retry policy: **5 seconds total**
+across correction and formatting, **3 seconds per attempt**, and **2 attempts
+per request**. These are configurable defaults, not measured provider
+service guarantees. Transient connection/read failures, timeouts and HTTP
+408/429/500/502/503/504/529 can retry with 0.15-second exponential backoff.
+`Retry-After` is respected only when another attempt fits the remaining
+budget; longer waits return the original immediately. Authentication,
+request-validation and malformed-answer failures are not retried.
+[TypeSafe's API](https://docs.typesafe.ai/api) documents the response schema
+and rate-limit/overload errors.
+
+A reused asynchronous HTTP client runs on an owned event loop so the total
+deadline cancels ongoing I/O, including a response body that keeps dripping
+bytes. Per-operation HTTP timeouts alone do not establish that bound. The
+client closes on application shutdown; a pending speech result survives a
+restart as raw success with an interrupted-processing notice. The deadline
+covers optional processing, not speech recognition or native paste.
+
+**Copy original** in history copies the untouched provider result without
+changing history or pasting into another app. Applying mappings without
+context after a failure awaits the confusion-group safety rules; the
+current entries cannot establish that a singleton mapping is safe.
 
 Measured on 2026-09-21 over this owner's 181 Parakeet transcripts, 48
 dictionary matches with the intended reading labelled from context:

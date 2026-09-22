@@ -44,17 +44,34 @@ function player(url, label, seconds) {
   return box;
 }
 
-// What Jev did to this transcript, when it was on: counts and time, or why it was skipped.
-function jevLine(t) {
-  if (t.jev_seconds === null && !t.jev_error) return null;
-  const line = document.createElement("div");
-  line.className = t.jev_error ? "jev err" : "jev";
-  const parts = ["Jev"];
-  if (t.jev_fixed !== null) parts.push(`${t.jev_fixed} fixed`, `${t.jev_kept} kept as heard`);
-  if (t.jev_seconds !== null) parts.push(`+${t.jev_seconds.toFixed(1)} s`);
-  if (t.jev_error) parts.push(`skipped: ${t.jev_error}`);
-  line.textContent = parts.join(" · ");
-  return line;
+// Stage counts describe processing, not the accuracy of the delivered words.
+function processingLines(t) {
+  const lines = [];
+  for (const [name, stage] of [["Dictionary", t.correction], ["Formatting", t.formatting]]) {
+    if (!stage || stage.status === "disabled") continue;
+    const line = document.createElement("div");
+    line.className = stage.status === "failed" ? "jev err" : "jev";
+    line.setAttribute("role", "status");
+    const parts = [name, stage.status];
+    if (stage.status === "failed") {
+      parts.push(name === "Dictionary" ? "original transcription retained" : "prior text retained", stage.error);
+    } else if (name === "Dictionary" && stage.status === "succeeded") {
+      parts.push(`${stage.replacements} replacement${stage.replacements === 1 ? "" : "s"}`);
+      if (stage.method === "contextual") parts.push(`${stage.preserved} preserved`, `${stage.decisions} contextual decision${stage.decisions === 1 ? "" : "s"}`);
+      else parts.push("without context");
+    }
+    if (stage.attempts > 1) parts.push(`${stage.attempts - 1} ${stage.attempts === 2 ? "retry" : "retries"}`);
+    if (stage.seconds) parts.push(`+${stage.seconds.toFixed(1)} s`);
+    line.textContent = parts.join(" · ");
+    lines.push(line);
+  }
+  if (t.legacy_processing) {
+    const line = document.createElement("div");
+    line.className = "jev";
+    line.textContent = "Legacy processing record · excluded from current metrics";
+    lines.push(line);
+  }
+  return lines;
 }
 
 export function renderCard(r, models) {
@@ -99,8 +116,7 @@ export function renderCard(r, models) {
     block.title = latest.text ? "Click to copy" : "";
     card.append(block);
     card.dataset.copy = latest.text ?? "";
-    const jev = jevLine(latest);
-    if (jev) card.append(jev);
+    card.append(...processingLines(latest));
   }
 
   const row = document.createElement("div");
@@ -118,6 +134,15 @@ export function renderCard(r, models) {
   const rowSpacer = document.createElement("span");
   rowSpacer.className = "spacer";
   row.append(download, rowStatus, rowSpacer);
+  if (latest?.raw_text !== null && latest?.raw_text !== undefined) {
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "btn ghost copy-raw";
+    copy.textContent = "Copy original";
+    copy.title = "Copy the untouched speech-provider result";
+    card.dataset.raw = latest.raw_text;
+    row.append(copy);
+  }
   let attempts = null;
   if (earlier.length > 0) {
     const toggle = document.createElement("button");
@@ -140,7 +165,7 @@ export function renderCard(r, models) {
       const text = document.createElement("div");
       text.className = t.status === "ok" ? "text" : "text err";
       text.textContent = t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
-      attempt.append(meta, text);
+      attempt.append(meta, text, ...processingLines(t));
       attempts.append(attempt);
     }
     toggle.addEventListener("click", () => {

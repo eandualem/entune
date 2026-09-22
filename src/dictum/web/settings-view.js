@@ -118,15 +118,27 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     jev.key.placeholder = j.key_hint ? `saved ${j.key_hint} · type to replace` : "Not set";
     jev.dictionary.checked = j.dictionary;
     jev.formatting.checked = j.formatting;
-    const s = j.summary;
-    const parts = [];
-    if (s.transcriptions) {
-      parts.push(`${s.transcriptions} transcriptions with Jev`, `${s.fixed} fixed`, `${s.kept} kept as heard`);
-      if (s.median_seconds !== null) parts.push(`median +${s.median_seconds.toFixed(1)} s`);
-      if (s.failed) parts.push(`${s.failed} skipped after an error`);
+    for (const name of ["total_seconds", "attempt_seconds", "max_attempts"]) {
+      el(`jev-${name}`).value = j.policy[name];
     }
-    el("jev-summary").textContent = parts.join(" · ") || (j.key_hint ? "" : "Add a TypeSafe key to turn either on.");
+    const s = j.summary;
+    const lines = [];
+    if (s.transcriptions) {
+      lines.push(`${s.transcriptions} processed transcripts · median +${s.median_seconds?.toFixed(1) ?? "–"} s`);
+      for (const [method, label] of [["contextual", "Contextual dictionary"], ["unconditional", "Without context"], ["formatting", "Formatting"]]) {
+        const stage = s.stages[method];
+        if (!stage.succeeded && !stage.failed && !stage.replacements && !stage.decisions) continue;
+        lines.push(`${label}: ${stage.succeeded} succeeded, ${stage.failed} failed, ${stage.skipped} skipped; retries: ${stage.retries}; decisions: ${stage.decisions}; replacements: ${stage.replacements}; preserved: ${stage.preserved}; unresolved: ${stage.abstained}`);
+      }
+      lines.push("Counts describe processing, not accuracy. Legacy counters are excluded.");
+    }
+    el("jev-summary").textContent = lines.join("\n") || (j.key_hint ? "" : "Add a TypeSafe key to turn either on.");
   }
+  el("jev-policy-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const policy = Object.fromEntries(["total_seconds", "attempt_seconds", "max_attempts"].map((name) => [name, Number(el(`jev-${name}`).value)]));
+    if (await saveSetting({ jev: { policy } }, el("jev-policy-status"))) await loadSettings();
+  });
   el("jev-key-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const key = jev.key.value.trim();

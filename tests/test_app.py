@@ -525,3 +525,20 @@ def test_persisted_audio_is_released_while_waiting_for_the_next_recording(tmp_pa
     del capture
     wait_for(lambda: len(dictum.store.list_recordings()) == 1)
     wait_for(lambda: reference() is None)
+
+
+def test_correction_failure_delivers_raw_with_a_noninterrupting_notice(tmp_path: Path) -> None:
+    app, platform, dictum = make(tmp_path)
+    dictum.set_key("stub", "k")
+    dictum.set_default_model("stub/good")
+    (tmp_path / "dictionary.json").write_text("{broken")
+    recording = dictum.store_recording(b"audio", "audio/wav")
+    app._pending = 1
+    app._transcribe_and_deliver(recording, 1.0)
+    assert platform.actions.clipboard == "hello from the fake"
+    assert platform.actions.pasted == 1 and not platform.window.shown
+    assert any(
+        "Original transcription delivered" in message for _, message in platform.actions.notices
+    )
+    assert not any("transcription failed" in title for title, _ in platform.actions.notices)
+    assert app._pending == 0
