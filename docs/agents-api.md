@@ -53,5 +53,18 @@ silently if Dictum is not running.
 | `POST /api/dictionary/pin` | `{"model", "group", "meaning"}` IDs plus `If-Match`: share one meaning and its associations; `{"model"}` explicitly pins all learned knowledge for that model |
 | `POST /api/recordings/{id}/transcriptions/{attempt}/safe-copy` | derive text from original using only approved direct mappings for the original speech model; returns text, replacements and unresolved count, without saving or pasting |
 | `GET /api/dictionary/corrections` | what agents sent and Dictum pinned, newest first, with the `source` each gave |
-| `POST /api/dictionary/build` | ask the configured language model for a proposal for the default speech model, from its transcripts only (nothing saved); the reply names the `model`, complete proposed groups, added/removed groups, and the original revision `version` |
+| `POST /api/dictionary/build` | `{"source": "history"}` or `{"source": "audio"}`: start one frozen-model/revision job; 202 returns its `id` and status; 409 if a job or unreviewed proposal is already active |
+| `GET /api/dictionary/build` | lightweight current job progress (no transcript or proposal contents) |
+| `GET /api/dictionary/build/{id}` | named job status, including its proposal when ready; 409 if no longer current |
+| `POST /api/dictionary/build/{id}/cancel` | request cancellation; in-flight synchronous speech may finish before cleanup; no new clips/chunks or proposal publication |
+| `POST /api/dictionary/build/{id}/accept` | accept the server-held proposal against its original revision, preserving pinned/other-model knowledge; 409 on stale revision or wrong state |
+| `DELETE /api/dictionary/build/{id}` | discard a finished job/proposal; 409 during work/cleanup; actions on a replaced job ID also return 409 |
 | `POST /api/capture`, `GET`, `DELETE` | record a shortcut by pressing it (needs the menu-bar app) |
+
+Build phases: `queued`, `transcribing` (audio), `building`, `cancelling`, `cleaning`,
+then `ready`, `failed` or `cancelled`. Acceptance/discard yields `accepted`/`discarded`;
+`idle` means no job yet. Status includes frozen speech/dictionary model IDs and source
+counts; generation progress adds `step`, `steps` and `inputCharacters` (the full system
+and user text, including the growing dictionary; not a token count or context-limit guarantee).
+Jobs and proposals are in memory only; restart discards them, while originals and accepted
+knowledge remain. The former synchronous history and separate audio-build routes are removed.

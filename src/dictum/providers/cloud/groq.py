@@ -16,7 +16,12 @@ class Groq:
     models: tuple[str, ...] = ("whisper-large-v3-turbo",)
 
     def __init__(self, client: httpx.Client | None = None) -> None:
+        self._owns_client = client is None
         self._client = client or httpx.Client(timeout=DEFAULT_TIMEOUT)
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
 
     def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         data = {"model": model, "response_format": "json"}

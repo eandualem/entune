@@ -191,6 +191,15 @@ that speech model. Review and accept the proposal to change your dictionary;
 pinned meanings remain shared. Provider failures stop the build visibly, without
 fallback or a partial dictionary. Audio already imported is kept.
 
+History and audio share one build job, visible across open windows. Cancel stops
+new clips and refinement steps; a running speech operation may need to finish,
+while a generation request can be interrupted. Wait for cleanup before starting
+another build. A ready proposal must be accepted or discarded first. Acceptance
+checks the dictionary revision from the start of the job: if another edit intervened,
+discard the stale proposal and rebuild. Foreground dictation takes priority between
+local audio clips; switching models never unloads one during inference.
+
+
 ### Jev decides each match in context
 
 With a [TypeSafe](https://typesafe.ai) key and contextual correction enabled, **Jev**

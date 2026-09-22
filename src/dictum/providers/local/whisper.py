@@ -65,6 +65,7 @@ class WhisperCpp:
         load_model: Callable[[str], Any] | None = None,
     ) -> None:
         self.models_dir = models_dir
+        self._owns_client = client is None
         self._client = client or httpx.Client(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True)
         self._load_model = load_model or _load_whisper
         self._downloads: dict[str, Download] = {}
@@ -119,10 +120,22 @@ class WhisperCpp:
     def remove(self, name: str) -> None:
         _spec(name)
         with self._lock:
+            download = self._downloads.get(name)
+            if download is not None and download.running:
+                raise ValueError("The model is still downloading; wait before removing it")
             self._models.pop(name, None)
             self._downloads.pop(name, None)
             for path in (self._path(name), self._part(name)):
                 path.unlink(missing_ok=True)
+
+    def close(self) -> None:
+        for download in self._downloads.values():
+            download.close()
+        try:
+            self.unload()
+        finally:
+            if self._owns_client:
+                self._client.close()
 
     def warm(self, name: str) -> None:
         """Load the model now (the caller is off the UI and request paths), so the first

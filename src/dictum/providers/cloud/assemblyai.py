@@ -21,6 +21,7 @@ import queue
 import struct
 import threading
 import time
+import weakref
 from collections.abc import Callable, Iterator
 
 import httpx
@@ -52,8 +53,19 @@ class AssemblyAI:
         client: httpx.Client | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        self._owns_client = client is None
         self._client = client or httpx.Client(timeout=DEFAULT_TIMEOUT)
         self._sleep = sleep
+        self._uploads: weakref.WeakSet[StreamingUpload] = weakref.WeakSet()
+
+    def close(self) -> None:
+        uploads = list(self._uploads)
+        for upload in uploads:
+            upload.abort()
+        for upload in uploads:
+            upload.close()
+        if self._owns_client:
+            self._client.close()
 
     def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         seconds = clip.seconds
@@ -98,7 +110,9 @@ class AssemblyAI:
                 self._client.delete(f"{BASE}/transcript/{job_id}", headers=headers)
 
     def begin_upload(self, api_key: str, sample_rate: int) -> Upload:
-        return StreamingUpload(self._client, api_key, sample_rate)
+        upload = StreamingUpload(self._client, api_key, sample_rate)
+        self._uploads.add(upload)
+        return upload
 
     def _wait(self, job_id: str, headers: dict[str, str]) -> TranscribeResult:
         deadline = time.monotonic() + POLL_LIMIT_SECONDS
@@ -172,6 +186,10 @@ class StreamingUpload:
         # then leave a marker to wake a consumer blocked on the queue.
         self._discard_pending()
         self._queue.put(_END)
+
+    def close(self) -> None:
+        self.abort()
+        self._thread.join()
 
     def _close(self) -> None:
         if not self._closed:

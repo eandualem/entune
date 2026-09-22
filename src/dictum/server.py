@@ -24,6 +24,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from dictum import __version__, jev, llm, onboarding, shortcuts
 from dictum.audio import extension_for, safe_mime
+from dictum.builds import JobConflict
 from dictum.service import (
     JEV_PROVIDER,
     DictionaryChanged,
@@ -338,12 +339,44 @@ def create_app(app: Dictum) -> Starlette:
             return _bad(str(exc))
         return JSONResponse({"added": [e.as_json() for e in added]})
 
-    async def build_dictionary(_: Request) -> Response:
+    def build_status(request: Request) -> Response:
         try:
-            proposal = await run_in_threadpool(app.build_dictionary)
+            return JSONResponse(app.dictionary_build_status(request.path_params.get("job_id")))
+        except JobConflict as exc:
+            return _bad(str(exc), 409)
+
+    async def start_build(request: Request) -> Response:
+        try:
+            body = await request.json()
+            if (
+                not isinstance(body, dict)
+                or set(body) != {"source"}
+                or body["source"] not in ("history", "audio")
+            ):
+                raise ValueError("Choose source history or audio")
+            state = await run_in_threadpool(app.start_dictionary_build, body["source"])
+        except JobConflict as exc:
+            return _bad(str(exc), 409)
         except ValueError as exc:
             return _bad(str(exc))
-        return JSONResponse(proposal.as_json())
+        return JSONResponse(state, status_code=202)
+
+    async def act_on_build(request: Request) -> Response:
+        action = request.path_params.get("action", "discard")
+        methods = {
+            "cancel": app.cancel_dictionary_build,
+            "accept": app.accept_dictionary_build,
+            "discard": app.discard_dictionary_build,
+        }
+        if action not in methods:
+            return _bad("Unknown dictionary job action", 404)
+        try:
+            await run_in_threadpool(methods[action], request.path_params["job_id"])
+        except (JobConflict, DictionaryChanged) as exc:
+            return _bad(str(exc), 409)
+        except ValueError as exc:
+            return _bad(str(exc))
+        return JSONResponse(app.dictionary_build_status())
 
     def dictionary_audio(_: Request) -> Response:
         return JSONResponse({"count": len(app.store.dictionary_audio())})
@@ -370,23 +403,6 @@ def create_app(app: Dictum) -> Starlette:
         except (ValueError, OSError) as exc:
             return _bad(str(exc))
         return JSONResponse(result)
-
-    def audio_build_status(_: Request) -> Response:
-        return JSONResponse(app.audio_dictionary_status())
-
-    async def start_audio_build(_: Request) -> Response:
-        try:
-            await run_in_threadpool(app.start_audio_dictionary)
-        except ValueError as exc:
-            return _bad(str(exc))
-        return JSONResponse(app.audio_dictionary_status(), status_code=202)
-
-    def dismiss_audio_build(_: Request) -> Response:
-        try:
-            app.dismiss_audio_dictionary()
-        except ValueError as exc:
-            return _bad(str(exc), 409)
-        return JSONResponse({"ok": True})
 
     async def start_capture(_: Request) -> Response:
         if not app.can_capture():
@@ -585,13 +601,14 @@ def create_app(app: Dictum) -> Starlette:
                 methods=["POST"],
             ),
             Route("/api/dictionary", put_dictionary, methods=["PUT"]),
-            Route("/api/dictionary/build", build_dictionary, methods=["POST"]),
+            Route("/api/dictionary/build", build_status, methods=["GET"]),
+            Route("/api/dictionary/build", start_build, methods=["POST"]),
+            Route("/api/dictionary/build/{job_id}", build_status, methods=["GET"]),
+            Route("/api/dictionary/build/{job_id}", act_on_build, methods=["DELETE"]),
+            Route("/api/dictionary/build/{job_id}/{action}", act_on_build, methods=["POST"]),
             Route("/api/dictionary/audio", dictionary_audio, methods=["GET"]),
             Route("/api/dictionary/audio", import_dictionary_audio, methods=["POST"]),
             Route("/api/dictionary/audio/wispr", import_wispr, methods=["POST"]),
-            Route("/api/dictionary/audio/build", audio_build_status, methods=["GET"]),
-            Route("/api/dictionary/audio/build", start_audio_build, methods=["POST"]),
-            Route("/api/dictionary/audio/build", dismiss_audio_build, methods=["DELETE"]),
             Route("/api/dictionary/corrections", agent_corrections, methods=["POST"]),
             Route("/api/dictionary/corrections", received_corrections, methods=["GET"]),
             Route("/api/capture", start_capture, methods=["POST"]),

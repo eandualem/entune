@@ -227,5 +227,67 @@ def test_rapid_selection_changes_coalesce_to_the_latest_model(
             app.set_default_model("local/small.en")
     finally:
         release.set()
-    wait_until(lambda: not app._warming)
+    wait_until(lambda: not app._speech.warming)
     assert warmed == ["base.en", "small.en"]
+    assert app.close()
+
+
+def test_shutdown_stops_download_before_next_chunk_and_keeps_resumable_bytes(
+    tmp_path: Path,
+) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from dictum.providers.local.downloads import Download
+
+    entered, release = threading.Event(), threading.Event()
+
+    class Stream(httpx.SyncByteStream):
+        def __iter__(self) -> Any:
+            yield b"first"
+            entered.set()
+            assert release.wait(3)
+            yield b"second"
+
+    target = tmp_path / "model.bin"
+    with mock_client(lambda req: httpx.Response(200, stream=Stream())) as client:
+        download = Download(client, [("https://models.test/first", target)], 11)
+        download.start()
+        try:
+            assert entered.wait(2)
+            with ThreadPoolExecutor(1) as pool:
+                closing = pool.submit(download.close)
+                try:
+                    assert download._cancel.wait(2)
+                    assert not closing.done()
+                finally:
+                    release.set()
+                closing.result()
+        finally:
+            release.set()
+            download.close()
+        assert not target.exists() and target.with_name("model.bin.part").read_bytes() == b"first"
+        assert not download.running
+
+
+def test_converter_timeout_removes_its_temporary_audio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from dictum.providers.local import audio
+
+    temporary: list[Path] = []
+
+    def timeout(command: list[str], **kwargs: object) -> None:
+        assert kwargs["timeout"] == 300
+        temporary.append(Path(command[command.index("-i") + 1]))
+        assert temporary[0].read_bytes() == b"clip"
+        raise subprocess.TimeoutExpired(command, 300)
+
+    monkeypatch.setattr("dictum.providers.local.audio.shutil.which", lambda name: "/fake/ffmpeg")
+    monkeypatch.setattr("dictum.providers.local.audio.subprocess.run", timeout)
+    monkeypatch.setattr("dictum.providers.local.audio.tempfile.tempdir", str(tmp_path))
+    with pytest.raises(subprocess.TimeoutExpired):
+        audio.to_wav_with_ffmpeg(b"clip", sample_rate=16_000)
+    assert not temporary[0].exists()

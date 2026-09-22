@@ -193,7 +193,9 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 
 /* Dictionary */
 .dict { padding: 0 var(--sp-28) var(--sp-28); }
-.dict-bar { display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-16) 0 var(--sp-12); position: sticky; top: 0; z-index: 2; background: var(--surface); }
+.dict-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-10); padding: var(--sp-16) 0 var(--sp-12); position: sticky; top: 0; z-index: 2; background: var(--surface); }
+#build-status { overflow-wrap: anywhere; }
+#build-status:not(.show) { display: none; }
 .help-btn { font-size: var(--fs-12-5); color: var(--text-dim); }
 .help-btn[aria-expanded="true"] { color: var(--text); }
 .json-editor { margin-bottom: var(--sp-14); }

@@ -14,7 +14,7 @@ def to_wav_with_ffmpeg(data: bytes, *, sample_rate: int) -> bytes:
     try:
         command = ["ffmpeg", "-v", "error", "-i", source.name, "-ac", "1"]
         command += ["-ar", str(sample_rate), "-f", "wav", "-"]
-        result = subprocess.run(command, capture_output=True, check=True)
+        result = subprocess.run(command, capture_output=True, check=True, timeout=300)
     finally:
         Path(source.name).unlink(missing_ok=True)
     return bytes(result.stdout)

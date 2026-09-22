@@ -67,6 +67,7 @@ class Parakeet:
         find_engine: Any = engine_python,
     ) -> None:
         self.models_dir = models_dir
+        self._owns_client = client is None
         self._client = client or httpx.Client(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True)
         self._engine = engine
         self._find_engine = find_engine
@@ -111,9 +112,20 @@ class Parakeet:
     def remove(self, name: str) -> None:
         _check(name)
         with self._lock:
+            if self._download is not None and self._download.running:
+                raise ValueError("The model is still downloading; wait before removing it")
             self._stop_helper()
             self._download = None
             shutil.rmtree(self._dir(), ignore_errors=True)
+
+    def close(self) -> None:
+        if self._download is not None:
+            self._download.close()
+        try:
+            self.unload()
+        finally:
+            if self._owns_client:
+                self._client.close()
 
     def unload(self, keep: str | None = None) -> None:
         if keep != MODEL:
