@@ -172,11 +172,16 @@ def main(argv: list[str] | None = None) -> None:
     threading.Thread(target=server.run, daemon=True).start()
     from dictum.desktop.app import DictumApp
 
+    app = None
     try:
-        DictumApp(dictum, platform, url, show_window=not args.no_open).run()
+        app = DictumApp(dictum, platform, url, show_window=not args.no_open)
+        app.run()
     finally:
         server.should_exit = True
-        dictum.close()
+        if app is not None:
+            app.close()
+        else:
+            dictum.close()
 
 
 if __name__ == "__main__":

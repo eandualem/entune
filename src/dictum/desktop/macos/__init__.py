@@ -1,6 +1,6 @@
 """macOS: pynput and Quartz for the shortcut, pbcopy and osascript for clipboard,
 paste and notifications, Quartz for the permission checks. The window and tray come
-from the platform-neutral shell in `desktop/webview`."""
+from `desktop/webview`, with Cocoa adaptations isolated in this package."""
 
 from __future__ import annotations
 

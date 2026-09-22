@@ -1,6 +1,6 @@
 """The desktop app: orchestration in `app.py` against the protocols in `platform.py`.
-The window and tray come from `webview/` on every operating system; the hotkeys,
-actions and permissions underneath come from one package per OS, `macos/` today."""
+The native shell is currently macOS only. Other systems use browser mode;
+portable window/tray dependencies do not establish native platform support."""
 
 from __future__ import annotations
 
