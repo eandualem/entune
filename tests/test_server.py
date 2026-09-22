@@ -296,7 +296,8 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
         assert "hello there, I use cloud code" in user
         assert "from another model" not in user  # only the default model's transcripts
         return (
-            '{"entries": [{"spelling": "Claude Code", "heard": ["claud code"]},'
+            '{"entries": [{"spelling": "Claude Code", "description": "coding agent",'
+            ' "heard": ["claud code"]},'
             ' {"spelling": "Soniox", "description": "a provider", "heard": ["sonics"]}]}'
         )
 
@@ -326,7 +327,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     assert calls == [("openai:gpt-6-astra", "sk-1")]
     assert proposal["model"] == "stub/good"
     assert proposal["learned"] == [  # the pinned spelling keeps only its new phrase
-        {"spelling": "Claude Code", "description": "", "heard": ["claud code"]},
+        {"spelling": "Claude Code", "description": "coding agent", "heard": ["claud code"]},
         {"spelling": "Soniox", "description": "a provider", "heard": ["sonics"]},
     ]
     assert proposal["added"] == proposal["learned"] and proposal["removed"] == []

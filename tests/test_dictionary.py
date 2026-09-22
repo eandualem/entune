@@ -155,7 +155,9 @@ def test_propose_respects_pinned_and_diffs_against_learned() -> None:
     )
     assert p.added == (Entry("dictum", "the app", ("dictam",)), Entry("AssemblyAI", "a provider"))
     assert p.removed == (Entry("Old Term"),)  # the other model's list is not compared
-    assert p.as_json()["added"][1] == {
+    added = p.as_json()["added"]
+    assert isinstance(added, list)
+    assert added[1] == {
         "spelling": "AssemblyAI",
         "description": "a provider",
         "heard": [],

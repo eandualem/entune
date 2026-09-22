@@ -21,8 +21,9 @@ entries, and an entry is a `spelling`, a `description` and the phrases
 - **spelling** is the term as this person writes it. **heard** is every
   phrase speech models write instead; it may be empty for a term that is
   only ever spelled right, which still tells the next build what this
-  person's vocabulary is. **description** says what the term means for this
-  person and when they use it: it is what Jev reads to decide, per
+  person's vocabulary is. **description** defines what the term is and adds
+  the person's usage where known, without limiting it to one conversation
+  or project: it is what Jev reads to decide, per
   occurrence, whether the term was meant (see below). Without Jev, every
   heard phrase is replaced.
 - **pinned** is the user's: entered by hand, pinned from a proposal, or
@@ -103,14 +104,18 @@ with mixed results; it is off unless turned on.
 ## Build from history
 
 **Build from history** sends the default speech model's recent raw
-transcripts (at most 300, or 240,000 characters), the pinned section as
+transcripts (at most 300), the pinned section as
 approved and as evidence of who the user is and what they talk about, and
 that model's previous learned list to revise, to the language model chosen
 in Settings (with no choice, the suggested model of the first provider with
 a key), at high reasoning effort. A long history goes in steps of about
-24,000 characters of transcript: each step sees what the earlier steps
-proposed and adds only what its own transcripts show, and the steps'
-entries are combined (heard phrases joined, the earlier description kept).
+24,000 characters of transcript, splitting a long transcript at word
+boundaries. Every supplied transcript is processed. Each step sees the
+working dictionary, starting with this model's existing learned entries,
+and can add entries, replace descriptions and heard phrases, or explicitly
+remove mistaken entries. Unmentioned entries stay unchanged; absence from
+a chunk does not erase earlier knowledge. Only changes are returned, so a
+growing dictionary does not have to be repeated in every reply.
 Each request is streamed, because a reply at high effort takes minutes and
 a connection that carries nothing for a minute was observed to be cut on
 the way; a step that fails ends the build with the provider's words. It is asked for entries with a concrete
