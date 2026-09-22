@@ -1,90 +1,111 @@
-# The dictionary file
+# Meaning-based dictionary
 
-`dictionary.json` in the data directory. Two sections; each is a list of
-entries, and an entry is a `spelling`, a `description` and the phrases
-`heard` instead of it:
+`dictionary.json` uses version 2. The primary record is a confusion group with
+stable meaning IDs and explicit recognized-form associations. `pinned` is shared;
+`learned` is keyed by the unchanged speech model identifier (`provider/model`).
+Pinning protects knowledge from generation, but context decides among eligible
+competitors. The editor pins one meaning and its associations; other meanings and
+associations in that group remain local to the speech model. The explicit Pin all
+action shares the model's entire learned section.
 
 ```json
 {
-  "pinned": [
-    {"spelling": "JEV", "description": "TypeSafe's decision model the speaker integrates; not a person named Jeff", "heard": ["Jeff", "Jav", "Jeev"]},
-    {"spelling": "Dictum", "description": "the dictation app the speaker builds", "heard": []}
-  ],
+  "version": 2,
+  "pinned": [],
   "learned": {
-    "parakeet/parakeet-tdt-0.6b-v3": [
-      {"spelling": "fast mode", "description": "Dictum's setting that streams audio while recording", "heard": ["first mode"]}
-    ]
+    "parakeet/parakeet-tdt-0.6b-v3": [{
+      "id": "g_jev",
+      "meanings": [
+        {"id": "m_jev", "spelling": "Jev", "meaning": "TypeSafe's contextual decision model.", "personal_context": "Used in Dictum.", "casing": "fixed"},
+        {"id": "m_jeff", "spelling": "Jeff", "meaning": "A person's given name.", "personal_context": null, "casing": "fixed"}
+      ],
+      "recognized_forms": [
+        {"text": "Jeff", "associations": [
+          {"meaning_id": "m_jev", "basis": "user", "evidence": []},
+          {"meaning_id": "m_jeff", "basis": "literal", "evidence": []}
+        ], "direct": null, "direct_reason": ""},
+        {"text": "Jev", "associations": [{"meaning_id": "m_jev", "basis": "literal", "evidence": []}], "direct": null, "direct_reason": ""}
+      ],
+      "needs_review": false
+    }]
   }
 }
 ```
 
-- **spelling** is the term as this person writes it. **heard** is every
-  phrase speech models write instead; it may be empty for a term that is
-  only ever spelled right, which still tells the next build what this
-  person's vocabulary is. **description** defines what the term is and adds
-  the person's usage where known, without limiting it to one conversation
-  or project: it is what Jev reads to decide, per
-  occurrence, whether the term was meant (see below). Without Jev, every
-  heard phrase is replaced.
-- **pinned** is the user's: entered by hand, pinned from a proposal, or
-  sent by the user's agents after confirming a mistranscription with the
-  user (see [the agents' API](agents-api.md)). A model never changes it,
-  and it applies to every speech model. There is no other list for all
-  models: what should apply everywhere is pinned.
-- **learned** is kept per speech model (`provider/model`, the id the API
-  uses): what a language model proposed from that model's own transcripts
-  and the user accepted. One model's mishearings are not another's, so a
-  local model's list never touches a cloud model's output. The next build
-  for that model replaces its list. The Dictionary tab shows and builds the
-  default model's list; the file holds them all.
+An association makes one meaning eligible for one recognized form. Being in the same
+group does not create other associations or reverse a confusion. Two groups sharing
+a form contribute all eligible meanings. An ID identifies a meaning independently
+of spelling: edits retain IDs, and two senses may share an output spelling. A learned
+extension can reference a pinned meaning without changing it or sharing new local edges.
 
-**There is no size limit.** Every consistent mishearing is worth an entry,
-and the list gets more useful as it grows. Matching is one indexed pass
-over the transcript: the heard phrases are indexed by their first word, so
-at each word of the text only the phrases starting with that word are
-tried, and ten thousand entries cost no more than ten. Whole words or
-phrases only, matched regardless of case, longest phrase first, never
-inside an earlier match, so one rule's output is never rewritten by
-another; the spelling is inserted exactly as written. On the same heard
-phrase, pinned wins over learned, and the same spelling in a different
-capitalisation is the same entry. Nothing is sent to the speech provider
-ahead of the audio: the provider transcribes the raw speech, and the
-dictionary is applied to what comes back. The provider's raw text is kept
-next to the corrected one.
+Definitions describe general meaning; optional personal usage is supporting context,
+not a condition. The hypothetical Jeff above supplies no personal fact about the user.
+Correctly spelled forms participate where needed by a confusion, such as GIF alongside
+Jev. New generation rejects unrelated vocabulary with no recognition confusion.
 
-The file is read on every transcription, so a hand edit counts at once
-(and a file that does not parse stops dictation with a visible error until
-it is fixed); it is written to a temporary file and renamed into place, and
-the page and the agents' corrections write under one lock, each naming the
-version they edited (the API's `ETag`), so nothing added meanwhile is
-dropped. Earlier forms are read and rewritten once: a section that was
-`{"terms": [...], "replacements": {"heard": "meant"}}` becomes entries, a
-term as a spelling without heard phrases and a replacement as a spelling
-with one; the first release's one flat object is pinned, and an `agents`
-section is folded into pinned.
+## Classification and exact output
 
-## Jev: contextual replacement
+The matcher indexes distinct forms by first word and retrieves all eligible meanings
+and overlapping spans. Matching ignores case and allows whitespace between phrase
+words; it does not infer plurals, fuzzy aliases or word boundaries. Costs include the
+size of the matching bucket: a larger dictionary is not automatically faster.
 
-With a TypeSafe key saved and **Contextual dictionary** on in Settings ›
-Providers, every match is decided in context instead of replaced blindly.
-One request per transcript carries the transcript, only the entries that
-matched (spelling and description), each occurrence with the words around
-it, and one question per occurrence: did the speaker mean the term, or the
-words as recognised with their ordinary meaning? Jev answers with
-probabilities; a match is replaced unless Jev puts the literal reading at
-0.8 or above (`VETO_PROBABILITY` in `jev.py`). So "Jeff" becomes "JEV" in a
-note about the model and stays "Jeff" in a note about a person, and a bad
-entry such as "Dictum" heard as "Dictam" is refused instead of applied.
-The earlier warm-connection trial took about 0.4 s per request. Speech
-success and the untouched provider text are now saved before dictionary
-loading or Jev processing. If contextual correction remains unavailable,
-Dictum delivers that untouched text, skips formatting and shows a
-noninterrupting notice. Formatting failure keeps the preceding successful
-text. History records each stage independently, including its status,
-method, elapsed time, attempts, decisions and replacements. Replacement
-counts describe operations, not accuracy. The old combined Jev counters
-remain in existing databases and exports as `legacy_processing`, excluded
-from new summaries because failed corrections could inflate them.
+With contextual correction enabled, one request supplies the original transcript,
+matched meanings, original character spans and surrounding context. Jev selects a
+semantic interpretation. For an isolated span that is one eligible meaning. An overlap
+can offer the whole multiword name or compatible word-level meanings. Literal meanings
+are ordinary candidates: selecting the computing or weather meaning of cloud outputs
+cloud; selecting Claude outputs Claude. There is no semantic replace/keep choice.
+
+Dictum separately supports application uncertainty when a meaning is missing or context
+is insufficient. The `unresolved` response option is an abstention control, never a
+stored meaning. Invalid responses fail the stage; valid uncertain occurrences remain
+untouched while independent supported occurrences can change. Confidence is not an
+acoustic accuracy score and cannot guarantee the candidate set is complete.
+
+The initial, uncalibrated policy requires at least 0.70 support for an output and a
+0.15 margin over any different output or uncertainty. Probabilities for interpretations
+that produce identical text are summed: two cloud senses at 0.35 each beat Claude at
+0.30 without claiming which cloud sense was resolved. Conservative abstention can miss
+a correction that the former aggressive binary veto made correctly. Paid comparisons
+require separate authorization; cached binary scores below do not validate this policy.
+
+Code applies only stored spellings, once against disjoint original offsets. Fixed names
+and acronyms use exact casing (Jev, GIF, GitHub). Ordinary literal selections preserve
+original casing/spacing; changed ordinary words receive sentence-initial capitalization.
+Plural outputs must be stored explicitly, e.g. em dashes or CLIs; no inflection engine
+invents a missing output. Phrase mappings remain necessary for agentbackbone, back bone,
+exact names and meaningful phrase interactions. Context is not the replacement span.
+
+Overlapping spans are classified as bounded compatible interpretations. At more than
+12 overlapping spans or 32 interpretations the component remains unresolved; candidates
+are never silently truncated. This bounds combinatorial work at a coverage cost. Other
+disjoint components still run. Python character offsets never become browser edit offsets.
+
+## Direct mapping and recovery
+
+A singleton or pinned status does not prove a mapping safe. An explicitly approved form
+can specify `direct` as its eligible meaning ID plus a nonempty `direct_reason`. The
+editor labels this as always using that meaning without context. Approval should cover
+literal/name/quotation negatives, model scope, boundaries, number and casing. Generation
+cannot grant, remove or change this policy. There are no automatically approved legacy
+or generated mappings. A competing output or overlapping span disables the fast path.
+Editing an output spelling or casing clears its approvals; save that edit before
+approving the revised mapping.
+
+Direct-only dictation needs no contextual request (formatting may still make its own).
+Mixed dictation still makes one request. Exact unchanged outputs need no decision call.
+When contextual correction is off, only eligible approved direct mappings apply;
+ambiguous/unapproved spans remain original. Historical unconditional results retain
+their old method label and are not represented as approved direct work.
+
+Speech success and untouched provider text are saved before dictionary processing.
+Failure of contextual correction delivers the exact original, skips formatting and
+shows a noninterrupting notice; failure of formatting preserves the preceding text.
+History and Settings separate decisions, direct replacements, unresolved occurrences,
+retries, failures, preserved spans and timings. Replacements count edited disjoint
+components, not words proven correct. Old combined counters remain in exports under
+`legacy_processing`, excluded from new summaries.
 
 Settings > Providers exposes the initial retry policy: **5 seconds total**
 across correction and formatting, **3 seconds per attempt**, and **2 attempts
@@ -104,10 +125,15 @@ client closes on application shutdown; a pending speech result survives a
 restart as raw success with an interrupted-processing notice. The deadline
 covers optional processing, not speech recognition or native paste.
 
-**Copy original** in history copies the untouched provider result without
-changing history or pasting into another app. Applying mappings without
-context after a failure awaits the confusion-group safety rules; the
-current entries cannot establish that a singleton mapping is safe.
+**Copy original** copies untouched provider text. After a correction failure,
+**Apply safe mappings and copy** computes a derived result using only currently approved
+mappings for that attempt's speech model and reports unresolved components. It does not
+change history, overwrite the original, or paste into another application.
+
+## Historical binary evaluation (before version 2)
+
+These cached results describe the former term-versus-literal classifier, not the current
+meaning-based implementation or a qualified direct-mapping set.
 
 Measured on 2026-09-21 over this owner's 181 Parakeet transcripts, 48
 dictionary matches with the intended reading labelled from context:
@@ -167,29 +193,39 @@ every word stays. A sentence between two list items joins the list at a
 lower bar. On the same corpus it changed 61 of 162 clips at the 0.6 bar,
 with mixed results; it is off unless turned on.
 
-## Build from history
+## Generation, editing and migration
 
-**Build from history** sends the default speech model's recent raw
-transcripts (at most 300), the pinned section as
-approved and as evidence of who the user is and what they talk about, and
-that model's previous learned list to revise, to the language model chosen
-in Settings (with no choice, the suggested model of the first provider with
-a key). The suggestions are Claude Sonnet 5 and GPT-5.4 mini, with medium
-reasoning effort where supported; older Claude models run without extended
-thinking. A long history goes in steps of about
-24,000 characters of transcript, splitting a long transcript at word
-boundaries. Every supplied transcript is processed. Each step sees the
-working dictionary, starting with this model's existing learned entries,
-and can add entries, replace descriptions and heard phrases, or explicitly
-remove mistaken entries. Unmentioned entries stay unchanged; absence from
-a chunk does not erase earlier knowledge. Only changes are returned, so a
-growing dictionary does not have to be repeated in every reply.
-Each request is streamed, because a reply at high effort takes minutes and
-a connection that carries nothing for a minute was observed to be cut on
-the way; a step that fails ends the build with the provider's words. It is asked for entries with a concrete
-description each, every consistent mishearing, and a heard phrase for a
-common English word only when the evidence is clear, since the description
-lets Jev keep it where it was meant literally. The reply becomes a proposal
-for that speech model, shown as added and removed entries; a pinned
-spelling comes back only with its new heard phrases. Nothing is saved until
-Accept.
+Build from history uses this speech model's recent raw transcripts (up to 300); audio
+onboarding uses fresh temporary transcripts from the selected model. The generation
+provider receives those snippets, pinned knowledge and this model's working groups.
+The configured model is honored; suggestions remain Sonnet 5 and GPT-5.4 mini with
+medium reasoning where supported. No generation or classification model rewrites dictation.
+
+Sequential steps contain about 24,000 transcript characters; the full growing dictionary
+adds to that request size. Each step can add groups, revise complete groups or explicitly
+remove learned group IDs. Unmentioned knowledge remains. New temporary IDs are assigned
+persistent IDs once; subsequent steps and editor changes retain them. Pin definitions
+cannot be overwritten by generation. Proposals name the original dictionary revision;
+acceptance on a stale revision is refused. No proposal is installed automatically.
+
+New inferred associations need source snippet IDs and exact character offsets validated
+against supplied text, including whole-word boundaries. `basis: text` records textual
+provenance only, not acoustic verification. Necessary same-spelling competitors use
+`basis: literal`; manual/confirmed associations use `user`. Only hashes/offsets remain
+as evidence: normal audio-build snippets are discarded. General definitions and optional
+personal usage remain as dictionary content. Old evidence can survive later chunks;
+new links cannot claim unavailable source text.
+
+On first load, old dictionaries are backed up byte-for-byte as
+`dictionary.pre-v2-<hash>.json` before atomic conversion. Every old entry, description,
+heard form and model key is retained, including collisions and zero-heard vocabulary.
+No competing ordinary definitions are invented. Imported groups are marked for review;
+review definitions and casing, add necessary competitors, or deliberately remove them.
+Undefined meanings are retained but cannot support contextual selection. Builds can
+propose deliberate removal/refinement; only acceptance changes learned data.
+
+The existing agents' confirmed-corrections request/response shape remains supported at
+its boundary; internally it creates scoped confusion knowledge without granting direct
+replacement or priority. Whole-document editing uses version-2 JSON with ETag/If-Match.
+The file is read on each dictation and writes are atomic under the service lock. A broken
+dictionary is a correction failure, not a lost speech transcription.

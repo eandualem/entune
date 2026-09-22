@@ -4,40 +4,39 @@ import asyncio
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from typing import Any
 
 import httpx
 import pytest
 
 from dictum import llm, prompts
-from dictum.dictionary import Dictionary, Entries, Entry
+from dictum.dictionary import Association, Dictionary, Form, Group, Groups, Meaning
+from tests.dictionary_samples import JEV, group, proposed
 
-REPLY = (
-    '{"entries": [{"spelling": "Claude Code", "description": "the agent",'
-    ' "heard": ["cloud code"]}]}'
-)
-PARSED = (Entry("Claude Code", "the agent", ("cloud code",)),)
+TEXT = "I use cloud code."
+REPLY = json.dumps(proposed(TEXT))
 
 
-def test_user_prompt_carries_pinned_one_models_learned_list_and_the_step() -> None:
+def test_user_prompt_carries_only_this_models_working_groups_and_literal_data() -> None:
     current = Dictionary(
-        pinned=(Entry("Dictum", "the app"),),
-        learned={"stub/good": (Entry("Soniox"),), "local/small.en": (Entry("Elsewhere"),)},
+        (JEV,),
+        {
+            "stub/good": (group("Soniox", "sonics"),),
+            "other/model": (group("Elsewhere", "else where"),),
+        },
     )
     prompt = llm.build_user_prompt(
-        current, ["first", "second"], "stub/good", (Entry("Groq", heard=("grok",)),), (2, 3)
+        current, ["first", "second"], "stub/good", (group("Groq", "grok"),), (2, 3)
     )
-    assert '"spelling": "Dictum", "description": "the app"' in prompt
-    assert "Working learned dictionary for stub/good" in prompt
+    assert "Jev" in prompt and "Groq" in prompt
     assert "Soniox" not in prompt and "Elsewhere" not in prompt
-    assert "Step 2 of 3" in prompt and '"spelling": "Groq"' in prompt
-    assert "transcripts from stub/good for this step" in prompt
-    assert '["first", "second"]' in prompt and "(2)" in prompt
-    first = llm.build_user_prompt(current, ["first"], "stub/good")
-    assert '"spelling": "Soniox"' in first and "Elsewhere" not in first
-    cleared = llm.build_user_prompt(current, ["last"], "stub/good", (), (3, 3))
-    assert "Soniox" not in cleared
-    assert "terms" not in prompts.text("dictionary-system.txt").split("Reply with")[1]
+    assert "Step 2 of 3" in prompt and "stub/good" in prompt
+    assert json.dumps(llm.sources(["first", "second"])) in prompt
+    assert "glossary" in prompts.text("dictionary-system.txt")
+    assert "empty list when the term is only ever spelled right" not in prompts.text(
+        "dictionary-system.txt"
+    )
 
 
 def test_all_supplied_text_is_processed_in_bounded_steps(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,77 +51,139 @@ def test_all_supplied_text_is_processed_in_bounded_steps(monkeypatch: pytest.Mon
     assert llm.batches([]) == [] and llm.batches(["", " "]) == []
 
 
-@pytest.mark.parametrize(
-    "reply",
-    [REPLY, f"Sure! ```json\n{REPLY}\n```", f"Here you go:\n{REPLY} thanks"],
-)
-def test_reply_is_parsed_with_or_without_decoration(reply: str) -> None:
-    assert llm.parse_reply(reply) == PARSED
+@pytest.mark.parametrize("reply", [REPLY, f"```json\n{REPLY}\n```"])
+def test_reply_has_persistent_ids_and_validated_source_occurrences(reply: str) -> None:
+    learned = llm.parse_reply(reply, transcripts=[TEXT])
+    assert len(learned) == 1 and learned[0].id.startswith("g_")
+    (meaning,) = learned[0].meanings
+    assert meaning.id.startswith("m_") and meaning.spelling == "Claude Code"
+    form = learned[0].recognized_forms[0]
+    assert form.associations[0].meaning_id == meaning.id
+    assert form.associations[0].evidence[0].start == 6
+    assert TEXT not in json.dumps(learned[0].as_json())  # no source excerpt persisted
 
 
-def test_bad_replies_are_errors_with_the_reply_quoted() -> None:
-    with pytest.raises(ValueError, match="did not return JSON"):
-        llm.parse_reply("I cannot help with that.")
-    with pytest.raises(ValueError, match="did not parse"):
-        llm.parse_reply('{"entries": [}')
-    with pytest.raises(ValueError, match="has no entries list"):
-        llm.parse_reply('{"terms": ["Dictum"]}')
-    with pytest.raises(ValueError, match=r"the model's reply\[0\].spelling must be"):
-        llm.parse_reply('{"entries": [{"spelling": 1}]}')
-    with pytest.raises(ValueError, match="must have a description"):
-        llm.parse_reply('{"entries": [{"spelling": "Groq"}]}')
-    with pytest.raises(ValueError, match="remove list"):
-        llm.parse_reply('{"entries": [], "remove": "Groq"}')
-    with pytest.raises(ValueError, match="both removed and revised"):
-        llm.parse_reply(REPLY[:-1] + ', "remove": ["claude code"]}')
+def test_provenance_glossary_direct_and_pinned_changes_are_rejected() -> None:
+    payload = proposed(TEXT)
+    groups = payload["groups"]
+    assert isinstance(groups, list)
+    record = groups[0]
+    record["recognized_forms"][0]["associations"][0]["evidence"][0]["start"] = 7
+    with pytest.raises(ValueError, match="exact whole"):
+        llm.parse_reply(json.dumps(payload), transcripts=[TEXT])
+    with pytest.raises(ValueError, match="unavailable source"):
+        llm.parse_reply(REPLY, transcripts=["different text"])
+    payload = proposed(TEXT)
+    record = payload["groups"][0]
+    record["recognized_forms"][0].update(direct="new_meaning", direct_reason="The model says so")
+    with pytest.raises(ValueError, match="cannot approve"):
+        llm.parse_reply(json.dumps(payload), transcripts=[TEXT])
+    record["recognized_forms"] = [record["recognized_forms"][1]]
+    with pytest.raises(ValueError, match="glossary"):
+        llm.parse_reply(json.dumps(payload), transcripts=[TEXT])
+    pinned = group("Claude Code", "cloud code")
+    revised = pinned.as_json()
+    revised["meanings"][0]["meaning"] = "Changed by the generator"
+    with pytest.raises(ValueError, match="conflicting definitions"):
+        llm.parse_reply(json.dumps({"groups": [revised], "remove": []}), pinned=(pinned,))
+    for content in ("no JSON", '{"groups":[}', '{"entries": []}'):
+        with pytest.raises(ValueError):
+            llm.parse_reply(content)
 
 
-def test_propose_learned_calls_the_model_with_the_prompts() -> None:
+def test_propose_uses_chosen_model_and_does_not_change_the_live_dictionary() -> None:
     seen: dict[str, str] = {}
 
     async def fake(provider: str, api_key: str, model: str, system: str, user: str) -> str:
         seen.update(provider=provider, api_key=api_key, model=model, system=system, user=user)
         return REPLY
 
+    current = Dictionary()
     learned = llm.propose_learned(
-        "anthropic",
-        "k",
-        "anthropic:claude-fable-5-1",
-        Dictionary(),
-        ["hello"],
-        "s/m",
-        call=fake,
+        "anthropic", "k", "anthropic:claude-sonnet-5", current, [TEXT], "s/m", call=fake
     )
-    assert learned == PARSED
-    assert seen["provider"] == "anthropic" and seen["model"] == "anthropic:claude-fable-5-1"
-    assert seen["system"] == prompts.text("dictionary-system.txt") and '["hello"]' in seen["user"]
-    assert "Step 1 of 1" in seen["user"]
+    assert learned[0].meanings[0].spelling == "Claude Code" and not current
+    assert seen["model"] == "anthropic:claude-sonnet-5" and seen["provider"] == "anthropic"
+    assert seen["system"] == prompts.text("dictionary-system.txt") and TEXT in seen["user"]
 
 
-def test_steps_revise_descriptions_and_phrases_remove_mistakes_and_keep_other_entries(
+def test_generation_can_add_literal_competitors_to_protected_pinned_knowledge() -> None:
+    pinned = group("Claude", "cloud")
+    literal = Group(
+        "new_literal_group",
+        (Meaning("new_weather", "cloud", "Water droplets in the sky.", casing="ordinary"),),
+        (Form("cloud", (Association("new_weather", basis="literal"),)),),
+    )
+    result = llm.parse_reply(
+        json.dumps({"groups": [literal.as_json()], "remove": []}), pinned=(pinned,)
+    )
+    assert result[0].meanings[0].spelling == "cloud"
+    assert pinned.meanings[0].spelling == "Claude"
+
+
+def test_case_only_duplicates_and_changes_to_approved_outputs_are_rejected() -> None:
+    payload = proposed(TEXT)
+    record = payload["groups"][0]
+    duplicate = {**record["meanings"][0], "id": "new_duplicate", "spelling": "CLAUDE CODE"}
+    record["meanings"].append(duplicate)
+    with pytest.raises(ValueError, match="case alone"):
+        llm.parse_reply(json.dumps(payload), transcripts=[TEXT])
+
+    approved = group("Dictum", "dictim", direct=True)
+    changed = replace(
+        approved,
+        meanings=(replace(approved.meanings[0], spelling="Different"),),
+        recognized_forms=(approved.recognized_forms[0],),
+    )
+    with pytest.raises(ValueError, match="approved direct mapping"):
+        llm.parse_reply(json.dumps({"groups": [changed.as_json()], "remove": []}), (approved,))
+
+
+def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(llm, "BATCH_CHARS", 8)
-    prompts: list[str] = []
-    replies = [
-        '{"entries": [{"spelling": "Groq", "description": "a provider",'
-        ' "heard": ["grok", "wrong phrase"]}]}',
-        '{"entries": [{"spelling": "groq", "description": "a clearer definition",'
-        ' "heard": ["grok", "crock"]},'
-        ' {"spelling": "Soniox", "description": "speech provider", "heard": ["sonics"]}],'
-        ' "remove": ["mistake"]}',
-        '{"entries": [], "remove": []}',
-    ]
+    monkeypatch.setattr(llm, "BATCH_CHARS", 10)
+    seen: list[str] = []
+    stable_id = ""
 
     async def fake(provider: str, api_key: str, model: str, system: str, user: str) -> str:
-        prompts.append(user)
-        return replies[len(prompts) - 1]
+        nonlocal stable_id
+        seen.append(user)
+        if len(seen) == 1:
+            return json.dumps(proposed("cloud code"))
+        working = json.loads(
+            user.split("Working learned confusion groups for s/m:\n")[1].split("\n\n")[0]
+        )
+        target = next(g for g in working if g["meanings"][0]["spelling"] == "Claude Code")
+        stable_id = target["meanings"][0]["id"]
+        if len(seen) == 2:
+            target["meanings"][0]["meaning"] = "An AI coding assistant."
+            target["recognized_forms"].append(
+                {
+                    "text": "clod code",
+                    "associations": [
+                        {
+                            "meaning_id": stable_id,
+                            "basis": "text",
+                            "evidence": [
+                                {
+                                    "source": next(iter(llm.sources(["clod code"]))),
+                                    "start": 0,
+                                    "end": 9,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+            return json.dumps({"groups": [target], "remove": ["g_wrong"]})
+        return '{"groups": [], "remove": []}'
 
     current = Dictionary(
-        pinned=(Entry("Pinned", "approved"),),
-        learned={
-            "s/m": (Entry("Keep", "still valid"), Entry("Mistake", "wrong")),
-            "other/model": (Entry("Elsewhere", "another model's term"),),
+        (JEV,),
+        {
+            "s/m": (group("Keep", "keep term"), group("Wrong", "wrong term")),
+            "other/model": (group("Elsewhere", "else where"),),
         },
     )
     learned = llm.propose_learned(
@@ -130,34 +191,33 @@ def test_steps_revise_descriptions_and_phrases_remove_mistakes_and_keep_other_en
         "k",
         "openai:gpt-6-astra",
         current,
-        ["one two", "second", "third"],
+        ["cloud code", "clod code", "third"],
         "s/m",
         call=fake,
     )
-    assert learned == (
-        Entry("Keep", "still valid"),
-        Entry("groq", "a clearer definition", ("grok", "crock")),
-        Entry("Soniox", "speech provider", ("sonics",)),
+    target = next(g for g in learned if g.meanings[0].spelling == "Claude Code")
+    assert (
+        target.meanings[0].id == stable_id
+        and target.meanings[0].meaning == "An AI coding assistant."
     )
-    assert "Step 1 of 3" in prompts[0] and '["one two"]' in prompts[0]
-    assert "Step 2 of 3" in prompts[1] and '["second"]' in prompts[1]
-    assert '"spelling": "Groq"' in prompts[1] and "one two" not in prompts[1]
-    assert "a clearer definition" in prompts[2] and "Mistake" not in prompts[2]
-    assert all("Elsewhere" not in prompt and '"spelling": "Pinned"' in prompt for prompt in prompts)
-    assert current.learned_for("s/m")[1].spelling == "Mistake"  # proposal only
+    assert {f.text for f in target.recognized_forms} == {"cloud code", "clod code", "Claude Code"}
+    assert {g.id for g in learned} == {"g_keep", target.id}
+    assert all("Elsewhere" not in prompt and "Jev" in prompt for prompt in seen)
+    assert "An AI coding assistant." in seen[2] and "Wrong" not in seen[2]
+    assert len(current.learned_for("s/m")) == 2  # still a proposal
 
 
 def test_a_later_step_failure_returns_no_partial_dictionary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(llm, "BATCH_CHARS", 8)
+    monkeypatch.setattr(llm, "BATCH_CHARS", 10)
     calls = 0
 
     async def failing(*_: str) -> str:
         nonlocal calls
         calls += 1
         if calls == 1:
-            return REPLY
+            return json.dumps(proposed("cloud code"))
         raise RuntimeError("HTTP 529")
 
     with pytest.raises(ValueError, match="Step 2 of 2: RuntimeError: HTTP 529"):
@@ -166,7 +226,7 @@ def test_a_later_step_failure_returns_no_partial_dictionary(
             "k",
             "openai:gpt-6-astra",
             Dictionary(),
-            ["one two", "three"],
+            ["cloud code", "three"],
             "s/m",
             call=failing,
         )
@@ -224,7 +284,7 @@ def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
         seen.append(request.headers["authorization"])
         assert str(request.url) == "https://api.openai.com/v1/responses"
         assert os.environ["OPENAI_API_KEY"] == "original"
-        return openai_done('{"entries": []}')
+        return openai_done('{"groups": [], "remove": []}')
 
     def client(**kwargs: Any) -> httpx.AsyncClient:
         assert kwargs["trust_env"] is False
@@ -234,7 +294,7 @@ def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
     monkeypatch.setenv("OPENAI_API_KEY", "original")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://elsewhere.invalid")
 
-    def build(key: str) -> Entries:
+    def build(key: str) -> Groups:
         return llm.propose_learned(
             "openai", key, "openai:gpt-6-astra", Dictionary(), ["text"], "s/m"
         )

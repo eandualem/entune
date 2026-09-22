@@ -125,10 +125,10 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const lines = [];
     if (s.transcriptions) {
       lines.push(`${s.transcriptions} processed transcripts · median +${s.median_seconds?.toFixed(1) ?? "–"} s`);
-      for (const [method, label] of [["contextual", "Contextual dictionary"], ["unconditional", "Without context"], ["formatting", "Formatting"]]) {
+      for (const [method, label] of [["contextual", "Contextual dictionary"], ["deterministic", "Approved direct mappings"], ["unconditional", "Historical unconditional mappings"], ["formatting", "Formatting"]]) {
         const stage = s.stages[method];
         if (!stage.succeeded && !stage.failed && !stage.replacements && !stage.decisions) continue;
-        lines.push(`${label}: ${stage.succeeded} succeeded, ${stage.failed} failed, ${stage.skipped} skipped; retries: ${stage.retries}; decisions: ${stage.decisions}; replacements: ${stage.replacements}; preserved: ${stage.preserved}; unresolved: ${stage.abstained}`);
+        lines.push(`${label}: ${stage.succeeded} succeeded, ${stage.failed} failed, ${stage.skipped} skipped; retries: ${stage.retries}; decisions: ${stage.decisions}; replacements: ${stage.replacements} (${stage.direct_replacements ?? 0} direct); preserved: ${stage.preserved}; unresolved: ${stage.abstained}`);
       }
       lines.push("Counts describe processing, not accuracy. Legacy counters are excluded.");
     }

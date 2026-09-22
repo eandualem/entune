@@ -96,9 +96,10 @@ never touches a transcript on its way to the user; that stays out.
 
 In scope since 2026-09-21, the owner's decision after a measured trial:
 Jev, TypeSafe's decision model, on every transcript, as the feature that
-sets Dictum apart. The dictionary is entries with a description each and
-every phrase heard instead, unlimited in size, and Jev decides each match
-in context; a second switch has it place paragraph breaks and bullets.
+sets Dictum apart. Since 2026-09-22 (issue #114), the dictionary uses confusion
+groups with stable meanings and explicit recognized-form associations. Jev
+selects eligible meanings in context; pinned knowledge is shared and protected
+without semantic priority. A second switch places paragraph breaks and bullets.
 Jev generates nothing, so no generated text ever reaches the user. Nothing
 from the dictionary goes to the speech provider any more: the provider
 transcribes the raw speech and the dictionary is applied afterwards. Both

@@ -1,16 +1,4 @@
-"""Jev, TypeSafe's decision model, on each transcript after the speech model.
-
-Jev generates nothing: it answers typed questions with probabilities. Two uses, each an
-opt-in setting. The contextual dictionary asks, for every dictionary match, whether the
-speaker meant the term or the words as recognised, so "Jeff" becomes "JEV" in a note about
-the model and stays "Jeff" in a note about a person; without it every match is replaced.
-Formatting asks, for every sentence, whether it continues, starts a paragraph or is one
-item of a list, and inserts only line breaks and bullets: every word stays.
-
-One request per use per transcript, with bounded retries for transient failures.
-The application owns the client and supplies one deadline across processing stages.
-https://docs.typesafe.ai/api documents the wire format.
-"""
+"""Bounded meaning classification and formatting; code alone applies stored outputs."""
 
 from __future__ import annotations
 
@@ -20,21 +8,20 @@ import math
 import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
 
 from dictum import prompts
-from dictum.dictionary import Entry, Match
+from dictum.matching import Component, Edit
 
-MODEL = "jev-1.13.0"  # pinned: the thresholds below were measured against this version
+MODEL = "jev-1.13.0"  # pinned; meaning-selection thresholds still need live calibration
 URL = "https://api.typesafe.ai/v1/systemone"
-# A match is replaced unless Jev is at least this sure the words were meant as recognised.
-# Measured on 2026-09-21 over 48 real matches: the genuine literal uses scored 0.93-1.00,
-# every intended term 0.09 or lower, so any value between 0.5 and 0.9 gave 48 of 48.
-VETO_PROBABILITY = 0.8
+# Conservative initial selection policy; offline invariants are not calibration.
+MEANING_PROBABILITY = 0.7
+MEANING_MARGIN = 0.15
 # A sentence starts a paragraph or a list item when that option's probability reaches
 # this; a sentence between two list items joins the list at the lower bar.
 FORMAT_PROBABILITY = 0.6
@@ -208,13 +195,6 @@ def _retry_after(value: str | None) -> float:
     return max(0.0, seconds) if math.isfinite(seconds) else 0.0
 
 
-@dataclass(frozen=True)
-class Decision:
-    match: Match
-    replace: bool
-    recognised: float  # P(the words were meant as recognised)
-
-
 def _answers(data: Any, questions: dict[str, Any]) -> dict[str, dict[str, float]]:
     answers = data.get("answers") if isinstance(data, dict) else None
     if not isinstance(answers, dict) or set(answers) != set(questions):
@@ -247,59 +227,119 @@ def _probabilities(answer: Any, options: set[str]) -> dict[str, float]:
     return {k: float(v) for k, v in probabilities.items()}
 
 
-# ---- contextual dictionary
+# ---- meaning classification
 
 
-def decide(text: str, found: list[Match], call: Call) -> list[Decision]:
-    """One decision per match: replace it, or keep the words as recognised.
+@dataclass(frozen=True)
+class Decision:
+    component: Component
+    edit: Edit | None
+    method: str  # contextual, direct, unchanged, uncertain
+    meaning_ids: tuple[str, ...] = ()
 
-    The state carries the transcript, only the entries that matched (spelling and
-    description) and each occurrence with its surroundings; every question points at
-    its occurrence and its entry by name, as TypeSafe's docs recommend.
+
+def decide(text: str, components: list[Component], call: Call) -> list[Decision]:
+    """Select semantic interpretations, aggregating senses that emit identical text.
+
+    `unresolved` is an application abstention, never a stored meaning or a literal
+    keep action. A literal word has its own definition and competes like any meaning.
     """
-    if not found:
-        return []
-    terms: dict[str, dict[str, str]] = {}
-    keys: dict[str, str] = {}
-    for match in found:
-        key = keys.setdefault(match.spelling, _key(match.spelling, len(keys)))
-        terms[key] = {"spelling": match.spelling, "meaning": _meaning(match.entry)}
-    occurrences: dict[str, dict[str, str]] = {}
-    questions: dict[str, dict[str, Any]] = {}
-    for i, match in enumerate(found):
+    decisions: dict[int, Decision] = {}
+    occurrences: dict[str, object] = {}
+    questions: dict[str, Any] = {}
+    outputs: dict[int, dict[str, str]] = {}
+    support: dict[int, dict[str, tuple[str, ...]]] = {}
+    meanings = {
+        c.meaning.id: asdict(c.meaning)
+        for component in components
+        for plan in component.interpretations
+        for c in plan.choices
+    }
+    for i, component in enumerate(components):
+        raw = text[component.start : component.end]
+        direct = component.direct_choice(text)
+        if direct is not None:
+            output = component.output(text, direct)
+            decisions[i] = Decision(
+                component,
+                Edit(component.start, component.end, output),
+                "direct",
+                tuple(c.meaning.id for c in direct.choices),
+            )
+            continue
+        plans = component.interpretations
+        if plans and all(component.output(text, p) == raw for p in plans):
+            decisions[i] = Decision(component, None, "unchanged")
+            continue
+        # Retain imported undefined meanings in storage, but never fabricate a
+        # definition to turn them into eligible semantic claims.
+        eligible = [p for p in plans if all(c.meaning.meaning for c in p.choices)]
+        if not eligible:
+            decisions[i] = Decision(component, None, "uncertain")
+            continue
         name = f"o{i}"
-        heard = text[match.start : match.end]
-        key = keys[match.spelling]
+        interpretations = {}
+        question = prompts.render_json("jev-dictionary.json", occurrence=name)
+        outputs[i], support[i] = {}, {}
+        for n, plan in enumerate(eligible):
+            option = f"i{n}"
+            interpretations[option] = [
+                {
+                    "meaning_id": c.meaning.id,
+                    "start": c.match.start,
+                    "end": c.match.end,
+                    "recognized": text[c.match.start : c.match.end],
+                }
+                for c in plan.choices
+            ]
+            question["criteria"][option] = prompts.render_text(
+                "jev-interpretation.txt", occurrence=name, interpretation=option
+            )
+            outputs[i][option] = component.output(text, plan)
+            support[i][option] = tuple(c.meaning.id for c in plan.choices)
         occurrences[name] = {
-            "heard": heard,
-            "before": text[max(0, match.start - WINDOW) : match.start],
-            "after": text[match.end : match.end + WINDOW],
+            "recognized": raw,
+            "start": component.start,
+            "end": component.end,
+            "before": text[max(0, component.start - WINDOW) : component.start],
+            "after": text[component.end : component.end + WINDOW],
+            "interpretations": interpretations,
+            "missing_definitions": len(eligible) != len(plans),
         }
-        questions[name] = prompts.render_json(
-            "jev-dictionary.json",
-            occurrence=name,
-            term=key,
-            spelling=repr(match.spelling),
-            meaning=_meaning(match.entry),
-            heard=repr(heard),
+        questions[name] = question
+    if questions:
+        answers = call.ask(
+            {"transcript": text, "meanings": meanings, "occurrences": occurrences}, questions
         )
-    state = {"transcript": text, "terms": terms, "occurrences": occurrences}
-    answers = call.ask(state, questions)
-    decisions = []
-    for i, match in enumerate(found):
-        p = answers[f"o{i}"]
-        decisions.append(Decision(match, p["recognised"] < VETO_PROBABILITY, p["recognised"]))
-    return decisions
-
-
-def _meaning(entry: Entry) -> str:
-    return entry.description or prompts.render_text(
-        "jev-meaning.txt", spelling=repr(entry.spelling)
-    )
-
-
-def _key(spelling: str, n: int) -> str:
-    return re.sub(r"[^A-Za-z0-9]+", "_", spelling).strip("_") or f"term{n}"
+        for i, values in outputs.items():
+            probabilities = answers[f"o{i}"]
+            totals: dict[str, float] = {}
+            for option, output in values.items():
+                totals[output] = totals.get(output, 0.0) + probabilities[option]
+            output = max(totals, key=lambda value: totals[value])
+            probability = totals[output]
+            runner_up = max(
+                [
+                    probabilities["unresolved"],
+                    *(p for value, p in totals.items() if value != output),
+                ]
+            )
+            component = components[i]
+            if probability < MEANING_PROBABILITY or probability - runner_up < MEANING_MARGIN:
+                decisions[i] = Decision(component, None, "uncertain")
+            else:
+                ids = tuple(
+                    dict.fromkeys(
+                        mid
+                        for option, value in values.items()
+                        if value == output
+                        for mid in support[i][option]
+                    )
+                )
+                decisions[i] = Decision(
+                    component, Edit(component.start, component.end, output), "contextual", ids
+                )
+    return [decisions[i] for i in range(len(components))]
 
 
 # ---- formatting

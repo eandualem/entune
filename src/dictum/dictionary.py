@@ -1,398 +1,431 @@
-"""The personal dictionary: the terms one person uses, how speech models mishear them,
-and what each one means.
+"""Confusion groups: stable meanings, explicit associations, and speech-model scope.
 
-An entry is one spelling (`Dictum`), a description of what it means for this person, and
-the phrases speech models write instead of it (`dictam`, `dictum app`). The description is
-what lets Jev decide, per occurrence, whether the term was meant; without Jev every
-match is replaced. There is no limit on how many entries or phrases there are: the list
-is meant to grow, and matching stays fast (one indexed pass, see `Matcher`).
-
-Two sections. `pinned` is the user's and applies to every speech model: entered by hand,
-pinned from a proposal, or sent by the user's agents after confirming a mistranscription
-with the user; a model never changes it. `learned` is what a language model proposed from
-the history and the user accepted, kept per speech model (`provider/model`) and built
-from that model's transcripts only, since one model's mishearings are not another's; the
-next build for that model replaces it. There is no list for all models: that is what
-pinned is. Stored as `dictionary.json` in the data directory so it can be edited by hand
-or pasted whole.
+Pinning shares and protects knowledge; it never chooses a meaning over a competitor.
+Only the derived matcher combines associations for an occurrence. Group membership
+alone does not make a form eligible for every meaning.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass, field
-from functools import lru_cache
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
+from typing import Any, Literal
 
 FILENAME = "dictionary.json"
-SECTIONS = ("pinned", "learned")
-FIELDS = ("spelling", "description", "heard")
+VERSION = 2
+_SPECIAL = str.maketrans({"\u0130": "i", "\u0131": "i", "\u017f": "s", "\u212a": "k"})
+
+
+def key(text: str) -> str:
+    """Whitespace/case equivalence consistent with Python's IGNORECASE matcher."""
+    return " ".join(text.split()).translate(_SPECIAL).lower()
 
 
 @dataclass(frozen=True)
-class Entry:
+class Meaning:
+    id: str
     spelling: str
-    description: str = ""
-    heard: tuple[str, ...] = ()  # what speech models write instead; may be empty
-
-    def as_json(self) -> dict[str, object]:
-        return {
-            "spelling": self.spelling,
-            "description": self.description,
-            "heard": list(self.heard),
-        }
+    meaning: str
+    personal_context: str | None = None
+    casing: Literal["fixed", "ordinary"] = "fixed"
 
 
-Entries = tuple[Entry, ...]
+@dataclass(frozen=True)
+class Evidence:
+    source: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
+class Association:
+    meaning_id: str
+    evidence: tuple[Evidence, ...] = ()
+    basis: Literal["text", "literal", "user", "legacy"] = "user"
+
+
+@dataclass(frozen=True)
+class Form:
+    text: str
+    associations: tuple[Association, ...]
+    direct: str | None = None
+    direct_reason: str = ""
+
+
+@dataclass(frozen=True)
+class Group:
+    id: str
+    meanings: tuple[Meaning, ...]
+    recognized_forms: tuple[Form, ...]
+    needs_review: bool = False
+
+    def as_json(self) -> dict[str, Any]:
+        # JSON arrays, including at the service boundary (not Python tuples).
+        return json.loads(json.dumps(asdict(self)))  # type: ignore[no-any-return]
+
+
+Groups = tuple[Group, ...]
 
 
 @dataclass(frozen=True)
 class Dictionary:
-    pinned: Entries = ()
-    learned: dict[str, Entries] = field(default_factory=dict)  # keyed by speech model
+    pinned: Groups = ()
+    learned: dict[str, Groups] = field(default_factory=dict)
 
     def __bool__(self) -> bool:
         return bool(self.pinned or any(self.learned.values()))
 
-    def learned_for(self, model: str) -> Entries:
+    def learned_for(self, model: str) -> Groups:
         return self.learned.get(model, ())
 
-    def effective(self, model: str) -> Entries:
-        """What is applied to that model's transcripts: pinned, shared by every model, plus
-        what was learned for this one; on the same heard phrase, pinned wins."""
+    def effective(self, model: str) -> Groups:
         return merge(self.pinned, self.learned_for(model))
-
-    def with_agent_corrections(self, corrections: Entries) -> tuple[Dictionary, Entries]:
-        """Pin corrections an agent sent; the second value is what was new."""
-        current = {_key(entry.spelling): entry for entry in self.pinned}
-        new: list[Entry] = []
-        for entry in corrections:
-            existing = current.get(_key(entry.spelling))
-            if existing is None:
-                current[_key(entry.spelling)] = entry
-                new.append(entry)
-                continue
-            known = {_key(x) for x in existing.heard}
-            phrases = tuple(h for h in entry.heard if _key(h) not in known)
-            if not phrases:
-                continue
-            merged = Entry(
-                existing.spelling,
-                existing.description or entry.description,
-                (*existing.heard, *phrases),
-            )
-            current[_key(entry.spelling)] = merged
-            new.append(Entry(existing.spelling, entry.description, phrases))
-        return Dictionary(tuple(current.values()), self.learned), tuple(new)
 
 
 EMPTY = Dictionary()
 
 
-def merge(*sections: Entries) -> Entries:
-    """Entries from several sections as one list, earlier sections winning: a heard phrase
-    that an earlier entry already claims is dropped from the later one, and the same
-    spelling twice becomes one entry. Matching ignores case, so `_key` decides equality."""
-    claimed: set[str] = set()
-    result: dict[str, Entry] = {}
+def merge(*sections: Groups) -> Groups:
+    """Union by stable IDs, never by output spelling or first ownership of a form."""
+    groups: dict[str, Group] = {}
     for section in sections:
-        for entry in section:
-            phrases = tuple(h for h in entry.heard if _key(h) not in claimed)
-            claimed.update(_key(h) for h in phrases)
-            existing = result.get(_key(entry.spelling))
-            if existing is None:
-                result[_key(entry.spelling)] = Entry(entry.spelling, entry.description, phrases)
-            else:
-                result[_key(entry.spelling)] = Entry(
-                    existing.spelling,
-                    existing.description or entry.description,
-                    (*existing.heard, *phrases),
-                )
+        for group in section:
+            previous = groups.get(group.id)
+            if previous is None:
+                groups[group.id] = group
+                continue
+            meanings = {m.id: m for m in previous.meanings}
+            for meaning in group.meanings:
+                if meaning.id in meanings and meanings[meaning.id] != meaning:
+                    raise ValueError(f"Meaning {meaning.id} has conflicting definitions")
+                meanings[meaning.id] = meaning
+            groups[group.id] = Group(
+                group.id,
+                tuple(meanings.values()),
+                _forms((*previous.recognized_forms, *group.recognized_forms)),
+                previous.needs_review or group.needs_review,
+            )
+    return tuple(groups.values())
+
+
+def _forms(forms: tuple[Form, ...]) -> tuple[Form, ...]:
+    result: dict[str, Form] = {}
+    for form in forms:
+        previous = result.get(key(form.text))
+        if previous is None:
+            result[key(form.text)] = form
+            continue
+        links = {a.meaning_id: a for a in previous.associations}
+        for link in form.associations:
+            old = links.get(link.meaning_id)
+            links[link.meaning_id] = replace(
+                old or link,
+                evidence=tuple(dict.fromkeys((*(old.evidence if old else ()), *link.evidence))),
+            )
+        direct = {d for d in (previous.direct, form.direct) if d}
+        chosen = next(iter(direct)) if len(direct) == 1 else None
+        result[key(form.text)] = Form(
+            previous.text,
+            tuple(links.values()),
+            chosen,
+            (previous.direct_reason or form.direct_reason) if chosen else "",
+        )
     return tuple(result.values())
 
 
+def _object(value: object, where: str, fields: set[str]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{where} must be an object")
+    if unknown := set(value) - fields:
+        raise ValueError(f"{where}: unknown keys {', '.join(sorted(unknown))}")
+    return value
+
+
+def _list(value: object, where: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise ValueError(f"{where} must be a list")
+    return value
+
+
+def _string(value: object, where: str, *, empty: bool = False) -> str:
+    if not isinstance(value, str) or (not empty and not value.strip()):
+        raise ValueError(f"{where} must be a {'non-empty ' if not empty else ''}string")
+    return value.strip()
+
+
+def _id(value: object, where: str) -> str:
+    result = _string(value, where)
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", result):
+        raise ValueError(f"{where} must be a stable ID (letter, then letters/digits/_/-; max 64)")
+    return result
+
+
+def parse_groups(value: object, where: str) -> Groups:
+    groups = []
+    ids: set[str] = set()
+    for i, item in enumerate(_list(value, where)):
+        loc = f"{where}[{i}]"
+        obj = _object(item, loc, {"id", "meanings", "recognized_forms", "needs_review"})
+        group_id = _id(obj.get("id"), f"{loc}.id")
+        if group_id in ids:
+            raise ValueError(f"{loc}: duplicate group ID {group_id}")
+        ids.add(group_id)
+        review = obj.get("needs_review", False)
+        if type(review) is not bool:
+            raise ValueError(f"{loc}.needs_review must be a boolean")
+        meanings = []
+        meaning_ids: set[str] = set()
+        for m in _list(obj.get("meanings"), f"{loc}.meanings"):
+            m = _object(m, loc, {"id", "spelling", "meaning", "personal_context", "casing"})
+            mid = _id(m.get("id"), f"{loc}.meaning.id")
+            if mid in meaning_ids:
+                raise ValueError(f"{loc}: duplicate meaning ID {mid}")
+            meaning_ids.add(mid)
+            context = m.get("personal_context")
+            casing = m.get("casing", "fixed")
+            if casing not in ("fixed", "ordinary"):
+                raise ValueError(f"{loc}: casing must be fixed or ordinary")
+            meanings.append(
+                Meaning(
+                    mid,
+                    _string(m.get("spelling"), f"{loc}.spelling"),
+                    _string(m.get("meaning"), f"{loc}.meaning", empty=review),
+                    _string(context, f"{loc}.personal_context") if context is not None else None,
+                    casing,
+                )
+            )
+        forms = []
+        for f in _list(obj.get("recognized_forms"), f"{loc}.recognized_forms"):
+            f = _object(f, loc, {"text", "associations", "direct", "direct_reason"})
+            text = " ".join(_string(f.get("text"), f"{loc}.form.text").split())
+            if not re.match(r"\w", text):
+                raise ValueError(f"{loc}: a recognized form must start with a letter or digit")
+            links = []
+            for a in _list(f.get("associations"), f"{loc}.associations"):
+                a = _object(a, loc, {"meaning_id", "basis", "evidence"})
+                mid = _id(a.get("meaning_id"), f"{loc}.meaning_id")
+                basis = a.get("basis", "user")
+                if basis not in ("text", "literal", "user", "legacy"):
+                    raise ValueError(f"{loc}: invalid association basis")
+                evidence = []
+                for e in _list(a.get("evidence", []), f"{loc}.evidence"):
+                    e = _object(e, loc, {"source", "start", "end"})
+                    start, end = e.get("start"), e.get("end")
+                    if type(start) is not int or type(end) is not int or not 0 <= start < end:
+                        raise ValueError(f"{loc}: evidence needs valid character offsets")
+                    evidence.append(Evidence(_string(e.get("source"), loc), start, end))
+                links.append(Association(mid, tuple(evidence), basis))
+            if not links or len({a.meaning_id for a in links}) != len(links):
+                raise ValueError(f"{loc}: associations must be nonempty with unique meaning IDs")
+            direct = f.get("direct")
+            note = _string(f.get("direct_reason", ""), f"{loc}.direct_reason", empty=True)
+            if direct is not None:
+                direct = _id(direct, f"{loc}.direct")
+                if not note or direct not in {a.meaning_id for a in links}:
+                    raise ValueError(
+                        f"{loc}: direct mapping needs an eligible meaning and approval reason"
+                    )
+            elif note:
+                raise ValueError(f"{loc}: direct_reason needs a direct meaning")
+            forms.append(Form(text, tuple(links), direct, note))
+        if not meanings and not forms:
+            raise ValueError(f"{loc}: an empty group has no knowledge")
+        groups.append(Group(group_id, tuple(meanings), _forms(tuple(forms)), review))
+    return tuple(groups)
+
+
+def validate(dictionary: Dictionary) -> Dictionary:
+    # A meaning can be referenced from another group or a model-local extension.
+    global_meanings: dict[str, Meaning] = {}
+    for section in (dictionary.pinned, *dictionary.learned.values()):
+        for group in section:
+            for m in group.meanings:
+                if m.id in global_meanings and global_meanings[m.id] != m:
+                    raise ValueError(
+                        f"Meaning {m.id} has conflicting definitions; preserve its identity"
+                    )
+                global_meanings[m.id] = m
+    for model in (None, *dictionary.learned):
+        groups = dictionary.pinned if model is None else dictionary.effective(model)
+        meanings = {m.id: m for g in groups for m in g.meanings}
+        for group in groups:
+            for form in group.recognized_forms:
+                for link in form.associations:
+                    if link.meaning_id not in meanings:
+                        raise ValueError(
+                            f"Form {form.text!r} references an unavailable meaning "
+                            f"{link.meaning_id}"
+                        )
+                    if link.basis == "literal" and key(form.text) != key(
+                        meanings[link.meaning_id].spelling
+                    ):
+                        raise ValueError(
+                            "A literal association must have the same recognized/output spelling"
+                        )
+    return dictionary
+
+
 def parse(text: str) -> Dictionary:
-    """Parse the JSON form. Raises ValueError with a reason a person can act on.
-
-    Earlier forms are read too: a section that was `{"terms": [...], "replacements":
-    {heard: meant}}` becomes entries, a term as a spelling without heard phrases and a
-    replacement as a spelling with one; the first release's one flat list is pinned, and
-    an `agents` section (corrections the user confirmed) is folded into pinned.
-    """
-    return _parse(_decode(text))
-
-
-def _decode(text: str) -> dict[str, object]:
     try:
         data = json.loads(text or "{}")
     except json.JSONDecodeError as exc:
         raise ValueError(f"Not valid JSON: {exc.msg} (line {exc.lineno})") from None
     if not isinstance(data, dict):
-        raise ValueError("The dictionary must be a JSON object with pinned and learned")
-    return data
+        raise ValueError("The dictionary must be a JSON object")
+    if "version" not in data:
+        from dictum.dictionary_legacy import convert
 
-
-def _parse(data: dict[str, object]) -> Dictionary:
-    if "terms" in data or "replacements" in data:
-        return Dictionary(pinned=parse_entries(data, "dictionary"))
-    unknown = set(data) - {*SECTIONS, "agents"}
-    if unknown:
-        raise ValueError(f"Unknown keys: {', '.join(sorted(unknown))} (use {', '.join(SECTIONS)})")
-    pinned = parse_entries(data.get("pinned", []), "pinned")
-    if "agents" in data:
-        pinned = merge(parse_entries(data["agents"], "agents"), pinned)
-    return Dictionary(pinned=pinned, learned=parse_learned(data.get("learned", {})))
-
-
-def parse_learned(data: object) -> dict[str, Entries]:
-    """`learned` keyed by speech model."""
-    if not isinstance(data, dict) or "terms" in data or "replacements" in data:
-        raise ValueError("learned must be an object keyed by speech model (provider/model)")
-    learned = {model: parse_entries(entries, f"learned.{model}") for model, entries in data.items()}
-    return {model: entries for model, entries in learned.items() if entries}
-
-
-def parse_entries(data: object, where: str) -> Entries:
-    """A list of entries, or the earlier `{"terms", "replacements"}` object."""
-    if isinstance(data, dict):
-        return _parse_legacy(data, where)
-    if not isinstance(data, list):
-        raise ValueError(f"{where} must be a list of entries (spelling, description, heard)")
-    entries = []
-    for i, item in enumerate(data):
-        if not isinstance(item, dict):
-            raise ValueError(f"{where}[{i}] must be an object with spelling, description, heard")
-        unknown = set(item) - set(FIELDS)
-        if unknown:
-            raise ValueError(f"{where}[{i}]: unknown keys {', '.join(sorted(unknown))}")
-        spelling = item.get("spelling")
-        if not isinstance(spelling, str) or not spelling.strip():
-            raise ValueError(f"{where}[{i}].spelling must be a non-empty string")
-        description = item.get("description", "")
-        if not isinstance(description, str):
-            raise ValueError(f"{where}[{i}].description must be a string")
-        heard = item.get("heard", [])
-        if not isinstance(heard, list) or not all(isinstance(h, str) for h in heard):
-            raise ValueError(f"{where}[{i}].heard must be a list of strings")
-        entries.append(
-            Entry(spelling.strip(), " ".join(description.split()), _phrases(heard, where))
+        return validate(convert(data))
+    obj = _object(data, "dictionary", {"version", "pinned", "learned"})
+    if type(obj["version"]) is not int or obj["version"] != VERSION:
+        raise ValueError(f"Unsupported dictionary version: {obj['version']!r}")
+    learned = obj.get("learned", {})
+    if not isinstance(learned, dict) or not all(isinstance(k, str) and k.strip() for k in learned):
+        raise ValueError("learned must be an object keyed by speech model")
+    return validate(
+        Dictionary(
+            parse_groups(obj.get("pinned", []), "pinned"),
+            {m: parse_groups(v, f"learned.{m}") for m, v in learned.items()},
         )
-    return merge(tuple(entries))
-
-
-def _parse_legacy(data: dict[str, object], where: str) -> Entries:
-    unknown = set(data) - {"terms", "replacements"}
-    if unknown:
-        raise ValueError(f"{where}: unknown keys {', '.join(sorted(unknown))}")
-    terms = data.get("terms", [])
-    if not isinstance(terms, list) or not all(isinstance(t, str) for t in terms):
-        raise ValueError(f"{where}.terms must be a list of strings")
-    replacements = data.get("replacements", {})
-    if not isinstance(replacements, dict) or not all(
-        isinstance(k, str) and isinstance(v, str) for k, v in replacements.items()
-    ):
-        raise ValueError(f"{where}.replacements must be an object of string to string")
-    entries = [Entry(t.strip()) for t in terms if t.strip()]
-    entries.extend(
-        Entry(meant.strip(), heard=_phrases([heard], where))
-        for heard, meant in replacements.items()
-        if heard.strip() and meant.strip()
     )
-    return merge(tuple(entries))
-
-
-def _phrases(heard: list[str], where: str) -> tuple[str, ...]:
-    seen: dict[str, str] = {}
-    for h in heard:
-        if h.strip():
-            seen.setdefault(_key(h), " ".join(h.split()))
-    phrases = tuple(seen.values())
-    for phrase in phrases:
-        if not re.match(r"\w", phrase):
-            raise ValueError(f"{where}: a heard phrase must start with a letter or digit: {phrase}")
-    return phrases
 
 
 def dumps(dictionary: Dictionary) -> str:
     return json.dumps(
         {
-            "pinned": [e.as_json() for e in dictionary.pinned],
-            "learned": {
-                model: [e.as_json() for e in entries]
-                for model, entries in dictionary.learned.items()
-            },
+            "version": VERSION,
+            "pinned": [g.as_json() for g in dictionary.pinned],
+            "learned": {m: [g.as_json() for g in gs] for m, gs in dictionary.learned.items()},
         },
         indent=2,
         ensure_ascii=False,
     )
 
 
-def load(data_dir: Path) -> Dictionary:
-    """The dictionary on disk; empty when there is none. A broken file raises ValueError.
+def _backup(path: Path) -> None:
+    if not path.exists():
+        return
+    raw = path.read_bytes()
+    try:
+        old = json.loads(raw)
+    except ValueError:
+        old = None
+    if (
+        not isinstance(old, dict)
+        or type(old.get("version")) is not int
+        or old.get("version") != VERSION
+    ):
+        backup = path.with_name(f"dictionary.pre-v2-{hashlib.sha256(raw).hexdigest()[:12]}.json")
+        try:
+            with backup.open("xb") as stream:
+                stream.write(raw)
+        except FileExistsError:
+            if backup.read_bytes() != raw:
+                raise ValueError(
+                    "Dictionary backup collision; original was not overwritten"
+                ) from None
 
-    A file in an earlier form (terms and replacements, or an `agents` section) is
-    rewritten in the current one, once, so the page and the file agree.
-    """
+
+def load(data_dir: Path) -> Dictionary:
     path = data_dir / FILENAME
     if not path.exists():
         return EMPTY
-    data = _decode(path.read_text(encoding="utf-8"))
-    dictionary = _parse(data)
-    if _legacy(data):
+    text = path.read_text(encoding="utf-8")
+    dictionary = parse(text)
+    if "version" not in json.loads(text):
         save(data_dir, dictionary)
     return dictionary
 
 
-def _legacy(data: dict[str, object]) -> bool:
-    if "agents" in data or "terms" in data or "replacements" in data:
-        return True
-    learned = data.get("learned", {})
-    sections = [data.get("pinned", []), *(learned.values() if isinstance(learned, dict) else [])]
-    return any(isinstance(section, dict) for section in sections)
-
-
 def save(data_dir: Path, dictionary: Dictionary) -> None:
-    """Written to a temporary file and renamed into place, so a reader (a transcription
-    applying the dictionary while it is being saved) never sees a half-written file."""
+    validate(dictionary)
     target = data_dir / FILENAME
+    _backup(target)
     temporary = target.with_name(FILENAME + ".tmp")
     temporary.write_text(dumps(dictionary) + "\n", encoding="utf-8")
     os.replace(temporary, target)
 
 
-# ---- matching
-
-
-@dataclass(frozen=True)
-class Match:
-    start: int
-    end: int
-    entry: Entry
-
-    @property
-    def spelling(self) -> str:
-        return self.entry.spelling
-
-
-class Matcher:
-    """Finds the heard phrases of a list of entries in a text, in one pass.
-
-    Whole words or phrases only, matched without regard to case, longest phrase first so
-    "cloud code" wins over "cloud", and never inside what an earlier match covered, so one
-    rule's output can never be rewritten by another. The phrases are indexed by their
-    first word: at each word of the text only the phrases starting with that word are
-    tried, so ten thousand entries cost no more than ten.
-    """
-
-    def __init__(self, entries: Entries) -> None:
-        self._index: dict[str, list[tuple[re.Pattern[str], Entry]]] = {}
-        for entry in entries:
-            for phrase in entry.heard:
-                first = re.match(r"\w+", phrase)
-                assert first is not None  # parse_entries only admits such phrases
-                body = r"\s+".join(map(re.escape, phrase.split()))
-                pattern = re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
-                self._index.setdefault(_fold(first.group()), []).append((pattern, entry))
-        for candidates in self._index.values():
-            candidates.sort(key=lambda c: len(c[0].pattern), reverse=True)
-
-    def matches(self, text: str) -> list[Match]:
-        if not self._index or not text:
-            return []
-        found: list[Match] = []
-        end = 0
-        for word in re.finditer(r"\w+", text):
-            if word.start() < end:
-                continue
-            for pattern, entry in self._index.get(_fold(word.group()), ()):
-                match = pattern.match(text, word.start())
-                if match:
-                    found.append(Match(match.start(), match.end(), entry))
-                    end = match.end()
-                    break
-        return found
-
-
-# The letters the regex engine treats as case variants of ASCII ones under IGNORECASE
-# (Python's documented list), so the index agrees with the patterns it holds.
-_SPECIAL = str.maketrans({"\u0130": "i", "\u0131": "i", "\u017f": "s", "\u212a": "k"})
-
-
-def _fold(word: str) -> str:
-    return word.translate(_SPECIAL).lower()
-
-
-@lru_cache(maxsize=8)
-def matcher(entries: Entries) -> Matcher:
-    """The matcher for these entries, built once per dictionary version."""
-    return Matcher(entries)
-
-
-def matches(entries: Entries, text: str) -> list[Match]:
-    return matcher(entries).matches(text)
-
-
-def replace(text: str, chosen: list[Match]) -> str:
-    """The text with each match replaced by its entry's spelling."""
-    parts: list[str] = []
-    end = 0
-    for match in chosen:
-        parts.extend((text[end : match.start], match.spelling))
-        end = match.end
-    parts.append(text[end:])
-    return "".join(parts)
-
-
-def apply(entries: Entries, text: str) -> str:
-    """Replace every heard phrase with its spelling: what happens without Jev."""
-    return replace(text, matches(entries, text))
-
-
-def _key(phrase: str) -> str:
-    return " ".join(phrase.split()).lower()
-
-
-# ---- proposals
+def pin(dictionary: Dictionary, model: str, group_id: str, meaning_id: str) -> Dictionary:
+    """Share exactly one meaning and its associations, leaving competitors model-local."""
+    learned = list(dictionary.learned_for(model))
+    group = next((g for g in learned if g.id == group_id), None)
+    if group is None:
+        raise ValueError("That learned group is no longer present")
+    meaning = next((m for m in group.meanings if m.id == meaning_id), None)
+    if meaning is None:
+        raise ValueError("That learned meaning is no longer present")
+    shared = []
+    remaining = []
+    for form in group.recognized_forms:
+        links = tuple(a for a in form.associations if a.meaning_id == meaning_id)
+        others = tuple(a for a in form.associations if a.meaning_id != meaning_id)
+        if links:
+            shared.append(
+                replace(
+                    form,
+                    associations=links,
+                    direct=form.direct if form.direct == meaning_id else None,
+                    direct_reason=form.direct_reason if form.direct == meaning_id else "",
+                )
+            )
+        if others:
+            remaining.append(
+                replace(
+                    form,
+                    associations=others,
+                    direct=None if form.direct == meaning_id else form.direct,
+                    direct_reason="" if form.direct == meaning_id else form.direct_reason,
+                )
+            )
+    updated = replace(
+        group,
+        meanings=tuple(m for m in group.meanings if m.id != meaning_id),
+        recognized_forms=tuple(remaining),
+    )
+    learned = [updated if g.id == group.id else g for g in learned]
+    learned = [g for g in learned if g.meanings or g.recognized_forms]
+    return validate(
+        Dictionary(
+            merge(
+                dictionary.pinned, (Group(group.id, (meaning,), tuple(shared), group.needs_review),)
+            ),
+            {**dictionary.learned, model: tuple(learned)},
+        )
+    )
 
 
 @dataclass(frozen=True)
 class Proposal:
-    """A proposed `learned` section for one speech model, with what it adds and removes
-    versus the current one."""
-
     model: str
-    learned: Entries
-    added: Entries
-    removed: Entries
+    learned: Groups
+    added: Groups
+    removed: Groups
+    version: str = ""
 
     def as_json(self) -> dict[str, object]:
         return {
             "model": self.model,
-            "learned": [e.as_json() for e in self.learned],
-            "added": [e.as_json() for e in self.added],
-            "removed": [e.as_json() for e in self.removed],
+            "version": self.version,
+            **{
+                name: [g.as_json() for g in getattr(self, name)]
+                for name in ("learned", "added", "removed")
+            },
         }
 
 
-def propose(current: Dictionary, proposed: Entries, model: str) -> Proposal:
-    """Drop what is already pinned, then diff against what was learned for that model.
-    Added and removed are whole entries; an entry whose heard phrases changed counts as
-    both."""
-    pinned = {_key(e.spelling): e for e in current.pinned}
-    learned = []
-    for entry in proposed:
-        existing = pinned.get(_key(entry.spelling))
-        if existing is None:
-            learned.append(entry)
-            continue
-        known = {_key(x) for x in existing.heard}
-        phrases = tuple(h for h in entry.heard if _key(h) not in known)
-        if phrases:
-            learned.append(Entry(entry.spelling, entry.description, phrases))
-    old = {_key(e.spelling): e for e in current.learned_for(model)}
-    new = {_key(e.spelling): e for e in learned}
-    added = tuple(e for k, e in new.items() if old.get(k) != e)
-    removed = tuple(e for k, e in old.items() if new.get(k) != e)
-    return Proposal(model, tuple(learned), added, removed)
+def propose(current: Dictionary, proposed: Groups, model: str, version: str = "") -> Proposal:
+    validate(Dictionary(current.pinned, {**current.learned, model: proposed}))
+    old = {g.id: g for g in current.learned_for(model)}
+    new = {g.id: g for g in proposed}
+    return Proposal(
+        model,
+        proposed,
+        tuple(g for k, g in new.items() if old.get(k) != g),
+        tuple(g for k, g in old.items() if new.get(k) != g),
+        version,
+    )
