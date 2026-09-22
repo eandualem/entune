@@ -101,24 +101,27 @@ errors. A deterministic audio-hash split reserved 199 recordings before
 generation; 197 had text. The remaining 769 recordings supplied 760 nonempty
 training transcripts. Original third-party transcripts were not used.
 
-An intermediate dictionary built with GPT-6 Astra at high effort after 22
-of 25 training chunks contained 290 entries, starting from the existing 45.
-Across the union of old and new
-dictionary matches in the held-out text, 420 occurrences were labelled from
-context before requesting Jev decisions; 12 unclear readings were excluded.
+A 25-chunk build produced 313 entries, starting from the existing 45. It
+used GPT-6 Astra: high effort for the first 22 chunks and medium for the
+last three. Across the union of old and new dictionary matches in the
+held-out text, 436 occurrences were labelled from context; 16 unclear
+readings were excluded. Labels preceded their Jev requests. An intermediate
+22-chunk evaluation was inspected before completing the last three training
+chunks; the generation prompt stayed unchanged.
 
-| Output on the same 408 labelled occurrences | Correct |
+| Output on the same 420 labelled occurrences | Correct |
 |---|---:|
-| Raw Parakeet | 288 |
-| Previous dictionary, plain replacement | 298 |
-| Previous dictionary, Jev | 299 |
-| Expanded dictionary, plain replacement | 112 |
-| Expanded dictionary, Jev | 392 |
+| Raw Parakeet | 299 |
+| Previous dictionary, plain replacement | 309 |
+| Previous dictionary, Jev | 310 |
+| Expanded dictionary, plain replacement | 113 |
+| Expanded dictionary, Jev | 405 |
 
-The expanded dictionary with Jev made nine wrong changes and missed seven
+The expanded dictionary with Jev made ten wrong changes and missed five
 corrections. Six wrong changes collapsed plurals; two changed literal "me"
-to "main", and one changed "pip" to "PyPI". The median Jev request took
-0.38 s across 120 clips with matches. On the separate, older 96-case
+to "main", one changed "pip" to "PyPI", and one changed "looks" to "logs".
+The median Jev request took 0.37 s across 124 clips with matches; decisions
+were reused when their full inputs were unchanged. On the separate, older 96-case
 regression set, it scored 87 versus the previous dictionary's 90. The
 experimental dictionary was therefore not adopted as the live default.
 
