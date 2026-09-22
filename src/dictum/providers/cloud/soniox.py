@@ -13,15 +13,13 @@ from collections.abc import Callable
 
 import httpx
 
-from dictum.providers.base import (
+from dictum.providers.cloud.http import (
     DEFAULT_TIMEOUT,
-    Clip,
-    Failure,
-    TranscribeResult,
     failure_from_body,
     failure_from_response,
     text_or_failure,
 )
+from dictum.providers.contracts import Clip, Failure, TranscribeResult
 
 BASE = "https://api.soniox.com/v1"
 POLL_SECONDS = 0.5

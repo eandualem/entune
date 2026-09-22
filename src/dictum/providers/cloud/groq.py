@@ -4,13 +4,8 @@ from __future__ import annotations
 
 import httpx
 
-from dictum.providers.base import (
-    DEFAULT_TIMEOUT,
-    Clip,
-    TranscribeResult,
-    failure_from_response,
-    text_or_failure,
-)
+from dictum.providers.cloud.http import DEFAULT_TIMEOUT, failure_from_response, text_or_failure
+from dictum.providers.contracts import Clip, TranscribeResult
 
 URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 

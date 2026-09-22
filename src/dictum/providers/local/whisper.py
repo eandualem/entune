@@ -1,4 +1,4 @@
-"""Local: whisper.cpp on this machine, through the pywhispercpp bindings.
+"""Whisper.cpp on this machine, through the pywhispercpp bindings.
 
 No key. A model is a file the user downloads once from the Settings page (a
 button, like entering a key for a cloud provider); only downloaded models are
@@ -10,10 +10,6 @@ from __future__ import annotations
 
 import gc
 import io
-import re
-import shutil
-import subprocess
-import tempfile
 import threading
 import wave
 from collections.abc import Callable
@@ -24,18 +20,14 @@ from typing import Any
 import httpx
 
 from dictum.audio import sniff_mime
-from dictum.providers.base import (
-    Clip,
-    Failure,
-    LocalModelStatus,
-    TranscribeResult,
-    Transcript,
-)
+from dictum.providers.contracts import Clip, Failure, TranscribeResult, Transcript
+from dictum.providers.local.audio import to_wav_with_ffmpeg
+from dictum.providers.local.contracts import LocalModelStatus
+from dictum.providers.local.downloads import DOWNLOAD_TIMEOUT, Download
 
 MODELS_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 WHISPER_RATE = 16_000
 LEADING_PUNCTUATION = " .,;:!?"  # whisper.cpp also starts a first segment with ". " at times
-DOWNLOAD_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 
 
 @dataclass(frozen=True)
@@ -62,9 +54,9 @@ CATALOGUE: tuple[ModelSpec, ...] = (
 )
 
 
-class Local:
+class WhisperCpp:
     id: str = "local"
-    name: str = "Local"
+    name: str = "Whisper.cpp (local)"
 
     def __init__(
         self,
@@ -165,7 +157,9 @@ class Local:
 
     def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         if not self._path(model).exists():
-            return Failure(f"Model {model} is not downloaded. Settings > Local has the button.")
+            return Failure(
+                f"Model {model} is not downloaded. Settings > Whisper.cpp has the button."
+            )
         try:
             audio = pcm16k(clip)
         except Exception as exc:
@@ -215,7 +209,7 @@ def pcm16k(clip: Clip) -> Any:
 
     data = clip.data
     if sniff_mime(data) != "audio/wav":
-        data = to_wav_with_ffmpeg(data)
+        data = to_wav_with_ffmpeg(data, sample_rate=WHISPER_RATE)
     with wave.open(io.BytesIO(data), "rb") as wav:
         channels, width, rate = wav.getnchannels(), wav.getsampwidth(), wav.getframerate()
         frames = wav.readframes(wav.getnframes())
@@ -253,101 +247,3 @@ def resample(samples: Any, rate: int, target: int) -> Any:
         return samples[:: int(ratio)]
     count = int(len(samples) / ratio)
     return np.interp(np.linspace(0, len(samples) - 1, count), np.arange(len(samples)), samples)
-
-
-def to_wav_with_ffmpeg(data: bytes) -> bytes:
-    if shutil.which("ffmpeg") is None:
-        raise RuntimeError("only WAV can be decoded without ffmpeg; record with the shortcut")
-    with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as source:
-        source.write(data)
-    try:
-        command = ["ffmpeg", "-v", "error", "-i", source.name, "-ac", "1"]
-        command += ["-ar", str(WHISPER_RATE), "-f", "wav", "-"]
-        result = subprocess.run(command, capture_output=True, check=True)
-    finally:
-        Path(source.name).unlink(missing_ok=True)
-    return bytes(result.stdout)
-
-
-class Download:
-    """A model's files, fetched in turn on a thread; each resumes from its `.part`."""
-
-    def __init__(self, client: httpx.Client, files: list[tuple[str, Path]], size: int) -> None:
-        self._client, self._files, self._size = client, files, size
-        self.received = sum(_have(target) for _, target in files)
-        self.error: str | None = None
-        self._thread = threading.Thread(target=self._run, daemon=True, name="dictum-download")
-
-    @property
-    def running(self) -> bool:
-        return self._thread.is_alive()
-
-    @property
-    def progress(self) -> float:
-        return min(self.received / self._size, 1.0) if self._size else 0.0
-
-    def start(self) -> None:
-        self._thread.start()
-
-    def _run(self) -> None:
-        for url, target in self._files:
-            if target.exists():
-                continue
-            if not self._fetch(url, target):
-                return
-
-    def _fetch(self, url: str, target: Path) -> bool:
-        part = target.with_name(target.name + ".part")
-        have = part.stat().st_size if part.exists() else 0
-        headers = {"Accept-Encoding": "identity"}
-        if have:
-            headers["Range"] = f"bytes={have}-"
-        try:
-            with self._client.stream("GET", url, headers=headers) as response:
-                if response.status_code == 416:
-                    complete = re.fullmatch(
-                        r"bytes \*/(\d+)", response.headers.get("content-range", "")
-                    )
-                    if complete is None or have == 0 or have != int(complete[1]):
-                        raise ValueError(
-                            "The server refused the range, but the partial file is not complete"
-                        )
-                elif response.status_code in (200, 206):
-                    expected = None
-                    if response.status_code == 206:
-                        interval = re.fullmatch(
-                            r"bytes (\d+)-(\d+)/(\d+)", response.headers.get("content-range", "")
-                        )
-                        if (
-                            interval is None
-                            or int(interval[1]) != have
-                            or int(interval[2]) != int(interval[3]) - 1
-                        ):
-                            raise ValueError("The server returned a different range than requested")
-                        expected = int(interval[3])
-                    else:
-                        self.received -= have
-                        have = 0
-                        length = response.headers.get("content-length")
-                        expected = int(length) if length is not None else None
-                    with part.open("ab" if have else "wb") as out:
-                        for chunk in response.iter_bytes():
-                            out.write(chunk)
-                            self.received += len(chunk)
-                    if expected is not None and part.stat().st_size != expected:
-                        raise ValueError("The download ended before the complete file arrived")
-                else:
-                    self.error = f"HTTP {response.status_code} from {url}"
-                    return False
-            part.replace(target)
-        except (httpx.HTTPError, OSError, ValueError) as exc:
-            self.error = f"{type(exc).__name__}: {exc}"
-            return False
-        return True
-
-
-def _have(target: Path) -> int:
-    if target.exists():
-        return target.stat().st_size
-    part = target.with_name(target.name + ".part")
-    return part.stat().st_size if part.exists() else 0

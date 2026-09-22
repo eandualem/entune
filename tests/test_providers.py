@@ -5,11 +5,11 @@ from pathlib import Path
 
 import httpx
 
-from dictum.providers import default_providers, resolve_model
-from dictum.providers.assemblyai import AssemblyAI
-from dictum.providers.base import Clip, Failure, Transcript
-from dictum.providers.groq import Groq
-from dictum.providers.soniox import Soniox
+from dictum.providers.cloud.assemblyai import AssemblyAI
+from dictum.providers.cloud.groq import Groq
+from dictum.providers.cloud.soniox import Soniox
+from dictum.providers.contracts import Clip, Failure, Transcript
+from dictum.providers.registry import default_providers, resolve_model
 from dictum.recorder import wav_bytes
 from tests.conftest import mock_client
 
@@ -208,7 +208,7 @@ def test_no_vocabulary_hint_goes_to_any_provider(clip: Clip) -> None:
 
 
 def test_assemblyai_streaming_upload_is_used_only_past_the_sync_limit() -> None:
-    from dictum.providers.assemblyai import StreamingUpload
+    from dictum.providers.cloud.assemblyai import StreamingUpload
 
     uploads: list[bytes] = []
     seen: list[str] = []
@@ -250,7 +250,7 @@ def test_assemblyai_streaming_upload_is_used_only_past_the_sync_limit() -> None:
 
 
 def test_failed_streaming_upload_stops_collecting_recorded_audio() -> None:
-    from dictum.providers.assemblyai import StreamingUpload
+    from dictum.providers.cloud.assemblyai import StreamingUpload
 
     class Offline(httpx.BaseTransport):
         def handle_request(self, request: httpx.Request) -> httpx.Response:
@@ -267,7 +267,7 @@ def test_failed_streaming_upload_stops_collecting_recorded_audio() -> None:
 def test_aborting_an_upload_discards_audio_waiting_for_a_slow_connection() -> None:
     import threading
 
-    from dictum.providers.assemblyai import StreamingUpload
+    from dictum.providers.cloud.assemblyai import StreamingUpload
 
     proceed = threading.Event()
     sent: list[bytes] = []

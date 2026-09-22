@@ -1,0 +1,8 @@
+Pinned by the user (approved, shared by every speech model, do not change):
+$pinned
+
+Step $number of $count. Working learned dictionary for $speech_model (revise; unmentioned entries stay unchanged):
+$learned
+
+Raw transcripts from $speech_model for this step ($transcript_count):
+$transcripts
