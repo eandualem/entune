@@ -45,9 +45,8 @@ class ShortcutEngine:
         cancel = self.shortcuts.cancel
         if cancel and key in cancel and set(cancel) <= self.pressed:
             self._cancelled = True
-            if self.recording:
-                self.recording = self._held = self._hold_stop_pending = False
-                self._on_cancel()
+            self.recording = self._held = self._hold_stop_pending = False
+            self._on_cancel()
             return
         if self._hold_stop_pending:
             return

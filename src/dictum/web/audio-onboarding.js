@@ -1,3 +1,4 @@
+const timeLabel = seconds => seconds < 60 ? `${Math.round(seconds)} s` : `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`;
 import { api, el, errorText } from "./ui.js";
 
 export function createAudioOnboarding({ getModel, getSettings, onBuild, onBusy }) {
@@ -6,26 +7,59 @@ export function createAudioOnboarding({ getModel, getSettings, onBuild, onBusy }
   const wispr = el("import-wispr");
   const build = el("build-audio-dictionary");
   const status = el("audio-import-status");
-  let count = 0;
+  let items = [];
+  const selected = new Set();
   let importing = false;
   let buildBusy = false;
 
   function render() {
-    el("audio-count").textContent = `${count} audio files saved for reuse`;
+    const duration = values => {
+      const seconds = values.reduce((sum, item) => sum + (item.seconds ?? 0), 0);
+      const unknown = values.filter(item => item.seconds == null).length;
+      return `${timeLabel(seconds)} known${unknown ? ` + ${unknown} unknown duration${unknown === 1 ? "" : "s"}` : ""}`;
+    };
+    const chosen = items.filter(item => selected.has(item.id));
+    el("audio-count").textContent = `Available: ${items.length} recordings · ${duration(items)}. Selected: ${chosen.length} · ${duration(chosen)}.`;
     const speech = getModel();
     const language = getSettings()?.dictionaryModel;
     el("audio-models").textContent = speech && language
-      ? `Transcribe with ${speech.label}; build the dictionary with ${language}. Provider charges apply. Review before accepting.`
+      ? `Transcribe with ${speech.label}; build the dictionary with ${language}. Cloud provider charges may apply; no cost estimate is available. Review before accepting.`
       : "Choose a speech model in the toolbar and a dictionary model in Settings → Providers.";
     choose.disabled = wispr.disabled = importing || buildBusy;
-    build.disabled = importing || buildBusy || !count || !speech || !language;
+    build.disabled = importing || buildBusy || !selected.size || !speech || !language;
+    for (const field of el("learning-audio-list").querySelectorAll("input")) field.disabled = importing || buildBusy;
     onBusy(importing);
   }
 
   async function refreshCount() {
-    count = (await api("/api/dictionary/audio")).count;
+    items = (await api("/api/dictionary/audio")).items;
+    for (const id of selected) if (!items.some(item => item.id === id)) selected.delete(id);
+    drawSelection();
+  }
+
+  function visibleItems() {
+    const from = el("audio-from").value, through = el("audio-through").value;
+    return items.filter(item => {
+      const date = item.created_at?.slice(0, 10);
+      return (!from && !through) || date && (!from || date >= from) && (!through || date <= through);
+    });
+  }
+  function drawSelection() {
+    const list = el("learning-audio-list"); list.replaceChildren();
+    for (const item of visibleItems()) {
+      const row = document.createElement("label"); row.className = "learning-audio-item";
+      const check = document.createElement("input"); check.type = "checkbox";
+      check.checked = selected.has(item.id);
+      check.addEventListener("change", () => { check.checked ? selected.add(item.id) : selected.delete(item.id); render(); });
+      const text = document.createElement("span");
+      text.textContent = `${item.name} · ${item.created_at ? new Date(item.created_at).toLocaleString() : "imported audio"} · ${item.seconds == null ? "duration unknown" : timeLabel(item.seconds)}`;
+      row.append(check, text); list.append(row);
+    }
     render();
   }
+  for (const id of ["audio-from", "audio-through"]) el(id).addEventListener("change", drawSelection);
+  el("audio-select-visible").addEventListener("click", () => { if (!buildBusy) { for (const item of visibleItems()) selected.add(item.id); drawSelection(); } });
+  el("audio-clear").addEventListener("click", () => { if (!buildBusy) { selected.clear(); drawSelection(); } });
 
   choose.addEventListener("click", () => folder.click());
   folder.addEventListener("change", async () => {
@@ -71,7 +105,7 @@ export function createAudioOnboarding({ getModel, getSettings, onBuild, onBusy }
       await refreshCount();
     }
   });
-  build.addEventListener("click", onBuild);
+  build.addEventListener("click", () => onBuild({audio_ids: [...selected]}));
 
   return {
     load: refreshCount,

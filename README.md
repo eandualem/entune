@@ -83,23 +83,34 @@ can be set:
 - **Hands-free**: a combination, for example `cmd+fn`. Press to start;
   press again, or press the hold key, to stop (on release if that key is also part of Cancel).
 
-**Cancel:** press `fn+esc` while dictating to discard the active recording,
-without saving, transcribing or pasting it. Escape alone does not cancel by
-default. Change or clear this combination in Settings, beside **Cancel dictation**.
+**Cancel:** press `fn+ctrl` during recording, transcription, processing, or pending
+delivery. Cancellation saves usable captured audio for later transcription and prevents
+pasting. A tap shorter than 0.25 seconds contains no usable capture and is not saved.
+Synchronous speech calls may need to drain; the app remains busy until they release
+resources. Existing Fn+Escape cancellation settings use Fn+Control on load because
+Escape can cancel foreground work. Custom shortcuts remain configurable; a modifier
+combination is not universally conflict-free across all applications.
 
-While you record, a small "Recording" pill appears, in the bottom-left
-corner of the screen your pointer is on until you drag it somewhere else;
-it stays where you drop it. It says "Transcribing…" until the text lands,
-and never takes focus. On stop, the clip is saved to history at once
-and goes to your default model; the transcript is copied to the clipboard
-and pasted into whatever had focus. Two dictations in a row land in the
-order you spoke them. A failure shows as a notification with the provider's
-message; History has the retry.
+The non-activating pill displays the actual stage: recording, saving, transcribing,
+contextual correction, filler reduction, formatting, or delivery. Disabled stages are
+skipped. One dictation owns the app until delivery completes; a new one must wait.
+Learning owns the same guard through proposal review. The final text is copied once
+and pasted into the **current editable input**, including in a different app from where
+recording began. With no editable target, Dictum reports “Copied to clipboard — no
+active text field.” If a paste cannot be verified through Accessibility, completion
+says so. Completion also appears in the pill, so it does not depend on notification
+permissions. History retains audio and all attempts for retry.
 
 The default model is the picker next to the Record button, the same one as
 in Settings; picking a model applies at once, no Save. The Record button in
 the window records the same WAV the shortcut does, so every model, cloud or
 local, takes it.
+The speech model is sampled when transcription starts, so changing it while speaking
+changes the engine for that recording. Changes after transcription starts apply to
+later attempts. Enhancement switches are sampled after speech succeeds. In fast mode,
+audio already uploaded while recording went to the provider selected at recording
+start. Switching providers does not retract that upload; when transcription starts,
+the old upload is aborted and the saved clip goes to the then-selected provider.
 
 **Fast mode** (Settings, off by default) uploads the audio while you record,
 so a dictation over two minutes is transcribed as soon as you stop instead of
@@ -174,7 +185,9 @@ Speech models mishear names, products and everyday words. The Dictionary tab gro
 recognized forms with their possible meanings, definitions and exact output spellings.
 Explicit associations decide which meanings can compete for a form; context decides
 which one applies. Edit groups directly, or ask the configured language model to build
-or refine them from this speech model's raw history, then accept its proposal.
+or refine them from this speech model's raw history. Additions, before/after updates,
+and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
+then apply the remainder once. Dismissing a proposal does not delete active knowledge.
 
 Learned associations stay specific to the speech model. Pinning shares and protects a
 meaning and its associations across models, without giving it priority over competitors.
@@ -182,25 +195,34 @@ Existing dictionaries are backed up before conversion and retained for review. C
 agent corrections still use the existing local API. Generation suggestions are Sonnet 5
 and GPT-5.4 mini; the model selected in Settings is honored.
 
-**Build from your audio**, in the Dictionary tab, imports original audio from
+**Learn from audio**, in the Dictionary tab, selects saved recordings directly or imports audio from
 Wispr Flow on this Mac (including its local backups) or an audio folder. Other
 applications' transcripts are ignored. Dictum keeps a local copy of each distinct
 audio file in `dictionary-audio/`, separate from recording history, and can reuse
 it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
 up to 199 MB can be uploaded; the chosen provider must support the audio format
 and length. A build uses the speech and dictionary models selected when it starts.
-Fresh transcripts stay in memory only for that build, which proposes confusion groups for
-that speech model. Review and accept the proposal to change your dictionary;
-pinned meanings remain shared. Provider failures stop the build visibly, without
-fallback or a partial dictionary. Audio already imported is kept.
+Select individual recordings or a date range; available and selected duration is shown
+where known. Fresh transcripts stay in memory within the workflow and never become
+history attempts. Retry reuses successful transcriptions, including after a later
+generation failure. Finishing, discarding, replacing the workflow, or closing Dictum
+clears that temporary text. Source audio is kept.
 
-History and audio share one build job, visible across open windows. Cancel stops
-new clips and refinement steps; a running speech operation may need to finish,
-while a generation request can be interrupted. Wait for cleanup before starting
-another build. A ready proposal must be accepted or discarded first. Acceptance
-checks the dictionary revision from the start of the job: if another edit intervened,
-discard the stale proposal and rebuild. Foreground dictation takes priority between
-local audio clips; switching models never unloads one during inference.
+History and audio share one exclusive, user-initiated learning workflow. Finish an
+active dictation first. Learning blocks dictation and separate dictionary editing,
+including while proposals await review. Stop or a later failure retains validated
+completed batches for review, with their actual coverage and cause. A running speech
+call may need to finish; a generation request can be interrupted. Apply, discard, or
+retry the completed portion. No changes are applied automatically.
+
+Default history refinement uses up to 300 recent, unprocessed attempts for the selected
+speech model; “All history” deliberately includes older/previously examined data.
+Original speech and its processing records are supplied as distinct evidence, not
+confirmed intended wording. Applying at least one actual change marks only fully
+covered input IDs learned for that model. Applying none leaves them eligible. A
+partially processed transcript remains eligible. New dictations after selection and
+other models' boundaries are unaffected. Pinned definitions can be reviewed and updated;
+the agent cannot delete pinned meanings or remove any existing pinned variant.
 
 
 ### Jev decides each match in context
@@ -208,12 +230,13 @@ local audio clips; switching models never unloads one during inference.
 With a [TypeSafe](https://typesafe.ai) key and contextual correction enabled, **Jev**
 classifies eligible meanings using the original transcript. Jev generates no replacement
 text: Dictum applies the selected stored spelling. A literal Jeff or GIF is a meaning in
-its own right. Unsupported or uncertain choices preserve the original occurrence.
-Meanings that produce identical text have their probability support combined.
+its own right. Every valid response selects the highest-scoring eligible meaning, even
+when scores are close. Exact ties use Jev's declared tied winner. Invalid responses
+fail the stage; scores are never invented or pooled by output spelling.
 
 Only explicitly approved, unambiguous direct mappings bypass classification. Pinning or
-having a single recorded candidate is not enough. With contextual correction off, only
-those direct mappings apply. The previous binary classifier's cached accuracy and timings
+having a single recorded candidate is not enough. Turning contextual correction off
+disables the entire dictionary stage. The previous binary classifier's cached accuracy and timings
 are documented separately; they do not establish the new classifier's quality or latency.
 History and Settings report work performed, including direct changes and abstentions,
 rather than an accuracy score. Optional formatting inserts paragraph breaks and bullets,
@@ -230,11 +253,16 @@ offline/mocked coverage; its live classification quality has not been evaluated.
 Successful speech and its original text are saved before correction. If
 contextual correction fails, Dictum delivers the untouched original and
 shows a noninterrupting notice, skipping cleanup and formatting. Those later stages run
-in that order; failure of either keeps its input and is reported separately.
+in that order; final failure stops all remaining stages, retains the last completed
+text and explains which stage failed and which later stages were skipped. Every completed
+stage output and occurrence-selection provenance is saved internally. History shows
+only the final result for each attempt; canceled attempts show an audio-saved notice.
 Settings > Providers controls the processing wait: initially five seconds
 total across correction, cleanup and formatting, three per attempt, and at most two
 attempts per request. Each applicable stage sends one request before retries. Transient
-failures can retry within that shared deadline. **Copy original** in history
+failures can retry within that shared deadline. Explicit exhausted-credit, authentication
+and authorization errors return immediately, including explicit credit failures in HTTP 429.
+These are configurable defaults, not an accuracy or end-to-end latency guarantee. **Copy original** in history
 copies the provider's text without altering history or already-pasted text. After a
 correction failure, **Apply safe mappings and copy** offers a derived result using only
 approved direct mappings; ambiguous spans remain untouched.
@@ -274,7 +302,7 @@ Enabled features determine what is sent out:
   mode starts uploading during recording. Local Whisper.cpp and Parakeet transcribe
   on this machine, without sending audio to a speech service.
 - **Dictionary builds:** the chosen Anthropic or OpenAI model receives raw source
-  transcripts and the pinned/working confusion groups, including definitions and
+  transcripts, relevant processing records, and the pinned/working confusion groups, including definitions and
   personal context. Refinement sends the current dictionary again with each chunk.
 - **Jev correction:** TypeSafe receives the original transcript, matched occurrences
   and their eligible meanings, spellings, definitions and personal context.
@@ -288,7 +316,8 @@ Enabled features determine what is sent out:
 
 There is no Dictum account, telemetry or hosted history storage. Local speech alone
 does not make every enabled feature offline. Temporary onboarding transcripts are
-not retained by Dictum; this does not establish the remote providers' retention
+kept in memory for workflow retries, never stored as normal attempts, and cleared on
+finish, discard, replacement or closure; this does not establish the remote providers' retention
 policies. Those depend on the provider and account you use.
 
 Saved audio and transcripts never automatically expire or get deleted, including

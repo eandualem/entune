@@ -4,8 +4,8 @@
 stable meaning IDs and explicit recognized-form associations. `pinned` is shared;
 `learned` is keyed by the unchanged speech model identifier (`provider/model`).
 Pinning protects knowledge from generation, but context decides among eligible
-competitors. The editor pins one meaning and its associations; other meanings and
-associations in that group remain local to the speech model. The explicit Pin all
+competitors. The editor pins one meaning and all its associations across groups and models;
+competing meanings remain local to their speech model. The explicit Pin all
 action shares the model's entire learned section.
 
 ```json
@@ -36,7 +36,10 @@ An association makes one meaning eligible for one recognized form. Being in the 
 group does not create other associations or reverse a confusion. Two groups sharing
 a form contribute all eligible meanings. An ID identifies a meaning independently
 of spelling: edits retain IDs, and two senses may share an output spelling. A learned
-extension can reference a pinned meaning without changing it or sharing new local edges.
+extension may add variants to a pinned meaning; those variants are shared too.
+Generation may propose definition/context updates for review, but cannot delete a pinned
+meaning, change its output spelling/casing or remove an existing variant. These checks
+apply to whole-group rewrites as well as explicit removals. Manual owner edits remain allowed.
 
 Definitions describe general meaning; optional personal usage is supporting context,
 not a condition. The hypothetical Jeff above supplies no personal fact about the user.
@@ -57,18 +60,14 @@ can offer the whole multiword name or compatible word-level meanings. Literal me
 are ordinary candidates: selecting the computing or weather meaning of cloud outputs
 cloud; selecting Claude outputs Claude. There is no semantic replace/keep choice.
 
-Dictum separately supports application uncertainty when a meaning is missing or context
-is insufficient. The `unresolved` response option is an abstention control, never a
-stored meaning. Invalid responses fail the stage; valid uncertain occurrences remain
-untouched while independent supported occurrences can change. Confidence is not an
-acoustic accuracy score and cannot guarantee the candidate set is complete.
-
-The initial, uncalibrated policy requires at least 0.70 support for an output and a
-0.15 margin over any different output or uncertainty. Probabilities for interpretations
-that produce identical text are summed: two cloud senses at 0.35 each beat Claude at
-0.30 without claiming which cloud sense was resolved. Conservative abstention can miss
-a correction that the former aggressive binary veto made correctly. Paid comparisons
-require separate authorization; cached binary scores below do not validate this policy.
+A valid response always selects its highest-scoring eligible interpretation, even
+when probabilities are close. Distinct meanings never pool probability merely because
+they output the same spelling. Exact ties honor Jev's declared choice after validating
+that it is tied for highest. There is no generic uncertainty candidate or confidence
+threshold for dictionary choices. Invalid/failed responses fail the stage; missing
+usable definitions or overly complex overlaps remain visibly unresolved without an
+invented meaning. Scores are not acoustic accuracy measurements or proof of complete
+candidate coverage. Offline fixtures test these contracts, not live model quality.
 
 Code applies only stored spellings, once against disjoint original offsets. Fixed names
 and acronyms use exact casing (Jev, GIF, GitHub). Ordinary literal selections preserve
@@ -95,15 +94,16 @@ approving the revised mapping.
 
 Direct-only dictation needs no contextual request (cleanup/formatting may make their own).
 Mixed dictation still makes one request. Exact unchanged outputs need no decision call.
-When contextual correction is off, only eligible approved direct mappings apply;
-ambiguous/unapproved spans remain original. Historical unconditional results retain
+When dictionary correction is off, the entire dictionary stage is disabled, including
+approved direct mappings. Explicit safe-copy recovery is a separate user action. Historical unconditional results retain
 their old method label and are not represented as approved direct work.
 
 Speech success and untouched provider text are saved before dictionary processing.
 Failure of contextual correction delivers the exact original, skips cleanup/formatting
 and shows a noninterrupting notice. Cleanup runs before formatting; failure of either
-preserves that stage's input. Both report their exact changes, latency and failures
-separately from dictionary replacements. Raw text remains available through Copy original.
+preserves that stage's input and skips all later enabled stages. Both report their exact changes, latency and failures
+separately from dictionary replacements. Raw text and completed stage outputs/provenance persist internally. History publishes
+only the final text after processing; pending results cannot be copied as final text.
 History and Settings separate decisions, direct replacements, unresolved occurrences,
 retries, failures, preserved spans and timings. Replacements count edited disjoint
 components, not words proven correct. Old combined counters remain in exports under
@@ -114,6 +114,8 @@ across correction, cleanup and formatting, **3 seconds per attempt**, and **2 at
 per request**. These are configurable defaults, not measured provider
 service guarantees. Transient connection/read failures, timeouts and HTTP
 408/429/500/502/503/504/529 can retry with 0.15-second exponential backoff.
+Explicit insufficient-credit/quota and invalid-credential responses are terminal even
+when encoded as 429. Malformed successful responses fail without an invented decision.
 `Retry-After` is respected only when another attempt fits the remaining
 budget; longer waits return the original immediately. Authentication,
 request-validation and malformed-answer failures are not retried.
@@ -232,18 +234,34 @@ quality. Paid evaluation needs separate authorization.
 
 ## Generation, editing and migration
 
-Build from history uses this speech model's recent raw transcripts (up to 300); audio
-onboarding uses fresh temporary transcripts from the selected model. The generation
-provider receives those snippets, pinned knowledge and this model's working groups.
+Default refinement uses up to 300 recent, not-yet-covered attempts for this speech model;
+explicit All history includes older data. Original speech and completed processing
+outputs, stage outcomes and selection provenance are distinct evidence: generated
+corrections are not ground truth. Audio learning uses selected saved/imported recordings,
+of any age. Temporary target-model transcripts stay in memory and are reused on retry;
+they never enter the database or ordinary history. Applying, discarding, replacing the
+workflow or closing the app clears them, while source audio remains. The generation
+provider receives the selected inputs, pinned knowledge and this model's working groups.
 The configured model is honored; suggestions remain Sonnet 5 and GPT-5.4 mini with
 medium reasoning where supported. No generation or classification model rewrites dictation.
 
 Sequential steps contain about 24,000 transcript characters; the full growing dictionary
 adds to that request size. Each step can add groups, revise complete groups or explicitly
 remove learned group IDs. Unmentioned knowledge remains. New temporary IDs are assigned
-persistent IDs once; subsequent steps and editor changes retain them. Pin definitions
-cannot be overwritten by generation. Proposals name the original dictionary revision;
-acceptance on a stale revision is refused. No proposal is installed automatically.
+persistent IDs once; subsequent steps and editor changes retain them. Pinned definitions
+and usage can be proposed for review, but existing pinned variants/meanings cannot be
+removed. Separate editing and dictation are blocked from generation through review;
+editing within the proposal is allowed. Additions, before/after updates and explicit
+removals can be dismissed individually, then applied together. No proposal is installed
+automatically. A revision check also rejects out-of-band file edits.
+
+Each validated batch checkpoints the working dictionary and its fully covered input
+IDs. Failure or Stop keeps completed proposals and excludes the failed batch. Retry
+resumes from the completed batch with the accumulated dictionary. Applying at least one
+actual change consumes only fully covered input IDs for that model; applying none
+consumes none. A transcript split across batches is covered only after its final segment
+succeeds. This ID-based record works even when selected inputs are not a chronological
+prefix, and never consumes new data created while the review is open.
 
 New inferred associations need source snippet IDs and exact character offsets validated
 against supplied text, including whole-word boundaries. `basis: text` records textual

@@ -11,9 +11,11 @@ import socket
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import CancelledError
 
 from dictum.desktop.engine import ShortcutEngine
 from dictum.desktop.platform import Microphone, Platform
+from dictum.operations import Busy, Operation
 from dictum.processing import notice
 from dictum.providers.cloud.contracts import Upload
 from dictum.recorder import Capture, Recorder, Sink
@@ -51,13 +53,15 @@ class DictumApp:
         self._quitting = False
         self._closed = False
         self._close_lock = threading.RLock()
-        self._pending = 0  # transcriptions still running; the tray state is derived
-        self._captures: queue.Queue[tuple[Capture, Upload | None]] = queue.Queue()
-        self._jobs: queue.Queue[tuple[Recording, float, Upload | None]] = queue.Queue()
+        self._operation: Operation | None = None
+        self._saved_recording: Recording | None = None
+        self._captures: queue.Queue[tuple[Capture, Upload | None, Operation]] = queue.Queue()
+        self._jobs: queue.Queue[tuple[Recording, float, Upload | None, Operation]] = queue.Queue()
         threading.Thread(target=self._persist, daemon=True, name="dictum-persist").start()
         threading.Thread(target=self._work, daemon=True, name="dictum-transcribe").start()
         self._server_answers = server_answers or self._probe_server
 
+        dictum.operations.listeners.append(lambda: self._later(self._refresh_state))
         platform.tray.set_actions(self.open_window, self.open_settings, self.quit)
         platform.every(PERMISSION_POLL_SECONDS, self._recheck_permission)
         dictum.on_change(lambda: platform.run_on_ui_thread(self.apply_shortcut))
@@ -103,6 +107,7 @@ class DictumApp:
             try:
                 if self._recording:
                     self.stop_recording()
+                self.dictum.operations.cancel_dictation()
                 deadline = time.monotonic() + QUIT_FLUSH_SECONDS
                 while self._captures.unfinished_tasks and time.monotonic() < deadline:
                     time.sleep(0.02)
@@ -270,18 +275,28 @@ class DictumApp:
         with self._close_lock:
             if self._quitting:
                 return
+            try:
+                operation = self.dictum.operations.begin("dictation", "recording")
+            except Busy as exc:
+                if self.engine:
+                    self.engine.recording = False
+                self._notify_later("Dictum: busy", str(exc))
+                return
+            self._operation = operation
+            self._saved_recording = None
             self._upload = None
             try:
                 self.recorder.start(self._begin_upload)
-            except Exception as exc:  # the user needs to know why nothing happens
+            except Exception as exc:
                 message = f"{type(exc).__name__}: {exc}"
                 self.dictum.report_status(lastError=message)
-                self._later(lambda: self.platform.actions.notify("Dictum: microphone", message))
-                if self.engine is not None:
+                self._notify_later("Dictum: microphone", message)
+                if self.engine:
                     self.engine.recording = False
-                if self._upload is not None:  # begun before the microphone refused
+                if self._upload is not None:
                     self._upload.abort()
                     self._upload = None
+                self._finish(operation)
                 return
             self.dictum.report_status(lastRecordingStarted=time.time(), lastError=None)
             self._quiet_notified = False
@@ -294,72 +309,87 @@ class DictumApp:
 
     def stop_recording(self) -> None:
         with self._close_lock:
+            operation = self._operation
+            if not self._recording or operation is None:
+                return
             capture = self.recorder.stop()
             upload, self._upload = self._upload, None
             self._recording = False
+            if operation.cancel.is_set() and upload is not None:
+                upload.abort()
+                upload = None
             if capture.seconds < MIN_CLIP_SECONDS:
                 if upload is not None:
                     upload.abort()
-                self._later(self._refresh_state)
+                self._notify_later(
+                    "Dictum",
+                    "Canceled — no usable audio captured."
+                    if operation.cancel.is_set()
+                    else "No usable audio captured.",
+                )
+                self._finish(operation)
                 return
-            self._pending += 1
-            self._later(self._refresh_state)
-            self._captures.put((capture, upload))
+            if not operation.cancel.is_set():
+                self.dictum.operations.stage(operation, "saving")
+            self._captures.put((capture, upload, operation))
 
     def cancel_recording(self) -> None:
-        """Discard only the active microphone capture; earlier dictations keep their place."""
+        """Cancel recording, processing, or queued delivery; saved audio is retained."""
         with self._close_lock:
-            if not self._recording:
-                return
-            upload, self._upload = self._upload, None
-            try:
-                if upload is not None:
-                    upload.abort()
-                self.recorder.stop(discard=True)
-            finally:
-                self._recording = False
+            self.dictum.operations.cancel_dictation()
+            if self.engine:
+                self.engine.recording = False
+            if self._recording:
+                self.stop_recording()
+            elif self._operation and self._operation.stage == "cancelling":
+                # A queued UI callback still checks its operation before delivery.
+                # A running provider drains before releasing ownership.
                 self._later(self._refresh_state)
 
     def _persist(self) -> None:
-        """Every stopped clip is written to disk and history at once, in order, so a quit
-        during a slow provider call loses nothing; only the transcription waits."""
         while True:
-            capture, upload = self._captures.get()
+            capture, upload, operation = self._captures.get()
             try:
                 recording = self.dictum.store_recording(capture.wav(), "audio/wav")
+                self._saved_recording = recording
             except Exception as exc:
                 self._capture_error = f"{type(exc).__name__}: {exc}"
                 logging.getLogger(__name__).exception("Could not save captured audio")
                 self._notify_later("Dictum: could not save", self._capture_error)
                 if upload is not None:
                     upload.abort()
-                self._pending -= 1
-                self._later(self._refresh_state)
+                self._finish(operation)
                 continue
             finally:
                 self._captures.task_done()
                 seconds = capture.seconds
-                del capture  # an idle worker must not keep the last clip's PCM alive
-            self._jobs.put((recording, seconds, upload))
+                del capture
+            self._jobs.put((recording, seconds, upload, operation))
 
     def _notify_later(self, title: str, message: str) -> None:
-        self._later(lambda: self.platform.actions.notify(title, message))
+        self._later(lambda: self._notify(title, message))
+
+    def _notify(self, title: str, message: str) -> None:
+        self.dictum.report_status(delivery=message)
+        self.platform.tray.complete(message)
+        self.platform.actions.notify(title, message)
 
     def _work(self) -> None:
-        """One worker, so two dictations in a row are transcribed and pasted in the order
-        they were spoken, whichever provider answers first."""
         while True:
-            recording, seconds, upload = self._jobs.get()
-            if self._quitting:
-                if upload is not None:
-                    upload.abort()
-                self._pending -= 1
-                continue  # audio is already saved; do not start another request at quit
-            self._transcribe_and_deliver(recording, seconds, upload)
+            recording, seconds, upload, operation = self._jobs.get()
+            try:
+                if self._quitting:
+                    operation.cancel.set()
+                self._transcribe_and_deliver(recording, seconds, upload, operation)
+            finally:
+                self._jobs.task_done()
 
     def _refresh_state(self) -> None:
-        """The tray and the pill follow what is really going on: a recording in progress
-        beats a transcription still running, which beats idle."""
+        operation = self.dictum.operations.status()
+        if self._recording and self._operation and self._operation.cancel.is_set():
+            if self.engine:
+                self.engine.recording = False
+            self.stop_recording()
         if self._recording:
             quiet = self.recorder.quiet
             self.platform.tray.set_state("quiet" if quiet else "recording")
@@ -370,79 +400,124 @@ class DictumApp:
                     "Almost no sound is reaching Dictum. Check your microphone in System "
                     "Settings → Sound → Input. Recording continues.",
                 )
-        elif self._pending > 0:
-            self.platform.tray.set_state("busy")
+        elif operation:
+            self.platform.tray.set_state(operation["stage"])
         else:
             self.platform.tray.set_state("idle")
 
+    def _finish(self, operation: Operation) -> None:
+        if self._operation is operation:
+            self._operation = None
+            self._saved_recording = None
+        self.dictum.operations.finish(operation)
+
+    def _cancelled(self, operation: Operation, recording: Recording) -> None:
+        saved = self.dictum.store.get_recording(recording.id)
+        attempt = saved.transcriptions[0].id if saved and saved.transcriptions else None
+        self.dictum.store.cancel_recording(recording.id, attempt)
+        self._notify_later(
+            "Dictum: canceled", "Canceled — audio saved. Open history to transcribe again."
+        )
+        self._finish(operation)
+
     def _transcribe_and_deliver(
-        self, recording: Recording, seconds: float, upload: Upload | None = None
+        self,
+        recording: Recording,
+        seconds: float,
+        upload: Upload | None,
+        operation: Operation,
     ) -> None:
         try:
-            self._transcribe_and_deliver_inner(recording, seconds, upload)
-        except Exception as exc:  # whatever happens, the icon must not stay busy
-            message = f"{type(exc).__name__}: {exc}"
-            self._later(
-                lambda: self.platform.actions.notify("Dictum: transcription failed", message)
+            operation.check()
+            started = time.monotonic()
+            recording = self.dictum.transcribe_recording(
+                recording, None, upload, operation=operation
+            )
+            operation.check()
+            attempt = recording.transcriptions[0]
+            print(
+                f"transcribed {seconds:.0f} s of audio in {time.monotonic() - started:.1f} s "
+                f"({attempt.status})",
+                flush=True,
+            )
+            if attempt.status == "ok" and attempt.text:
+                self.dictum.operations.stage(operation, "delivering")
+                self._wait_for_keys_up(operation)
+                message = notice(attempt.correction, attempt.formatting, attempt.cleanup)
+                if attempt.error:
+                    message = " ".join(part for part in (message, attempt.error) if part)
+                self._later(
+                    lambda: self._deliver(attempt.text or "", message, operation, recording)
+                )
+                return  # ownership lasts through the queued UI delivery
+            if attempt.status == "ok":
+                self._notify_later("Dictum", "No speech detected.")
+            else:
+                first = (attempt.error or "failed").splitlines()[0]
+                self._notify_later(
+                    f"Dictum: {attempt.provider} / {attempt.model} failed",
+                    f"{first}. Open history to retry with another model.",
+                )
+        except CancelledError:
+            self._cancelled(operation, recording)
+        except (NoDefaultModel, UnknownModel) as exc:
+            self._notify_later("Dictum", str(exc))
+        except Exception as exc:
+            self._notify_later("Dictum: transcription failed", f"{type(exc).__name__}: {exc}")
+        finally:
+            if upload is not None and operation.cancel.is_set():
+                upload.abort()
+        self._finish(operation)
+
+    def _deliver(
+        self, text: str, message: str | None, operation: Operation, recording: Recording
+    ) -> None:
+        try:
+            operation.check()
+            actions, permissions = self.platform.actions, self.platform.permissions
+            actions.copy_to_clipboard(text)
+            title, completion = "Dictum: copied", ""
+            if self.engine is not None and self.engine.pressed:
+                completion = "Copied to clipboard — release shortcut keys and press Cmd+V."
+            elif permissions.can_post():
+                operation.check()
+                outcome = actions.paste_into_focused_app(text, operation.check)
+                if outcome == "no_target":
+                    completion = "Copied to clipboard — no active text field."
+                elif outcome == "focus_moving":
+                    completion = "Copied to clipboard — focus kept changing before paste."
+                elif outcome == "unverified":
+                    completion = (
+                        "Copied to clipboard. Paste was sent, but insertion could not be verified."
+                    )
+                else:
+                    self.dictum.report_status(delivery="Inserted into current text field")
+                    self.platform.tray.complete("Inserted into current text field")
+            else:
+                permissions.request_post()
+                title = "Dictum: copied, not pasted"
+                completion = (
+                    f"Copied to clipboard. Allow Accessibility in {permissions.settings_hint} "
+                    "to paste. Cmd+V for now."
+                )
+            if message:
+                completion = f"{completion or 'Dictation delivered.'} {message}"
+            if completion:
+                self._notify(title, completion)
+        except CancelledError:
+            self._cancelled(operation, recording)
+        except Exception as exc:
+            self._notify_later(
+                "Dictum: delivery unavailable",
+                f"{type(exc).__name__}: {exc}. Open history to copy the result.",
             )
         finally:
-            self._pending -= 1
-            self._later(self._refresh_state)
+            self._finish(operation)
 
-    def _transcribe_and_deliver_inner(
-        self, recording: Recording, seconds: float, upload: Upload | None
-    ) -> None:
-        started = time.monotonic()
-        try:
-            recording = self.dictum.transcribe_recording(recording, None, upload)
-        except (NoDefaultModel, UnknownModel) as exc:
-            message = str(exc)
-            self._later(lambda: self.platform.actions.notify("Dictum", message))
-            return
-        attempt = recording.transcriptions[0]
-        # Measured so fast mode's worth can be judged from the log (issue #20).
-        how = "fast mode" if attempt.fast else "plain"
-        print(
-            f"transcribed {seconds:.0f} s of audio in {time.monotonic() - started:.1f} s"
-            f" ({how}, {attempt.status})",
-            flush=True,
-        )
-        if upload is not None and upload.error:
-            print(f"fast mode: the stream was not used: {upload.error}", flush=True)
-        if attempt.status == "ok" and attempt.text:
-            self._wait_for_keys_up()
-            # Delivered on the UI thread: on macOS the paste goes through HIToolbox, which
-            # only allows it there.
-            text = attempt.text
-            processing_notice = notice(attempt.correction, attempt.formatting, attempt.cleanup)
-            self._later(lambda: self._deliver(text, processing_notice))
-        elif attempt.status == "ok":
-            self._later(lambda: self.platform.actions.notify("Dictum", "No speech detected."))
-        else:
-            first_line = (attempt.error or "").splitlines()[0] if attempt.error else "failed"
-            self._later(
-                lambda: self.platform.actions.notify(
-                    f"Dictum: {attempt.provider} / {attempt.model} failed",
-                    f"{first_line}. Open history to retry with another model.",
-                )
-            )
-
-    def _deliver(self, text: str, message: str | None = None) -> None:
-        actions, permissions = self.platform.actions, self.platform.permissions
-        actions.copy_to_clipboard(text)
-        if permissions.can_post():
-            actions.paste_into_focused_app()
-        else:
-            permissions.request_post()
-            hint = f"Allow Accessibility in {permissions.settings_hint} to paste. Cmd+V for now."
-            actions.notify("Dictum: copied, not pasted", hint)
-
-        if message:
-            actions.notify("Dictum: processing unavailable", message)
-
-    def _wait_for_keys_up(self) -> None:
+    def _wait_for_keys_up(self, operation: Operation) -> None:
         deadline = time.monotonic() + KEYS_UP_WAIT_SECONDS
         while self.engine is not None and self.engine.pressed and time.monotonic() < deadline:
+            operation.check()
             time.sleep(0.02)
 
     def _later(self, action: Callable[[], None]) -> None:

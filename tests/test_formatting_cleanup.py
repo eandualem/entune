@@ -187,7 +187,7 @@ def test_text_changes_validate_source_and_disjoint_offsets() -> None:
 
 
 @pytest.mark.parametrize("failure", ["fillers", "sentences"])
-def test_cleanup_and_formatting_fail_independently(failure: str) -> None:
+def test_final_failure_stops_remaining_stages(failure: str) -> None:
     import json
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -211,8 +211,8 @@ def test_cleanup_and_formatting_fail_independently(failure: str) -> None:
             policy=jev.Policy(),
         )
     if failure == "fillers":
-        assert result.text == "- Um um first item.\n- Second item."
-        assert result.cleanup.status == "failed" and result.formatting.status == "succeeded"
+        assert result.text == "Um um first item. Second item."
+        assert result.cleanup.status == "failed" and result.formatting.status == "skipped"
         assert result.cleanup.removed_words == 0 and not result.cleanup.changes
     else:
         assert result.text == "Um first item. Second item."
@@ -241,8 +241,18 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
 
     def respond(request: httpx.Request) -> httpx.Response:
         attempt = store.list_recordings()[0].transcriptions[0]
-        assert attempt.status == "ok" and attempt.raw_text == attempt.text == raw
-        assert attempt.cleanup is not None and attempt.cleanup.status == "pending"
+        assert attempt.status == "ok" and attempt.raw_text == raw
+        assert attempt.processing_state == "processing"
+        assert attempt.correction is not None and attempt.cleanup is not None
+        if len(requests) == 0:
+            assert attempt.text == raw and attempt.correction.status == "pending"
+        elif len(requests) == 1:
+            assert attempt.text == attempt.correction.output == "Um um use Jev. Next item."
+            assert attempt.correction.selections[0].meaning_ids == ("a_jev",)
+            assert attempt.cleanup.status == "pending"
+        else:
+            assert attempt.text == attempt.cleanup.output == "Um use Jev. Next item."
+            assert attempt.cleanup.status == "succeeded"
         return handler(request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as network:

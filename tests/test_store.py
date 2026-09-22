@@ -185,3 +185,41 @@ def test_older_formatting_does_not_gain_invented_edit_counts(tmp_path: Path) -> 
         assert attempt.formatting is not None and attempt.formatting.changes is None
         assert attempt.formatting.decisions == 1
         assert attempt.raw_text == "First. Next." and attempt.text == "- First.\n- Next."
+
+
+def test_restart_retains_completed_enhancement_and_fails_only_unfinished_stage(
+    tmp_path: Path,
+) -> None:
+    from contextlib import closing
+    from dataclasses import replace
+
+    from dictum.processing import Stage, pending
+    from dictum.text_edits import Change
+
+    raw = "Jeff works. Next."
+    with closing(Store(tmp_path)) as store:
+        recording = store.create_recording(WEBM_HEADER)
+        initial = pending(raw, contextual=True, formatting=True, cleanup=True)
+        attempt_id = store.add_transcription(
+            recording.id, "p", "m", "ok", raw, None, raw_text=raw, processing=initial
+        )
+        checkpoint = replace(
+            initial,
+            text="Jev works. Next.",
+            correction=Stage(
+                "succeeded",
+                "contextual",
+                output="Jev works. Next.",
+                replacements=1,
+                changes=(Change(0, 4, "Jeff", "Jev"),),
+            ),
+        )
+        store.finish_processing(attempt_id, checkpoint, final=False)
+    with closing(Store(tmp_path)) as reopened:
+        attempt = reopened.list_recordings()[0].transcriptions[0]
+        assert attempt.text == "Jev works. Next." and attempt.raw_text == raw
+        assert attempt.processing_state == "complete"
+        assert attempt.correction is not None and attempt.correction.status == "succeeded"
+        assert attempt.correction.output == attempt.text
+        assert attempt.cleanup is not None and attempt.cleanup.status == "failed"
+        assert attempt.formatting is not None and attempt.formatting.status == "skipped"

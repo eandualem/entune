@@ -56,8 +56,12 @@ class FnAwareListener(_ListenerBase):  # type: ignore[misc]
     being slow is re-enabled here, which pynput does not do itself.
     """
 
-    def __init__(self, *args: Any, owns_fn: bool = False, **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, owns_fn: bool = False, cancel_control: bool = False, **kwargs: Any
+    ) -> None:
         self.owns_fn = owns_fn
+        self.cancel_control = cancel_control
+        self._swallowed_control: set[int] = set()
         self._tap: Any = None
         if owns_fn:
             kwargs["darwin_intercept"] = self._intercept
@@ -68,8 +72,27 @@ class FnAwareListener(_ListenerBase):  # type: ignore[misc]
         return self._tap
 
     def _intercept(self, event_type: Any, event: Any) -> Any:
-        keycode = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
-        return None if swallow_fn(int(event_type), int(keycode), self.owns_fn) else event
+        keycode = int(Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode))
+        if swallow_fn(int(event_type), keycode, self.owns_fn):
+            return None
+        if (
+            self.cancel_control
+            and int(event_type) == int(Quartz.kCGEventFlagsChanged)
+            and keycode == 59
+        ):
+            flags = int(Quartz.CGEventGetFlags(event))
+            down = bool(flags & int(Quartz.kCGEventFlagMaskControl))
+            if keycode in self._swallowed_control:
+                if not down:
+                    self._swallowed_control.remove(keycode)
+                return None
+            if down and flags & FN_FLAG:
+                self._swallowed_control.add(keycode)
+                return None
+            # Control-first already reached the foreground as a lone modifier.
+            # Its release must still reach it; never forward Fn as part of that event.
+            Quartz.CGEventSetFlags(event, flags & ~FN_FLAG)
+        return event
 
     def _handle_message(
         self, proxy: Any, event_type: Any, event: Any, refcon: Any, injected: Any
@@ -133,17 +156,23 @@ class HotkeyListener:
         the listener is recreated when that changes.
         """
         owns_fn = engine is not None and engine.shortcuts.uses_fn
+        cancel_control = engine is not None and set(engine.shortcuts.cancel or ()) == {"fn", "ctrl"}
         with self._lock:
             self._engine = engine
             if self._listener is not None and (
-                self._listener.owns_fn != owns_fn or not self._listener.is_alive()
+                self._listener.owns_fn != owns_fn
+                or self._listener.cancel_control != cancel_control
+                or not self._listener.is_alive()
             ):
                 # A listener whose event tap macOS refused has no thread any more.
                 self._listener.stop()
                 self._listener = None
             if self._listener is None:
                 self._listener = FnAwareListener(
-                    on_press=self._on_press, on_release=self._on_release, owns_fn=owns_fn
+                    on_press=self._on_press,
+                    on_release=self._on_release,
+                    owns_fn=owns_fn,
+                    cancel_control=cancel_control,
                 )
                 self._listener.start()
 

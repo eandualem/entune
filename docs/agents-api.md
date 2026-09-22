@@ -53,11 +53,11 @@ silently if Dictum is not running.
 | `POST /api/dictionary/pin` | `{"model", "group", "meaning"}` IDs plus `If-Match`: share one meaning and its associations; `{"model"}` explicitly pins all learned knowledge for that model |
 | `POST /api/recordings/{id}/transcriptions/{attempt}/safe-copy` | derive text from original using only approved direct mappings for the original speech model; returns text, replacements and unresolved count, without saving or pasting |
 | `GET /api/dictionary/corrections` | what agents sent and Dictum pinned, newest first, with the `source` each gave |
-| `POST /api/dictionary/build` | `{"source": "history"}` or `{"source": "audio"}`: start one frozen-model/revision job; 202 returns its `id` and status; 409 if a job or unreviewed proposal is already active |
+| `POST /api/dictionary/build` | `{"source": "history", "scope": "new" or "all"}` or `{"source": "audio", "audio_ids": [IDs from audio listing]}`: start one exclusive frozen-model/revision workflow; 202 returns its `id` and status; 409 if a job or unreviewed proposal is already active |
 | `GET /api/dictionary/build` | lightweight current job progress (no transcript or proposal contents) |
 | `GET /api/dictionary/build/{id}` | named job status, including its proposal when ready; 409 if no longer current |
-| `POST /api/dictionary/build/{id}/cancel` | request cancellation; in-flight synchronous speech may finish before cleanup; no new clips/chunks or proposal publication |
-| `POST /api/dictionary/build/{id}/accept` | accept the server-held proposal against its original revision, preserving pinned/other-model knowledge; 409 on stale revision or wrong state |
+| `POST /api/dictionary/build/{id}/cancel` | request cancellation; in-flight synchronous speech may finish before cleanup; no new clips/chunks; validated completed proposals remain reviewable |
+| `POST /api/dictionary/build/{id}/accept` | `{"selected": [{"id": groupID, "after": editedGroupOrNull}]}` applies included proposals once; omitted IDs are dismissed, null is an explicit proposed removal, an empty list changes nothing. Omitted body includes all. Validates pinned protections and the original revision; 409 on stale revision or wrong state |
 | `DELETE /api/dictionary/build/{id}` | discard a finished job/proposal; 409 during work/cleanup; actions on a replaced job ID also return 409 |
 | `POST /api/capture`, `GET`, `DELETE` | record a shortcut by pressing it (needs the menu-bar app) |
 
@@ -68,3 +68,17 @@ counts; generation progress adds `step`, `steps` and `inputCharacters` (the full
 and user text, including the growing dictionary; not a token count or context-limit guarantee).
 Jobs and proposals are in memory only; restart discards them, while originals and accepted
 knowledge remain. The former synchronous history and separate audio-build routes are removed.
+
+Learning `ready` can have outcome `complete`, `failed` or `stopped`; completedBatches,
+steps, coveredInputs and total describe actual coverage. `/retry` (POST) resumes failed
+or stopped learning using successful temporary audio and validated generation batches.
+GET `/api/dictionary/audio` includes retained imports and ordinary recordings, known
+seconds, unknown-duration count and dates where known. Temporary learning text is never
+persisted; per-model learning run/coverage metadata is persisted only on finish/discard.
+
+The browser starts `POST /api/operations` before microphone capture, then sends its
+returned `id` as multipart `operation` with the audio. GET lists the active operation;
+POST `/api/operations/{id}/cancel` cancels dictation without deleting audio. The recorder
+still submits saved audio after cancellation. DELETE `/api/operations/{id}` releases
+only an unclaimed browser capture after failed setup. Ordinary retry and direct upload
+also acquire the operation guard. Busy mutations return 409 with a user-facing reason.

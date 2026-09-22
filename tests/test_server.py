@@ -55,7 +55,7 @@ def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
         {"id": "stub", "name": "Stub", "keyHint": None, "streams": False, "local": False}
     ]
     assert settings["defaultModel"] is None
-    assert settings["shortcuts"] == {"hold": None, "toggle": None, "cancel": "fn+esc"}
+    assert settings["shortcuts"] == {"hold": None, "toggle": None, "cancel": "fn+ctrl"}
     assert client.get("/api/models").json() == []
 
     res = client.put(
@@ -135,7 +135,7 @@ def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None
     assert client.get("/api/settings").json()["shortcuts"] == {
         "hold": None,
         "toggle": None,
-        "cancel": "fn+esc",
+        "cancel": "fn+ctrl",
     }
     res = client.put(
         "/api/settings", json={"shortcuts": {"hold": "Alt_R", "toggle": "Cmd+Shift+Space"}}
@@ -144,7 +144,7 @@ def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None
     assert client.get("/api/settings").json()["shortcuts"] == {
         "hold": "alt_r",
         "toggle": "cmd+shift+space",
-        "cancel": "fn+esc",
+        "cancel": "fn+ctrl",
     }
     bad = client.put("/api/settings", json={"shortcuts": {"hold": "cmd+space", "toggle": ""}})
     assert bad.status_code == 400 and "exactly one key" in bad.text
@@ -153,7 +153,7 @@ def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None
     assert client.get("/api/settings").json()["shortcuts"] == {
         "hold": None,
         "toggle": "cmd+shift+space",
-        "cancel": "fn+esc",
+        "cancel": "fn+ctrl",
     }
 
 
@@ -165,7 +165,7 @@ def test_legacy_single_shortcut_is_still_read(tmp_path: Path, stub: StubProvider
     assert client.get("/api/settings").json()["shortcuts"] == {
         "hold": None,
         "toggle": "cmd+d",
-        "cancel": "fn+esc",
+        "cancel": "fn+ctrl",
     }
 
 
@@ -337,12 +337,19 @@ def test_dictionary_direct_mappings_are_explicit_and_scope_is_preserved(
         },
     )
     assert saved.status_code == 200, saved.text
-    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    client.put(
+        "/api/settings",
+        json={
+            "keys": {"stub": "k", "typesafe": "ts-key"},
+            "defaultModel": "stub/good",
+            "jev": {"dictionary": True},
+        },
+    )
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     attempt = rec["transcriptions"][0]
     assert attempt["raw_text"] == "hello there, I use cloud code"
     assert attempt["text"] == "hello there, I use Claude Code"
-    assert attempt["correction"]["method"] == "deterministic"
+    assert attempt["correction"]["method"] == "contextual"
     assert (
         attempt["correction"]["direct_replacements"] == attempt["correction"]["replacements"] == 1
     )
@@ -394,7 +401,8 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
         assert "hello there, I use cloud code" in user
         assert "from another model" not in user
         if len(calls) == 2:
-            dictum.add_agent_corrections({"entries": [{"spelling": "Jev", "heard": ["Jeff"]}]})
+            with pytest.raises(ValueError, match="busy learning"):
+                dictum.add_agent_corrections({"entries": [{"spelling": "Jev", "heard": ["Jeff"]}]})
         return json.dumps(proposed("hello there, I use cloud code"))
 
     dictum = Dictum(Store(tmp_path), [stub], llm_call=fake)
@@ -413,7 +421,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     ).json()
     dictum.store.add_transcription(rec["id"], "stub", "other", "ok", "from another model", None)
     res = client.post("/api/dictionary/build", json={"source": "history"})
-    assert res.status_code == 400 and "no transcripts from Stub / good" in res.text
+    assert res.status_code == 400 and "No new history to learn from for Stub / good" in res.text
 
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
     client.put("/api/dictionary", json={"pinned": [CLAUDE_CODE]})
@@ -423,17 +431,22 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     proposal = first["proposal"]
     assert calls == [("openai:gpt-6-astra", "sk-1")]
     assert proposal["model"] == "stub/good"
-    assert len(proposal["learned"]) == 1
-    assert proposal["learned"][0]["meanings"][0]["spelling"] == "Claude Code"
+    assert len(proposal["changes"]) == 1
+    assert proposal["changes"][0]["after"]["meanings"][0]["spelling"] == "Claude Code"
     assert proposal["version"] == client.get("/api/dictionary").headers["etag"]
-    assert proposal["added"] == proposal["learned"] and proposal["removed"] == []
+    assert proposal["changes"][0]["kind"] == "add" and proposal["changes"][0]["before"] is None
     # Nothing is saved until the page accepts.
     assert client.get("/api/dictionary").json()["learned"] == {}
-    # An edit during the next build invalidates acceptance of that snapshot.
+    # Separate edits are blocked during generation and review. Out-of-process file
+    # changes still invalidate a snapshot; this is a final guard, not merge UX.
     assert client.delete(f"/api/dictionary/build/{first['id']}").status_code == 200
     assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 202
     pending = wait_for_build(client)
-    current = client.get("/api/dictionary")  # even reloading cannot rebase a stale proposal
+    current = client.get("/api/dictionary")
+    assert client.put("/api/dictionary", json=current.json()).status_code == 409
+    path = tmp_path / "dictionary.json"
+    path.write_text(path.read_text() + "\n")  # explicitly external edit bypasses API ownership
+    current = client.get("/api/dictionary")
     stale = client.post(
         f"/api/dictionary/build/{pending['id']}/accept",
         headers={"If-Match": current.headers["etag"]},
@@ -621,7 +634,14 @@ def test_a_clip_missing_from_disk_becomes_a_stored_error(
 def test_a_broken_dictionary_file_does_not_lose_a_transcript(
     client: TestClient, tmp_path: Path, stub: StubProvider
 ) -> None:
-    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    client.put(
+        "/api/settings",
+        json={
+            "keys": {"stub": "k", "typesafe": "ts-key"},
+            "defaultModel": "stub/good",
+            "jev": {"dictionary": True},
+        },
+    )
     (tmp_path / "dictionary.json").write_text("{broken", encoding="utf-8")
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     attempt = rec["transcriptions"][0]

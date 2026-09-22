@@ -17,11 +17,8 @@ from dictum import cleanup, formatting, prompts
 from dictum.matching import Component, Edit
 from dictum.text_edits import Change
 
-MODEL = "jev-1.13.0"  # pinned; meaning-selection thresholds still need live calibration
+MODEL = "jev-1.13.0"
 URL = "https://api.typesafe.ai/v1/systemone"
-# Conservative initial selection policy; offline invariants are not calibration.
-MEANING_PROBABILITY = 0.7
-MEANING_MARGIN = 0.15
 # A sentence starts a paragraph or a list item when that option's probability reaches
 # this; a sentence between two list items joins the list at the lower bar.
 FORMAT_PROBABILITY = 0.6
@@ -32,6 +29,29 @@ WINDOW = 160  # characters of context either side of a match
 
 class JevError(Exception):
     """The request failed or the answer was not usable; the transcript goes on without Jev."""
+
+
+def terminal_error(response: httpx.Response) -> bool:
+    """Funding/auth failures cannot be repaired by an immediate retry, even on 429."""
+    if response.status_code in {401, 402, 403}:
+        return True
+    detail = response.text[:8192].lower().replace("_", " ").replace("-", " ")
+    return any(
+        code in detail
+        for code in (
+            "insufficient quota",
+            "insufficient credit",
+            "insufficient funds",
+            "credit balance",
+            "credits exhausted",
+            "exhausted credits",
+            "out of credits",
+            "billing hard limit",
+            "billing not active",
+            "invalid api key",
+            "invalid credential",
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -81,11 +101,24 @@ class Client:
                 self._thread.start()
             future = asyncio.run_coroutine_threadsafe(self._ask(call, state, questions), self._loop)
         try:
-            return future.result(timeout=max(0.0, call.deadline - time.monotonic()))
+            while True:
+                if call.cancel is not None and call.cancel.is_set():
+                    future.cancel()
+                    raise concurrent.futures.CancelledError("Dictation cancelled")
+                remaining = call.deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError()
+                try:
+                    return future.result(timeout=min(0.05, remaining))
+                except TimeoutError:
+                    if future.done():
+                        raise
         except TimeoutError as exc:
             future.cancel()
             raise JevError("processing deadline reached") from exc
         except concurrent.futures.CancelledError as exc:
+            if call.cancel is not None and call.cancel.is_set():
+                raise
             raise JevError("correction is shutting down") from exc
 
     async def _ask(
@@ -120,7 +153,15 @@ class Client:
                     return _answers(data, questions)
                 detail = response.text.replace(call.key, "")[:300]
                 error = f"HTTP {response.status_code}: {detail}"
-                if response.status_code not in {408, 429, 500, 502, 503, 504, 529}:
+                if terminal_error(response) or response.status_code not in {
+                    408,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504,
+                    529,
+                }:
                     raise JevError(error)
                 delay = max(delay, _retry_after(response.headers.get("Retry-After")))
             except (
@@ -174,6 +215,7 @@ class Call:
     deadline: float
     attempts: int = 0
     decisions: int = 0
+    cancel: threading.Event | None = None
 
     def ask(self, state: object, questions: dict[str, Any]) -> dict[str, dict[str, float]]:
         if not self.key:
@@ -225,7 +267,12 @@ def _probabilities(answer: Any, options: set[str]) -> dict[str, float]:
         or probabilities[choice] != max(probabilities.values())
     ):
         raise JevError("unusable answer: choice missing or inconsistent")
-    return {k: float(v) for k, v in probabilities.items()}
+    # Preserve the validated provider choice first so exact ties honor that choice,
+    # independently of JSON key order. No score, candidate or probability is invented.
+    return {
+        choice: float(probabilities[choice]),
+        **{k: float(v) for k, v in probabilities.items() if k != choice},
+    }
 
 
 # ---- meaning classification
@@ -240,10 +287,10 @@ class Decision:
 
 
 def decide(text: str, components: list[Component], call: Call) -> list[Decision]:
-    """Select semantic interpretations, aggregating senses that emit identical text.
+    """Apply the top eligible interpretation, even when scores are close.
 
-    `unresolved` is an application abstention, never a stored meaning or a literal
-    keep action. A literal word has its own definition and competes like any meaning.
+    Literal meanings compete normally. Distinct meanings never pool their scores
+    merely because they emit identical text; invalid responses fail the whole stage.
     """
     decisions: dict[int, Decision] = {}
     occurrences: dict[str, object] = {}
@@ -314,32 +361,14 @@ def decide(text: str, components: list[Component], call: Call) -> list[Decision]
         )
         for i, values in outputs.items():
             probabilities = answers[f"o{i}"]
-            totals: dict[str, float] = {}
-            for option, output in values.items():
-                totals[output] = totals.get(output, 0.0) + probabilities[option]
-            output = max(totals, key=lambda value: totals[value])
-            probability = totals[output]
-            runner_up = max(
-                [
-                    probabilities["unresolved"],
-                    *(p for value, p in totals.items() if value != output),
-                ]
-            )
+            option = max(probabilities, key=lambda name: probabilities[name])
             component = components[i]
-            if probability < MEANING_PROBABILITY or probability - runner_up < MEANING_MARGIN:
-                decisions[i] = Decision(component, None, "uncertain")
-            else:
-                ids = tuple(
-                    dict.fromkeys(
-                        mid
-                        for option, value in values.items()
-                        if value == output
-                        for mid in support[i][option]
-                    )
-                )
-                decisions[i] = Decision(
-                    component, Edit(component.start, component.end, output), "contextual", ids
-                )
+            decisions[i] = Decision(
+                component,
+                Edit(component.start, component.end, values[option]),
+                "contextual",
+                support[i][option],
+            )
     return [decisions[i] for i in range(len(components))]
 
 
