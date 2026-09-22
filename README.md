@@ -209,10 +209,19 @@ costs a fraction of a cent per dictation on your own key.
 Measured on 2026-09-21 over 181 real Parakeet transcripts and their 48
 dictionary matches, labelled by the intended reading: plain replacement
 got 42 right, Jev with descriptions got 48, including a wrong dictionary
-entry it refused every time. Each history card shows what Jev fixed and
-kept, and Settings sums it up. A second switch, **Formatting**, asks Jev
+entry it refused every time. Each history card shows replacements, preserved
+occurrences and independent stage outcomes; Settings sums the work performed,
+not an accuracy score. A second switch, **Formatting**, asks Jev
 where a paragraph or a bullet point begins and inserts only line breaks:
 every word stays.
+
+Successful speech and its original text are saved before correction. If
+contextual correction fails, Dictum delivers the untouched original and
+shows a noninterrupting notice; formatting failure keeps the preceding text.
+Settings > Providers controls the processing wait: initially five seconds
+total, three per attempt, and at most two attempts per request. Transient
+failures can retry within that shared deadline. **Copy original** in history
+copies the provider's text without altering history or already-pasted text.
 
 Details: [the dictionary file](docs/dictionary.md) and
 [the agents' API](docs/agents-api.md).

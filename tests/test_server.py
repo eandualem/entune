@@ -347,7 +347,9 @@ def test_dictionary_round_trip_and_replacements_apply_without_jev(
     attempt = rec["transcriptions"][0]
     assert attempt["raw_text"] == "hello there, I use cloud code"
     assert attempt["text"] == "hello there, I use Claude Code"  # stub/bad's "hello" not applied
-    assert attempt["jev_seconds"] is None and attempt["jev_fixed"] is None
+    assert attempt["correction"]["method"] == "unconditional"
+    assert attempt["correction"]["replacements"] == 1
+    assert attempt["formatting"]["status"] == "disabled"
 
 
 def test_an_earlier_dictionary_form_is_converted_once(client: TestClient, tmp_path: Path) -> None:
@@ -616,7 +618,10 @@ def test_a_broken_dictionary_file_does_not_lose_a_transcript(
     (tmp_path / "dictionary.json").write_text("{broken", encoding="utf-8")
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     attempt = rec["transcriptions"][0]
-    assert attempt["status"] == "error" and "Not valid JSON" in attempt["error"]
+    assert attempt["status"] == "ok" and attempt["error"] is None
+    assert attempt["text"] == attempt["raw_text"] == "hello there, I use cloud code"
+    assert "Not valid JSON" in attempt["correction"]["error"]
+    assert len(stub.calls) == 1
 
 
 def test_status_and_show_window(client: TestClient, tmp_path: Path, stub: StubProvider) -> None:

@@ -7,16 +7,18 @@ data directory on this machine.
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
 from dictum.audio import extension_for, identify
 from dictum.dictionary import Entries
+from dictum.processing import Processed, Stage, failed
 
 Status = Literal["ok", "error"]
 
@@ -44,10 +46,8 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     audio_seconds REAL,
     elapsed_seconds REAL,
     fast INTEGER NOT NULL DEFAULT 0,
-    jev_seconds REAL,
-    jev_fixed INTEGER,
-    jev_kept INTEGER,
-    jev_error TEXT
+    correction TEXT,
+    formatting TEXT
 );
 CREATE INDEX IF NOT EXISTS transcriptions_by_recording ON transcriptions(recording_id);
 CREATE TABLE IF NOT EXISTS corrections (
@@ -78,10 +78,8 @@ MIGRATIONS = [
         "fast",
         "ALTER TABLE transcriptions ADD COLUMN fast INTEGER NOT NULL DEFAULT 0",
     ),
-    ("transcriptions", "jev_seconds", "ALTER TABLE transcriptions ADD COLUMN jev_seconds REAL"),
-    ("transcriptions", "jev_fixed", "ALTER TABLE transcriptions ADD COLUMN jev_fixed INTEGER"),
-    ("transcriptions", "jev_kept", "ALTER TABLE transcriptions ADD COLUMN jev_kept INTEGER"),
-    ("transcriptions", "jev_error", "ALTER TABLE transcriptions ADD COLUMN jev_error TEXT"),
+    ("transcriptions", "correction", "ALTER TABLE transcriptions ADD COLUMN correction TEXT"),
+    ("transcriptions", "formatting", "ALTER TABLE transcriptions ADD COLUMN formatting TEXT"),
 ]
 
 
@@ -99,10 +97,10 @@ class Transcription:
     audio_seconds: float | None = None  # how long the clip is, when its container says
     elapsed_seconds: float | None = None  # how long the provider took to answer
     fast: bool = False  # transcribed from fast mode's stream (issue #20)
-    jev_seconds: float | None = None  # time Jev added, when it ran
-    jev_fixed: int | None = None  # dictionary matches replaced
-    jev_kept: int | None = None  # dictionary matches Jev kept as recognised
-    jev_error: str | None = None  # why Jev was skipped; the transcript went on without it
+    correction: Stage | None = None
+    formatting: Stage | None = None
+    # Preserve old recorded metrics without treating them as trustworthy stage outcomes.
+    legacy_processing: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +142,7 @@ class Store:
         self.audio_dir = data_dir / "audio"
         self.audio_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        self._history_epoch = uuid.uuid4().hex
         self._db = sqlite3.connect(data_dir / "dictum.db", check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         with self._lock:
@@ -154,6 +153,20 @@ class Store:
                 if column not in columns:
                     self._db.execute(statement)
             self._db.commit()
+        # A previous process may have stopped after saving speech but before processing.
+        rows = self._db.execute(
+            "SELECT * FROM transcriptions WHERE correction LIKE '%pending%'"
+        ).fetchall()
+        for row in rows:
+            attempt = _transcription(row)
+            if attempt.correction is not None and attempt.correction.status == "pending":
+                raw = attempt.raw_text if attempt.raw_text is not None else attempt.text or ""
+                initial = Processed(
+                    raw, attempt.correction, attempt.formatting or Stage("disabled", "formatting")
+                )
+                self.finish_processing(
+                    attempt.id, failed(raw, initial, "Processing interrupted before completion")
+                )
 
     def close(self) -> None:
         self._db.close()
@@ -244,18 +257,14 @@ class Store:
         audio_seconds: float | None = None,
         elapsed_seconds: float | None = None,
         fast: bool = False,
-        jev_seconds: float | None = None,
-        jev_fixed: int | None = None,
-        jev_kept: int | None = None,
-        jev_error: str | None = None,
-    ) -> None:
+        processing: Processed | None = None,
+    ) -> int:
         with self._lock, self._db:
-            self._db.execute(
+            cursor = self._db.execute(
                 "INSERT INTO transcriptions"
                 " (recording_id, provider, model, status, text, error, created_at, raw_text,"
-                "  audio_seconds, elapsed_seconds, fast, jev_seconds, jev_fixed, jev_kept,"
-                "  jev_error)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  audio_seconds, elapsed_seconds, fast, correction, formatting)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     recording_id,
                     provider,
@@ -268,10 +277,23 @@ class Store:
                     audio_seconds,
                     elapsed_seconds,
                     int(fast),
-                    jev_seconds,
-                    jev_fixed,
-                    jev_kept,
-                    jev_error,
+                    json.dumps(asdict(processing.correction)) if processing else None,
+                    json.dumps(asdict(processing.formatting)) if processing else None,
+                ),
+            )
+            return int(cursor.lastrowid or 0)
+
+    def finish_processing(self, attempt_id: int, result: Processed) -> None:
+        """Update only optional processing; speech status and raw text are immutable."""
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE transcriptions SET text = ?, correction = ?, formatting = ?"
+                " WHERE id = ? AND status = 'ok'",
+                (
+                    result.text,
+                    json.dumps(asdict(result.correction)),
+                    json.dumps(asdict(result.formatting)),
+                    attempt_id,
                 ),
             )
 
@@ -283,12 +305,11 @@ class Store:
             ).fetchall()
         return [_transcription(row) for row in rows]
 
-    def jev_transcriptions(self) -> list[Transcription]:
-        """Every attempt on which Jev ran or was tried, for the summary in Settings."""
+    def processed_transcriptions(self) -> list[Transcription]:
+        """Attempts with independent processing outcomes; legacy counters are excluded."""
         with self._lock:
             rows = self._db.execute(
-                "SELECT * FROM transcriptions"
-                " WHERE jev_seconds IS NOT NULL OR jev_error IS NOT NULL ORDER BY id"
+                "SELECT * FROM transcriptions WHERE correction IS NOT NULL ORDER BY id"
             ).fetchall()
         return [_transcription(row) for row in rows]
 
@@ -300,11 +321,9 @@ class Store:
             return None if row is None else self._recording(row)
 
     def history_version(self) -> str:
-        """An inexpensive revision for the append-only recording and attempt history."""
+        """Invalidate polling after stage updates as well as new speech attempts."""
         with self._lock:
-            recording = self._db.execute("SELECT MAX(id) FROM recordings").fetchone()[0] or 0
-            attempt = self._db.execute("SELECT MAX(id) FROM transcriptions").fetchone()[0] or 0
-        return f"{recording}-{attempt}"
+            return f"{self._history_epoch}-{self._db.total_changes}"
 
     def list_recordings(
         self, limit: int | None = None, before: int | None = None
@@ -386,4 +405,14 @@ class Store:
 def _transcription(row: sqlite3.Row) -> Transcription:
     fields = dict(row)
     fields["fast"] = bool(fields.get("fast", 0))
+    for name in ("correction", "formatting"):
+        value = fields[name]
+        fields[name] = Stage(**json.loads(value)) if value else None
+    legacy = {
+        name: fields.pop(name, None)
+        for name in ("jev_seconds", "jev_fixed", "jev_kept", "jev_error")
+    }
+    fields["legacy_processing"] = (
+        legacy if any(value is not None for value in legacy.values()) else None
+    )
     return Transcription(**fields)

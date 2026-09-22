@@ -277,7 +277,14 @@
                   <div><div class="name">Formatting</div><div class="caption">Paragraph breaks and bullet points where the dictation clearly has them. Every word stays. Adds about half a second to every transcript.</div></div>
                   <input type="checkbox" id="jev-formatting" />
                 </label>
-                <div class="srow note"><span></span><span class="caption" id="jev-summary" role="status"></span></div>
+                <form id="jev-policy-form">
+                  <div class="srow"><label class="name" for="jev-total_seconds">Maximum processing wait</label><input class="input field" id="jev-total_seconds" type="number" min="0.1" max="30" step="0.1" required aria-label="Maximum processing wait in seconds" /></div>
+                  <div class="srow"><label class="name" for="jev-attempt_seconds">Seconds per attempt</label><input class="input field" id="jev-attempt_seconds" type="number" min="0.1" max="30" step="0.1" required /></div>
+                  <div class="srow"><label class="name" for="jev-max_attempts">Attempts per request</label><input class="input field" id="jev-max_attempts" type="number" min="1" max="3" step="1" required /></div>
+                  <div class="srow note"><span></span><span class="caption">Correction and formatting share the total wait, including retries. If correction fails, the original transcription is delivered. Formatting failure keeps the prior text.</span></div>
+                  <div class="srow foot"><button type="submit" class="btn">Save wait limits</button><span class="caption save-status" id="jev-policy-status" role="status"></span></div>
+                </form>
+                <div class="srow note"><span></span><span class="caption" id="jev-summary" role="status" style="white-space: pre-line"></span></div>
               </div>
             </div>
 

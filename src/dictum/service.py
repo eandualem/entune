@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import statistics
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 
 from dictum import dictionary as dictionary_file
-from dictum import llm, shortcuts
+from dictum import jev, llm, processing, shortcuts
 from dictum.audio import sniff_mime
 from dictum.dictionary import Dictionary, Entries, Proposal
-from dictum.processing import Corrected, process_text
+from dictum.processing import Processed, Stage, process_text
 from dictum.providers.cloud.contracts import Streams, Upload
 from dictum.providers.contracts import Clip, Failure, Provider, Transcript
 from dictum.providers.local.contracts import Downloadable, LocalModelStatus
@@ -27,6 +28,7 @@ FAST_MODE_KEY = "fast_mode"
 JEV_PROVIDER = "typesafe"  # the key is stored like a speech provider's
 JEV_DICTIONARY_KEY = "jev_dictionary"
 JEV_FORMATTING_KEY = "jev_formatting"
+JEV_POLICY_KEY = "jev_policy"
 SHORTCUT_HOLD_KEY = "shortcut_hold"
 SHORTCUT_TOGGLE_KEY = "shortcut_toggle"
 SHORTCUT_CANCEL_KEY = "shortcut_cancel"
@@ -58,13 +60,26 @@ class JevStatus:
 
 
 @dataclass(frozen=True)
+class StageSummary:
+    succeeded: int
+    failed: int
+    skipped: int
+    disabled: int
+    pending: int
+    decisions: int
+    replacements: int
+    preserved: int
+    abstained: int
+    retries: int
+    median_seconds: float | None
+
+
+@dataclass(frozen=True)
 class JevSummary:
-    """What Jev has done in real use: the numbers that show what it adds and costs."""
+    """Processing counts measure work performed, never transcription accuracy."""
 
     transcriptions: int
-    fixed: int
-    kept: int
-    failed: int
+    stages: dict[str, StageSummary]
     median_seconds: float | None
 
 
@@ -119,10 +134,13 @@ class Dictum:
         store: Store,
         providers: list[Provider],
         llm_call: llm.Caller = llm.call_model,
+        *,
+        jev_client: jev.Client | None = None,
     ) -> None:
         self.store = store
         self.providers = providers
         self._llm_call = llm_call
+        self._jev_client = jev_client or jev.Client()
         self._listeners: list[Callable[[], None]] = []
         self._capture_listeners: list[Callable[[], None]] = []
         self._dictionary_lock = threading.RLock()  # dictionary() may save inside a write
@@ -218,7 +236,7 @@ class Dictum:
         """How each model has performed in real use, fast mode apart, newest data included.
 
         Speed is audio seconds per second of waiting over the successful runs; the
-        median wait is what a dictation felt like. The numbers a README can quote.
+        median wait measures the speech stage. Processing stages have separate timings.
         """
         groups: dict[tuple[str, str, bool], list[Transcription]] = {}
         for attempt in self.store.timed_transcriptions():
@@ -275,16 +293,45 @@ class Dictum:
             self.store.set_setting(JEV_FORMATTING_KEY, "1" if formatting else None)
         self._changed()
 
+    def jev_policy(self) -> jev.Policy:
+        saved = self.store.get_setting(JEV_POLICY_KEY)
+        return jev.Policy(**json.loads(saved)) if saved else jev.Policy()
+
+    def set_jev_policy(self, policy: jev.Policy) -> None:
+        self.store.set_setting(JEV_POLICY_KEY, json.dumps(asdict(policy)))
+        self._changed()
+
+    def close(self) -> None:
+        self._jev_client.close()
+
     def jev_summary(self) -> JevSummary:
-        attempts = self.store.jev_transcriptions()
-        waits = sorted(a.jev_seconds for a in attempts if a.jev_seconds is not None)
-        return JevSummary(
-            transcriptions=len(attempts),
-            fixed=sum(a.jev_fixed or 0 for a in attempts),
-            kept=sum(a.jev_kept or 0 for a in attempts),
-            failed=sum(1 for a in attempts if a.jev_error),
-            median_seconds=statistics.median(waits) if waits else None,
-        )
+        attempts = self.store.processed_transcriptions()
+        stages: list[Stage] = [
+            stage for a in attempts for stage in (a.correction, a.formatting) if stage is not None
+        ]
+        summaries = {}
+        for method in ("contextual", "unconditional", "formatting"):
+            group = [s for s in stages if s.method == method]
+            waits = [s.seconds for s in group if s.status in ("succeeded", "failed")]
+            summaries[method] = StageSummary(
+                succeeded=sum(s.status == "succeeded" for s in group),
+                failed=sum(s.status == "failed" for s in group),
+                skipped=sum(s.status == "skipped" for s in group),
+                disabled=sum(s.status == "disabled" for s in group),
+                pending=sum(s.status == "pending" for s in group),
+                decisions=sum(s.decisions for s in group),
+                replacements=sum(s.replacements for s in group),
+                preserved=sum(s.preserved for s in group),
+                abstained=sum(s.abstained for s in group),
+                retries=sum(max(0, s.attempts - 1) for s in group),
+                median_seconds=statistics.median(waits) if waits else None,
+            )
+        totals = [
+            sum(s.seconds for s in (a.correction, a.formatting) if s is not None)
+            for a in attempts
+            if a.correction is not None and a.correction.status != "pending"
+        ]
+        return JevSummary(len(attempts), summaries, statistics.median(totals) if totals else None)
 
     def begin_upload(self, sample_rate: int) -> Upload | None:
         """Fast mode's upload for a recording that starts now, when everything for it is
@@ -698,69 +745,112 @@ class Dictum:
     def transcribe(
         self, recording: Recording, ref: ModelRef, upload: Upload | None = None
     ) -> Recording:
-        """Run one attempt and record it.
-
-        Every failure becomes a stored error, never an exception: the user reads it and retries.
-        `upload`: fast mode's stream of this same audio, used when it is the same provider.
-        """
-        api_key = self.store.get_setting(key_setting(ref.provider.id))
-        if isinstance(ref.provider, Downloadable):
-            api_key = ""  # a local model needs none
-        result: Transcript | Failure
-        timing = Timing(None, None, False)
-        if api_key is None:
-            result = Failure(f"No API key set for {ref.provider.name}")
-        else:
-            try:
-                # Everything here can fail: a clip gone from disk, a hand-edited dictionary
-                # that does not parse, the provider. All of it becomes a stored error.
-                data = self.store.audio_path(recording).read_bytes()
-                mime = recording.mime
-                if not mime.startswith("audio/"):
-                    mime = sniff_mime(data) or mime
-                entries = self.dictionary().effective(ref.id)  # a broken file: no call made
-                started = time.monotonic()  # before the stream is finished: that wait counts
-                stream, upload = upload, None  # from here the stream is finished or aborted
-                clip = Clip(data, mime, upload_url=_finish(stream, ref, Clip(data, mime)))
-                result = ref.provider.transcribe(clip, ref.model, api_key)
+        """Save speech success first. Optional processing cannot turn it into speech failure."""
+        try:
+            api_key = self.store.get_setting(key_setting(ref.provider.id))
+            if isinstance(ref.provider, Downloadable):
+                api_key = ""
+            result: Transcript | Failure
+            timing = Timing(None, None, False)
+            if api_key is None:
+                result = Failure(f"No API key set for {ref.provider.name}")
+            else:
+                started = time.monotonic()
+                clip: Clip | None = None
+                try:
+                    data = self.store.audio_path(recording).read_bytes()
+                    mime = recording.mime
+                    if not mime.startswith("audio/"):
+                        mime = sniff_mime(data) or mime
+                    clip = Clip(data, mime)
+                    clip = replace(clip, upload_url=_finish(upload, ref, clip))
+                    upload = None
+                    result = ref.provider.transcribe(clip, ref.model, api_key)
+                except Exception as exc:
+                    result = Failure(f"{type(exc).__name__}: {exc}")
                 timing = Timing(
-                    clip.seconds, time.monotonic() - started, clip.upload_url is not None
+                    clip.seconds if clip else None,
+                    time.monotonic() - started,
+                    clip.upload_url is not None if clip else False,
                 )
+            raw = result.text if isinstance(result, Transcript) else None
+            status = self.jev_status()
+            initial = (
+                processing.pending(raw, contextual=status.dictionary, formatting=status.formatting)
+                if raw is not None
+                else None
+            )
+            attempt_id = self.store.add_transcription(
+                recording.id,
+                provider=ref.provider.id,
+                model=ref.model,
+                status="ok" if raw is not None else "error",
+                text=raw,
+                raw_text=raw,
+                error=result.error if isinstance(result, Failure) else None,
+                audio_seconds=timing.audio_seconds,
+                elapsed_seconds=timing.elapsed_seconds,
+                fast=timing.fast,
+                processing=initial,
+            )
+            if raw is not None and initial is not None:
+                started = time.monotonic()
+                try:
+                    # A damaged dictionary must not stop speech transcription or its persistence.
+                    entries = self.dictionary().effective(ref.id)
+                    processed = self.correct(raw, entries, status)
+                except Exception as exc:
+                    processed = processing.failed(
+                        raw, initial, f"{type(exc).__name__}: {exc}", time.monotonic() - started
+                    )
+                try:
+                    self.store.finish_processing(attempt_id, processed)
+                except Exception as exc:
+                    # The durable row still contains raw speech. Deliver that same result and
+                    # report the processing-save failure even if this second DB write failed.
+                    processed = processing.failed(
+                        raw, initial, f"Could not save processing: {type(exc).__name__}: {exc}"
+                    )
+                    saved = self.store.get_recording(recording.id)
+                    assert saved is not None
+                    return replace(
+                        saved,
+                        transcriptions=[
+                            replace(
+                                a,
+                                text=raw,
+                                correction=processed.correction,
+                                formatting=processed.formatting,
+                            )
+                            if a.id == attempt_id
+                            else a
+                            for a in saved.transcriptions
+                        ],
+                    )
+            updated = self.store.get_recording(recording.id)
+            assert updated is not None
+            return updated
+        finally:
+            try:
+                if upload is not None:
+                    upload.abort()
             except Exception as exc:
-                result = Failure(f"{type(exc).__name__}: {exc}")
-        if upload is not None:
-            upload.abort()  # never reached _finish: a failure before it, or no key
-        raw_text = result.text if isinstance(result, Transcript) else None
-        corrected = self.correct(raw_text, entries) if raw_text is not None else Corrected("")
-        self.store.add_transcription(
-            recording.id,
-            provider=ref.provider.id,
-            model=ref.model,
-            status="ok" if isinstance(result, Transcript) else "error",
-            text=corrected.text if raw_text is not None else None,
-            error=result.error if isinstance(result, Failure) else None,
-            raw_text=raw_text,
-            audio_seconds=timing.audio_seconds,
-            elapsed_seconds=timing.elapsed_seconds,
-            fast=timing.fast,
-            jev_seconds=corrected.seconds,
-            jev_fixed=corrected.fixed,
-            jev_kept=corrected.kept,
-            jev_error=corrected.error,
-        )
-        self._release_after_use(ref)
-        updated = self.store.get_recording(recording.id)
-        assert updated is not None
-        return updated
+                self.report_status(lastError=f"Upload cleanup: {type(exc).__name__}: {exc}")
+            finally:
+                try:
+                    self._release_after_use(ref)
+                except Exception as exc:
+                    self.report_status(lastError=f"Model cleanup: {type(exc).__name__}: {exc}")
 
-    def correct(self, raw: str, entries: Entries) -> Corrected:
-        status = self.jev_status()
+    def correct(self, raw: str, entries: Entries, status: JevStatus) -> Processed:
         return process_text(
             raw,
             entries,
             contextual=status.dictionary,
             formatting=status.formatting,
             key=self.store.get_setting(key_setting(JEV_PROVIDER)),
+            client=self._jev_client,
+            policy=self.jev_policy(),
         )
 
     def record_and_transcribe(

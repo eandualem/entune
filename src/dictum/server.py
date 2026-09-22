@@ -22,7 +22,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from dictum import __version__, llm, onboarding, shortcuts
+from dictum import __version__, jev, llm, onboarding, shortcuts
 from dictum.audio import extension_for, safe_mime
 from dictum.service import (
     JEV_PROVIDER,
@@ -161,7 +161,11 @@ def create_app(app: Dictum) -> Starlette:
                 ],
                 "dictionaryModel": app.dictionary_model(),
                 "fastMode": app.fast_mode(),
-                "jev": {**asdict(app.jev_status()), "summary": asdict(app.jev_summary())},
+                "jev": {
+                    **asdict(app.jev_status()),
+                    "policy": asdict(app.jev_policy()),
+                    "summary": asdict(app.jev_summary()),
+                },
             }
         )
 
@@ -198,13 +202,29 @@ def create_app(app: Dictum) -> Starlette:
             if "fastMode" in body and not isinstance(body["fastMode"], bool):
                 raise ValueError("fastMode must be a boolean")
             jev_settings = body.get("jev", {})
-            if not isinstance(jev_settings, dict) or not all(
-                k in ("dictionary", "formatting") and isinstance(v, bool)
-                for k, v in jev_settings.items()
-            ):
-                raise ValueError("jev must be an object of dictionary and formatting booleans")
+            if not isinstance(jev_settings, dict) or set(jev_settings) - {
+                "dictionary",
+                "formatting",
+                "policy",
+            }:
+                raise ValueError("jev must contain dictionary, formatting or policy settings")
+            for name in ("dictionary", "formatting"):
+                if name in jev_settings and not isinstance(jev_settings[name], bool):
+                    raise ValueError(f"jev.{name} must be a boolean")
+            policy = None
+            if "policy" in jev_settings:
+                value = jev_settings["policy"]
+                if not isinstance(value, dict) or set(value) != {
+                    "total_seconds",
+                    "attempt_seconds",
+                    "max_attempts",
+                }:
+                    raise ValueError(
+                        "jev.policy needs total_seconds, attempt_seconds and max_attempts"
+                    )
+                policy = jev.Policy(**value)
             if (
-                any(jev_settings.values())
+                (jev_settings.get("dictionary") or jev_settings.get("formatting"))
                 and JEV_PROVIDER not in keys
                 and app.jev_status().key_hint is None
             ):
@@ -231,6 +251,8 @@ def create_app(app: Dictum) -> Starlette:
                 app.set_fast_mode(body["fastMode"])
             if jev_settings:
                 app.set_jev(jev_settings.get("dictionary"), jev_settings.get("formatting"))
+            if policy is not None:
+                app.set_jev_policy(policy)
             if "shortcuts" in body:
                 app.set_shortcuts(hold, toggle, cancel)
         except UnknownModel as exc:

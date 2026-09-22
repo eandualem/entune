@@ -46,7 +46,7 @@ silently if Dictum is not running.
 | `GET /api/local/models` | the local models with size, state (absent, downloading with progress, ready, error, unavailable when the engine is not installed) |
 | `POST /api/local/models/{name}/download`, `DELETE /api/local/models/{name}` | fetch or remove one |
 | `GET /api/status` | version, shortcuts, default model, whether the desktop app runs and listens |
-| `GET /api/recordings` | the history, newest first, with every attempt; each carries what Jev did to it (`jev_fixed`, `jev_kept`, `jev_seconds`, `jev_error`) when it ran |
+| `GET /api/recordings` | the history, newest first, with every attempt; speech status/raw text and separate `correction`/`formatting` outcomes (status, method, time, attempts and operation counts); historical combined counters are retained as `legacy_processing` |
 | `POST /api/recordings` | multipart `audio` (+ optional `model`): store and transcribe |
 | `POST /api/recordings/{id}/transcriptions` | `{"model": "provider/model"}`: transcribe again |
 | `GET /api/recordings/{id}/audio` | the clip |

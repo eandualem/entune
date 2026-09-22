@@ -13,6 +13,7 @@ from collections.abc import Callable
 
 from dictum.desktop.engine import ShortcutEngine
 from dictum.desktop.platform import Microphone, Platform
+from dictum.processing import notice
 from dictum.providers.cloud.contracts import Upload
 from dictum.recorder import Capture, Recorder, Sink
 from dictum.service import Dictum, NoDefaultModel, UnknownModel
@@ -364,7 +365,8 @@ class DictumApp:
             # Delivered on the UI thread: on macOS the paste goes through HIToolbox, which
             # only allows it there.
             text = attempt.text
-            self._later(lambda: self._deliver(text))
+            processing_notice = notice(attempt.correction, attempt.formatting)
+            self._later(lambda: self._deliver(text, processing_notice))
         elif attempt.status == "ok":
             self._later(lambda: self.platform.actions.notify("Dictum", "No speech detected."))
         else:
@@ -376,7 +378,7 @@ class DictumApp:
                 )
             )
 
-    def _deliver(self, text: str) -> None:
+    def _deliver(self, text: str, message: str | None = None) -> None:
         actions, permissions = self.platform.actions, self.platform.permissions
         actions.copy_to_clipboard(text)
         if permissions.can_post():
@@ -385,6 +387,9 @@ class DictumApp:
             permissions.request_post()
             hint = f"Allow Accessibility in {permissions.settings_hint} to paste. Cmd+V for now."
             actions.notify("Dictum: copied, not pasted", hint)
+
+        if message:
+            actions.notify("Dictum: processing unavailable", message)
 
     def _wait_for_keys_up(self) -> None:
         deadline = time.monotonic() + KEYS_UP_WAIT_SECONDS

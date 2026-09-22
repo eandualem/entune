@@ -246,13 +246,14 @@ document.addEventListener("visibilitychange", () => {
 
 // Copy (click on the transcript) and re-transcribe, delegated so re-renders need no rebinding.
 historyList.addEventListener("click", async (e) => {
-  const block = e.target.closest(".transcript, .failed");
+  const block = e.target.closest(".transcript, .failed, .copy-raw");
   if (block) {
     const card = block.closest(".card");
-    if (!card.dataset.copy) return;
+    const text = block.matches(".copy-raw") ? card.dataset.raw : card.dataset.copy;
+    if (text === undefined) return;
     const tag = card.querySelector(".copied-tag");
     try {
-      await navigator.clipboard.writeText(card.dataset.copy);
+      await navigator.clipboard.writeText(text);
       tag.textContent = "Copied";
     } catch (err) {
       tag.textContent = `Copy failed: ${errorText(err)}`;
