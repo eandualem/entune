@@ -82,11 +82,54 @@ def test_ids_survive_spelling_edits_and_pinned_definitions_cannot_conflict() -> 
         recognized_forms=(CLOUD.recognized_forms[0],),
     )
     proposal = dictionary.propose(Dictionary(learned={"m": (CLOUD,)}), (revised,), "m", "revision")
-    assert proposal.added == (revised,) and proposal.removed == (CLOUD,)
-    assert proposal.learned[0].meanings[0].id == CLOUD.meanings[0].id
+    assert len(proposal.changes) == 1 and proposal.changes[0].kind == "update"
+    assert proposal.changes[0].before == CLOUD and proposal.changes[0].after == revised
+    assert proposal.working[0].meanings[0].id == CLOUD.meanings[0].id
     assert proposal.as_json()["version"] == "revision"
     with pytest.raises(ValueError, match="conflicting definitions"):
         dictionary.validate(Dictionary((CLOUD,), {"m": (revised,)}))
+
+
+def test_pinning_shares_cross_group_and_cross_model_variants_without_competitor_priority() -> None:
+    from dictum.dictionary import Association, Form, Group
+
+    extension = Group("g_extension", (), (Form("Jiff", (Association("a_jev"),)),))
+    other = Group("g_other", (JEV.meanings[0],), (Form("Jebb", (Association("a_jev"),)),))
+    doc = Dictionary(learned={"one": (JEV, extension), "two": (other,)})
+    pinned = dictionary.pin(doc, "one", "g_jev", "a_jev")
+    found = matching.matches(pinned.effective("new/model"), "Jeff Jiff Jebb")
+    assert len(found) == 3 and all(m.meanings == (JEV.meanings[0],) for m in found)
+    assert {m.id for m in matching.matches(pinned.effective("one"), "Jeff")[0].meanings} == {
+        "a_jev",
+        "b_jeff",
+    }
+    # Previously stored model-local extensions of pinned knowledge work immediately,
+    # without modifying the user's file merely to read the effective dictionary.
+    old = Dictionary((JEV,), {"one": (extension,)})
+    assert matching.matches(old.effective("new/model"), "Jiff")
+
+
+def test_reviewed_pinned_updates_and_new_variants_keep_existing_links_in_all_models() -> None:
+    from dictum.dictionary import Association, Form
+
+    original = Dictionary((JEV,), {"unrelated": (CLOUD,)})
+    revised = replace(
+        JEV,
+        meanings=(replace(JEV.meanings[0], meaning="A context classifier."), *JEV.meanings[1:]),
+        recognized_forms=(*JEV.recognized_forms, Form("Jiff", (Association("a_jev"),))),
+    )
+    proposal = dictionary.propose(original, (revised,), "one")
+    assert proposal.working[0].meanings[0].meaning == "A context classifier."
+    applied = dictionary.refined(original, (revised,), "one")
+    assert applied.learned_for("unrelated") == (CLOUD,)
+    assert len(matching.matches(applied.effective("new"), "Jeff Jiff GIF")) == 3
+    assert original.pinned == (JEV,)  # review never mutates active knowledge
+    for incomplete in (
+        replace(revised, recognized_forms=revised.recognized_forms[1:]),
+        replace(revised, meanings=revised.meanings[1:]),
+    ):
+        with pytest.raises(ValueError, match="pinned"):
+            dictionary.propose(original, (incomplete,), "one")
 
 
 def test_corrupt_references_and_direct_approval_are_rejected() -> None:

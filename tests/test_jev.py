@@ -15,7 +15,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from dictum import dictionary, jev, matching, text_edits
-from dictum.processing import process_text
+from dictum.processing import Processed, process_text
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store
@@ -71,11 +71,7 @@ def call(client: jev.Client, policy: jev.Policy | None = None) -> jev.Call:
 def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> None:
     text = "My colleague Jeff called. Use Jeff to classify. Send the animated GIF."
     requests, handler = answering(
-        lambda name, _: (
-            {"i1": 0.95, "unresolved": 0.05}
-            if name in ("o0", "o2")
-            else {"i0": 0.95, "unresolved": 0.05}
-        )
+        lambda name, _: {"i1": 1.0} if name in ("o0", "o2") else {"i0": 1.0}
     )
     with closing(jev.Client(httpx.MockTransport(handler))) as client:
         context = call(client)
@@ -95,7 +91,7 @@ def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> N
     assert state["meanings"]["b_jeff"]["personal_context"] is None
     assert state["occurrences"]["o1"]["before"] == "My colleague Jeff called. Use "
     question = requests[0]["questions"]["o0"]
-    assert set(question["criteria"]) == {"i0", "i1", "unresolved"}
+    assert set(question["criteria"]) == {"i0", "i1"}
     assert question["instructions"] and "interpretations.i0" in question["criteria"]["i0"]
 
 
@@ -104,25 +100,25 @@ def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> N
     [
         {},
         {"probabilities": None},
-        {"probabilities": {"i0": True, "unresolved": False}},
-        {"probabilities": {"i0": 0.9, "unresolved": 0.9}},
-        {"probabilities": {"i0": float("nan"), "unresolved": 0.0}},
+        {"probabilities": {"i0": True, "i1": False}},
+        {"probabilities": {"i0": 0.9, "i1": 0.9}},
+        {"probabilities": {"i0": float("nan")}},
         {"probabilities": {"i0": 1.0}},
-        {"probabilities": {"i0": 1.0, "unresolved": 0.0}, "type": "choice", "choice": "unknown"},
+        {"probabilities": {"i0": 1.0}, "type": "choice", "choice": "unknown"},
         {
-            "probabilities": {"i0": 1.0, "unresolved": 0.0},
+            "probabilities": {"i0": 1.0},
             "type": "choice",
-            "choice": "unresolved",
+            "choice": "i1",
         },
     ],
 )
 def test_missing_or_invalid_probabilities_and_choices_are_rejected(answer: object) -> None:
     with pytest.raises(jev.JevError, match="unusable answer"):
-        jev._probabilities(answer, {"i0", "unresolved"})
+        jev._probabilities(answer, {"i0", "i1"})
 
 
 def test_transient_retry_reuses_client_and_nonretryable_answers_stop() -> None:
-    requests, good = answering(lambda *_: {"i0": 0.95, "unresolved": 0.05})
+    requests, good = answering(lambda *_: {"i0": 1.0})
     calls = 0
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -280,7 +276,7 @@ def test_formatter_failure_preserves_successful_correction() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         if "sentences" in json.loads(request.content)["state"]:
             return httpx.Response(401, text="invalid key")
-        return answering(lambda *_: {"i0": 1.0, "unresolved": 0.0})[1](request)
+        return answering(lambda *_: {"i0": 1.0})[1](request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
@@ -347,7 +343,7 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
                 and attempt["correction"]["replacements"] == 0
             )
             assert seen_pending[-1] != store.history_version()
-            handler = answering(lambda *_: {"i0": 0.9, "unresolved": 0.1})[1]
+            handler = answering(lambda *_: {"i0": 0.9, "i1": 0.1})[1]
             attempt = client.post(
                 "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}
             ).json()["transcriptions"][0]
@@ -404,7 +400,7 @@ def test_all_three_stages_share_one_deadline() -> None:
             await asyncio.sleep(0.04)
             return answering(lambda *_: {"hesitation": 1.0})[1](request)
         await asyncio.sleep(0.08)
-        return answering(lambda *_: {"i0": 1.0, "unresolved": 0.0})[1](request)
+        return answering(lambda *_: {"i0": 1.0})[1](request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as client:
         started = time.monotonic()
@@ -436,7 +432,7 @@ def test_network_timeout_retries_but_honors_retry_after_dates() -> None:
         attempts += 1
         if attempts == 1:
             raise httpx.ReadTimeout("stalled ts-key")
-        return answering(lambda *_: {"i0": 1.0, "unresolved": 0.0})[1](request)
+        return answering(lambda *_: {"i0": 1.0})[1](request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as client:
         context = call(client)
@@ -474,15 +470,71 @@ def test_postprocessing_exceptions_cannot_erase_speech_or_skip_release(
         result = service.record_and_transcribe(WEBM_HEADER, None, None)
         attempt = result.transcriptions[0]
         assert attempt.status == "ok" and attempt.text == attempt.raw_text
-        assert attempt.correction is not None and "Could not save processing" in (
-            attempt.correction.error or ""
-        )
+        assert "Could not save final processing state" in (attempt.error or "")
         saved = store.get_recording(result.id)
         assert saved is not None and saved.transcriptions[0].raw_text == attempt.raw_text
         assert service.close() and closed == [True]
 
 
-def test_formatting_without_context_keeps_direct_replacement_metrics_separate() -> None:
+def test_final_write_failure_preserves_completed_stage_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with closing(Store(tmp_path)) as store:
+        persist = store.finish_processing
+
+        def fail_final(attempt_id: int, result: Processed, *, final: bool = True) -> None:
+            if final:
+                raise OSError("disk unavailable")
+            persist(attempt_id, result, final=False)
+
+        monkeypatch.setattr(store, "finish_processing", fail_final)
+        with closing(
+            jev.Client(httpx.MockTransport(answering(lambda *_: {"i0": 1.0})[1]))
+        ) as network:
+            service = Dictum(store, [StubProvider()], jev_client=network)
+            with TestClient(create_app(service), base_url="http://localhost") as client:
+                assert (
+                    client.put(
+                        "/api/settings",
+                        json={
+                            "keys": {"stub": "k", "typesafe": "ts-key"},
+                            "defaultModel": "stub/good",
+                            "jev": {"dictionary": True},
+                        },
+                    ).status_code
+                    == 200
+                )
+                assert (
+                    client.put(
+                        "/api/dictionary",
+                        json={
+                            "version": 2,
+                            "pinned": [GROUPS[1].as_json()],
+                        },
+                    ).status_code
+                    == 200
+                )
+                recording = client.post(
+                    "/api/recordings",
+                    files={
+                        "audio": ("clip", WEBM_HEADER, ""),
+                    },
+                ).json()
+                attempt = recording["transcriptions"][0]
+                assert attempt["text"] == "hello there, I use Claude Code"
+                assert "disk unavailable" in attempt["error"]
+                assert attempt["correction"]["status"] == "succeeded"
+                saved = store.get_recording(recording["id"])
+                assert saved is not None
+                durable = saved.transcriptions[0]
+                assert durable.raw_text == "hello there, I use cloud code"
+                assert durable.correction is not None
+                assert durable.correction.status == "succeeded"
+                assert durable.correction.output == attempt["text"]
+                assert durable.correction.selections and durable.correction.changes
+
+
+def test_formatting_with_dictionary_disabled_does_not_apply_even_direct_mappings() -> None:
     requests, handler = answering(
         lambda *_: {"continues": 0.0, "new_paragraph": 1.0, "list_item": 0.0}
     )
@@ -496,67 +548,41 @@ def test_formatting_without_context_keeps_direct_replacement_metrics_separate() 
             client=client,
             policy=jev.Policy(),
         )
-    assert result.text == "Jev is fast.\n\nNext topic."
+    assert result.text == "Jeff is fast.\n\nNext topic."
     assert len(requests) == 1 and "sentences" in requests[0]["state"]
-    assert result.correction.method == "deterministic" and result.correction.replacements == 1
+    assert result.correction.status == "disabled" and result.correction.replacements == 0
     assert result.correction.decisions == result.correction.attempts == 0
     assert result.formatting.status == "succeeded" and result.formatting.decisions == 2
 
 
-def test_identical_output_senses_aggregate_and_unknown_is_not_a_literal_meaning() -> None:
+def test_identical_output_senses_do_not_pool_scores() -> None:
     from tests.dictionary_samples import CLOUD
 
-    requests, handler = answering(lambda *_: {"i0": 0.3, "i1": 0.35, "i2": 0.35})
+    requests, handler = answering(lambda *_: {"i0": 0.4, "i1": 0.3, "i2": 0.3})
     with closing(jev.Client(httpx.MockTransport(handler))) as client:
-        result = process_text(
-            "Cloud storage is remote.",
-            (CLOUD,),
-            contextual=True,
-            formatting=False,
-            key="ts-key",
-            client=client,
-            policy=jev.Policy(),
+        decisions = jev.decide(
+            "Ask cloud here.", matches((CLOUD,), "Ask cloud here."), call(client)
         )
-    assert result.text == "Cloud storage is remote."
-    assert result.correction.preserved == 1 and result.correction.abstained == 0
-    assert len(requests) == 1 and result.correction.decisions == 1
-    # A painting title is not supplied as a meaning; this stub exercises the application
-    # abstention, not a prediction that a live model would identify missing coverage.
-    _, handler = answering(lambda *_: {"unresolved": 1.0})
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
-        result = process_text(
-            "Cloud is her painting title.",
-            (CLOUD,),
-            contextual=True,
-            formatting=False,
-            key="ts-key",
-            client=client,
-            policy=jev.Policy(),
-        )
-    assert result.text == "Cloud is her painting title." and result.correction.abstained == 1
-    assert result.correction.status == "succeeded" and result.correction.replacements == 0
+    assert decisions[0].edit is not None and decisions[0].edit.text == "Claude"
+    assert decisions[0].meaning_ids == ("a_claude",)
+    assert "unresolved" not in requests[0]["questions"]["o0"]["criteria"]
 
 
-def test_jif_has_two_evidenced_outputs_and_low_confidence_can_miss_a_correction() -> None:
-    for selected, expected in [("i0", "Use Jev here."), ("i1", "Use GIF here.")]:
-        _, handler = answering(lambda *_, option=selected: {option: 0.95, "unresolved": 0.05})
-        with closing(jev.Client(httpx.MockTransport(handler))) as client:
-            result = process_text(
-                "Use Jif here.",
-                (JEV,),
-                contextual=True,
-                formatting=False,
-                key="ts-key",
-                client=client,
-                policy=jev.Policy(),
-            )
-        assert result.text == expected and result.correction.replacements == 1
-    # Constructed loss: old aggressive binary veto would replace at term=.6/literal=.4.
-    # The new policy abstains. This is policy behavior, not a measured model prediction.
-    _, handler = answering(lambda *_: {"i0": 0.6, "i1": 0.35, "unresolved": 0.05})
+@pytest.mark.parametrize(
+    "scores, expected",
+    [
+        ({"i0": 0.51, "i1": 0.49}, "Use Jev here."),
+        ({"i0": 0.49, "i1": 0.51}, "Use GIF here."),
+    ],
+)
+def test_jif_uses_highest_eligible_meaning_even_when_scores_are_close(
+    scores: dict[str, float],
+    expected: str,
+) -> None:
+    _, handler = answering(lambda *_: scores)
     with closing(jev.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
-            "Use Jeff to classify.",
+            "Use Jif here.",
             (JEV,),
             contextual=True,
             formatting=False,
@@ -564,12 +590,33 @@ def test_jif_has_two_evidenced_outputs_and_low_confidence_can_miss_a_correction(
             client=client,
             policy=jev.Policy(),
         )
-    assert result.text == "Use Jeff to classify." and result.correction.abstained == 1
+    assert result.text == expected and result.correction.abstained == 0
+
+
+def test_exact_tie_honors_validated_provider_choice_not_json_or_candidate_order() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "answers": {
+                    "o0": {
+                        "type": "choice",
+                        "choice": "i1",
+                        "probabilities": {"i0": 0.5, "i1": 0.5},
+                    }
+                }
+            },
+        )
+
+    with closing(jev.Client(httpx.MockTransport(respond))) as client:
+        decisions = jev.decide("Jif", matches((JEV,), "Jif"), call(client))
+    assert decisions[0].edit is not None and decisions[0].edit.text == "GIF"
+    assert decisions[0].meaning_ids == ("c_gif",)
 
 
 def test_shorter_interpretation_can_win_over_phrase_and_edits_do_not_cascade() -> None:
     groups = (group("Agent Backbone", "agent back bone"), group("backbone", "back bone"))
-    requests, handler = answering(lambda *_: {"i1": 0.95, "unresolved": 0.05})
+    requests, handler = answering(lambda *_: {"i1": 1.0})
     raw = "😀 Restart agent back bone."
     with closing(jev.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
@@ -618,3 +665,40 @@ def test_direct_only_needs_no_request_but_failure_in_mixed_text_still_returns_al
         )
     assert result.text == raw and result.correction.status == "failed"
     assert result.correction.replacements == result.correction.direct_replacements == 0
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": {"code": "insufficient_quota", "message": "Top up your account"}},
+        {"error": "credit balance too low"},
+        {"error": {"code": "invalid_api_key"}},
+    ],
+)
+def test_explicit_terminal_error_never_retries_even_with_429(body: dict[str, object]) -> None:
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(429, json=body)
+
+    with closing(jev.Client(httpx.MockTransport(respond))) as client:
+        context = call(client)
+        with pytest.raises(jev.JevError):
+            jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
+    assert context.attempts == 1 and len(requests) == 1
+
+
+def test_disabled_dictionary_does_not_read_broken_file_or_run_approved_mappings(
+    tmp_path: Path,
+) -> None:
+    with closing(Store(tmp_path)) as store:
+        service = Dictum(store, [StubProvider()])
+        service.set_key("stub", "k")
+        service.set_default_model("stub/good")
+        (tmp_path / "dictionary.json").write_text("{broken")
+        result = service.record_and_transcribe(WEBM_HEADER, None, None)
+        attempt = result.transcriptions[0]
+        assert attempt.text == attempt.raw_text
+        assert attempt.correction is not None and attempt.correction.status == "disabled"
+        service.close()

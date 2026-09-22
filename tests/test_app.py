@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 import weakref
 from collections.abc import Callable
@@ -11,7 +12,7 @@ import pytest
 
 from dictum.desktop.app import DictumApp
 from dictum.desktop.engine import ShortcutEngine
-from dictum.desktop.platform import State
+from dictum.desktop.platform import Delivery, State
 from dictum.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from dictum.recorder import Capture, SinkFactory
 from dictum.service import Dictum
@@ -27,6 +28,9 @@ class FakeTray:
         self.states.append(state)
 
     def set_status(self, text: str) -> None:
+        self.status = text
+
+    def complete(self, text: str) -> None:
         self.status = text
 
     def set_actions(
@@ -69,13 +73,20 @@ class FakeActions:
     def __init__(self) -> None:
         self.clipboard: str | None = None
         self.pasted = 0
+        self.outcome: Delivery = "inserted"
         self.notices: list[tuple[str, str]] = []
 
     def copy_to_clipboard(self, text: str) -> None:
         self.clipboard = text
 
-    def paste_into_focused_app(self) -> None:
-        self.pasted += 1
+    def paste_into_focused_app(
+        self, text: str, check: Callable[[], None] | None = None
+    ) -> Delivery:
+        if check:
+            check()
+        if self.outcome != "no_target":
+            self.pasted += 1
+        return self.outcome
 
     def notify(self, title: str, message: str) -> None:
         self.notices.append((title, message))
@@ -437,18 +448,30 @@ def test_cancelling_a_capture_reaches_the_listener(tmp_path: Path) -> None:
     assert platform.hotkeys.capturing is None
 
 
-def test_the_tray_shows_recording_while_an_older_transcription_finishes(tmp_path: Path) -> None:
+def test_new_recording_is_blocked_until_processing_and_delivery_finish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     app, platform, dictum = make(tmp_path)
     dictum.set_key("stub", "k")
     dictum.set_default_model("stub/good")
-    dictum.set_shortcuts("alt_r", None)
+    entered, release = threading.Event(), threading.Event()
+
+    def speech(clip: Clip, model: str, key: str) -> Transcript:
+        entered.set()
+        assert release.wait(2)
+        return Transcript("single operation")
+
+    monkeypatch.setattr(dictum.providers[0], "transcribe", speech)
     app.start_recording()
-    app.stop_recording()  # a transcription is now running
-    app.start_recording()  # and a new recording begins
-    wait_for(lambda: app._pending == 0)
-    assert platform.tray.states[-1] == "recording"
     app.stop_recording()
-    wait_for(lambda: platform.tray.states[-1] == "idle")
+    assert entered.wait(1)
+    app.start_recording()
+    assert not app._recording
+    assert platform.tray.states[-1] == "transcribing"
+    assert "Finish the current dictation" in platform.actions.notices[-1][1]
+    release.set()
+    wait_for(lambda: dictum.operations.status() is None)
+    assert platform.actions.pasted == 1 and len(dictum.store.list_recordings()) == 1
 
 
 def test_clearing_the_shortcuts_mid_recording_finishes_the_clip(tmp_path: Path) -> None:
@@ -487,7 +510,9 @@ def test_quitting_right_after_a_recording_still_saves_it(tmp_path: Path) -> None
     assert len(dictum.store.list_recordings()) == 1
 
 
-def test_cancelling_discards_capture_and_upload_without_saving_or_pasting(tmp_path: Path) -> None:
+def test_cancelling_retains_capture_aborts_upload_and_prevents_transcription_or_paste(
+    tmp_path: Path,
+) -> None:
     app, platform, dictum = make(tmp_path)
     dictum.set_key("stub", "k")
     dictum.set_default_model("stub/good")
@@ -502,14 +527,17 @@ def test_cancelling_discards_capture_and_upload_without_saving_or_pasting(tmp_pa
     upload = app._upload
     assert isinstance(upload, FakeUpload)
     engine.press("fn")
-    engine.press("esc")
-    engine.release("esc")
+    engine.press("ctrl")
+    engine.release("ctrl")
     engine.release("fn")
     assert upload.aborted and app._upload is None
     assert not app._recording and not app.recorder.recording  # type: ignore[attr-defined]
+    wait_for(lambda: dictum.operations.status() is None)
     assert platform.tray.states[-1] == "idle"
-    assert app._captures.empty() and app._jobs.empty() and app._pending == 0
-    assert dictum.store.list_recordings() == []
+    saved = dictum.store.list_recordings()
+    assert len(saved) == 1 and saved[0].transcriptions == []
+    assert "audio saved" in (saved[0].notice or "")
+    assert dictum.store.audio_path(saved[0]).exists()
     assert platform.actions.clipboard is None and platform.actions.pasted == 0
     engine.press("fn")
     engine.release("fn")
@@ -520,8 +548,8 @@ def test_persisted_audio_is_released_while_waiting_for_the_next_recording(tmp_pa
     app, _platform, dictum = make(tmp_path)
     capture = Capture(b"\x00\x00" * 16_000, 16_000)
     reference = weakref.ref(capture)
-    app._pending += 1
-    app._captures.put((capture, None))
+    operation = dictum.operations.begin("dictation", "saving")
+    app._captures.put((capture, None, operation))
     del capture
     wait_for(lambda: len(dictum.store.list_recordings()) == 1)
     wait_for(lambda: reference() is None)
@@ -531,17 +559,16 @@ def test_correction_failure_delivers_raw_with_a_noninterrupting_notice(tmp_path:
     app, platform, dictum = make(tmp_path)
     dictum.set_key("stub", "k")
     dictum.set_default_model("stub/good")
+    dictum.store.set_setting("jev_dictionary", "1")
     (tmp_path / "dictionary.json").write_text("{broken")
     recording = dictum.store_recording(b"audio", "audio/wav")
-    app._pending = 1
-    app._transcribe_and_deliver(recording, 1.0)
+    operation = dictum.operations.begin("dictation", "transcribing")
+    app._transcribe_and_deliver(recording, 1.0, None, operation)
     assert platform.actions.clipboard == "hello from the fake"
     assert platform.actions.pasted == 1 and not platform.window.shown
-    assert any(
-        "Original transcription delivered" in message for _, message in platform.actions.notices
-    )
+    assert any("Last completed text retained" in message for _, message in platform.actions.notices)
     assert not any("transcription failed" in title for title, _ in platform.actions.notices)
-    assert app._pending == 0
+    assert dictum.operations.status() is None
 
 
 def test_quit_discards_pending_delivery_and_does_not_restart_shortcuts(
@@ -552,7 +579,9 @@ def test_quit_discards_pending_delivery_and_does_not_restart_shortcuts(
     dictum.set_shortcuts("alt_r", None)
     callbacks: list[Callable[[], None]] = []
     monkeypatch.setattr(platform, "run_on_ui_thread", callbacks.append)
-    app._later(lambda: app._deliver("late result"))
+    recording = dictum.store_recording(b"audio", "audio/wav")
+    operation = dictum.operations.begin("dictation", "delivering")
+    app._later(lambda: app._deliver("late result", None, operation, recording))
     app.quit()
     for callback in callbacks:
         callback()

@@ -7,14 +7,14 @@ import pytest
 from dictum.cli import applications_folder, build_parser, main, port_is_free
 
 
-def test_port_probe_sees_a_listener() -> None:
+def test_port_probe_sees_a_listener(tmp_path: Path) -> None:
     with socket.socket() as taken:
         taken.bind(("127.0.0.1", 0))
         taken.listen()
         port = taken.getsockname()[1]
         assert not port_is_free(port)
         with pytest.raises(SystemExit, match="already running"):
-            main(["--no-menu", "--no-open", "--port", str(port)])
+            main(["--no-menu", "--no-open", "--port", str(port), "--data", str(tmp_path)])
     assert port_is_free(port)
 
 

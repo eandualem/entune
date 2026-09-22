@@ -47,6 +47,13 @@ function player(url, label, seconds) {
 // Stage counts describe processing, not the accuracy of the delivered words.
 function processingLines(t) {
   const lines = [];
+  if (t.status === "ok" && t.error) {
+    const line = document.createElement("div");
+    line.className = "jev err";
+    line.setAttribute("role", "status");
+    line.textContent = t.error;
+    lines.push(line);
+  }
   for (const [name, stage] of [["Dictionary", t.correction], ["Filler reduction", t.cleanup], ["Formatting", t.formatting]]) {
     if (!stage || stage.status === "disabled") continue;
     const line = document.createElement("div");
@@ -114,7 +121,22 @@ export function renderCard(r, models) {
   head.append(when, model, spacer, copied);
   card.append(head);
 
-  if (latest && latest.status !== "ok") {
+  if (r.notice) {
+    const message = document.createElement("div");
+    message.className = "status"; message.textContent = r.notice;
+    card.append(message);
+  }
+  if (latest?.processing_state === "cancelled") {
+    const canceled = document.createElement("div");
+    canceled.className = "status"; canceled.textContent = "Canceled — audio saved. No text delivered.";
+    card.append(canceled);
+  } else if (latest?.processing_state === "processing") {
+    const pending = document.createElement("div");
+    pending.className = "status";
+    pending.setAttribute("role", "status");
+    pending.textContent = "Processing… Final text will appear when complete.";
+    card.append(pending);
+  } else if (latest && latest.status !== "ok") {
     const failed = document.createElement("div");
     failed.className = "failed";
     const label = document.createElement("div");
@@ -150,7 +172,7 @@ export function renderCard(r, models) {
   const rowSpacer = document.createElement("span");
   rowSpacer.className = "spacer";
   row.append(download, rowStatus, rowSpacer);
-  if (latest?.raw_text !== null && latest?.raw_text !== undefined) {
+  if (!(["processing", "cancelled"].includes(latest?.processing_state)) && latest?.raw_text !== null && latest?.raw_text !== undefined) {
     const copy = document.createElement("button");
     copy.type = "button";
     copy.className = "btn ghost copy-raw";
@@ -188,8 +210,9 @@ export function renderCard(r, models) {
       meta.append(`${attemptLabel(t)} · `, time);
       const text = document.createElement("div");
       text.className = t.status === "ok" ? "text" : "text err";
-      text.textContent = t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
-      attempt.append(meta, text, ...processingLines(t));
+      const pending = ["processing", "cancelled"].includes(t.processing_state);
+      text.textContent = pending ? (t.processing_state === "cancelled" ? "Canceled — audio saved. No text delivered." : "Processing…") : t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
+      attempt.append(meta, text, ...(pending ? [] : processingLines(t)));
       attempts.append(attempt);
     }
     toggle.addEventListener("click", () => {

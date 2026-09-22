@@ -14,7 +14,7 @@ import json
 import re
 import uuid
 from collections.abc import Callable, Coroutine, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -66,12 +66,30 @@ def catalog(provider: str) -> list[ModelChoice]:
     return [ModelChoice(f"{provider}:{model}", name) for model, name in _MODELS[provider]]
 
 
-def batches(transcripts: Sequence[str]) -> list[list[str]]:
-    """All supplied text in bounded steps; split long transcripts at word boundaries."""
-    steps: list[list[str]] = []
+@dataclass(frozen=True)
+class LearningText:
+    id: str
+    text: str
+    records: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Batch:
+    snippets: tuple[str, ...]
+    completed: tuple[str, ...]
+    records: dict[str, dict[str, object]]
+
+
+def learning_batches(inputs: Sequence[LearningText]) -> list[Batch]:
+    """Keep identity through splitting; only a final segment completes its source."""
+    result: list[Batch] = []
+    snippets: list[str] = []
+    completed: list[str] = []
+    records: dict[str, dict[str, object]] = {}
     used = 0
-    for text in transcripts:
-        remaining = text.strip()
+    for item in inputs:
+        remaining = item.text.lstrip()
+        offset = len(item.text) - len(remaining)
         while remaining:
             end = len(remaining)
             if end > BATCH_CHARS:
@@ -81,13 +99,40 @@ def batches(transcripts: Sequence[str]) -> list[list[str]]:
                 )
                 if end <= 0:
                     end = BATCH_CHARS
-            snippet, remaining = remaining[:end], remaining[end:].lstrip()
-            if not steps or used + len(snippet) > BATCH_CHARS:
-                steps.append([])
-                used = 0
-            steps[-1].append(snippet)
+            snippet, tail = remaining[:end], remaining[end:]
+            remaining = tail.lstrip()
+            if snippets and used + len(snippet) > BATCH_CHARS:
+                result.append(Batch(tuple(snippets), tuple(completed), records))
+                snippets, completed, records, used = [], [], {}, 0
+            snippets.append(snippet)
             used += len(snippet)
-    return steps
+            if item.records:
+                record = records.setdefault(item.id, {**item.records, "source_spans": []})
+                spans = record["source_spans"]
+                assert isinstance(spans, list)
+                spans.append(
+                    {
+                        "source": next(iter(sources([snippet]))),
+                        "start_in_input": offset,
+                        "end_in_input": offset + len(snippet),
+                    }
+                )
+            offset += len(snippet) + len(tail) - len(remaining)
+            if not remaining:
+                completed.append(item.id)
+    if snippets:
+        result.append(Batch(tuple(snippets), tuple(completed), records))
+    return result
+
+
+def batches(transcripts: Sequence[str]) -> list[list[str]]:
+    """Text batching helper; runtime learning retains source identities separately."""
+    return [
+        list(b.snippets)
+        for b in learning_batches(
+            [LearningText(str(i), text) for i, text in enumerate(transcripts)]
+        )
+    ]
 
 
 def build_user_prompt(
@@ -96,6 +141,7 @@ def build_user_prompt(
     speech_model: str,
     proposed: Groups | None = None,
     step: tuple[int, int] = (1, 1),
+    records: dict[str, dict[str, object]] | None = None,
 ) -> str:
     """One step's evidence and the working dictionary after all earlier edits."""
     number, count = step
@@ -108,12 +154,13 @@ def build_user_prompt(
         learned=json.dumps(
             [
                 e.as_json()
-                for e in (current.learned_for(speech_model) if proposed is None else proposed)
+                for e in (current.effective(speech_model) if proposed is None else proposed)
             ],
             ensure_ascii=False,
         ),
         transcript_count=str(len(transcripts)),
         transcripts=json.dumps(sources(transcripts), ensure_ascii=False),
+        records=json.dumps(records or {}, ensure_ascii=False),
     )
 
 
@@ -138,15 +185,16 @@ def parse_reply(
         raise ValueError("The model must return groups and remove lists")
     revised = dictionary_file.parse_groups(data["groups"], "the model's reply")
     removed = data["remove"]
-    old = {g.id: g for g in proposed}
+    old = {g.id: g for g in pinned}
+    old.update({g.id: g for g in proposed})
     if not isinstance(removed, list) or not all(isinstance(v, str) and v in old for v in removed):
         raise ValueError("remove must name existing learned group IDs")
     if set(removed) & {g.id for g in revised}:
         raise ValueError("A group cannot be revised and removed together")
-    known_groups = {g.id for g in (*pinned, *proposed)}
-    known_meanings = {m.id: m for g in (*pinned, *proposed) for m in g.meanings}
+    known_groups = set(old)
+    known_meanings = {m.id: m for g in old.values() for m in g.meanings}
     known_links: dict[tuple[str, str], list[dictionary_file.Association]] = {}
-    for group in (*pinned, *proposed):
+    for group in old.values():
         for form in group.recognized_forms:
             for association in form.associations:
                 known_links.setdefault((key(form.text), association.meaning_id), []).append(
@@ -154,7 +202,7 @@ def parse_reply(
                 )
     approved = {
         (g.id, key(f.text)): (f.direct, f.direct_reason)
-        for g in proposed
+        for g in old.values()
         for f in g.recognized_forms
         if f.direct
     }
@@ -191,8 +239,7 @@ def parse_reply(
                 seen_meanings.append(m)
     meanings = {**known_meanings, **{m.id: m for g in revised for m in g.meanings}}
     preview = (
-        *pinned,
-        *(g for g in proposed if g.id not in set(removed) | {r.id for r in revised}),
+        *(g for g in old.values() if g.id not in set(removed) | {r.id for r in revised}),
         *revised,
     )
     forms = [f for g in preview for f in g.recognized_forms]
@@ -272,10 +319,12 @@ def parse_reply(
         if (
             current is None
             or (current.direct, current.direct_reason) != approval
-            or meanings[approval[0]] != known_meanings[approval[0]]
+            or (meanings[approval[0]].spelling, meanings[approval[0]].casing)
+            != (known_meanings[approval[0]].spelling, known_meanings[approval[0]].casing)
         ):
             raise ValueError("The generator cannot remove or change an approved direct mapping")
-    dictionary_file.validate(Dictionary(pinned, {"working": result}))
+    dictionary_file.protect_pinned(pinned, result)
+    dictionary_file.validate(Dictionary(learned={"working": result}))
     return result
 
 
@@ -410,26 +459,43 @@ async def propose_learned(
     call: Caller = call_model,
     *,
     progress: Callable[[int, int, int], None] | None = None,
+    inputs: Sequence[LearningText] | None = None,
+    checkpoint: Callable[[Groups, int, int, tuple[str, ...]], None] | None = None,
+    working: Groups | None = None,
+    resume: int = 0,
 ) -> Groups:
     """Ask the model for a new `learned` section for `speech_model`, from its transcripts.
 
     A long history goes in steps (`batches`), each seeing what the earlier steps
     changed; each step may add, revise or remove learned entries. Raises ValueError
     carrying the provider's or the model's own words
-    when a step fails; nothing partial is returned.
+    when a step fails; the checkpoint retains only fully validated completed batches.
     """
-    proposed = current.learned_for(speech_model)
-    steps = batches(transcripts)
+    current = dictionary_file.share(current, set())
+    proposed = current.effective(speech_model) if working is None else working
+    steps = learning_batches(
+        inputs
+        if inputs is not None
+        else [LearningText(str(i), text) for i, text in enumerate(transcripts)]
+    )
     for number, step in enumerate(steps, 1):
+        if number <= resume:
+            continue
         await asyncio.sleep(0)  # cancellation between chunks even for immediate test callers
-        user_prompt = build_user_prompt(current, step, speech_model, proposed, (number, len(steps)))
+        user_prompt = build_user_prompt(
+            current, step.snippets, speech_model, proposed, (number, len(steps)), step.records
+        )
         system_prompt = prompts.text("dictionary-system.txt")
         if progress:
             progress(number, len(steps), len(system_prompt) + len(user_prompt))
         try:
             async with asyncio.timeout(1200):
                 reply = await call(provider, api_key, model, system_prompt, user_prompt)
-            proposed = parse_reply(reply, proposed, transcripts=step, pinned=current.pinned)
+            proposed = parse_reply(
+                reply, proposed, transcripts=step.snippets, pinned=current.pinned
+            )
+            if checkpoint:
+                checkpoint(proposed, number, len(steps), step.completed)
         except Exception as exc:
             raise ValueError(f"Step {number} of {len(steps)}: {type(exc).__name__}: {exc}") from exc
     return proposed

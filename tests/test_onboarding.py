@@ -126,7 +126,7 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
     client.put(
         "/api/settings", json={"keys": {"stub": "k", "openai": "k"}, "defaultModel": "stub/good"}
     )
-    assert "Import audio" in client.post("/api/dictionary/build", json={"source": "audio"}).text
+    assert "import audio" in client.post("/api/dictionary/build", json={"source": "audio"}).text
     pinned = {"spelling": "PinnedName", "description": "person", "heard": ["pin name"]}
     original = {"pinned": [pinned], "learned": {"stub/other": [{"spelling": "OtherOnly"}]}}
     client.put("/api/dictionary", json=original)
@@ -158,7 +158,9 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
     saved = client.get("/api/dictionary").json()
     assert saved["pinned"] == before.json()["pinned"]
     assert saved["learned"]["stub/other"] == before.json()["learned"]["stub/other"]
-    assert saved["learned"]["stub/good"] == result["proposal"]["learned"]
+    assert saved["learned"]["stub/good"] == [
+        c["after"] for c in result["proposal"]["changes"] if c["kind"] == "add"
+    ]
     assert client.get("/api/dictionary/build").json()["phase"] == "accepted"
     assert store.list_recordings() == [] and store.timed_transcriptions() == []
     assert not any(
@@ -198,5 +200,6 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
             assert result["proposal"]["model"] == f"stub/{model}"
         assert client.delete(f"/api/dictionary/build/{result['id']}").status_code == 200
     assert len(stub.calls) == 3 and len(prompts) == 2  # no fallback or retry
-    assert client.get("/api/dictionary/audio").json() == {"count": 1}
+    assert client.get("/api/dictionary/audio").json()["count"] == 1
+    assert client.get("/api/dictionary/audio").json()["seconds"] > 0
     assert store.list_recordings() == []

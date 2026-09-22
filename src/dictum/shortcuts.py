@@ -30,11 +30,11 @@ ALIASES = {
 
 @dataclass(frozen=True)
 class Shortcuts:
-    """The recording shortcuts and the key combination that discards a recording."""
+    """The recording shortcuts and the key combination that cancels an operation."""
 
     hold: tuple[str, ...] | None = None
     toggle: tuple[str, ...] | None = None
-    cancel: tuple[str, ...] | None = ("fn", "esc")
+    cancel: tuple[str, ...] | None = ("fn", "ctrl")
 
     def __bool__(self) -> bool:
         return self.hold is not None or self.toggle is not None
@@ -92,7 +92,7 @@ def parse_toggle(text: str) -> tuple[str, ...]:
     return keys
 
 
-def parse(hold: str | None, toggle: str | None, cancel: str | None = "fn+esc") -> Shortcuts:
+def parse(hold: str | None, toggle: str | None, cancel: str | None = "fn+ctrl") -> Shortcuts:
     """Build shortcuts from the text fields; blank means not set."""
     parsed = Shortcuts(
         hold=parse_hold(hold) if hold and hold.strip() else None,
@@ -101,6 +101,8 @@ def parse(hold: str | None, toggle: str | None, cancel: str | None = "fn+esc") -
     )
     if parsed.cancel:
         cancel_keys = set(parsed.cancel)
+        if cancel_keys == {"fn", "esc"}:
+            raise ValueError("Fn+Escape can cancel foreground work; use Fn+Control instead")
         if parsed.hold and cancel_keys == set(parsed.hold):
             raise ValueError("Cancel dictation and Hold-to-talk must use different keys")
         if parsed.toggle and (

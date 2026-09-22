@@ -1,4 +1,4 @@
-"""One cancellable dictionary job, from a frozen snapshot to explicit acceptance."""
+"""Exclusive learning workflow with validated checkpoints and temporary retry reuse."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from dictum import dictionary, llm
 from dictum.dictionary import Dictionary, Groups, Proposal
+from dictum.operations import Operation, Operations
 from dictum.providers.contracts import Clip, Failure
 from dictum.providers.registry import ModelRef
 from dictum.resources import SpeechResources
@@ -36,16 +37,23 @@ class BuildInput:
     builder: tuple[str, str, str]
     dictionary: Dictionary
     revision: str
-    transcripts: tuple[str, ...] = ()
+    transcripts: tuple[llm.LearningText, ...] = ()
     audio: tuple[tuple[DictionaryAudio, Path], ...] = ()
+    scope: str = "new"
 
 
 class DictionaryBuilds:
-    def __init__(self, speech: SpeechResources, call: llm.Caller) -> None:
-        self._speech, self._call = speech, call
+    def __init__(self, speech: SpeechResources, call: llm.Caller, operations: Operations) -> None:
+        self._speech, self._call, self._operations = speech, call, operations
         self._lock = threading.RLock()
         self._state: dict[str, Any] = {"phase": "idle"}
         self._proposal: Proposal | None = None
+        self._spec: BuildInput | None = None
+        self._texts: dict[str, llm.LearningText] = {}
+        self._working: Groups | None = None
+        self._covered: set[str] = set()
+        self._completed_batches = 0
+        self._operation: Operation | None = None
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -63,32 +71,79 @@ class DictionaryBuilds:
 
     def start(self, prepare: Callable[[], BuildInput]) -> dict[str, Any]:
         with self._lock:
-            if self._closed:
-                raise JobConflict("Dictionary builds are shutting down")
-            if self._state["phase"] in RUNNING | {"ready"} or (
-                self._thread is not None and self._thread.is_alive()
-            ):
-                raise JobConflict("A dictionary build or unreviewed proposal is already active")
-            spec = prepare()  # reject competing starts before snapshots or resource acquisition
-            if self._closed:
-                raise JobConflict("Dictionary builds are shutting down")
-            self._cancel = threading.Event()
-            self._proposal = None
+            self._available()
+            if self._state["phase"] == "ready":
+                raise JobConflict(
+                    "Apply or discard the current proposal before starting another model"
+                )
+            operation = self._operations.begin("learning", "learning")
+            try:
+                spec = prepare()
+                if self._closed:
+                    raise JobConflict("Dictionary builds are shutting down")
+            except BaseException:
+                self._operations.finish(operation)
+                raise
+            self._clear()
+            self._operation, self._spec = operation, spec
             self._state = {
                 "id": uuid.uuid4().hex,
                 "phase": "queued",
                 "source": spec.source,
+                "scope": spec.scope,
                 "model": spec.speech.id,
                 "dictionaryModel": spec.builder[2],
                 "version": f'"{spec.revision}"',
                 "completed": 0,
                 "total": len(spec.audio) if spec.source == "audio" else len(spec.transcripts),
+                "coveredInputs": 0,
+                "completedBatches": 0,
+                "steps": 0,
             }
-            self._thread = threading.Thread(
-                target=self._run, args=(spec,), daemon=True, name="dictum-dictionary-build"
-            )
-            self._thread.start()
+            self._launch()
             return self.status()
+
+    def _available(self) -> None:
+        if self._closed:
+            raise JobConflict("Dictionary builds are shutting down")
+        if self._state["phase"] in RUNNING:
+            raise JobConflict("A dictionary build is still running or cleaning up")
+
+    def retry(self, job_id: str, refresh: Callable[[BuildInput], BuildInput]) -> dict[str, Any]:
+        with self._lock:
+            self._named(job_id)
+            self._available()
+            if self._spec is None or self._state.get("outcome") not in {"failed", "stopped"}:
+                raise JobConflict("Only failed or stopped learning can be retried")
+            acquired = self._operation is None
+            if self._operation is None:
+                self._operation = self._operations.begin("learning", "learning")
+            try:
+                fresh = refresh(self._spec)
+            except BaseException:
+                if acquired:
+                    self._release()
+                raise
+            self._operations.stage(self._operation, "learning")
+            # Edits after an empty failed run require a fresh dictionary baseline,
+            # but never retranscription of already successful temporary audio.
+            if fresh.revision != self._spec.revision:
+                self._working = None
+                self._completed_batches = 0
+                self._covered.clear()
+            self._spec = fresh
+            self._state.update(
+                phase="queued", dictionaryModel=fresh.builder[2], version=f'"{fresh.revision}"'
+            )
+            self._state.pop("error", None)
+            self._proposal = None
+            self._launch()
+            return self.status()
+
+    def _launch(self) -> None:
+        self._cancel = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="dictum-learning")
+        self._thread.start()
 
     def _named(self, job_id: str) -> None:
         if self._state.get("id") != job_id:
@@ -98,7 +153,7 @@ class DictionaryBuilds:
         with self._lock:
             self._named(job_id)
             if self._state["phase"] not in RUNNING:
-                raise JobConflict("Only a running dictionary job can be cancelled")
+                raise JobConflict("Only running learning can be stopped")
             self._request_cancel()
 
     def _request_cancel(self) -> None:
@@ -110,19 +165,34 @@ class DictionaryBuilds:
     def discard(self, job_id: str) -> None:
         with self._lock:
             self._named(job_id)
-            if self._state["phase"] in RUNNING:
-                raise JobConflict("Cancel the running job and wait for cleanup before discarding")
-            self._proposal = None
+            self._available()
+            self._clear()
+            self._release()
             self._state["phase"] = "discarded"
 
-    def accept(self, job_id: str, save: Callable[[Proposal], None]) -> None:
+    def accept(
+        self, job_id: str, save: Callable[[Proposal, BuildInput, tuple[str, ...]], bool]
+    ) -> None:
         with self._lock:
             self._named(job_id)
-            if self._state["phase"] != "ready" or self._proposal is None:
-                raise JobConflict("That job has no proposal ready to accept")
-            save(self._proposal)  # caller verifies the frozen revision under the dictionary lock
-            self._proposal = None
-            self._state["phase"] = "accepted"
+            self._available()
+            if self._state["phase"] != "ready" or self._proposal is None or self._spec is None:
+                raise JobConflict("That job has no proposal ready to apply")
+            applied = save(self._proposal, self._spec, tuple(sorted(self._covered)))
+            self._clear()
+            self._release()
+            self._state.update(phase="accepted", applied=applied)
+
+    def _clear(self) -> None:
+        self._proposal = self._spec = self._working = None
+        self._texts.clear()
+        self._covered.clear()
+        self._completed_batches = 0
+
+    def _release(self) -> None:
+        if self._operation:
+            self._operations.finish(self._operation)
+            self._operation = None
 
     def _checkpoint(self) -> None:
         if self._closed or self._cancel.is_set():
@@ -133,18 +203,36 @@ class DictionaryBuilds:
             self._checkpoint()
             self._state.update(fields)
 
-    async def _generate(self, spec: BuildInput, transcripts: list[str]) -> Groups:
+    async def _generate(self, spec: BuildInput, inputs: list[llm.LearningText]) -> Groups:
         with self._lock:
             self._loop = asyncio.get_running_loop()
             self._task = asyncio.current_task()
+
+        def completed(groups: Groups, number: int, total: int, covered: tuple[str, ...]) -> None:
+            # Validate against the full scoped dictionary before advancing coverage.
+            proposal = dictionary.propose(
+                spec.dictionary, groups, spec.speech.id, f'"{spec.revision}"'
+            )
+            with self._lock:
+                self._working, self._proposal = groups, proposal
+                self._completed_batches = number
+                self._covered.update(covered)
+                self._state.update(
+                    completedBatches=number, steps=total, coveredInputs=len(self._covered)
+                )
+
         try:
             self._checkpoint()
             return await llm.propose_learned(
                 *spec.builder,
                 spec.dictionary,
-                transcripts,
+                (),
                 spec.speech.id,
                 call=self._call,
+                inputs=inputs,
+                working=self._working,
+                resume=self._completed_batches,
+                checkpoint=completed,
                 progress=lambda step, total, size: self._progress(
                     phase="building", step=step, steps=total, inputCharacters=size
                 ),
@@ -153,73 +241,92 @@ class DictionaryBuilds:
             with self._lock:
                 self._loop = self._task = None
 
-    def _run(self, spec: BuildInput) -> None:
-        transcripts = list(spec.transcripts)
-        proposal = None
-        phase, error = "cancelled", None
+    def _run(self) -> None:
+        spec = self._spec
+        assert spec is not None
+        outcome, error = "complete", None
         try:
             self._checkpoint()
             if spec.source == "audio":
                 self._progress(phase="transcribing")
                 for number, (item, path) in enumerate(spec.audio, 1):
                     self._checkpoint()
-                    try:
-                        with self._speech.use(spec.speech, background=True, cancel=self._cancel):
+                    if item.id not in self._texts:
+                        try:
+                            with self._speech.use(
+                                spec.speech, background=True, cancel=self._cancel
+                            ):
+                                self._checkpoint()
+                                data = path.read_bytes()
+                                if (
+                                    not item.id.startswith("recording:")
+                                    and hashlib.sha256(data).hexdigest() != item.id
+                                ):
+                                    raise ValueError("The imported audio changed; import it again")
+                                result = spec.speech.provider.transcribe(
+                                    Clip(data, item.mime), spec.speech.model, spec.speech_key
+                                )
+                            if isinstance(result, Failure):
+                                raise ValueError(result.error)
+                            # Preserve a successful in-flight result even if Stop arrived
+                            # during inference. It can be reused on Retry, never delivered.
+                            if not self._closed:
+                                self._texts[item.id] = llm.LearningText(
+                                    item.id,
+                                    result.text,
+                                    {"source": "temporary_audio", "speech_model": spec.speech.id},
+                                )
                             self._checkpoint()
-                            data = path.read_bytes()
-                            if hashlib.sha256(data).hexdigest() != item.id:
-                                raise ValueError("The imported audio changed; import it again")
-                            result = spec.speech.provider.transcribe(
-                                Clip(data, item.mime), spec.speech.model, spec.speech_key
-                            )
-                            del data
-                        self._checkpoint()
-                        if isinstance(result, Failure):
-                            raise ValueError(result.error)
-                        if result.text.strip():
-                            transcripts.append(result.text)
-                        del result
-                    except CancelledError:
-                        raise
-                    except Exception as exc:
-                        raise ValueError(
-                            f"Audio {number}/{len(spec.audio)} ({item.name}): {exc}"
-                        ) from exc
+                        except CancelledError:
+                            raise
+                        except Exception as exc:
+                            raise ValueError(
+                                f"Audio {number}/{len(spec.audio)} ({item.name}): {exc}"
+                            ) from exc
                     self._progress(completed=number)
-            if not transcripts:
-                raise ValueError("The selected speech model returned no text from this audio")
+                inputs = [self._texts[item.id] for item, _ in spec.audio]
+            else:
+                inputs = list(spec.transcripts)
+            if not any(item.text.strip() for item in inputs):
+                raise ValueError("The selected inputs contain no transcribed text")
             self._progress(phase="building")
-            learned = asyncio.run(self._generate(spec, transcripts))
+            asyncio.run(self._generate(spec, inputs))
             self._checkpoint()
-            proposal = dictionary.propose(
-                spec.dictionary, learned, spec.speech.id, f'"{spec.revision}"'
-            )
-            phase = "ready"
         except (CancelledError, asyncio.CancelledError):
-            pass
+            outcome = "stopped"
         except Exception as exc:
-            phase, error = "failed", str(exc)
+            outcome, error = "failed", str(exc)
             for secret in (spec.speech_key, spec.builder[1]):
                 if secret:
                     error = error.replace(secret, "[redacted]")
         finally:
             with self._lock:
-                if not self._cancel.is_set():
-                    self._state["phase"] = "cleaning"
-            transcripts.clear()
-            # Inference leases and asynchronous clients have already exited. Only
-            # after transient text/cleanup is gone may another caller see a proposal.
-            with self._lock:
-                cancelled = self._closed or self._cancel.is_set()
-                self._proposal = proposal if not cancelled and phase == "ready" else None
-                self._state["phase"] = "cancelled" if cancelled else phase
-                if error and not cancelled:
-                    self._state["error"] = error
+                if self._closed:
+                    self._clear()
+                    self._release()
+                    self._state.update(phase="cancelled", outcome="stopped")
+                else:
+                    phase = (
+                        "ready"
+                        if self._proposal is not None
+                        else ("cancelled" if outcome == "stopped" else "failed")
+                    )
+                    self._state.update(
+                        phase=phase,
+                        outcome=outcome,
+                        cachedTranscripts=len(self._texts),
+                        completedBatches=self._completed_batches,
+                        coveredInputs=len(self._covered),
+                    )
+                    if error:
+                        self._state["error"] = error
+                    if self._operation and phase == "ready":
+                        self._operations.stage(self._operation, "review")
+                    else:
+                        self._release()
 
     def close(self, timeout: float = 2.0) -> bool:
         deadline = time.monotonic() + max(0.0, timeout)
-        # Signal before taking the lock: a source snapshot or acceptance may still
-        # hold it for disk I/O. Neither that wait nor joining gets a fresh budget.
         self._closed = True
         self._cancel.set()
         if not self._lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
@@ -227,9 +334,10 @@ class DictionaryBuilds:
         try:
             if self._state["phase"] in RUNNING:
                 self._request_cancel()
-            elif self._state["phase"] == "ready":
+            else:
+                self._clear()
+                self._release()
                 self._state["phase"] = "discarded"
-            self._proposal = None
             thread = self._thread
         finally:
             self._lock.release()

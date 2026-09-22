@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -19,12 +20,19 @@ from PIL import Image
 from dictum.desktop.platform import Actions, Hotkeys, Permissions, State, Tray, Window
 
 ASSETS = Path(__file__).resolve().parents[2] / "assets"
-TITLES: dict[State, str] = {"idle": "", "recording": "● rec", "quiet": "● rec", "busy": "…"}
 INDICATOR: dict[State, str] = {
     "idle": "",
     "recording": "Recording",
     "quiet": "Recording · mic very quiet",
-    "busy": "Transcribing…",
+    "saving": "Saving audio…",
+    "transcribing": "Transcribing…",
+    "correction": "Contextual correction…",
+    "cleanup": "Reducing fillers…",
+    "formatting": "Formatting…",
+    "delivering": "Delivering…",
+    "cancelling": "Canceling — keeping audio…",
+    "learning": "Learning…",
+    "review": "Learning: apply or discard proposal",
 }
 WIDTH, HEIGHT = 880, 640
 
@@ -113,6 +121,8 @@ class _Tray:
     def __init__(self, platform: WebviewPlatform) -> None:
         self._platform = platform
         self._status = ""
+        self._state = "idle"
+        self._completion_until = 0.0
         self._open_window: Callable[[], None] = lambda: None
         self._open_settings: Callable[[], None] = lambda: None
         self._quit: Callable[[], None] = lambda: None
@@ -137,15 +147,30 @@ class _Tray:
         return self._icon
 
     def set_state(self, state: State) -> None:
+        self._state = state
         if self._icon is not None:
-            self._icon.title = f"Dictum {TITLES[state]}".strip()
+            self._icon.title = f"Dictum {INDICATOR.get(state, state)}".strip()
         indicator = self._indicator()
         if indicator is None:
             return
         if state == "idle":
-            indicator.hide()
+            if time.monotonic() >= self._completion_until:
+                indicator.hide()
         else:
-            indicator.show(INDICATOR[state])
+            indicator.show(INDICATOR.get(state, state))
+
+    def complete(self, text: str) -> None:
+        self._completion_until = time.monotonic() + 5.0
+        indicator = self._indicator()
+        if indicator is not None:
+            indicator.show(text[:180])
+        self.set_status(text)
+
+        def hide() -> None:
+            if self._state == "idle" and time.monotonic() >= self._completion_until:
+                self.set_state("idle")
+
+        self._platform.call_later(5.0, hide)
 
     def _indicator(self) -> Any:
         """The on-screen pill (macOS today); the tray title alone is a tooltip there."""

@@ -159,7 +159,10 @@ def test_cancel_between_chunks_stops_refinement_and_reports_full_input_size(
     monkeypatch.setattr(app._builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
     client.post("/api/dictionary/build", json={"source": "audio"})
-    assert wait_for_build(client)["phase"] == "cancelled"
+    partial = wait_for_build(client)
+    assert partial["phase"] == "ready" and partial["outcome"] == "stopped"
+    assert partial["completedBatches"] == 1 and partial["steps"] == 2
+    assert partial["coveredInputs"] == 1
     assert len(calls) == 1
 
 
@@ -218,7 +221,7 @@ def test_shutdown_deadline_also_bounds_waiting_for_a_source_snapshot(
     entered, release = threading.Event(), threading.Event()
     prepare = app._build_input
 
-    def slow_snapshot(source: Source) -> BuildInput:
+    def slow_snapshot(source: Source, **kwargs: object) -> BuildInput:
         entered.set()
         assert release.wait(2)
         return prepare(source)

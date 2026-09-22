@@ -90,8 +90,8 @@
           <div class="help-panel" id="help-panel" hidden>
             <div class="defs">
               <b>Group</b><span>Recognized forms linked to possible meanings. For <i>cloud</i>, Claude and a literal cloud can compete; Jev chooses the meaning and Dictum applies its stored spelling.</span>
-              <b>Meaning</b><span>A general definition, optional personal usage, and exact output spelling. Uncertain or missing meanings leave the original words untouched.</span>
-              <b>Pinned</b><span>Shared with every model and protected from builds. Pinning a meaning shares its associations; context still decides among competitors.</span>
+              <b>Meaning</b><span>A general definition, optional personal usage, and exact output spelling. Valid decisions select the highest-scoring eligible meaning, even when scores are close. Missing usable definitions are left unresolved.</span>
+              <b>Pinned</b><span>Shared with every model and protected from builds. Pinning shares all variants; reviewed definition updates are allowed; context still decides among competitors.</span>
               <b>Learned</b><span>Proposed from one model's own transcripts and accepted by you. Used only with that model.</span>
             </div>
             <div class="defs more" id="help-more" hidden>
@@ -103,8 +103,8 @@
           </div>
 
           <details class="audio-onboarding" id="audio-onboarding">
-            <summary>Build from your audio</summary>
-            <p class="caption">Bring audio from Wispr Flow or a folder. Original audio stays on this Mac for reuse with another model. Fresh transcripts are used only for this build and are not saved to history.</p>
+            <summary>Learn from audio</summary>
+            <p class="caption">Select Dictum recordings, or bring audio from Wispr Flow or a folder. Original audio stays on this Mac for reuse with another model. Fresh transcripts stay in memory for this workflow and its retries; they are not saved to history.</p>
             <div class="audio-actions">
               <button type="button" class="btn" id="import-wispr">Import Wispr Flow audio</button>
               <button type="button" class="btn" id="choose-audio-folder">Choose audio folder</button>
@@ -114,20 +114,27 @@
             <p class="caption" id="audio-import-status" role="status"></p>
             <p class="caption" id="audio-count"></p>
             <p class="caption" id="audio-models"></p>
-            <p class="caption">Keep Dictum running until the proposal is ready. Closing the app discards build progress; your imported audio stays saved.</p>
+            <div class="audio-actions"><label>From <input type="date" class="input" id="audio-from" /></label><label>Through <input type="date" class="input" id="audio-through" /></label><button class="btn ghost" id="audio-select-visible" type="button">Select visible</button><button class="btn ghost" id="audio-clear" type="button">Clear selection</button></div>
+            <p class="caption">Date filters use Dictum recording dates. Imports without a source date appear when no dates are selected. Unknown durations are shown separately.</p>
+            <div id="learning-audio-list" class="learning-audio-list"></div>
+            <p class="caption">Keep Dictum running until the proposal is ready. Successful temporary transcripts are reused on Retry. Applying, discarding or closing the app clears them; your imported audio stays saved.</p>
             <button type="button" class="btn accent" id="build-audio-dictionary" disabled>Build from saved audio</button>
           </details>
 
           <div class="row-actions">
             <p class="caption" id="dictionary-build-status" role="status"></p>
-            <button type="button" class="btn ghost" id="cancel-dictionary-build" hidden>Cancel build</button>
+            <button type="button" class="btn ghost" id="cancel-dictionary-build" hidden>Stop learning</button>
+            <button type="button" class="btn ghost" id="retry-dictionary-build" hidden>Retry remaining work</button>
+            <button type="button" class="btn ghost" id="abandon-dictionary-build" hidden>Discard workflow</button>
           </div>
           <p class="caption save-status" id="build-status" role="status"></p>
 
+          <p class="caption" id="dictionary-edit-lock" hidden>Learning owns the dictionary until you apply or discard. Edit the proposals below; separate dictionary editing and dictation are paused.</p>
+          <label class="caption">History for learning <select class="select" id="learning-scope"><option value="new">Recent unprocessed inputs (up to 300)</option><option value="all">All this model’s history, including previously learned inputs</option></select></label>
           <div class="proposal" id="proposal" hidden>
             <div class="proposal-head">
               <span class="proposal-title" id="proposal-title">Proposed by the model</span>
-              <span class="caption hint">Your dictionary changes only when you accept.</span>
+              <span class="caption hint">Dismiss unwanted proposals with ×. Apply the included changes once.</span>
               <span class="spacer"></span>
               <button type="button" class="btn accent" id="accept-proposal">Accept</button>
               <button type="button" class="btn ghost" id="discard-proposal">Discard</button>
@@ -274,7 +281,7 @@
                   <div class="srow foot"><button type="submit" class="btn accent">Save key</button><span class="caption save-status" id="jev-key-status" role="status"></span></div>
                 </form>
                 <label class="srow check">
-                  <div><div class="name">Contextual dictionary</div><div class="caption">Jev chooses among eligible meanings using the original context. Off, only explicitly approved direct mappings apply; ambiguous forms stay unchanged.</div></div>
+                  <div><div class="name">Contextual dictionary</div><div class="caption">Jev chooses among eligible meanings using the original context. Off disables the entire dictionary stage, including approved direct mappings.</div></div>
                   <input type="checkbox" id="jev-dictionary" />
                 </label>
                 <label class="srow check">

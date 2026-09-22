@@ -83,7 +83,12 @@ class Dictionary:
         return self.learned.get(model, ())
 
     def effective(self, model: str) -> Groups:
-        return merge(self.pinned, self.learned_for(model))
+        ids = {m.id for g in self.pinned for m in g.meanings}
+        return merge(
+            self.pinned,
+            *(_select(gs, ids, included=True) for gs in self.learned.values()),
+            self.learned_for(model),
+        )
 
 
 EMPTY = Dictionary()
@@ -351,81 +356,178 @@ def save(data_dir: Path, dictionary: Dictionary) -> None:
 
 
 def pin(dictionary: Dictionary, model: str, group_id: str, meaning_id: str) -> Dictionary:
-    """Share exactly one meaning and its associations, leaving competitors model-local."""
-    learned = list(dictionary.learned_for(model))
-    group = next((g for g in learned if g.id == group_id), None)
+    """Share a meaning's associations everywhere, leaving competitors model-local."""
+    group = next((g for g in dictionary.learned_for(model) if g.id == group_id), None)
     if group is None:
         raise ValueError("That learned group is no longer present")
     meaning = next((m for m in group.meanings if m.id == meaning_id), None)
     if meaning is None:
         raise ValueError("That learned meaning is no longer present")
-    shared = []
-    remaining = []
-    for form in group.recognized_forms:
-        links = tuple(a for a in form.associations if a.meaning_id == meaning_id)
-        others = tuple(a for a in form.associations if a.meaning_id != meaning_id)
-        if links:
-            shared.append(
-                replace(
-                    form,
-                    associations=links,
-                    direct=form.direct if form.direct == meaning_id else None,
-                    direct_reason=form.direct_reason if form.direct == meaning_id else "",
+    return share(dictionary, {meaning_id})
+
+
+def _select(groups: Groups, ids: set[str], *, included: bool) -> Groups:
+    result = []
+    for group in groups:
+        forms = []
+        for form in group.recognized_forms:
+            links = tuple(a for a in form.associations if (a.meaning_id in ids) == included)
+            if links:
+                direct = form.direct if form.direct in {a.meaning_id for a in links} else None
+                forms.append(
+                    replace(
+                        form,
+                        associations=links,
+                        direct=direct,
+                        direct_reason=form.direct_reason if direct else "",
+                    )
                 )
-            )
-        if others:
-            remaining.append(
-                replace(
-                    form,
-                    associations=others,
-                    direct=None if form.direct == meaning_id else form.direct,
-                    direct_reason="" if form.direct == meaning_id else form.direct_reason,
-                )
-            )
-    updated = replace(
-        group,
-        meanings=tuple(m for m in group.meanings if m.id != meaning_id),
-        recognized_forms=tuple(remaining),
-    )
-    learned = [updated if g.id == group.id else g for g in learned]
-    learned = [g for g in learned if g.meanings or g.recognized_forms]
+        meanings = tuple(m for m in group.meanings if (m.id in ids) == included)
+        if meanings or forms:
+            result.append(replace(group, meanings=meanings, recognized_forms=tuple(forms)))
+    return tuple(result)
+
+
+def share(dictionary: Dictionary, ids: set[str]) -> Dictionary:
+    """Normalize all pinned variants, including extensions in other groups/models."""
+    ids = ids | {m.id for g in dictionary.pinned for m in g.meanings}
     return validate(
         Dictionary(
             merge(
-                dictionary.pinned, (Group(group.id, (meaning,), tuple(shared), group.needs_review),)
+                *(
+                    _select(gs, ids, included=True)
+                    for gs in (dictionary.pinned, *dictionary.learned.values())
+                )
             ),
-            {**dictionary.learned, model: tuple(learned)},
+            {
+                model: local
+                for model, gs in dictionary.learned.items()
+                if (local := _select(gs, ids, included=False))
+            },
         )
     )
+
+
+def protect_pinned(pinned: Groups, working: Groups) -> None:
+    """Agent proposals may refine definitions, never erase protected knowledge."""
+    meanings = {m.id: m for g in working for m in g.meanings}
+    links = {
+        (key(f.text), a.meaning_id)
+        for g in working
+        for f in g.recognized_forms
+        for a in f.associations
+    }
+    for group in pinned:
+        for old in group.meanings:
+            new = meanings.get(old.id)
+            if new is None or (old.spelling, old.casing) != (new.spelling, new.casing):
+                raise ValueError(
+                    "The generator cannot delete or change a pinned meaning's spelling"
+                )
+        for form in group.recognized_forms:
+            if any((key(form.text), a.meaning_id) not in links for a in form.associations):
+                raise ValueError("The generator cannot remove an existing pinned variant")
+
+
+def refined(current: Dictionary, working: Groups, model: str) -> Dictionary:
+    """Partition a reviewed working dictionary into shared and model-local knowledge."""
+    current = share(current, set())
+    protect_pinned(current.pinned, working)
+    ids = {m.id for g in current.pinned for m in g.meanings}
+    definitions = {m.id: m for g in working for m in g.meanings if m.id in ids}
+
+    def revised(groups: Groups) -> Groups:
+        return tuple(
+            replace(g, meanings=tuple(definitions.get(m.id, m) for m in g.meanings)) for g in groups
+        )
+
+    return share(
+        Dictionary(
+            revised(current.pinned),
+            {
+                **{name: revised(gs) for name, gs in current.learned.items()},
+                model: working,
+            },
+        ),
+        ids,
+    )
+
+
+@dataclass(frozen=True)
+class ProposalChange:
+    id: str
+    before: Group | None
+    after: Group | None
+
+    @property
+    def kind(self) -> str:
+        return "add" if self.before is None else "remove" if self.after is None else "update"
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "before": self.before.as_json() if self.before else None,
+            "after": self.after.as_json() if self.after else None,
+        }
 
 
 @dataclass(frozen=True)
 class Proposal:
     model: str
-    learned: Groups
-    added: Groups
-    removed: Groups
+    working: Groups
+    changes: tuple[ProposalChange, ...]
     version: str = ""
 
     def as_json(self) -> dict[str, object]:
         return {
             "model": self.model,
             "version": self.version,
-            **{
-                name: [g.as_json() for g in getattr(self, name)]
-                for name in ("learned", "added", "removed")
-            },
+            "changes": [change.as_json() for change in self.changes],
         }
 
 
 def propose(current: Dictionary, proposed: Groups, model: str, version: str = "") -> Proposal:
-    validate(Dictionary(current.pinned, {**current.learned, model: proposed}))
-    old = {g.id: g for g in current.learned_for(model)}
-    new = {g.id: g for g in proposed}
+    updated = refined(current, proposed, model)
+    old = {g.id: g for g in current.effective(model)}
+    new = {g.id: g for g in updated.effective(model)}
     return Proposal(
         model,
-        proposed,
-        tuple(g for k, g in new.items() if old.get(k) != g),
-        tuple(g for k, g in old.items() if new.get(k) != g),
+        tuple(new.values()),
+        tuple(
+            ProposalChange(identity, old.get(identity), new.get(identity))
+            for identity in dict.fromkeys((*new, *old))
+            if old.get(identity) != new.get(identity)
+        ),
         version,
     )
+
+
+def review(current: Dictionary, proposal: Proposal, selected: object = None) -> Dictionary:
+    """Apply included proposals only; dismissal never removes existing knowledge."""
+    changes = {c.id: c for c in proposal.changes}
+    if selected is None:
+        selected = [
+            {"id": c.id, "after": c.after.as_json() if c.after else None} for c in proposal.changes
+        ]
+    working = {g.id: g for g in current.effective(proposal.model)}
+    seen: set[str] = set()
+    for item in _list(selected, "selected proposals"):
+        item = _object(item, "proposal", {"id", "after"})
+        identity = item.get("id")
+        if not isinstance(identity, str) or identity not in changes or identity in seen:
+            raise ValueError("Select each proposed change at most once by its current ID")
+        seen.add(identity)
+        change = changes[identity]
+        if change.after is None:
+            if item.get("after") is not None:
+                raise ValueError("A removal can only be included or dismissed")
+            working.pop(identity, None)
+        else:
+            groups = parse_groups([item.get("after")], "edited proposal")
+            if groups[0].id != identity:
+                raise ValueError("Keep the proposal's group ID while editing")
+            working[identity] = groups[0]
+    if working == {g.id: g for g in current.effective(proposal.model)}:
+        return current
+    return refined(current, tuple(working.values()), proposal.model)
