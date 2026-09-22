@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import io
+import json
+import sqlite3
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from zipfile import ZipFile
 
 import httpx
 import pytest
 from starlette.testclient import TestClient
 
+from dictum import server
 from dictum.providers.base import Clip, Failure, TranscribeResult, Transcript
 from dictum.recorder import wav_bytes
 from dictum.server import create_app
@@ -199,6 +205,99 @@ def test_audio_download_has_a_filename(client: TestClient) -> None:
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     res = client.get(f"/api/recordings/{rec['id']}/audio")
     assert res.headers["content-disposition"] == f'inline; filename="dictum-{rec["id"]}.webm"'
+
+
+def test_data_exports_include_all_retained_audio_and_attempts(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    app = Dictum(store, [])
+    app.set_key("openai", "secret-key-not-for-export")
+    (tmp_path / "unrelated.txt").write_text("private unrelated data")
+    # Exceed a history page; a decades-old recording must remain exportable too.
+    recordings = [store.create_recording(WEBM_HEADER) for _ in range(51)]
+    first = recordings[0]
+    store.add_transcription(
+        first.id, "old-provider", "old-model", "error", text=None, error="quota exceeded"
+    )
+    store.add_transcription(
+        first.id, "other-provider", "new-model", "ok", text="Jev", error=None, raw_text="Jeff"
+    )
+    imported = [wav_bytes(bytes([i, 0]) * 160) for i in (1, 2)]
+    for data in imported:
+        store.import_dictionary_audio(data, "meeting.wav", "audio/wav")
+    store.close()
+    with sqlite3.connect(tmp_path / "dictum.db") as db:
+        db.execute(
+            "UPDATE recordings SET created_at = '2000-01-01T00:00:00Z' WHERE id = ?", (first.id,)
+        )
+    store = Store(tmp_path)
+    client = TestClient(create_app(Dictum(store, [])), base_url="http://localhost")
+
+    audio = client.get("/api/exports/audio")
+    assert audio.status_code == 200
+    assert audio.headers["content-disposition"] == 'attachment; filename="dictum-audio.zip"'
+    assert audio.headers["cache-control"] == "no-store"
+    with ZipFile(io.BytesIO(audio.content)) as archive:
+        index = json.loads(archive.read("manifest.json"))
+        assert len(index["recordings"]) == 51
+        for recording in recordings:
+            assert archive.read(f"audio/{recording.file}") == WEBM_HEADER
+        assert index["recordings"][-1]["created_at"] == "2000-01-01T00:00:00Z"
+        assert [row["name"] for row in index["dictionary_audio"]] == ["meeting.wav"] * 2
+        assert [archive.read(row["file"]) for row in index["dictionary_audio"]] == imported
+        assert len(archive.namelist()) == 54  # 51 recordings, two imports, one index
+    assert b"secret-key-not-for-export" not in audio.content
+    assert b"private unrelated data" not in audio.content
+
+    transcripts = client.get("/api/exports/transcripts")
+    assert transcripts.status_code == 200
+    assert (
+        transcripts.headers["content-disposition"]
+        == 'attachment; filename="dictum-transcripts.json"'
+    )
+    assert transcripts.headers["cache-control"] == "no-store"
+    saved = transcripts.json()["recordings"]
+    assert len(saved) == 51  # Imported audio creates no transcript-history rows.
+    assert saved[-1]["id"] == first.id and saved[-1]["file"] == first.file
+    assert saved[-1]["created_at"] == "2000-01-01T00:00:00Z"
+    attempts = saved[-1]["transcriptions"]
+    assert len(attempts) == 2
+    assert (attempts[0]["text"], attempts[0]["raw_text"]) == ("Jev", "Jeff")
+    assert (attempts[0]["provider"], attempts[0]["model"]) == ("other-provider", "new-model")
+    assert (attempts[1]["status"], attempts[1]["error"]) == ("error", "quota exceeded")
+    assert b"secret-key-not-for-export" not in transcripts.content
+    assert b"private unrelated data" not in transcripts.content
+    assert len(store.list_recordings()) == 51 and len(store.dictionary_audio()) == 2
+    store.close()
+
+
+def test_exports_of_empty_store(client: TestClient) -> None:
+    assert client.get("/api/exports/transcripts").json() == {"recordings": []}
+    with ZipFile(io.BytesIO(client.get("/api/exports/audio").content)) as archive:
+        assert archive.namelist() == ["manifest.json"]
+        assert json.loads(archive.read("manifest.json")) == {
+            "recordings": [],
+            "dictionary_audio": [],
+        }
+
+
+def test_audio_export_cleans_up_and_reports_missing_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def temporary_directory(*, prefix: str) -> TemporaryDirectory[str]:
+        return TemporaryDirectory(prefix=prefix, dir=tmp_path)
+
+    monkeypatch.setattr(server, "TemporaryDirectory", temporary_directory)
+    store = Store(tmp_path / "data")
+    recording = store.create_recording(WEBM_HEADER)
+    client = TestClient(create_app(Dictum(store, [])), base_url="http://localhost")
+    assert client.get("/api/exports/audio").status_code == 200
+    assert list(tmp_path.glob("dictum-export-*")) == []
+    store.audio_path(recording).unlink()
+    failed = client.get("/api/exports/audio")
+    assert failed.status_code == 500 and "Could not export audio" in failed.text
+    assert "content-disposition" not in failed.headers
+    assert list(tmp_path.glob("dictum-export-*")) == []
+    store.close()
 
 
 def test_capture_needs_the_menu_bar_app_or_hands_over_keys_once(
