@@ -11,6 +11,7 @@ export function createDictionary({ getModel, getSettings }) {
   let importing = false;
   let building = false;
   let filter = "all";
+  let proposalChanges = [];
   const dictionaryBox = el("dictionary");
   const buildBtn = el("build-dictionary");
   const buildStatus = el("build-status");
@@ -18,14 +19,15 @@ export function createDictionary({ getModel, getSettings }) {
   const proposalBody = el("proposal-body");
   const onboarding = createAudioOnboarding({
     getModel, getSettings,
-    onBuild() { return builds.start("audio"); },
+    onBuild(selection) { return builds.start("audio", selection); },
     onBusy(value) { importing = value; buildBtn.disabled = importing || building; },
   });
 
   const builds = createDictionaryBuild({
-    onBusy(value) { building = value; buildBtn.disabled = importing || building; onboarding.setBuildBusy(value); },
+    onBusy(value) { building = value; buildBtn.disabled = importing || building; onboarding.setBuildBusy(value); lockEditors(); },
     onProposal(value) { if (value) renderProposal(value); else proposalPanel.hidden = true; },
     onAccepted: () => loadDictionary(false),
+    getSelected: () => proposalChanges.filter(c => c.included).map(c => ({id: c.id, after: c.after})),
   });
 
   segmentedGroup({ all: el("filter-all"), pinned: el("filter-pinned"), learned: el("filter-learned") }, (name) => { filter = name; renderDictionary(); });
@@ -39,6 +41,7 @@ export function createDictionary({ getModel, getSettings }) {
     dict = JSON.parse(text);
     dictVersion = res.headers.get("etag");
     renderDictionary(text);
+    lockEditors();
     await onboarding.load();
   }
 
@@ -46,7 +49,13 @@ export function createDictionary({ getModel, getSettings }) {
   // server refuses a save on a stale version (an agent or a hand edit got there first)
   // and the fresh document is shown instead. Explicit JSON repair can replace an
   // unreadable document after confirmation; table edits always need a loaded version.
+  function lockEditors() {
+    for (const field of document.querySelectorAll("#dict-rows input, #dict-rows select, #dict-rows button, .add-panel input, .add-panel button, #dictionary, #save-dictionary, #pin-all")) field.disabled = building;
+    el("dictionary-edit-lock").hidden = !building;
+  }
+
   async function saveDictionary(next, fromEditor = false) {
+    if (building) { flash(buildStatus, "Finish learning by applying or discarding first.", "err"); return false; }
     if (!dictVersion && !fromEditor) {
       await loadDictionary();
       if (dictVersion) flash(el("dictionary-status"), "Dictionary reloaded; please redo that change.", "err");
@@ -223,6 +232,7 @@ export function createDictionary({ getModel, getSettings }) {
       ? `Send this model's recent transcripts to ${dictionaryModel} and review a proposal; nothing is saved before Accept`
       : "Needs an Anthropic or OpenAI key in Settings › Providers";
     if (jsonText !== undefined) dictionaryBox.value = jsonText;
+    lockEditors();
   }
 
   el("pin-all").addEventListener("click", () => pinMeaning(null, null));
@@ -262,42 +272,85 @@ export function createDictionary({ getModel, getSettings }) {
     el("help-more-toggle").textContent = more.hidden ? "More detail" : "Less";
   });
 
-  // Build: the model proposes a learned list for the default speech model, from that
-  // model's transcripts; nothing changes until Accept.
-  const label = (g) => `${g.meanings.map((m) => m.spelling).join(" / ")} ← ${g.recognized_forms.map((f) => f.text).join(", ")}`;
-  function chips(list, cls) {
-    const box = document.createElement("div");
-    box.className = "chips";
-    for (const entry of list) {
-      const c = document.createElement("span");
-      c.className = `chip ${cls}`;
-      c.textContent = label(entry);
-      c.title = entry.meanings.map((m) => `${m.spelling}: ${m.meaning}`).join("\n");
-      box.append(c);
-    }
-    return box;
-  }
+  const label = (g) => g ? `${g.meanings.map(m => m.spelling).join(" / ")} ← ${g.recognized_forms.map(f => f.text).join(", ")}` : "";
+  const describe = g => g ? [...g.meanings.map(m => `${m.spelling}: ${m.meaning}${m.personal_context ? ` (${m.personal_context})` : ""}`), ...g.recognized_forms.map(f => `Recognized: ${f.text}`)].join("\n") : "";
   function renderProposal(p) {
+    proposalChanges = p.changes.map(c => ({...structuredClone(c), included: true}));
     el("proposal-title").textContent = `Proposed for ${p.model}`;
-    proposalBody.replaceChildren();
-    const groups = [["Added", p.added, "add"], ["Removed", p.removed, "remove"]];
-    let any = false;
-    for (const [title, items, cls] of groups) {
-      if (items.length === 0) continue;
-      any = true;
-      const h = document.createElement("h3");
-      h.textContent = `${title} (${items.length})`;
-      proposalBody.append(h, chips(items, cls));
-    }
-    if (!any) {
-      const p2 = document.createElement("p");
-      p2.className = "nothing";
-      p2.textContent = "The model proposed no changes to what is learned.";
-      proposalBody.append(p2);
-    }
+    drawProposal();
     proposalPanel.hidden = false;
   }
-  buildBtn.addEventListener("click", () => builds.start("history"));
+  function drawProposal() {
+    proposalBody.replaceChildren();
+    const known = new Map([...dict.pinned, ...learnedOf(dict), ...proposalChanges.flatMap(c => c.after ? [c.after] : [])].flatMap(g => g.meanings).map(m => [m.id, m]));
+    const pinnedIds = new Set(dict.pinned.flatMap(g => g.meanings.map(m => m.id)));
+    for (const [kind, title] of [["add", "Additions"], ["update", "Updates"], ["remove", "Proposed removals"]]) {
+      const items = proposalChanges.filter(c => c.kind === kind);
+      if (!items.length) continue;
+      proposalBody.append(node("h3", `${title} (${items.length})`));
+      for (const change of items) {
+        const box = node("section", "", "proposal-change");
+        box.classList.toggle("dismissed", !change.included);
+        const heading = node("div", "", "row-actions");
+        heading.append(node("strong", label(change.after || change.before)));
+        const dismiss = button(change.included ? "×" : "Restore", () => { change.included = !change.included; drawProposal(); });
+        dismiss.setAttribute("aria-label", `${change.included ? "Dismiss" : "Restore"} ${kind} ${label(change.after || change.before)}`);
+        dismiss.title = "Dismiss this proposal; the current dictionary entry is kept";
+        heading.append(dismiss); box.append(heading);
+        if (change.before) {
+          box.append(node("b", kind === "remove" ? "Will be removed only if included when applying" : "Before"), node("pre", describe(change.before), "proposal-before"));
+        }
+        if (change.after && change.included) {
+          const editor = node("details", "", "proposal-editor");
+          editor.append(node("summary", "After · inspect and edit"));
+          editor.open = true;
+          for (const meaning of change.after.meanings) {
+            const row = node("div", "", "meaning-editor");
+            const spelling = field(row, "Output spelling", meaning.spelling, value => {
+              meaning.spelling = value;
+              for (const form of change.after.recognized_forms) if (form.direct === meaning.id) { form.direct = null; form.direct_reason = ""; }
+            });
+            spelling.readOnly = pinnedIds.has(meaning.id);
+            field(row, "Definition", meaning.meaning, value => { meaning.meaning = value; });
+            field(row, "Personal usage", meaning.personal_context, value => { meaning.personal_context = value || null; });
+            editor.append(row);
+          }
+          for (const form of change.after.recognized_forms) {
+            const row = node("div", "", "meaning-editor");
+            const protectedForm = change.before?.recognized_forms.some(old => old.text.toLowerCase() === form.text.toLowerCase() && old.associations.some(a => pinnedIds.has(a.meaning_id)));
+            const input = field(row, "Recognized form", form.text, value => { form.text = value; form.direct = null; form.direct_reason = ""; form.associations = form.associations.map(a => ({meaning_id: a.meaning_id, basis: "user", evidence: []})); });
+            input.readOnly = Boolean(protectedForm);
+            const choices = node("div", "", "proposal-associations");
+            for (const [id, meaning] of known) {
+              if (!change.after.meanings.some(m => m.id === id) && !form.associations.some(a => a.meaning_id === id)) continue;
+              const wrap = node("label", "", "caption");
+              const check = document.createElement("input"); check.type = "checkbox";
+              check.checked = form.associations.some(a => a.meaning_id === id);
+              check.disabled = Boolean(protectedForm && pinnedIds.has(id) && check.checked);
+              check.addEventListener("change", () => {
+                if (check.checked) form.associations.push({meaning_id: id, basis: "user", evidence: []});
+                else form.associations = form.associations.filter(a => a.meaning_id !== id);
+              });
+              wrap.append(check, `${meaning.spelling} — ${meaning.meaning}`); choices.append(wrap);
+            }
+            const remove = button("Remove proposed form", () => { change.after.recognized_forms = change.after.recognized_forms.filter(f => f !== form); drawProposal(); });
+            remove.disabled = Boolean(protectedForm);
+            row.append(choices, remove); editor.append(row);
+          }
+          editor.append(button("Add recognized form", () => {
+            const id = change.after.meanings[0]?.id || change.after.recognized_forms[0]?.associations[0]?.meaning_id;
+            change.after.recognized_forms.push({text: "", associations: id ? [{meaning_id: id, basis: "user", evidence: []}] : []}); drawProposal();
+          }));
+          box.append(editor);
+        }
+        proposalBody.append(box);
+      }
+    }
+    const included = proposalChanges.filter(c => c.included).length;
+    el("accept-proposal").textContent = included ? `Apply ${included} changes` : "Finish without changes";
+    if (!proposalChanges.length) proposalBody.append(node("p", "No changes proposed. Finishing leaves these inputs eligible for another learning run."));
+  }
+  buildBtn.addEventListener("click", () => builds.start("history", {scope: el("learning-scope").value}));
 
   return { load: loadDictionary, showHelp };
 }

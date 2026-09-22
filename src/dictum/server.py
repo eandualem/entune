@@ -25,6 +25,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from dictum import __version__, jev, llm, onboarding, shortcuts
 from dictum.audio import extension_for, safe_mime
 from dictum.builds import JobConflict
+from dictum.operations import Busy
 from dictum.service import (
     JEV_PROVIDER,
     DictionaryChanged,
@@ -298,7 +299,7 @@ def create_app(app: Dictum) -> Starlette:
         except DictionaryChanged as exc:
             return _bad(str(exc), 409)
         except ValueError as exc:
-            return _bad(str(exc))
+            return _bad(str(exc), 409 if isinstance(exc, Busy) else 400)
         return await run_in_threadpool(_dictionary_response, app)
 
     async def pin_meaning(request: Request) -> Response:
@@ -324,7 +325,7 @@ def create_app(app: Dictum) -> Starlette:
         except DictionaryChanged as exc:
             return _bad(str(exc), 409)
         except ValueError as exc:
-            return _bad(str(exc))
+            return _bad(str(exc), 409 if isinstance(exc, Busy) else 400)
         return await run_in_threadpool(_dictionary_response, app)
 
     async def safe_mapping_recovery(request: Request) -> Response:
@@ -347,13 +348,13 @@ def create_app(app: Dictum) -> Starlette:
         try:
             added = await run_in_threadpool(app.add_agent_corrections, body)
         except ValueError as exc:
-            return _bad(str(exc))
+            return _bad(str(exc), 409 if isinstance(exc, Busy) else 400)
         return JSONResponse({"added": [e.as_json() for e in added]})
 
     def build_status(request: Request) -> Response:
         try:
             return JSONResponse(app.dictionary_build_status(request.path_params.get("job_id")))
-        except JobConflict as exc:
+        except (JobConflict, Busy) as exc:
             return _bad(str(exc), 409)
 
     async def start_build(request: Request) -> Response:
@@ -361,12 +362,22 @@ def create_app(app: Dictum) -> Starlette:
             body = await request.json()
             if (
                 not isinstance(body, dict)
-                or set(body) != {"source"}
-                or body["source"] not in ("history", "audio")
+                or set(body) - {"source", "scope", "audio_ids"}
+                or body.get("source") not in ("history", "audio")
             ):
                 raise ValueError("Choose source history or audio")
-            state = await run_in_threadpool(app.start_dictionary_build, body["source"])
-        except JobConflict as exc:
+            ids = body.get("audio_ids")
+            if ids is not None and (
+                not isinstance(ids, list) or not all(isinstance(i, str) for i in ids)
+            ):
+                raise ValueError("audio_ids must list saved recording IDs")
+            state = await run_in_threadpool(
+                app.start_dictionary_build,
+                body["source"],
+                scope=body.get("scope", "new"),
+                audio_ids=ids,
+            )
+        except (JobConflict, Busy) as exc:
             return _bad(str(exc), 409)
         except ValueError as exc:
             return _bad(str(exc))
@@ -378,19 +389,36 @@ def create_app(app: Dictum) -> Starlette:
             "cancel": app.cancel_dictionary_build,
             "accept": app.accept_dictionary_build,
             "discard": app.discard_dictionary_build,
+            "retry": app.retry_dictionary_build,
         }
         if action not in methods:
             return _bad("Unknown dictionary job action", 404)
         try:
-            await run_in_threadpool(methods[action], request.path_params["job_id"])
-        except (JobConflict, DictionaryChanged) as exc:
+            if action == "accept":
+                body = await request.json() if await request.body() else {}
+                if not isinstance(body, dict) or set(body) - {"selected"}:
+                    raise ValueError("Apply a list of selected proposals")
+                await run_in_threadpool(
+                    app.accept_dictionary_build, request.path_params["job_id"], body.get("selected")
+                )
+            else:
+                await run_in_threadpool(methods[action], request.path_params["job_id"])
+        except (JobConflict, DictionaryChanged, Busy) as exc:
             return _bad(str(exc), 409)
         except ValueError as exc:
             return _bad(str(exc))
         return JSONResponse(app.dictionary_build_status())
 
     def dictionary_audio(_: Request) -> Response:
-        return JSONResponse({"count": len(app.store.dictionary_audio())})
+        items = [asdict(item) for item, _ in app.store.learning_audio()]
+        return JSONResponse(
+            {
+                "count": len(items),
+                "items": items,
+                "seconds": sum(item["seconds"] or 0 for item in items),
+                "unknownDurations": sum(item["seconds"] is None for item in items),
+            }
+        )
 
     async def import_dictionary_audio(request: Request) -> Response:
         async with request.form() as form:
@@ -487,13 +515,35 @@ def create_app(app: Dictum) -> Starlette:
             label = audio.content_type
             model = form.get("model")
             ref = model if isinstance(model, str) and model else None
+            operation_id = form.get("operation")
+            if operation_id is not None and not isinstance(operation_id, str):
+                return _bad("operation must be a recording identifier")
         try:
-            recording = await run_in_threadpool(app.record_and_transcribe, data, label, ref)
+            recording = await run_in_threadpool(
+                app.record_and_transcribe, data, label, ref, operation_id=operation_id
+            )
         except NoDefaultModel as exc:
             return _bad(str(exc))
         except UnknownModel as exc:
             return _bad(f"Unknown model: {exc}")
         return JSONResponse(_recording_json(recording))
+
+    def operation_status(_: Request) -> Response:
+        return JSONResponse(app.operations.status())
+
+    def begin_operation(_: Request) -> Response:
+        op = app.operations.begin("dictation", "recording", source="web")
+        return JSONResponse({"id": op.id}, status_code=201)
+
+    def cancel_operation(request: Request) -> Response:
+        current = app.operations.status()
+        if current and current["id"] == request.path_params["operation"]:
+            app.operations.cancel_dictation()
+        return JSONResponse(app.operations.status())
+
+    def abandon_operation(request: Request) -> Response:
+        app.operations.abandon_capture(request.path_params["operation"])
+        return JSONResponse({"notice": "Capture closed; no audio was submitted."})
 
     async def retry(request: Request) -> Response:
         recording = await run_in_threadpool(app.store.get_recording, int(request.path_params["id"]))
@@ -508,7 +558,7 @@ def create_app(app: Dictum) -> Starlette:
         ref = app.resolve(body["model"]) if isinstance(body.get("model"), str) else None
         if ref is None:
             return _bad(f"Unknown model: {body.get('model')}")
-        updated = await run_in_threadpool(app.transcribe, recording, ref)
+        updated = await run_in_threadpool(app.transcribe_recording, recording, ref.id)
         return JSONResponse(_recording_json(updated))
 
     def local_models(_: Request) -> Response:
@@ -597,6 +647,7 @@ def create_app(app: Dictum) -> Starlette:
         )
 
     return Starlette(
+        exception_handlers={Busy: lambda request, exc: _bad(str(exc), 409)},
         middleware=[Middleware(NoCache), Middleware(LocalOnly)],
         routes=[
             Route("/", index),
@@ -629,6 +680,10 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/window", show_window, methods=["POST"]),
             Route("/api/permissions/{name}", request_permission, methods=["POST"]),
             Route("/api/models", models),
+            Route("/api/operations", operation_status, methods=["GET"]),
+            Route("/api/operations", begin_operation, methods=["POST"]),
+            Route("/api/operations/{operation}/cancel", cancel_operation, methods=["POST"]),
+            Route("/api/operations/{operation}", abandon_operation, methods=["DELETE"]),
             Route("/api/recordings", list_recordings, methods=["GET"]),
             Route("/api/recordings", create_recording, methods=["POST"]),
             Route("/api/recordings/{id:int}/transcriptions", retry, methods=["POST"]),

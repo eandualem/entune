@@ -5,7 +5,7 @@ from dictum.desktop.engine import ShortcutEngine
 
 
 def make(
-    hold: str | None, toggle: str | None, cancel: str | None = "fn+esc"
+    hold: str | None, toggle: str | None, cancel: str | None = "fn+ctrl"
 ) -> tuple[ShortcutEngine, list[str]]:
     events: list[str] = []
     engine = ShortcutEngine(
@@ -85,7 +85,7 @@ def test_fn_is_always_the_way_to_stop() -> None:
     engine.release("fn")
     engine.release("cmd")
     assert events == ["start", "stop", "start"] and engine.recording
-    engine.press("fn")  # wait for release so fn+esc can still cancel
+    engine.press("fn")  # wait for release so fn+ctrl can still cancel
     assert events == ["start", "stop", "start"] and engine.recording
     engine.release("fn")
     assert events == ["start", "stop", "start", "stop"]
@@ -176,7 +176,7 @@ def test_injected_keys_such_as_our_own_paste_never_reach_the_engine() -> None:
 
 
 @pytest.mark.parametrize("hands_free", [False, True])
-def test_fn_escape_cancels_without_submitting_or_restarting(hands_free: bool) -> None:
+def test_fn_control_cancels_without_submitting_or_restarting(hands_free: bool) -> None:
     engine, events = make("fn", "cmd+fn")
     if hands_free:
         engine.press("cmd")
@@ -185,11 +185,11 @@ def test_fn_escape_cancels_without_submitting_or_restarting(hands_free: bool) ->
         engine.release("fn")
         engine.release("cmd")
         engine.press("fn")
-    engine.press("esc")
-    engine.press("esc")  # repeat
+    engine.press("ctrl")
+    engine.press("ctrl")  # repeat
     engine.release("fn")
-    engine.press("fn")  # Escape still held: must not start again
-    engine.release("esc")
+    engine.press("fn")  # Control still held: must not start again
+    engine.release("ctrl")
     engine.release("fn")
     assert events == ["start", "cancel"] and not engine.recording
     engine.press("fn")
@@ -197,17 +197,17 @@ def test_fn_escape_cancels_without_submitting_or_restarting(hands_free: bool) ->
     assert events == ["start", "cancel", "start", "stop"]
 
 
-def test_escape_alone_does_not_cancel_and_fn_escape_works_with_other_shortcuts() -> None:
+def test_control_alone_does_not_cancel_and_fn_control_works_with_other_shortcuts() -> None:
     engine, events = make("alt_r", "cmd+d")
     engine.press("cmd")
     engine.press("d")
     engine.release("d")
     engine.release("cmd")
-    engine.press("esc")
+    engine.press("ctrl")
     assert events == ["start"] and engine.recording
     engine.press("fn")  # either order completes cancellation
     engine.release("fn")
-    engine.release("esc")
+    engine.release("ctrl")
     assert events == ["start", "cancel"] and not engine.recording
 
 
@@ -238,3 +238,51 @@ def test_cleared_cancel_does_not_discard() -> None:
     engine.press("fn")
     engine.press("esc")
     assert events == ["start"] and engine.recording
+
+
+@pytest.mark.parametrize("order", [("fn", "ctrl"), ("ctrl", "fn")])
+def test_cancel_calls_back_during_processing_without_a_new_recording(
+    order: tuple[str, str],
+) -> None:
+    engine, events = make(None, "cmd+d")
+    for key in order:
+        engine.press(key)
+        engine.press(key)  # held repeats
+    assert events == ["cancel"]
+    for key in order:
+        engine.release(key)
+    for key in reversed(order):
+        engine.press(key)
+    assert events == ["cancel", "cancel"]
+
+
+def test_native_control_fn_filter_swallows_combo_without_forwarding_escape() -> None:
+    Quartz = pytest.importorskip("Quartz")
+    from dictum.desktop.macos.hotkeys import FN_FLAG, FnAwareListener
+
+    listener = FnAwareListener(owns_fn=True, cancel_control=True)
+
+    def event(vk: int, flags: int) -> object:
+        e = Quartz.CGEventCreateKeyboardEvent(None, vk, True)
+        Quartz.CGEventSetType(e, Quartz.kCGEventFlagsChanged)
+        Quartz.CGEventSetFlags(e, flags)
+        return e
+
+    flags_changed = Quartz.kCGEventFlagsChanged
+    control = int(Quartz.kCGEventFlagMaskControl)
+    # Fn first: neither Fn nor Control press/release reaches the foreground.
+    assert listener._intercept(flags_changed, event(63, FN_FLAG)) is None
+    assert listener._intercept(flags_changed, event(59, FN_FLAG | control)) is None
+    assert listener._intercept(flags_changed, event(63, control)) is None
+    assert listener._intercept(flags_changed, event(59, 0)) is None
+    # Control first: the application receives only a balanced lone Control.
+    press = event(59, control)
+    assert listener._intercept(flags_changed, press) is press
+    assert listener._intercept(flags_changed, event(63, FN_FLAG | control)) is None
+    release = event(59, FN_FLAG)
+    assert listener._intercept(flags_changed, release) is release
+    assert Quartz.CGEventGetFlags(release) == 0
+    assert listener._intercept(flags_changed, event(63, 0)) is None
+    # Real Escape is untouched; it is not Dictum's cancellation shortcut.
+    escape = Quartz.CGEventCreateKeyboardEvent(None, 53, True)
+    assert listener._intercept(Quartz.kCGEventKeyDown, escape) is escape

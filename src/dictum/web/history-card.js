@@ -114,7 +114,16 @@ export function renderCard(r, models) {
   head.append(when, model, spacer, copied);
   card.append(head);
 
-  if (latest?.processing_state === "processing") {
+  if (r.notice) {
+    const message = document.createElement("div");
+    message.className = "status"; message.textContent = r.notice;
+    card.append(message);
+  }
+  if (latest?.processing_state === "cancelled") {
+    const canceled = document.createElement("div");
+    canceled.className = "status"; canceled.textContent = "Canceled — audio saved. No text delivered.";
+    card.append(canceled);
+  } else if (latest?.processing_state === "processing") {
     const pending = document.createElement("div");
     pending.className = "status";
     pending.setAttribute("role", "status");
@@ -156,7 +165,7 @@ export function renderCard(r, models) {
   const rowSpacer = document.createElement("span");
   rowSpacer.className = "spacer";
   row.append(download, rowStatus, rowSpacer);
-  if (latest?.processing_state !== "processing" && latest?.raw_text !== null && latest?.raw_text !== undefined) {
+  if (!(["processing", "cancelled"].includes(latest?.processing_state)) && latest?.raw_text !== null && latest?.raw_text !== undefined) {
     const copy = document.createElement("button");
     copy.type = "button";
     copy.className = "btn ghost copy-raw";
@@ -194,8 +203,8 @@ export function renderCard(r, models) {
       meta.append(`${attemptLabel(t)} · `, time);
       const text = document.createElement("div");
       text.className = t.status === "ok" ? "text" : "text err";
-      const pending = t.processing_state === "processing";
-      text.textContent = pending ? "Processing…" : t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
+      const pending = ["processing", "cancelled"].includes(t.processing_state);
+      text.textContent = pending ? (t.processing_state === "cancelled" ? "Canceled — audio saved. No text delivered." : "Processing…") : t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
       attempt.append(meta, text, ...(pending ? [] : processingLines(t)));
       attempts.append(attempt);
     }

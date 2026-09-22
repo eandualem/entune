@@ -234,18 +234,34 @@ quality. Paid evaluation needs separate authorization.
 
 ## Generation, editing and migration
 
-Build from history uses this speech model's recent raw transcripts (up to 300); audio
-onboarding uses fresh temporary transcripts from the selected model. The generation
-provider receives those snippets, pinned knowledge and this model's working groups.
+Default refinement uses up to 300 recent, not-yet-covered attempts for this speech model;
+explicit All history includes older data. Original speech and completed processing
+outputs, stage outcomes and selection provenance are distinct evidence: generated
+corrections are not ground truth. Audio learning uses selected saved/imported recordings,
+of any age. Temporary target-model transcripts stay in memory and are reused on retry;
+they never enter the database or ordinary history. Applying, discarding, replacing the
+workflow or closing the app clears them, while source audio remains. The generation
+provider receives the selected inputs, pinned knowledge and this model's working groups.
 The configured model is honored; suggestions remain Sonnet 5 and GPT-5.4 mini with
 medium reasoning where supported. No generation or classification model rewrites dictation.
 
 Sequential steps contain about 24,000 transcript characters; the full growing dictionary
 adds to that request size. Each step can add groups, revise complete groups or explicitly
 remove learned group IDs. Unmentioned knowledge remains. New temporary IDs are assigned
-persistent IDs once; subsequent steps and editor changes retain them. Pin definitions
-cannot be overwritten by generation. Proposals name the original dictionary revision;
-acceptance on a stale revision is refused. No proposal is installed automatically.
+persistent IDs once; subsequent steps and editor changes retain them. Pinned definitions
+and usage can be proposed for review, but existing pinned variants/meanings cannot be
+removed. Separate editing and dictation are blocked from generation through review;
+editing within the proposal is allowed. Additions, before/after updates and explicit
+removals can be dismissed individually, then applied together. No proposal is installed
+automatically. A revision check also rejects out-of-band file edits.
+
+Each validated batch checkpoints the working dictionary and its fully covered input
+IDs. Failure or Stop keeps completed proposals and excludes the failed batch. Retry
+resumes from the completed batch with the accumulated dictionary. Applying at least one
+actual change consumes only fully covered input IDs for that model; applying none
+consumes none. A transcript split across batches is covered only after its final segment
+succeeds. This ID-based record works even when selected inputs are not a chronological
+prefix, and never consumes new data created while the review is open.
 
 New inferred associations need source snippet IDs and exact character offsets validated
 against supplied text, including whole-word boundaries. `basis: text` records textual

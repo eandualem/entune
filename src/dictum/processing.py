@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import CancelledError
@@ -116,6 +117,7 @@ def process_text(
     checkpoint: Callable[[Processed], None] | None = None,
     progress: Callable[[str], None] | None = None,
     check: Callable[[], None] | None = None,
+    cancel: threading.Event | None = None,
 ) -> Processed:
     """Use one wall-clock budget across processing stages, including retries and backoff."""
     started = time.monotonic()
@@ -123,7 +125,7 @@ def process_text(
     initial = pending(
         raw, contextual=contextual, formatting=formatting, cleanup=cleanup, direct=direct
     )
-    call = jev.Call(client, key or "", policy, deadline)
+    call = jev.Call(client, key or "", policy, deadline, cancel=cancel)
     if check:
         check()
     if progress and (contextual or direct):
@@ -156,6 +158,8 @@ def process_text(
                     decisions.append(
                         jev.Decision(component, None, "unchanged" if unchanged else "uncertain")
                     )
+        if check:
+            check()
         edits = tuple(
             d.edit
             for d in decisions
@@ -207,9 +211,11 @@ def process_text(
         if progress:
             progress(method)
         started = time.monotonic()
-        call = jev.Call(client, key or "", policy, deadline)
+        call = jev.Call(client, key or "", policy, deadline, cancel=cancel)
         try:
             classified = classify(text, call)
+            if check:
+                check()
             updated = text_edits.apply(text, classified.changes)
             outcome = Stage(
                 "succeeded" if call.decisions else "skipped",

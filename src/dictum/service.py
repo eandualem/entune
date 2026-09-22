@@ -9,6 +9,7 @@ import statistics
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import CancelledError
 from contextlib import ExitStack
 from dataclasses import asdict, dataclass, replace
 
@@ -18,6 +19,7 @@ from dictum.audio import sniff_mime
 from dictum.builds import BuildInput, DictionaryBuilds, Source
 from dictum.dictionary import Dictionary, Groups, Proposal
 from dictum.dictionary_legacy import Correction, add_corrections, read_entries
+from dictum.operations import Operation, Operations
 from dictum.processing import Processed, Stage, process_text
 from dictum.providers.cloud.contracts import Streams, Upload
 from dictum.providers.contracts import Clip, Failure, Provider, Transcript
@@ -162,7 +164,8 @@ class Dictum:
         self._speech = SpeechResources(
             providers, lambda message: self.report_status(lastError=message)
         )
-        self._builds = DictionaryBuilds(self._speech, llm_call)
+        self.operations = Operations()
+        self._builds = DictionaryBuilds(self._speech, llm_call, self.operations)
 
     # What the desktop app reports about itself, for /api/status and for diagnosis.
 
@@ -170,7 +173,7 @@ class Dictum:
         self._desktop_status.update(fields)
 
     def desktop_status(self) -> dict[str, object]:
-        return dict(self._desktop_status)
+        return {**self._desktop_status, "operation": self.operations.status()}
 
     def on_permission_request(self, listener: Callable[[str, bool], None]) -> None:
         self._permission_listeners.append(listener)
@@ -472,10 +475,14 @@ class Dictum:
             elif mode == "toggle":
                 toggle = keys
         cancel = self.store.get_setting(SHORTCUT_CANCEL_KEY)
-        return shortcuts.parse(hold, toggle, "fn+esc" if cancel is None else cancel)
+        return shortcuts.parse(
+            hold,
+            toggle,
+            "fn+ctrl" if cancel is None or set(cancel.split("+")) == {"fn", "esc"} else cancel,
+        )
 
     def set_shortcuts(
-        self, hold: str | None, toggle: str | None, cancel: str | None = "fn+esc"
+        self, hold: str | None, toggle: str | None, cancel: str | None = "fn+ctrl"
     ) -> Shortcuts:
         """Validate and store shortcuts; blank clears one. ValueError says what is wrong."""
         parsed = shortcuts.parse(hold, toggle, cancel)
@@ -520,7 +527,7 @@ class Dictum:
         DictionaryChanged when `expected_version` is given and the file moved on since:
         an edit made on a stale copy would silently drop what was added meanwhile."""
         parsed = dictionary_file.parse(text)
-        with self._dictionary_lock:
+        with self.operations.dictionary_edit(), self._dictionary_lock:
             if expected_version is not None and expected_version != self.dictionary_version():
                 raise DictionaryChanged(
                     "The dictionary changed since it was loaded (an agent or a hand edit);"
@@ -531,7 +538,7 @@ class Dictum:
         return parsed
 
     def pin_meaning(self, model: str, group: str | None, meaning: str | None, version: str) -> None:
-        with self._dictionary_lock:
+        with self.operations.dictionary_edit(), self._dictionary_lock:
             current = self.dictionary()
             if group is None or meaning is None:
                 updated = dictionary_file.share(
@@ -585,7 +592,7 @@ class Dictum:
             corrections = read_entries(body, "corrections")
         if not corrections:
             raise ValueError("Nothing to add: give entries with a spelling and heard phrases")
-        with self._dictionary_lock:
+        with self.operations.dictionary_edit(), self._dictionary_lock:
             current = self.dictionary()
             updated, added = add_corrections(current, corrections)
             if added:
@@ -606,8 +613,26 @@ class Dictum:
             raise ValueError(f"No API key set for {llm.LLM_PROVIDERS[provider][0]}.")
         return provider, api_key, model
 
-    def start_dictionary_build(self, source: Source) -> dict[str, object]:
-        return self._builds.start(lambda: self._build_input(source))
+    def start_dictionary_build(
+        self, source: Source, *, scope: str = "new", audio_ids: list[str] | None = None
+    ) -> dict[str, object]:
+        if scope not in {"new", "all"}:
+            raise ValueError("Choose new or all history")
+        previous = self._builds.status()
+        state = self._builds.start(
+            lambda: self._build_input(source, scope=scope, audio_ids=audio_ids)
+        )
+        if previous.get("phase") in {"failed", "cancelled"}:
+            self.store.finish_learning(
+                str(previous["id"]),
+                str(previous["model"]),
+                str(previous["source"]),
+                (),
+                "replaced",
+                previous,
+                applied=False,
+            )
+        return state
 
     def dictionary_build_status(self, job_id: str | None = None) -> dict[str, object]:
         return self._builds.status(job_id)
@@ -616,27 +641,77 @@ class Dictum:
         self._builds.cancel(job_id)
 
     def discard_dictionary_build(self, job_id: str) -> None:
+        state = self._builds.status(job_id)
         self._builds.discard(job_id)
+        state.pop("proposal", None)
+        self.store.finish_learning(
+            job_id, str(state["model"]), str(state["source"]), (), "discarded", state, applied=False
+        )
 
-    def accept_dictionary_build(self, job_id: str) -> None:
-        def save(proposal: Proposal) -> None:
+    def retry_dictionary_build(self, job_id: str) -> None:
+        def refresh(spec: BuildInput) -> BuildInput:
+            with self._dictionary_lock:
+                speech_key = spec.speech_key
+                if spec.source == "audio" and not isinstance(spec.speech.provider, Downloadable):
+                    configured = self.store.get_setting(key_setting(spec.speech.provider.id))
+                    if configured is None:
+                        raise ValueError(f"No API key set for {spec.speech.provider.name}.")
+                    speech_key = configured
+                return replace(
+                    spec,
+                    speech_key=speech_key,
+                    builder=self._dictionary_builder(),
+                    dictionary=dictionary_file.share(self.dictionary(), set()),
+                    revision=self.dictionary_version(),
+                )
+
+        self._builds.retry(job_id, refresh)
+
+    def accept_dictionary_build(self, job_id: str, selected: object = None) -> None:
+        def save(proposal: Proposal, spec: BuildInput, covered: tuple[str, ...]) -> bool:
             with self._dictionary_lock:
                 if proposal.version.strip('"') != self.dictionary_version():
                     raise DictionaryChanged(
-                        "The dictionary changed after this build started. "
-                        "Discard this proposal and rebuild from the current dictionary."
+                        "The dictionary file changed outside this learning flow. "
+                        "Discard this proposal and rebuild from the current file."
                     )
                 current = self.dictionary()
-                updated = dictionary_file.refined(
-                    current,
-                    dictionary_file.merge(proposal.pinned, proposal.learned),
-                    proposal.model,
-                )
-                self.set_dictionary(dictionary_file.dumps(updated), proposal.version.strip('"'))
+                updated = dictionary_file.review(current, proposal, selected)
+                applied = updated != current
+                state = self._builds.status()
+                state["coveredInputIds"] = list(covered)
+                path = self.store.data_dir / dictionary_file.FILENAME
+                original = path.read_bytes() if path.exists() else None
+                if applied:
+                    dictionary_file.save(self.store.data_dir, updated)
+                try:
+                    self.store.finish_learning(
+                        job_id,
+                        spec.speech.id,
+                        spec.source,
+                        covered,
+                        "applied" if applied else "no_changes",
+                        state,
+                        applied=applied,
+                    )
+                except Exception:
+                    if applied:
+                        if original is None:
+                            path.unlink(missing_ok=True)
+                        else:
+                            temporary = path.with_suffix(".rollback")
+                            temporary.write_bytes(original)
+                            temporary.replace(path)
+                    raise
+                if applied:
+                    self._changed()
+                return applied
 
         self._builds.accept(job_id, save)
 
-    def _build_input(self, source: Source) -> BuildInput:
+    def _build_input(
+        self, source: Source, *, scope: str = "new", audio_ids: list[str] | None = None
+    ) -> BuildInput:
         builder = self._dictionary_builder()
         try:
             ref = self.choose_model(None)
@@ -645,16 +720,20 @@ class Dictum:
         except UnknownModel as exc:
             raise ValueError(str(exc)) from exc
         with self._dictionary_lock:
-            current, version = self.dictionary(), self.dictionary_version()
+            current = dictionary_file.share(self.dictionary(), set())
+            version = self.dictionary_version()
         if source == "history":
-            transcripts = self.store.recent_transcripts(
-                ref.provider.id, ref.model, llm.MAX_TRANSCRIPTS
+            inputs = self.store.learning_inputs(
+                ref.provider.id, ref.model, scope=scope, limit=llm.MAX_TRANSCRIPTS
             )
-            if not transcripts:
+            if not inputs:
                 raise ValueError(
-                    f"Nothing to learn from yet: the history has no transcripts from {ref.label}."
+                    f"No {scope} history to learn from for {ref.label}. "
+                    "Choose all history to deliberately reprocess older inputs."
                 )
-            return BuildInput(source, ref, "", builder, current, version, tuple(transcripts))
+            return BuildInput(
+                source, ref, "", builder, current, version, tuple(inputs), scope=scope
+            )
         speech_key = (
             ""
             if isinstance(ref.provider, Downloadable)
@@ -662,12 +741,25 @@ class Dictum:
         )
         if speech_key is None:
             raise ValueError(f"No API key set for {ref.provider.name}.")
-        audio = tuple(
-            (item, self.store.dictionary_audio_path(item)) for item in self.store.dictionary_audio()
-        )
+        available = self.store.learning_audio()
+        if audio_ids is None:
+            # Existing API callers without a selection retain imported-audio scope;
+            # the UI always sends its explicit selection, including normal recordings.
+            audio = tuple(
+                (item, path) for item, path in available if not item.id.startswith("recording:")
+            )
+        else:
+            if not audio_ids or len(audio_ids) != len(set(audio_ids)):
+                raise ValueError("Select one or more distinct saved recordings")
+            ids = set(audio_ids)
+            audio = tuple((item, path) for item, path in available if item.id in ids)
+            if len(audio) != len(ids):
+                raise ValueError("Some selected audio is no longer available; reload the selection")
         if not audio:
-            raise ValueError("Import audio from Wispr Flow or a folder first.")
-        return BuildInput(source, ref, speech_key, builder, current, version, audio=audio)
+            raise ValueError("Select saved recordings or import audio first.")
+        return BuildInput(
+            source, ref, speech_key, builder, current, version, audio=audio, scope="selected"
+        )
 
     # Shortcut capture: the page asks, the menu-bar app's global listener records the keys.
 
@@ -738,7 +830,12 @@ class Dictum:
         return resolved
 
     def transcribe(
-        self, recording: Recording, ref: ModelRef, upload: Upload | None = None
+        self,
+        recording: Recording,
+        ref: ModelRef,
+        upload: Upload | None = None,
+        *,
+        operation: Operation | None = None,
     ) -> Recording:
         """Save speech success first. Optional processing cannot turn it into speech failure."""
         try:
@@ -754,7 +851,11 @@ class Dictum:
                     started = time.monotonic()
                     clip: Clip | None = None
                     try:
-                        resources.enter_context(self._speech.use(ref))
+                        resources.enter_context(
+                            self._speech.use(ref, cancel=operation.cancel if operation else None)
+                        )
+                        if operation:
+                            operation.check()
                         data = self.store.audio_path(recording).read_bytes()
                         mime = recording.mime
                         if not mime.startswith("audio/"):
@@ -763,6 +864,8 @@ class Dictum:
                         clip = replace(clip, upload_url=_finish(upload, ref, clip))
                         upload = None
                         result = ref.provider.transcribe(clip, ref.model, api_key)
+                    except CancelledError:
+                        raise
                     except Exception as exc:
                         result = Failure(f"{type(exc).__name__}: {exc}")
                     timing = Timing(
@@ -795,6 +898,9 @@ class Dictum:
                     fast=timing.fast,
                     processing=initial,
                 )
+            if operation and operation.cancel.is_set() and raw is None:
+                self.store.cancel_recording(recording.id, attempt_id)
+                operation.check()
             if raw is not None and initial is not None:
                 started = time.monotonic()
                 latest = initial
@@ -805,9 +911,19 @@ class Dictum:
                     latest = result
 
                 try:
+                    if operation:
+                        operation.check()
                     # A damaged dictionary must not stop speech transcription or its persistence.
                     entries = self.dictionary().effective(ref.id) if status.dictionary else ()
-                    processed = self.correct(raw, entries, status, checkpoint=checkpoint)
+                    processed = self.correct(
+                        raw, entries, status, checkpoint=checkpoint, operation=operation
+                    )
+                except CancelledError:
+                    self.store.finish_processing(
+                        attempt_id, processing.interrupted(latest, "Cancelled")
+                    )
+                    self.store.cancel_recording(recording.id, attempt_id)
+                    raise
                 except Exception as exc:
                     processed = processing.failed(
                         latest.text,
@@ -864,6 +980,7 @@ class Dictum:
         status: JevStatus,
         *,
         checkpoint: Callable[[Processed], None] | None = None,
+        operation: Operation | None = None,
     ) -> Processed:
         return process_text(
             raw,
@@ -875,20 +992,66 @@ class Dictum:
             client=self._jev_client,
             policy=self.jev_policy(),
             checkpoint=checkpoint,
-            progress=lambda stage: self.report_status(stage=stage),
+            progress=(lambda stage: self.operations.stage(operation, stage)) if operation else None,
+            check=operation.check if operation else None,
+            cancel=operation.cancel if operation else None,
         )
 
     def record_and_transcribe(
-        self, data: bytes, label: str | None, ref: str | None, upload: Upload | None = None
+        self,
+        data: bytes,
+        label: str | None,
+        ref: str | None,
+        upload: Upload | None = None,
+        *,
+        operation_id: str | None = None,
     ) -> Recording:
-        return self.transcribe_recording(self.store_recording(data, label), ref, upload)
+        operation = (
+            self.operations.claim_capture(operation_id)
+            if operation_id
+            else self.operations.begin("dictation", "transcribing")
+        )
+        try:
+            recording = self.store_recording(data, label)
+            try:
+                operation.check()
+                return self.transcribe_recording(recording, ref, upload, operation=operation)
+            except CancelledError:
+                self.store.cancel_recording(recording.id)
+                updated = self.store.get_recording(recording.id)
+                assert updated is not None
+                return updated
+        finally:
+            self.operations.finish(operation)
 
     def store_recording(self, data: bytes, label: str | None) -> Recording:
         """The clip is on disk and in history from this moment, whatever happens next."""
         return self.store.create_recording(data, label)
 
     def transcribe_recording(
-        self, recording: Recording, ref: str | None, upload: Upload | None = None
+        self,
+        recording: Recording,
+        ref: str | None,
+        upload: Upload | None = None,
+        *,
+        operation: Operation | None = None,
+    ) -> Recording:
+        owned = operation is None
+        operation = operation or self.operations.begin("dictation", "transcribing")
+        try:
+            return self._transcribe_owned(recording, ref, upload, operation)
+        except CancelledError:
+            if not owned:
+                raise
+            updated = self.store.get_recording(recording.id)
+            assert updated is not None
+            return updated
+        finally:
+            if owned:
+                self.operations.finish(operation)
+
+    def _transcribe_owned(
+        self, recording: Recording, ref: str | None, upload: Upload | None, operation: Operation
     ) -> Recording:
         try:
             model = self.choose_model(ref)
@@ -905,7 +1068,22 @@ class Dictum:
                 error=str(exc),
             )
             raise
-        return self.transcribe(recording, model, upload)
+        try:
+            self.operations.stage(operation, "transcribing")
+            self.store.recording_notice(recording.id, None)
+            result = self.transcribe(recording, model, upload, operation=operation)
+            operation.check()
+            return result
+        except CancelledError:
+            saved = self.store.get_recording(recording.id)
+            prior = {attempt.id for attempt in recording.transcriptions}
+            latest = saved.transcriptions[0] if saved and saved.transcriptions else None
+            self.store.cancel_recording(
+                recording.id, latest.id if latest and latest.id not in prior else None
+            )
+            if upload is not None:
+                upload.abort()
+            raise
 
 
 @dataclass(frozen=True)

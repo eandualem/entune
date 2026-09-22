@@ -101,11 +101,24 @@ class Client:
                 self._thread.start()
             future = asyncio.run_coroutine_threadsafe(self._ask(call, state, questions), self._loop)
         try:
-            return future.result(timeout=max(0.0, call.deadline - time.monotonic()))
+            while True:
+                if call.cancel is not None and call.cancel.is_set():
+                    future.cancel()
+                    raise concurrent.futures.CancelledError("Dictation cancelled")
+                remaining = call.deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError()
+                try:
+                    return future.result(timeout=min(0.05, remaining))
+                except TimeoutError:
+                    if future.done():
+                        raise
         except TimeoutError as exc:
             future.cancel()
             raise JevError("processing deadline reached") from exc
         except concurrent.futures.CancelledError as exc:
+            if call.cancel is not None and call.cancel.is_set():
+                raise
             raise JevError("correction is shutting down") from exc
 
     async def _ask(
@@ -202,6 +215,7 @@ class Call:
     deadline: float
     attempts: int = 0
     decisions: int = 0
+    cancel: threading.Event | None = None
 
     def ask(self, state: object, questions: dict[str, Any]) -> dict[str, dict[str, float]]:
         if not self.key:
