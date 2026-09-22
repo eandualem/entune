@@ -93,8 +93,8 @@ function showView(name) {
 }
 function show(name) { selectTab(name); showView(name); }
 
-const sections = { general: el("settings-general"), providers: el("settings-providers"), local: el("settings-local"), agents: el("settings-agents") };
-const selectSection = segmentedGroup({ general: el("sec-general"), providers: el("sec-providers"), local: el("sec-local"), agents: el("sec-agents") }, showSection);
+const sections = { general: el("settings-general"), providers: el("settings-providers"), local: el("settings-local"), privacy: el("settings-privacy"), agents: el("settings-agents") };
+const selectSection = segmentedGroup({ general: el("sec-general"), providers: el("sec-providers"), local: el("sec-local"), privacy: el("sec-privacy"), agents: el("sec-agents") }, showSection);
 function showSection(name) {
   for (const key in sections) sections[key].toggleAttribute("data-active", key === name);
   if (name === "agents") settingsView.refreshCorrections();

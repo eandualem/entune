@@ -156,6 +156,7 @@
             <button type="button" id="sec-general" aria-selected="true">General</button>
             <button type="button" id="sec-providers" aria-selected="false">Providers</button>
             <button type="button" id="sec-local" aria-selected="false">Local models</button>
+            <button type="button" id="sec-privacy" aria-selected="false">Data &amp; Privacy</button>
             <button type="button" id="sec-agents" aria-selected="false">Agents</button>
             <div class="spacer"></div>
             <p class="hint rail-note">Everything applies as you change it. Keys wait for Save.</p>
@@ -286,6 +287,25 @@
                 <span class="caption" id="local-summary"></span>
               </div>
               <div id="local-cards"></div>
+            </div>
+
+            <div class="section" id="settings-privacy">
+              <h2 class="sec-label">Your data stays yours</h2>
+              <div class="scard">
+                <div class="scard-head">
+                  <div class="name strong">No expiry</div>
+                  <div class="caption">Dictum never automatically expires or deletes your saved audio or transcripts. This includes audio imported to build dictionaries. Your files stay on this Mac.</div>
+                </div>
+                <div class="srow summary">
+                  <div><div class="name">Original audio</div><div class="caption">A ZIP of all recordings and imported dictionary audio. Large exports can take a while to prepare.</div></div>
+                  <a class="btn" href="/api/exports/audio" download>Export audio</a>
+                </div>
+                <div class="srow summary">
+                  <div><div class="name">Transcripts</div><div class="caption">JSON with saved text, raw transcripts, models, dates and every attempt. Transcripts used only to build a dictionary from imported audio are not saved.</div></div>
+                  <a class="btn" href="/api/exports/transcripts" download>Export transcripts</a>
+                </div>
+                <div class="srow foot"><span class="caption">Exports are created on this Mac. Saved API keys and settings are excluded.</span></div>
+              </div>
             </div>
 
             <div class="section" id="settings-agents">

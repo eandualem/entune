@@ -249,6 +249,13 @@ points. Nothing leaves your machine except:
 
 No telemetry, no accounts, no cloud storage.
 
+Saved audio and transcripts never automatically expire or get deleted, including
+audio imported for dictionary builds. **Settings → Data & Privacy** exports all
+original recording and imported audio as a ZIP with a file index, or all saved
+transcription attempts as JSON (including raw text, models and dates). Exports are
+created locally and exclude saved API keys and settings. Temporary transcripts
+from imported audio are not saved or included in the transcript export.
+
 ## Development
 
 The app uses Starlette and SQLite, plain browser JavaScript modules without
