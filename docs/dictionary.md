@@ -95,6 +95,41 @@ literal use 0.93 or higher, so any threshold between 0.5 and 0.9 gives the
 same result. The same prompt without descriptions, sent to Jev the day
 before, got 6 of 48: the description is what makes the decision easy.
 
+On 2026-09-22, a larger private audio corpus was transcribed afresh with
+local Parakeet: 968 recordings, 20.8 hours, 11 empty results and no provider
+errors. A deterministic audio-hash split reserved 199 recordings before
+generation; 197 had text. The remaining 769 recordings supplied 760 nonempty
+training transcripts. Original third-party transcripts were not used.
+
+An intermediate dictionary built with GPT-6 Astra at high effort after 22
+of 25 training chunks contained 290 entries, starting from the existing 45.
+Across the union of old and new
+dictionary matches in the held-out text, 420 occurrences were labelled from
+context before requesting Jev decisions; 12 unclear readings were excluded.
+
+| Output on the same 408 labelled occurrences | Correct |
+|---|---:|
+| Raw Parakeet | 288 |
+| Previous dictionary, plain replacement | 298 |
+| Previous dictionary, Jev | 299 |
+| Expanded dictionary, plain replacement | 112 |
+| Expanded dictionary, Jev | 392 |
+
+The expanded dictionary with Jev made nine wrong changes and missed seven
+corrections. Six wrong changes collapsed plurals; two changed literal "me"
+to "main", and one changed "pip" to "PyPI". The median Jev request took
+0.38 s across 120 clips with matches. On the separate, older 96-case
+regression set, it scored 87 versus the previous dictionary's 90. The
+experimental dictionary was therefore not adopted as the live default.
+
+These are **context-labelled candidate-occurrence scores**, not
+audio-verified full-transcript word error rates. They measure both needed
+corrections and literal words that must stay unchanged, but cannot count
+errors outside dictionary matches. The larger training corpus and changed
+generation process were evaluated together; this does not isolate the
+effect of the new prompt or demonstrate a uniform accuracy improvement.
+Personal audio, labels and reproducible evaluation outputs remain local.
+
 **Formatting** is the other opt-in: one question per sentence (continues,
 new paragraph, or list item) and only line breaks and bullets inserted, so
 every word stays. A sentence between two list items joins the list at a
