@@ -206,10 +206,13 @@ def create_app(app: Dictum) -> Starlette:
             if not isinstance(jev_settings, dict) or set(jev_settings) - {
                 "dictionary",
                 "formatting",
+                "cleanup",
                 "policy",
             }:
-                raise ValueError("jev must contain dictionary, formatting or policy settings")
-            for name in ("dictionary", "formatting"):
+                raise ValueError(
+                    "jev must contain dictionary, formatting, cleanup or policy settings"
+                )
+            for name in ("dictionary", "formatting", "cleanup"):
                 if name in jev_settings and not isinstance(jev_settings[name], bool):
                     raise ValueError(f"jev.{name} must be a boolean")
             policy = None
@@ -225,7 +228,11 @@ def create_app(app: Dictum) -> Starlette:
                     )
                 policy = jev.Policy(**value)
             if (
-                (jev_settings.get("dictionary") or jev_settings.get("formatting"))
+                (
+                    jev_settings.get("dictionary")
+                    or jev_settings.get("formatting")
+                    or jev_settings.get("cleanup")
+                )
                 and JEV_PROVIDER not in keys
                 and app.jev_status().key_hint is None
             ):
@@ -251,7 +258,11 @@ def create_app(app: Dictum) -> Starlette:
             if "fastMode" in body:
                 app.set_fast_mode(body["fastMode"])
             if jev_settings:
-                app.set_jev(jev_settings.get("dictionary"), jev_settings.get("formatting"))
+                app.set_jev(
+                    jev_settings.get("dictionary"),
+                    jev_settings.get("formatting"),
+                    jev_settings.get("cleanup"),
+                )
             if policy is not None:
                 app.set_jev_policy(policy)
             if "shortcuts" in body:

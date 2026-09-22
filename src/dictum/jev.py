@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import math
-import re
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -14,8 +13,9 @@ from typing import Any
 
 import httpx
 
-from dictum import prompts
+from dictum import cleanup, formatting, prompts
 from dictum.matching import Component, Edit
+from dictum.text_edits import Change
 
 MODEL = "jev-1.13.0"  # pinned; meaning-selection thresholds still need live calibration
 URL = "https://api.typesafe.ai/v1/systemone"
@@ -26,6 +26,7 @@ MEANING_MARGIN = 0.15
 # this; a sentence between two list items joins the list at the lower bar.
 FORMAT_PROBABILITY = 0.6
 BRIDGE_PROBABILITY = 0.3
+FILLER_PROBABILITY = 0.9  # conservative initial policy; not live calibration
 WINDOW = 160  # characters of context either side of a match
 
 
@@ -345,54 +346,77 @@ def decide(text: str, components: list[Component], call: Call) -> list[Decision]
 # ---- formatting
 
 
-def _sentences(text: str) -> list[tuple[int, int]]:
-    """Sentence spans by punctuation and line breaks; unpunctuated dictation is one span."""
-    spans = []
-    start = 0
-    for boundary in re.finditer(r"(?<=[.!?\u1362\u3002\uff01\uff1f])\s+|\n+|$", text):
-        part = text[start : boundary.start()]
-        if part.strip():
-            left = start + len(part) - len(part.lstrip())
-            spans.append((left, start + len(part.rstrip())))
-        start = boundary.end()
-    return spans
+@dataclass(frozen=True)
+class TextResult:
+    changes: tuple[Change, ...] = ()
+    preserved: int = 0
+    abstained: int = 0
+    removed_words: int = 0
 
 
-def format_text(text: str, call: Call) -> str:
-    """Paragraph breaks and bullets where the dictation clearly has them; every word stays."""
-    spans = _sentences(text)
+def format_edits(text: str, call: Call) -> TextResult:
+    spans = formatting.sentences(text)
     if len(spans) < 2:
-        return text
+        return TextResult()
     names = [f"S{i:02d}" for i in range(len(spans))]
-    state = {"sentences": {name: text[a:b] for name, (a, b) in zip(names, spans, strict=True)}}
     questions = {
-        name: prompts.render_json("jev-formatting.json", sentence=name) for name in names[1:]
+        name: prompts.render_json("jev-formatting.json", sentence=name)
+        for name, span in zip(names, spans, strict=True)
+        if not span.listed and not span.protected
     }
-    answers = call.ask(state, questions)
-    probabilities = [{"continues": 1.0}] + [answers[name] for name in names[1:]]
-    actions = ["continues"] * len(spans)
-    for i in range(1, len(spans)):
-        p = probabilities[i]
-        best = max(p, key=lambda k: p[k])
-        if best != "continues" and p[best] >= FORMAT_PROBABILITY:
+    if not questions:
+        return TextResult()
+    answers = call.ask(
+        {
+            "transcript": text,
+            "sentences": {
+                name: text[s.start : s.end] for name, s in zip(names, spans, strict=True)
+            },
+        },
+        questions,
+    )
+    actions = ["list_item" if span.listed else "continues" for span in spans]
+    for i, name in enumerate(names):
+        if name not in answers:
+            continue
+        probabilities = answers[name]
+        best = max(probabilities, key=lambda k: probabilities[k])
+        if probabilities[best] >= FORMAT_PROBABILITY:
             actions[i] = best
+    # Retain the established list bridge only within an unstructured paragraph.
     for i in range(1, len(spans) - 1):
-        between = actions[i - 1] == "list_item" and actions[i + 1] == "list_item"
-        bridged = probabilities[i]["list_item"] >= BRIDGE_PROBABILITY
-        if actions[i] == "continues" and between and bridged:
+        gap = text[spans[i - 1].end : spans[i + 1].start]
+        between = actions[i - 1] == actions[i + 1] == "list_item"
+        if (
+            names[i] in answers
+            and actions[i] == "continues"
+            and between
+            and "\n" not in gap
+            and "\r" not in gap
+            and answers[names[i]]["list_item"] >= BRIDGE_PROBABILITY
+        ):
             actions[i] = "list_item"
-    parts: list[str] = []
-    end = 0
-    previous = "continues"
-    for i, (start, stop) in enumerate(spans):
-        gap = text[end:start]
-        action = actions[i]
-        if i > 0:
-            if action == "new_paragraph" or (previous == "list_item" and action != "list_item"):
-                gap = "\n\n"
-            elif action == "list_item":
-                gap = "\n" if previous == "list_item" else "\n\n"
-        parts.extend((gap, "- " if action == "list_item" else "", text[start:stop]))
-        end, previous = stop, action
-    parts.append(text[end:])
-    return "".join(parts)
+    return TextResult(formatting.changes(text, spans, actions))
+
+
+def cleanup_edits(text: str, call: Call) -> TextResult:
+    candidates = cleanup.candidates(text)
+    if not candidates:
+        return TextResult()
+    names = [f"F{i:02d}" for i in range(len(candidates))]
+    answers = call.ask(
+        {"transcript": text, "fillers": dict(zip(names, map(asdict, candidates), strict=True))},
+        {name: prompts.render_json("jev-cleanup.json", filler=name) for name in names},
+    )
+    changes = []
+    preserved = abstained = removed = 0
+    for name, candidate in zip(names, candidates, strict=True):
+        probabilities = answers[name]
+        if probabilities["hesitation"] >= FILLER_PROBABILITY:
+            changes.append(candidate.deletion)
+            removed += candidate.removed_words
+        elif probabilities["meaningful"] >= FILLER_PROBABILITY:
+            preserved += 1
+        else:
+            abstained += 1
+    return TextResult(tuple(changes), preserved, abstained, removed)

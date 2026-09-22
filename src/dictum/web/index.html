@@ -278,14 +278,18 @@
                   <input type="checkbox" id="jev-dictionary" />
                 </label>
                 <label class="srow check">
-                  <div><div class="name">Formatting</div><div class="caption">Paragraph breaks and bullet points where the dictation clearly has them. Every word stays. Adds about half a second to every transcript.</div></div>
+                  <div><div class="name">Formatting</div><div class="caption">Paragraph breaks and bullet points where the dictation clearly has them. Keeps every word and existing structure. Measured time appears in history.</div></div>
                   <input type="checkbox" id="jev-formatting" />
+                </label>
+                <label class="srow check">
+                  <div><div class="name">Reduce repeated fillers</div><div class="caption">Reduce adjacent repeats of um, uh, erm or like to one occurrence when Jev identifies hesitation. Quoted/code text is excluded; uncertain decisions preserve text. Original transcription is always kept.</div></div>
+                  <input type="checkbox" id="jev-cleanup" />
                 </label>
                 <form id="jev-policy-form">
                   <div class="srow"><label class="name" for="jev-total_seconds">Maximum processing wait</label><input class="input field" id="jev-total_seconds" type="number" min="0.1" max="30" step="0.1" required aria-label="Maximum processing wait in seconds" /></div>
                   <div class="srow"><label class="name" for="jev-attempt_seconds">Seconds per attempt</label><input class="input field" id="jev-attempt_seconds" type="number" min="0.1" max="30" step="0.1" required /></div>
                   <div class="srow"><label class="name" for="jev-max_attempts">Attempts per request</label><input class="input field" id="jev-max_attempts" type="number" min="1" max="3" step="1" required /></div>
-                  <div class="srow note"><span></span><span class="caption">Correction and formatting share the total wait, including retries. If correction fails, the original transcription is delivered. Formatting failure keeps the prior text.</span></div>
+                  <div class="srow note"><span></span><span class="caption">Correction, filler reduction and formatting share the total wait, including retries. If correction fails, the original transcription is delivered. A filler-reduction or formatting failure keeps that stage’s input.</span></div>
                   <div class="srow foot"><button type="submit" class="btn">Save wait limits</button><span class="caption save-status" id="jev-policy-status" role="status"></span></div>
                 </form>
                 <div class="srow note"><span></span><span class="caption" id="jev-summary" role="status" style="white-space: pre-line"></span></div>
@@ -301,7 +305,7 @@
             </div>
 
             <div class="section" id="settings-privacy">
-              <p class="caption hint">Cloud speech sends audio to your selected provider. Dictionary builds send transcripts and dictionary contents to your chosen language model. Enabled Jev correction and formatting send text and relevant meanings to TypeSafe, even with local speech recognition. Temporary build transcripts are not saved by Dictum; remote retention depends on each provider.</p>
+              <p class="caption hint">Cloud speech sends audio to your selected provider. Dictionary builds send transcripts and dictionary contents to your chosen language model. Enabled Jev correction, filler reduction and formatting send text, proposed spans and relevant meanings to TypeSafe, even with local speech recognition. Temporary build transcripts are not saved by Dictum; remote retention depends on each provider.</p>
               <h2 class="sec-label">Your data stays yours</h2>
               <div class="scard">
                 <div class="scard-head">

@@ -153,7 +153,7 @@ def test_interrupted_processing_reopens_as_raw_success_with_a_failure(tmp_path: 
             raw,
             None,
             raw_text=raw,
-            processing=pending(raw, contextual=True, formatting=True),
+            processing=pending(raw, contextual=True, formatting=True, cleanup=True),
         )
     with closing(Store(tmp_path)) as reopened:
         attempt = reopened.list_recordings()[0].transcriptions[0]
@@ -161,3 +161,27 @@ def test_interrupted_processing_reopens_as_raw_success_with_a_failure(tmp_path: 
         assert attempt.correction is not None and attempt.correction.status == "failed"
         assert attempt.correction.replacements == 0 and attempt.correction.attempts == 0
         assert attempt.formatting is not None and attempt.formatting.status == "skipped"
+        assert attempt.cleanup is not None and attempt.cleanup.status == "skipped"
+        assert not attempt.cleanup.changes and attempt.cleanup.removed_words == 0
+
+
+def test_older_formatting_does_not_gain_invented_edit_counts(tmp_path: Path) -> None:
+    from contextlib import closing
+
+    with closing(Store(tmp_path)) as store:
+        recording = store.create_recording(WEBM_HEADER)
+        store.add_transcription(
+            recording.id, "p", "m", "ok", "- First.\n- Next.", None, raw_text="First. Next."
+        )
+        with store._db:
+            store._db.execute("ALTER TABLE transcriptions DROP COLUMN cleanup")
+            store._db.execute(
+                "UPDATE transcriptions SET formatting = ?",
+                ('{"status":"succeeded","method":"formatting","decisions":1}',),
+            )
+    with closing(Store(tmp_path)) as reopened:
+        attempt = reopened.list_recordings()[0].transcriptions[0]
+        assert attempt.cleanup is None
+        assert attempt.formatting is not None and attempt.formatting.changes is None
+        assert attempt.formatting.decisions == 1
+        assert attempt.raw_text == "First. Next." and attempt.text == "- First.\n- Next."

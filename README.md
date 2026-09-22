@@ -216,14 +216,24 @@ having a single recorded candidate is not enough. With contextual correction off
 those direct mappings apply. The previous binary classifier's cached accuracy and timings
 are documented separately; they do not establish the new classifier's quality or latency.
 History and Settings report work performed, including direct changes and abstentions,
-rather than an accuracy score. Optional formatting inserts paragraph breaks and bullets
-without generated prose.
+rather than an accuracy score. Optional formatting inserts paragraph breaks and bullets,
+including the first list item, while retaining existing structure and words. Lines without
+sentence punctuation stay whole; a single unpunctuated note needs no formatting request.
+
+**Reduce repeated fillers** is a separate opt-in. Code proposes adjacent repeats of
+English `um`, `uh`, `erm` or `like`; Jev classifies hesitation versus meaningful speech.
+Only confidently classified hesitation runs are reduced to one occurrence. Quoted/code
+spans are excluded, and uncertain answers preserve the words. History shows the exact
+deletions and timing separately from dictionary replacements. This initial policy has
+offline/mocked coverage; its live classification quality has not been evaluated.
 
 Successful speech and its original text are saved before correction. If
 contextual correction fails, Dictum delivers the untouched original and
-shows a noninterrupting notice; formatting failure keeps the preceding text.
+shows a noninterrupting notice, skipping cleanup and formatting. Those later stages run
+in that order; failure of either keeps its input and is reported separately.
 Settings > Providers controls the processing wait: initially five seconds
-total, three per attempt, and at most two attempts per request. Transient
+total across correction, cleanup and formatting, three per attempt, and at most two
+attempts per request. Each applicable stage sends one request before retries. Transient
 failures can retry within that shared deadline. **Copy original** in history
 copies the provider's text without altering history or already-pasted text. After a
 correction failure, **Apply safe mappings and copy** offers a derived result using only
@@ -268,8 +278,9 @@ Enabled features determine what is sent out:
   personal context. Refinement sends the current dictionary again with each chunk.
 - **Jev correction:** TypeSafe receives the original transcript, matched occurrences
   and their eligible meanings, spellings, definitions and personal context.
+  **Jev filler reduction** sends its input text and code-proposed deletion spans;
   **Jev formatting** sends the text being formatted and its sentence spans.
-  Turning on either feature sends text even when speech recognition is local.
+  Turning on any of these features sends text even when speech recognition is local.
 - **Optional model downloads:** Hugging Face serves local model weights; no dictation
   audio or text is included. Parakeet's separately installed engine has its own
   package downloads. Export files are generated locally and saved through the

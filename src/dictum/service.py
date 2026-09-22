@@ -33,6 +33,7 @@ FAST_MODE_KEY = "fast_mode"
 JEV_PROVIDER = "typesafe"  # the key is stored like a speech provider's
 JEV_DICTIONARY_KEY = "jev_dictionary"
 JEV_FORMATTING_KEY = "jev_formatting"
+JEV_CLEANUP_KEY = "jev_cleanup"
 JEV_POLICY_KEY = "jev_policy"
 SHORTCUT_HOLD_KEY = "shortcut_hold"
 SHORTCUT_TOGGLE_KEY = "shortcut_toggle"
@@ -62,6 +63,7 @@ class JevStatus:
     key_hint: str | None
     dictionary: bool  # decide each dictionary match in context
     formatting: bool  # paragraph breaks and bullets
+    cleanup: bool  # bounded repeated-filler reduction
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,8 @@ class StageSummary:
     abstained: int
     retries: int
     median_seconds: float | None
+    changes: int
+    removed_words: int
 
 
 @dataclass(frozen=True)
@@ -278,7 +282,7 @@ class Dictum:
         self.store.set_setting(FAST_MODE_KEY, "1" if on else None)
         self._changed()
 
-    # Jev: a TypeSafe key, and two things it can do to every transcript, each opt-in.
+    # Jev: a TypeSafe key and independently controlled, opt-in processing stages.
 
     def jev_status(self) -> JevStatus:
         key = self.store.get_setting(key_setting(JEV_PROVIDER))
@@ -286,17 +290,27 @@ class Dictum:
             None if key is None else mask_key(key),
             self.store.get_setting(JEV_DICTIONARY_KEY) == "1",
             self.store.get_setting(JEV_FORMATTING_KEY) == "1",
+            self.store.get_setting(JEV_CLEANUP_KEY) == "1",
         )
 
-    def set_jev(self, dictionary: bool | None = None, formatting: bool | None = None) -> None:
+    def set_jev(
+        self,
+        dictionary: bool | None = None,
+        formatting: bool | None = None,
+        cleanup: bool | None = None,
+    ) -> None:
         """Turn a Jev use on or off; turning one on needs the key, so the setting never
         promises what a dictation cannot do."""
-        if (dictionary or formatting) and self.store.get_setting(key_setting(JEV_PROVIDER)) is None:
+        if (dictionary or formatting or cleanup) and self.store.get_setting(
+            key_setting(JEV_PROVIDER)
+        ) is None:
             raise ValueError("Save a TypeSafe API key first.")
         if dictionary is not None:
             self.store.set_setting(JEV_DICTIONARY_KEY, "1" if dictionary else None)
         if formatting is not None:
             self.store.set_setting(JEV_FORMATTING_KEY, "1" if formatting else None)
+        if cleanup is not None:
+            self.store.set_setting(JEV_CLEANUP_KEY, "1" if cleanup else None)
         self._changed()
 
     def jev_policy(self) -> jev.Policy:
@@ -335,10 +349,13 @@ class Dictum:
     def jev_summary(self) -> JevSummary:
         attempts = self.store.processed_transcriptions()
         stages: list[Stage] = [
-            stage for a in attempts for stage in (a.correction, a.formatting) if stage is not None
+            stage
+            for a in attempts
+            for stage in (a.correction, a.cleanup, a.formatting)
+            if stage is not None
         ]
         summaries = {}
-        for method in ("contextual", "deterministic", "unconditional", "formatting"):
+        for method in ("contextual", "deterministic", "unconditional", "formatting", "cleanup"):
             group = [s for s in stages if s.method == method]
             waits = [s.seconds for s in group if s.status in ("succeeded", "failed")]
             summaries[method] = StageSummary(
@@ -354,9 +371,11 @@ class Dictum:
                 abstained=sum(s.abstained for s in group),
                 retries=sum(max(0, s.attempts - 1) for s in group),
                 median_seconds=statistics.median(waits) if waits else None,
+                changes=sum(len(s.changes or ()) for s in group),
+                removed_words=sum(s.removed_words for s in group),
             )
         totals = [
-            sum(s.seconds for s in (a.correction, a.formatting) if s is not None)
+            sum(s.seconds for s in (a.correction, a.cleanup, a.formatting) if s is not None)
             for a in attempts
             if a.correction is not None and a.correction.status != "pending"
         ]
@@ -753,7 +772,10 @@ class Dictum:
                 status = self.jev_status()
                 initial = (
                     processing.pending(
-                        raw, contextual=status.dictionary, formatting=status.formatting
+                        raw,
+                        contextual=status.dictionary,
+                        formatting=status.formatting,
+                        cleanup=status.cleanup,
                     )
                     if raw is not None
                     else None
@@ -799,6 +821,7 @@ class Dictum:
                                 text=raw,
                                 correction=processed.correction,
                                 formatting=processed.formatting,
+                                cleanup=processed.cleanup,
                             )
                             if a.id == attempt_id
                             else a
@@ -821,6 +844,7 @@ class Dictum:
             groups,
             contextual=status.dictionary,
             formatting=status.formatting,
+            cleanup=status.cleanup,
             key=self.store.get_setting(key_setting(JEV_PROVIDER)),
             client=self._jev_client,
             policy=self.jev_policy(),
