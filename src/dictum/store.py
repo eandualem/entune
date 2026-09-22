@@ -19,6 +19,7 @@ from typing import Literal
 from dictum.audio import extension_for, identify
 from dictum.dictionary_legacy import Correction as SubmittedCorrection
 from dictum.processing import Processed, Stage, failed
+from dictum.text_edits import Change
 
 Status = Literal["ok", "error"]
 
@@ -47,7 +48,8 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     elapsed_seconds REAL,
     fast INTEGER NOT NULL DEFAULT 0,
     correction TEXT,
-    formatting TEXT
+    formatting TEXT,
+    cleanup TEXT
 );
 CREATE INDEX IF NOT EXISTS transcriptions_by_recording ON transcriptions(recording_id);
 CREATE TABLE IF NOT EXISTS corrections (
@@ -80,6 +82,7 @@ MIGRATIONS = [
     ),
     ("transcriptions", "correction", "ALTER TABLE transcriptions ADD COLUMN correction TEXT"),
     ("transcriptions", "formatting", "ALTER TABLE transcriptions ADD COLUMN formatting TEXT"),
+    ("transcriptions", "cleanup", "ALTER TABLE transcriptions ADD COLUMN cleanup TEXT"),
 ]
 
 
@@ -99,6 +102,7 @@ class Transcription:
     fast: bool = False  # transcribed from fast mode's stream (issue #20)
     correction: Stage | None = None
     formatting: Stage | None = None
+    cleanup: Stage | None = None
     # Preserve old recorded metrics without treating them as trustworthy stage outcomes.
     legacy_processing: dict[str, object] | None = None
 
@@ -162,7 +166,10 @@ class Store:
             if attempt.correction is not None and attempt.correction.status == "pending":
                 raw = attempt.raw_text if attempt.raw_text is not None else attempt.text or ""
                 initial = Processed(
-                    raw, attempt.correction, attempt.formatting or Stage("disabled", "formatting")
+                    raw,
+                    attempt.correction,
+                    attempt.formatting or Stage("disabled", "formatting"),
+                    attempt.cleanup or Stage("disabled", "cleanup"),
                 )
                 self.finish_processing(
                     attempt.id, failed(raw, initial, "Processing interrupted before completion")
@@ -263,8 +270,8 @@ class Store:
             cursor = self._db.execute(
                 "INSERT INTO transcriptions"
                 " (recording_id, provider, model, status, text, error, created_at, raw_text,"
-                "  audio_seconds, elapsed_seconds, fast, correction, formatting)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  audio_seconds, elapsed_seconds, fast, correction, formatting, cleanup)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     recording_id,
                     provider,
@@ -279,6 +286,7 @@ class Store:
                     int(fast),
                     json.dumps(asdict(processing.correction)) if processing else None,
                     json.dumps(asdict(processing.formatting)) if processing else None,
+                    json.dumps(asdict(processing.cleanup)) if processing else None,
                 ),
             )
             return int(cursor.lastrowid or 0)
@@ -287,12 +295,13 @@ class Store:
         """Update only optional processing; speech status and raw text are immutable."""
         with self._lock, self._db:
             self._db.execute(
-                "UPDATE transcriptions SET text = ?, correction = ?, formatting = ?"
+                "UPDATE transcriptions SET text = ?, correction = ?, formatting = ?, cleanup = ?"
                 " WHERE id = ? AND status = 'ok'",
                 (
                     result.text,
                     json.dumps(asdict(result.correction)),
                     json.dumps(asdict(result.formatting)),
+                    json.dumps(asdict(result.cleanup)),
                     attempt_id,
                 ),
             )
@@ -405,9 +414,17 @@ class Store:
 def _transcription(row: sqlite3.Row) -> Transcription:
     fields = dict(row)
     fields["fast"] = bool(fields.get("fast", 0))
-    for name in ("correction", "formatting"):
+    for name in ("correction", "formatting", "cleanup"):
         value = fields[name]
-        fields[name] = Stage(**json.loads(value)) if value else None
+        if value:
+            stage = json.loads(value)
+            changes = stage.get("changes")
+            stage["changes"] = (
+                tuple(Change(**change) for change in changes) if changes is not None else None
+            )
+            fields[name] = Stage(**stage)
+        else:
+            fields[name] = None
     legacy = {
         name: fields.pop(name, None)
         for name in ("jev_seconds", "jev_fixed", "jev_kept", "jev_error")

@@ -1,0 +1,18 @@
+{
+  "type": "choice",
+  "instructions": {
+    "question": "Is the repeated run `fillers.$filler` a speech hesitation or meaningful repetition in this transcript?",
+    "focus": "Judge the whole original context. Code may remove only the recorded deletion span, reducing adjacent repeats to the first occurrence. A known filler word is not sufficient evidence: like can be a verb, comparison or quotation, and repetition can convey emphasis. Classify intent, without generating text, offsets or editing commands. These candidates are English; meaningful or unexplained uses in another language are not evidence of English hesitation."
+  },
+  "criteria": {
+    "hesitation": {
+      "what": "An accidental adjacent repetition while hesitating, whose reduction to one occurrence retains the meaning and intended emphasis.",
+      "not_for": "Intentional emphasis, quoting the repeated words, talking about words themselves, a name, code, or distinct meaningful uses of like.",
+      "examples": ["Um, um, open the settings.", "It is, like, like, taking a while."]
+    },
+    "meaningful": {
+      "what": "The repetition carries meaning, emphasis or a deliberate verbal rhythm, or these are meaningful words rather than an English hesitation.",
+      "examples": ["I mean like, like, not love.", "The example contains two um tokens."]
+    }
+  }
+}

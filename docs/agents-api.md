@@ -39,13 +39,13 @@ silently if Dictum is not running.
 
 | Method and path | What |
 |---|---|
-| `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode, `jev` (key hint, `dictionary` and `formatting` on or off, and a summary of what Jev has done); each provider says whether it `streams` (fast mode) or is `local` |
+| `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode, `jev` (key hint, `dictionary`, `cleanup` and `formatting` on or off, shared retry policy and separate stage summaries); each provider says whether it `streams` (fast mode) or is `local` |
 | `GET /api/models` | the models of every provider that has a key, plus the downloaded local ones |
 | `GET /api/metrics` | the performance table: per model and mode, runs, audio seconds, median wait, speed |
 | `GET /api/local/models` | the local models with size, state (absent, downloading with progress, ready, error, unavailable when the engine is not installed) |
 | `POST /api/local/models/{name}/download`, `DELETE /api/local/models/{name}` | fetch or remove one |
 | `GET /api/status` | version, shortcuts, default model, whether the desktop app runs and listens |
-| `GET /api/recordings` | the history, newest first, with every attempt; speech status/raw text and separate `correction`/`formatting` outcomes (status, method, time, attempts and operation counts); historical combined counters are retained as `legacy_processing` |
+| `GET /api/recordings` | the history, newest first, with every attempt; speech status/raw text and separate `correction`/`cleanup`/`formatting` outcomes (status, method, time, attempts and operation counts). Cleanup/formatting `changes` contain start/end Python character offsets and exact before/after text against that stage's input; cleanup also counts `removed_words`. Historical rows have no invented cleanup outcome; combined old counters remain as `legacy_processing` |
 | `POST /api/recordings` | multipart `audio` (+ optional `model`): store and transcribe |
 | `POST /api/recordings/{id}/transcriptions` | `{"model": "provider/model"}`: transcribe again |
 | `GET /api/recordings/{id}/audio` | the clip |

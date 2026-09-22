@@ -1,4 +1,4 @@
-"""Independent dictionary and formatting outcomes; speech success is already durable."""
+"""Independent dictionary, cleanup and formatting outcomes; speech success is already durable."""
 
 from __future__ import annotations
 
@@ -6,14 +6,15 @@ import time
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from dictum import jev, matching
+from dictum import jev, matching, text_edits
 from dictum.dictionary import Groups
+from dictum.text_edits import Change
 
 
 @dataclass(frozen=True)
 class Stage:
     status: Literal["pending", "succeeded", "failed", "skipped", "disabled"]
-    method: Literal["contextual", "deterministic", "unconditional", "formatting"]
+    method: Literal["contextual", "deterministic", "unconditional", "formatting", "cleanup"]
     seconds: float = 0.0
     attempts: int = 0
     decisions: int = 0
@@ -22,6 +23,8 @@ class Stage:
     preserved: int = 0
     abstained: int = 0
     error: str | None = None
+    changes: tuple[Change, ...] | None = ()  # None: an older outcome did not record edits
+    removed_words: int = 0
 
 
 @dataclass(frozen=True)
@@ -29,13 +32,15 @@ class Processed:
     text: str
     correction: Stage
     formatting: Stage
+    cleanup: Stage = Stage("disabled", "cleanup")
 
 
-def pending(raw: str, *, contextual: bool, formatting: bool) -> Processed:
+def pending(raw: str, *, contextual: bool, formatting: bool, cleanup: bool = False) -> Processed:
     return Processed(
         raw,
         Stage("pending", "contextual" if contextual else "deterministic"),
         Stage("pending" if formatting else "disabled", "formatting"),
+        Stage("pending" if cleanup else "disabled", "cleanup"),
     )
 
 
@@ -46,15 +51,28 @@ def failed(raw: str, initial: Processed, error: str, seconds: float = 0.0) -> Pr
         replace(initial.formatting, status="skipped")
         if initial.formatting.status != "disabled"
         else initial.formatting,
+        replace(initial.cleanup, status="skipped")
+        if initial.cleanup.status != "disabled"
+        else initial.cleanup,
     )
 
 
-def notice(correction: Stage | None, formatting: Stage | None) -> str | None:
+def notice(
+    correction: Stage | None, formatting: Stage | None, cleanup: Stage | None = None
+) -> str | None:
     if correction is not None and correction.status == "failed":
         return (
             "Dictionary correction unavailable. Original transcription delivered; "
             "details in history."
         )
+    if cleanup is not None and cleanup.status == "failed":
+        name = (
+            "Filler reduction and formatting"
+            if formatting is not None and formatting.status == "failed"
+            else "Filler reduction"
+        )
+        detail = "Prior text retained" if name.endswith("formatting") else "Repeated words retained"
+        return f"{name} unavailable. {detail}; details in history."
     if formatting is not None and formatting.status == "failed":
         return (
             "Formatting unavailable. Transcription delivered without added formatting; "
@@ -69,14 +87,15 @@ def process_text(
     *,
     contextual: bool,
     formatting: bool,
+    cleanup: bool = False,
     key: str | None,
     client: jev.Client,
     policy: jev.Policy,
 ) -> Processed:
-    """Use one wall-clock budget across both stages, including retries and backoff."""
+    """Use one wall-clock budget across processing stages, including retries and backoff."""
     started = time.monotonic()
     deadline = started + policy.total_seconds
-    initial = pending(raw, contextual=contextual, formatting=formatting)
+    initial = pending(raw, contextual=contextual, formatting=formatting, cleanup=cleanup)
     call = jev.Call(client, key or "", policy, deadline)
     try:
         components = matching.components(matching.matches(groups, raw))
@@ -124,23 +143,35 @@ def process_text(
         result = failed(raw, initial, _error(exc, key), time.monotonic() - started)
         return replace(result, correction=replace(result.correction, attempts=call.attempts))
     correction = replace(correction, seconds=time.monotonic() - started)
-    if not formatting:
-        return Processed(text, correction, initial.formatting)
-
-    started = time.monotonic()
-    call = jev.Call(client, key or "", policy, deadline)
-    try:
-        formatted = jev.format_text(text, call)
-        outcome = Stage(
-            "succeeded" if call.decisions else "skipped",
-            "formatting",
-            attempts=call.attempts,
-            decisions=call.decisions,
-        )
-        text = formatted
-    except Exception as exc:
-        outcome = Stage("failed", "formatting", attempts=call.attempts, error=_error(exc, key))
-    return Processed(text, correction, replace(outcome, seconds=time.monotonic() - started))
+    outcomes = {"cleanup": initial.cleanup, "formatting": initial.formatting}
+    for method, enabled, classify in (
+        ("cleanup", cleanup, jev.cleanup_edits),
+        ("formatting", formatting, jev.format_edits),
+    ):
+        if not enabled:
+            continue
+        started = time.monotonic()
+        call = jev.Call(client, key or "", policy, deadline)
+        try:
+            classified = classify(text, call)
+            updated = text_edits.apply(text, classified.changes)
+            outcome = Stage(
+                "succeeded" if call.decisions else "skipped",
+                outcomes[method].method,
+                attempts=call.attempts,
+                decisions=call.decisions,
+                changes=classified.changes,
+                removed_words=classified.removed_words,
+                preserved=classified.preserved,
+                abstained=classified.abstained,
+            )
+            text = updated
+        except Exception as exc:
+            outcome = Stage(
+                "failed", outcomes[method].method, attempts=call.attempts, error=_error(exc, key)
+            )
+        outcomes[method] = replace(outcome, seconds=time.monotonic() - started)
+    return Processed(text, correction, outcomes["formatting"], outcomes["cleanup"])
 
 
 def _error(exc: Exception, key: str | None) -> str:

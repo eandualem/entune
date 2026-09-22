@@ -93,22 +93,24 @@ or generated mappings. A competing output or overlapping span disables the fast 
 Editing an output spelling or casing clears its approvals; save that edit before
 approving the revised mapping.
 
-Direct-only dictation needs no contextual request (formatting may still make its own).
+Direct-only dictation needs no contextual request (cleanup/formatting may make their own).
 Mixed dictation still makes one request. Exact unchanged outputs need no decision call.
 When contextual correction is off, only eligible approved direct mappings apply;
 ambiguous/unapproved spans remain original. Historical unconditional results retain
 their old method label and are not represented as approved direct work.
 
 Speech success and untouched provider text are saved before dictionary processing.
-Failure of contextual correction delivers the exact original, skips formatting and
-shows a noninterrupting notice; failure of formatting preserves the preceding text.
+Failure of contextual correction delivers the exact original, skips cleanup/formatting
+and shows a noninterrupting notice. Cleanup runs before formatting; failure of either
+preserves that stage's input. Both report their exact changes, latency and failures
+separately from dictionary replacements. Raw text remains available through Copy original.
 History and Settings separate decisions, direct replacements, unresolved occurrences,
 retries, failures, preserved spans and timings. Replacements count edited disjoint
 components, not words proven correct. Old combined counters remain in exports under
 `legacy_processing`, excluded from new summaries.
 
 Settings > Providers exposes the initial retry policy: **5 seconds total**
-across correction and formatting, **3 seconds per attempt**, and **2 attempts
+across correction, cleanup and formatting, **3 seconds per attempt**, and **2 attempts
 per request**. These are configurable defaults, not measured provider
 service guarantees. Transient connection/read failures, timeouts and HTTP
 408/429/500/502/503/504/529 can retry with 0.15-second exponential backoff.
@@ -187,11 +189,46 @@ generation process were evaluated together; this does not isolate the
 effect of the new prompt or demonstrate a uniform accuracy improvement.
 Personal audio, labels and reproducible evaluation outputs remain local.
 
-**Formatting** is the other opt-in: one question per sentence (continues,
-new paragraph, or list item) and only line breaks and bullets inserted, so
-every word stays. A sentence between two list items joins the list at a
-lower bar. On the same corpus it changed 61 of 162 clips at the 0.6 bar,
-with mixed results; it is off unless turned on.
+The **previous formatter** changed 61 of 162 clips in that cached corpus at the 0.6 bar,
+with mixed results. Those cached observations do not evaluate the revised formatter or
+filler reduction below.
+
+## Formatting and repeated fillers
+
+Both are independently opt-in and keep the input words unless the user enables bounded
+filler reduction. Each applicable stage makes one request with all its questions;
+there is no chunking or parallel request policy.
+
+Formatting classifies all eligible spans, including the first, as running prose,
+new paragraph or list item. The winning probability must reach 0.6. A middle item can
+join two list items at 0.3 only within an originally flat paragraph. Code inserts bullets
+and changes only horizontal whitespace between spans; original line endings, paragraphs,
+indentation and recognized list markers are retained. Existing bullet/numeric/`A)` lists,
+indented code and lines containing protected quotes/code are not classified internally.
+Single unpunctuated lines remain whole; fewer than two spans need no request.
+
+Segmentation handles common English titles/abbreviations, initials, decimals and domains.
+Ethiopic `።` and CJK stops can delimit sentences without spaces. These are explicit
+heuristics, not universal language segmentation: abbreviation-final sentences can remain
+joined, and punctuation-free prose does not gain inferred sentence boundaries.
+
+Filler candidates are runs of **2–6 adjacent repetitions of the same English token**:
+`um`, `uh`, `erm` or `like`, separated by horizontal whitespace/commas and spanning no
+more than 80 characters. Code excludes quoted/code spans, sentence/line crossings and
+larger runs. A hesitation probability of at least **0.9** permits deletion of only the
+duplicate suffix; the first token, its case and final punctuation stay. Intentional
+emphasis and meaningful `like` uses should be classified as meaningful; uncertain or
+malformed answers preserve text. This threshold is an initial, uncalibrated policy.
+It does not remove lone fillers, arbitrary repeats, mixed filler runs or spoken repairs.
+
+Every edit records exact before/after text and Python character offsets against its
+stage input; disjoint source validation precedes application. History and export retain
+these edits and the original transcription. Cleanup's removed-word count and formatting's
+changed-span count are operations, not accuracy scores. Older formatting outcomes have
+`changes: null` (not recorded), not an invented zero; aggregate span counts cover recorded
+edits only. Mocked probability tests establish
+these boundaries and failure behavior, not acoustic truth or live Jev classification
+quality. Paid evaluation needs separate authorization.
 
 ## Generation, editing and migration
 

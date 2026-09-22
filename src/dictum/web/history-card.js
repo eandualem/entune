@@ -47,7 +47,7 @@ function player(url, label, seconds) {
 // Stage counts describe processing, not the accuracy of the delivered words.
 function processingLines(t) {
   const lines = [];
-  for (const [name, stage] of [["Dictionary", t.correction], ["Formatting", t.formatting]]) {
+  for (const [name, stage] of [["Dictionary", t.correction], ["Filler reduction", t.cleanup], ["Formatting", t.formatting]]) {
     if (!stage || stage.status === "disabled") continue;
     const line = document.createElement("div");
     line.className = stage.status === "failed" ? "jev err" : "jev";
@@ -61,10 +61,25 @@ function processingLines(t) {
       else parts.push(stage.method === "unconditional" ? "historical unconditional" : "approved direct mappings only");
       parts.push(`${stage.direct_replacements ?? 0} direct`, `${stage.abstained} unresolved`);
     }
+    if (name !== "Dictionary" && stage.status === "succeeded") {
+      parts.push(stage.changes == null ? "span changes not recorded" : `${stage.changes.length} span change${stage.changes.length === 1 ? "" : "s"}`, `${stage.decisions} decision${stage.decisions === 1 ? "" : "s"}`);
+      if (name === "Filler reduction") parts.push(`${stage.removed_words} word${stage.removed_words === 1 ? "" : "s"} removed`, `${stage.preserved} preserved`, `${stage.abstained} uncertain`);
+    }
     if (stage.attempts > 1) parts.push(`${stage.attempts - 1} ${stage.attempts === 2 ? "retry" : "retries"}`);
     if (stage.seconds) parts.push(`+${stage.seconds.toFixed(1)} s`);
     line.textContent = parts.join(" · ");
     lines.push(line);
+    if (stage.changes?.length) {
+      const details = document.createElement("details");
+      details.className = "jev";
+      const summary = document.createElement("summary");
+      summary.textContent = `${name} changes`;
+      const contents = document.createElement("pre");
+      contents.style.whiteSpace = "pre-wrap";
+      contents.textContent = stage.changes.map(change => `${JSON.stringify(change.before)} → ${JSON.stringify(change.after)}`).join("\n");
+      details.append(summary, contents);
+      lines.push(details);
+    }
   }
   if (t.legacy_processing) {
     const line = document.createElement("div");

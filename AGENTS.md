@@ -100,9 +100,11 @@ sets Dictum apart. Since 2026-09-22 (issue #114), the dictionary uses confusion
 groups with stable meanings and explicit recognized-form associations. Jev
 selects eligible meanings in context; pinned knowledge is shared and protected
 without semantic priority. A second switch places paragraph breaks and bullets.
+Since issue #117, another opt-in reduces code-proposed repeated English fillers
+to one occurrence after Jev classifies hesitation, preserving uncertain/meaningful uses.
 Jev generates nothing, so no generated text ever reaches the user. Nothing
 from the dictionary goes to the speech provider any more: the provider
-transcribes the raw speech and the dictionary is applied afterwards. Both
+transcribes the raw speech and the dictionary is applied afterwards. All
 Jev uses are settings, each with its measured cost in time shown, and the
 numbers that show the improvement are kept (`docs/dictionary.md`).
 
