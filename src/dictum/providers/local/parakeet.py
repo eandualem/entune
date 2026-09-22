@@ -23,14 +23,10 @@ from typing import Any
 import httpx
 
 from dictum.audio import sniff_mime
-from dictum.providers.base import (
-    Clip,
-    Failure,
-    LocalModelStatus,
-    TranscribeResult,
-    Transcript,
-)
-from dictum.providers.local import DOWNLOAD_TIMEOUT, Download, to_wav_with_ffmpeg
+from dictum.providers.contracts import Clip, Failure, TranscribeResult, Transcript
+from dictum.providers.local.audio import to_wav_with_ffmpeg
+from dictum.providers.local.contracts import LocalModelStatus
+from dictum.providers.local.downloads import DOWNLOAD_TIMEOUT, Download
 
 MODEL = "parakeet-tdt-0.6b-v3"
 REPO = "https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3/resolve/main"
@@ -139,7 +135,9 @@ class Parakeet:
         # The engine resamples properly itself; a WAV goes over as recorded.
         try:
             data = (
-                clip.data if sniff_mime(clip.data) == "audio/wav" else to_wav_with_ffmpeg(clip.data)
+                clip.data
+                if sniff_mime(clip.data) == "audio/wav"
+                else to_wav_with_ffmpeg(clip.data, sample_rate=16_000)
             )
         except Exception as exc:
             return Failure(f"Could not decode the clip: {type(exc).__name__}: {exc}")

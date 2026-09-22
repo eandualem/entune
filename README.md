@@ -122,7 +122,7 @@ reach other apps as a modifier. Pick another key if you need fn elsewhere.
 | AssemblyAI | universal-3-5-pro | sync endpoint; clips over two minutes use the long-form endpoint |
 | Groq | whisper-large-v3-turbo | OpenAI-style transcriptions endpoint |
 | Soniox | stt-async-v5 | upload, poll, fetch; the upload is deleted afterwards |
-| Local | Whisper large-v3-turbo, its compact build, small.en, base.en | whisper.cpp on this machine; no key, nothing leaves the Mac |
+| Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | whisper.cpp on this machine; no key, nothing leaves the Mac |
 | Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
 
 Enter a provider's API key in Settings and its model appears in the model
@@ -262,6 +262,12 @@ The app uses Starlette and SQLite, plain browser JavaScript modules without
 a build step, and httpx for provider calls. Dictionary builds call Anthropic
 or OpenAI directly; the suggested model list is kept in `llm.py`, with a
 custom model field in Settings.
+
+Speech adapters are organized under providers/cloud and providers/local,
+with common contracts separate from HTTP and local lifecycle capabilities.
+Dictionary-generation and Jev instructions, criteria and examples live in
+the packaged src/dictum/prompts/ resources; thresholds and algorithms stay
+in Python.
 
 ```sh
 uv sync                 # environment with dev tools

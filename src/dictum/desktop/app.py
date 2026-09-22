@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 from dictum.desktop.engine import ShortcutEngine
 from dictum.desktop.platform import Microphone, Platform
-from dictum.providers.base import Upload
+from dictum.providers.cloud.contracts import Upload
 from dictum.recorder import Capture, Recorder, Sink
 from dictum.service import Dictum, NoDefaultModel, UnknownModel
 from dictum.store import Recording

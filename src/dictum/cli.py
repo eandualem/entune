@@ -17,7 +17,7 @@ import uvicorn
 from dictum import __version__
 from dictum.desktop import create_platform
 from dictum.paths import default_data_dir
-from dictum.providers import default_providers
+from dictum.providers.registry import default_providers
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store

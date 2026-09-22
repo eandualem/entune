@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from dictum.providers.base import Clip
+from dictum.providers.contracts import Clip
 from dictum.store import Store
 
 WEBM_HEADER = b"\x1a\x45\xdf\xa3" + b"\x00" * 12

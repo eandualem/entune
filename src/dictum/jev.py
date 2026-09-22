@@ -23,6 +23,7 @@ from typing import Any
 
 import httpx
 
+from dictum import prompts
 from dictum.dictionary import Entry, Match
 
 MODEL = "jev-1.13.0"  # pinned: the thresholds below were measured against this version
@@ -33,6 +34,7 @@ URL = "https://api.typesafe.ai/v1/systemone"
 VETO_PROBABILITY = 0.8
 # A sentence starts a paragraph or a list item when that option's probability reaches
 # this; a sentence between two list items joins the list at the lower bar.
+FORMAT_OPTIONS = {"continues", "new_paragraph", "list_item"}
 FORMAT_PROBABILITY = 0.6
 BRIDGE_PROBABILITY = 0.3
 WINDOW = 160  # characters of context either side of a match
@@ -123,27 +125,14 @@ def decide(text: str, found: list[Match], api_key: str) -> tuple[list[Decision],
             "before": text[max(0, match.start - WINDOW) : match.start],
             "after": text[match.end : match.end + WINDOW],
         }
-        questions[name] = {
-            "type": "choice",
-            "instructions": {
-                "question": (
-                    f"In `occurrences.{name}`, the speech recogniser wrote"
-                    f" `occurrences.{name}.heard`. Did the speaker mean the term described in"
-                    f" `terms.{key}`, or the recognised words with their ordinary meaning?"
-                ),
-                "focus": (
-                    f"Read `occurrences.{name}.before` and `occurrences.{name}.after`, and"
-                    " `transcript` for the topic. The recogniser often mishears this term as"
-                    " these words."
-                ),
-            },
-            "criteria": {
-                "term": {"what": f"The speaker meant {match.spelling!r}: {_meaning(match.entry)}"},
-                "recognised": {
-                    "what": f"The words {heard!r} as recognised, with their ordinary meaning."
-                },
-            },
-        }
+        questions[name] = prompts.render_json(
+            "jev-dictionary.json",
+            occurrence=name,
+            term=key,
+            spelling=repr(match.spelling),
+            meaning=_meaning(match.entry),
+            heard=repr(heard),
+        )
     state = {"transcript": text, "terms": terms, "occurrences": occurrences}
     data, elapsed = _ask(state, questions, api_key)
     decisions = []
@@ -154,7 +143,9 @@ def decide(text: str, found: list[Match], api_key: str) -> tuple[list[Decision],
 
 
 def _meaning(entry: Entry) -> str:
-    return entry.description or f"the term {entry.spelling!r}, as this person spells it"
+    return entry.description or prompts.render_text(
+        "jev-meaning.txt", spelling=repr(entry.spelling)
+    )
 
 
 def _key(spelling: str, n: int) -> str:
@@ -177,37 +168,6 @@ def _sentences(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-_CRITERIA = {
-    "continues": {
-        "what": "Continues the same thought or topic as the previous sentence; running prose.",
-        "not_for": "A sentence that opens a new topic, or that is one entry of an enumeration.",
-    },
-    "new_paragraph": {
-        "what": (
-            "Starts a clearly different topic, request or step than the previous sentence,"
-            " where a writer would begin a new paragraph."
-        ),
-        "not_for": "Elaboration, examples or a follow-up of the previous sentence.",
-        "examples": [
-            "Okay, now the second thing I want to talk about is the settings page.",
-            "Another issue is the microphone.",
-        ],
-    },
-    "list_item": {
-        "what": (
-            "One entry in an enumeration of parallel items, often introduced with words such"
-            " as first, secondly, thirdly, one, two, three, next, finally."
-        ),
-        "not_for": "A sentence that merely mentions a number or an order.",
-        "examples": [
-            "First of all, we don't want to make it very long.",
-            "Secondly, we want to add tags.",
-            "Three, I don't see any formatting.",
-        ],
-    },
-}
-
-
 def format_text(text: str, api_key: str) -> tuple[str, float]:
     """Paragraph breaks and bullets where the dictation clearly has them; every word stays."""
     spans = _sentences(text)
@@ -216,25 +176,11 @@ def format_text(text: str, api_key: str) -> tuple[str, float]:
     names = [f"S{i:02d}" for i in range(len(spans))]
     state = {"sentences": {name: text[a:b] for name, (a, b) in zip(names, spans, strict=True)}}
     questions = {
-        name: {
-            "type": "choice",
-            "instructions": {
-                "question": (
-                    f"How does sentence `sentences.{name}` relate to the sentences before it in"
-                    " this dictated note?"
-                ),
-                "focus": (
-                    "This is spoken dictation transcribed as one block, with fillers. Judge from"
-                    " the words only; the sentences keep their order and wording."
-                ),
-            },
-            "criteria": _CRITERIA,
-        }
-        for name in names[1:]
+        name: prompts.render_json("jev-formatting.json", sentence=name) for name in names[1:]
     }
     data, elapsed = _ask(state, questions, api_key)
     probabilities = [{"continues": 1.0}] + [
-        _probabilities(data["answers"][name], set(_CRITERIA)) for name in names[1:]
+        _probabilities(data["answers"][name], FORMAT_OPTIONS) for name in names[1:]
     ]
     actions = ["continues"] * len(spans)
     for i in range(1, len(spans)):

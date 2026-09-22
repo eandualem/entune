@@ -15,7 +15,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from dictum import server
-from dictum.providers.base import Clip, Failure, TranscribeResult, Transcript
+from dictum.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from dictum.recorder import wav_bytes
 from dictum.server import create_app
 from dictum.service import Dictum
@@ -660,11 +660,11 @@ def test_metrics_are_computed_from_timed_attempts(client: TestClient) -> None:
 
 
 def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: StubProvider) -> None:
-    from dictum.providers.local import Local
-    from tests.test_local import FakeEngine
+    from dictum.providers.local.whisper import WhisperCpp
+    from tests.test_whisper import FakeEngine
 
     body = b"m" * 10
-    local = Local(
+    local = WhisperCpp(
         tmp_path / "models", client=mock_client(lambda req: httpx.Response(200, content=body))
     )
     app = create_app(Dictum(Store(tmp_path), [stub, local]))

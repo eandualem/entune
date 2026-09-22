@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 import pytest
 
-from dictum import llm
+from dictum import llm, prompts
 from dictum.dictionary import Dictionary, Entries, Entry
 
 REPLY = (
@@ -37,7 +37,7 @@ def test_user_prompt_carries_pinned_one_models_learned_list_and_the_step() -> No
     assert '"spelling": "Soniox"' in first and "Elsewhere" not in first
     cleared = llm.build_user_prompt(current, ["last"], "stub/good", (), (3, 3))
     assert "Soniox" not in cleared
-    assert "terms" not in llm.SYSTEM_PROMPT.split("Reply with")[1]
+    assert "terms" not in prompts.text("dictionary-system.txt").split("Reply with")[1]
 
 
 def test_all_supplied_text_is_processed_in_bounded_steps(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -95,7 +95,7 @@ def test_propose_learned_calls_the_model_with_the_prompts() -> None:
     )
     assert learned == PARSED
     assert seen["provider"] == "anthropic" and seen["model"] == "anthropic:claude-fable-5-1"
-    assert seen["system"] == llm.SYSTEM_PROMPT and '["hello"]' in seen["user"]
+    assert seen["system"] == prompts.text("dictionary-system.txt") and '["hello"]' in seen["user"]
     assert "Step 1 of 1" in seen["user"]
 
 

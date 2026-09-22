@@ -7,17 +7,22 @@ API and the page; on macOS a menu-bar app runs on the main thread beside it.
 src/dictum/
   cli.py          the `dictum` command: data directory, port check, server thread, menu-bar app
   service.py      what the app does: settings, models, transcription, dictionary, capture
+  processing.py   text-processing workflow; service passes explicit settings/key,
+                  retains persistence and delivery coordination
   store.py        SQLite (settings, recordings, every transcription attempt) + audio files
   audio.py        container sniffing, WAV and WebM duration
-  providers/      one module per speech-to-text provider behind the Provider protocol;
-                  base.py also has the optional Streams (fast mode) and Downloadable
-                  (local models) protocols; local.py is whisper.cpp in-process,
-                  parakeet.py runs parakeet_helper.py inside a separate engine
+  providers/      contracts.py: audio/result types and the Provider protocol
+                  registry.py: adapters and stable provider/model identifiers
+                  cloud/: adapters, HTTP response helpers and upload capability
+                  local/: Whisper.cpp and Parakeet, lifecycle capability, shared
+                  downloads and conversion; Parakeet's helper runs in its external engine
   dictionary.py   shared pinned entries and per-model learned entries (spelling, description,
                   heard phrases), the indexed matcher, proposals
   jev.py          Jev, TypeSafe's decision model: one request per transcript deciding each
                   dictionary match in context, and one for paragraph breaks and bullets
-  llm.py          dictionary prompts, model choices and direct Anthropic/OpenAI HTTP calls
+  llm.py          dictionary-build orchestration, model choices and provider calls
+  prompts/        packaged generation text and structured Jev questions/criteria/examples;
+                  a small resource loader substitutes literal values
   shortcuts.py    shortcut strings: hold key, hands-free chord
   recorder.py     microphone -> WAV at the device's rate (sounddevice); a sink gets
                   each chunk as it is recorded, which fast mode streams to the provider
@@ -56,6 +61,14 @@ verbatim and never fall back or retry silently; keys only ever go to the
 provider they belong to; the page keeps itself current by polling the API
 while visible; anything touching AppKit or HIToolbox runs on the main
 thread.
+
+Model-facing instructions live in prompts/; algorithms, thresholds and
+response validation remain in Python. Text templates use named dollar
+placeholders. Structured Jev templates are decoded from JSON before their
+string leaves are substituted, so quotes, braces and dollar signs in
+transcript data are never interpreted as template instructions. Resources
+are loaded with importlib.resources, independent of the working directory.
+The wheel and desktop bundle include the same files.
 
 Native recording, permissions, shortcuts, paste and the indicator live under
 `desktop/macos/`; the webview shell also wires macOS application termination
