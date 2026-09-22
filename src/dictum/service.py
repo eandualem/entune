@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import statistics
 import threading
 import time
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass, replace
 
 from dictum import dictionary as dictionary_file
 from dictum import jev, llm, processing, shortcuts
 from dictum.audio import sniff_mime
+from dictum.builds import BuildInput, DictionaryBuilds, Source
 from dictum.dictionary import Dictionary, Groups, Proposal
 from dictum.dictionary_legacy import Correction, add_corrections, read_entries
 from dictum.processing import Processed, Stage, process_text
@@ -20,8 +23,9 @@ from dictum.providers.cloud.contracts import Streams, Upload
 from dictum.providers.contracts import Clip, Failure, Provider, Transcript
 from dictum.providers.local.contracts import Downloadable, LocalModelStatus
 from dictum.providers.registry import ModelRef, resolve_model
+from dictum.resources import SpeechResources
 from dictum.shortcuts import Shortcuts
-from dictum.store import DictionaryAudio, Recording, Store, Transcription
+from dictum.store import Recording, Store, Transcription
 
 DEFAULT_MODEL_KEY = "default_model"
 DICTIONARY_MODEL_KEY = "dictionary_model"
@@ -141,22 +145,20 @@ class Dictum:
     ) -> None:
         self.store = store
         self.providers = providers
-        self._llm_call = llm_call
         self._jev_client = jev_client or jev.Client()
         self._listeners: list[Callable[[], None]] = []
         self._capture_listeners: list[Callable[[], None]] = []
         self._dictionary_lock = threading.RLock()  # dictionary() may save inside a write
-        self._warm_lock = threading.Lock()
-        self._warming = False
-        self._warm_pending = False
         self._cancel_listeners: list[Callable[[], None]] = []
         self._show_window_listeners: list[Callable[[], None]] = []
         self._permission_listeners: list[Callable[[str, bool], None]] = []
         self._desktop_status: dict[str, object] = {"desktop": False}
         self._capture_lock = threading.Lock()
         self._capture = CaptureStatus("idle", None)
-        self._audio_build_lock = threading.Lock()
-        self._audio_build: dict[str, object] = {"phase": "idle"}
+        self._speech = SpeechResources(
+            providers, lambda message: self.report_status(lastError=message)
+        )
+        self._builds = DictionaryBuilds(self._speech, llm_call)
 
     # What the desktop app reports about itself, for /api/status and for diagnosis.
 
@@ -220,10 +222,12 @@ class Dictum:
         ]
 
     def download_local_model(self, name: str) -> None:
-        self._local(name).download(name)
+        with self._speech.use(None):
+            self._local(name).download(name)
 
     def remove_local_model(self, name: str) -> None:
-        self._local(name).remove(name)
+        with self._speech.use(None):
+            self._local(name).remove(name)
         self._changed()
 
     def _local(self, name: str) -> Downloadable:
@@ -303,8 +307,30 @@ class Dictum:
         self.store.set_setting(JEV_POLICY_KEY, json.dumps(asdict(policy)))
         self._changed()
 
-    def close(self) -> None:
-        self._jev_client.close()
+    def close(self) -> bool:
+        # Signal both owners before waiting; no new work can race shutdown. Jev
+        # owns a separate two-second close; builds/resources share two more seconds.
+        self._builds.close(0)
+        self._speech.close(0)
+        jev_done = True
+        try:
+            self._jev_client.close()
+        except Exception as exc:
+            jev_done = False
+            self.report_status(lastError=f"Jev cleanup: {type(exc).__name__}: {exc}")
+            logging.getLogger(__name__).warning(self._desktop_status["lastError"])
+        deadline = time.monotonic() + 2.0
+        builds_done = self._builds.close(max(0.0, deadline - time.monotonic()))
+        resources_done = self._speech.close(max(0.0, deadline - time.monotonic()))
+        if not (builds_done and resources_done):
+            self.report_status(
+                lastError=(
+                    "Shutdown cleanup is incomplete; an operation is still draining "
+                    "or resource cleanup failed."
+                )
+            )
+            logging.getLogger(__name__).warning(self._desktop_status["lastError"])
+        return jev_done and builds_done and resources_done
 
     def jev_summary(self) -> JevSummary:
         attempts = self.store.processed_transcriptions()
@@ -348,7 +374,8 @@ class Dictum:
         api_key = self.store.get_setting(key_setting(ref.provider.id))
         if api_key is None or not isinstance(ref.provider, Streams):
             return None
-        return ref.provider.begin_upload(api_key, sample_rate)
+        with self._speech.use(ref):
+            return ref.provider.begin_upload(api_key, sample_rate)
 
     def set_default_model(self, ref: str | None) -> None:
         if ref is not None and self.resolve(ref) is None:
@@ -358,58 +385,9 @@ class Dictum:
         self.warm_default_model()
 
     def warm_default_model(self) -> None:
-        """A local default model is loaded ahead of the first dictation (at start and
-        whenever the default changes), and every other local model is unloaded: a model
-        takes memory only while it is the selected one. Cloud models have nothing to warm."""
-        with self._warm_lock:
-            self._warm_pending = True
-            if self._warming:
-                return
-            self._warming = True
-
-        def work() -> None:
-            while True:
-                with self._warm_lock:
-                    if not self._warm_pending:
-                        self._warming = False
-                        return
-                    self._warm_pending = False
-                try:
-                    self._warm_selected()
-                except Exception as exc:
-                    self.report_status(lastError=f"Could not load local model: {exc}")
-
-        threading.Thread(target=work, daemon=True, name="dictum-warm").start()
-
-    def _warm_selected(self) -> None:
-        # One worker follows the latest selection; rapid changes coalesce instead of
-        # creating a queue of threads that repeatedly load/unload the same model.
-        default = self.default_model()
-        ref = self.resolve(default) if default else None
-        for provider in self.providers:
-            if isinstance(provider, Downloadable):
-                keep = ref.model if ref is not None and ref.provider is provider else None
-                provider.unload(keep=keep)
-        if self.default_model() != default:
-            return  # selection changed while waiting for an inference to release its lock
-        if ref is not None and isinstance(ref.provider, Downloadable):
-            ref.provider.warm(ref.model)
-            if self.default_model() != ref.id:
-                ref.provider.unload(keep=None)
-
-    def _release_after_use(self, ref: ModelRef) -> None:
-        """A local model used for a retry, not the selected one, is unloaded again."""
-        if not isinstance(ref.provider, Downloadable):
-            return
-        default = self.default_model()
-        if default != ref.id:
-            selected = self.resolve(default) if default else None
-            keep = (
-                selected.model
-                if selected is not None and selected.provider is ref.provider
-                else None
-            )
-            ref.provider.unload(keep=keep)
+        """Coalesce selection changes and warm only when local inference yields."""
+        selected = self.default_model()
+        self._speech.select(self.resolve(selected) if selected else None)
 
     def llm_provider_statuses(self) -> list[ProviderStatus]:
         statuses = []
@@ -609,113 +587,66 @@ class Dictum:
             raise ValueError(f"No API key set for {llm.LLM_PROVIDERS[provider][0]}.")
         return provider, api_key, model
 
-    def build_dictionary(self) -> Proposal:
-        """Propose a learned section from this speech model's history. Nothing is saved."""
-        provider, api_key, model = self._dictionary_builder()
-        try:
-            ref = self.choose_model(None)
-        except NoDefaultModel:
-            raise ValueError(
-                "Pick a default model first: the dictionary is learned per speech model."
-            ) from None
-        with self._dictionary_lock:
-            current, version = self.dictionary(), self.dictionary_version()
-        transcripts = self.store.recent_transcripts(ref.provider.id, ref.model, llm.MAX_TRANSCRIPTS)
-        if not transcripts:
-            raise ValueError(
-                f"Nothing to learn from yet: the history has no transcripts from {ref.label}."
-            )
-        learned = llm.propose_learned(
-            provider, api_key, model, current, transcripts, ref.id, call=self._llm_call
-        )
-        return dictionary_file.propose(current, learned, ref.id, f'"{version}"')
+    def start_dictionary_build(self, source: Source) -> dict[str, object]:
+        return self._builds.start(lambda: self._build_input(source))
 
-    def audio_dictionary_status(self) -> dict[str, object]:
-        with self._audio_build_lock:
-            return dict(self._audio_build)
+    def dictionary_build_status(self, job_id: str | None = None) -> dict[str, object]:
+        return self._builds.status(job_id)
 
-    def dismiss_audio_dictionary(self) -> None:
-        with self._audio_build_lock:
-            if self._audio_build["phase"] in ("transcribing", "building"):
-                raise ValueError("An audio dictionary build is still running.")
-            self._audio_build = {"phase": "idle"}
+    def cancel_dictionary_build(self, job_id: str) -> None:
+        self._builds.cancel(job_id)
 
-    def start_audio_dictionary(self) -> None:
-        """Freeze the selected models and audio list; keep fresh transcripts only in memory."""
+    def discard_dictionary_build(self, job_id: str) -> None:
+        self._builds.discard(job_id)
+
+    def accept_dictionary_build(self, job_id: str) -> None:
+        def save(proposal: Proposal) -> None:
+            with self._dictionary_lock:
+                if proposal.version.strip('"') != self.dictionary_version():
+                    raise DictionaryChanged(
+                        "The dictionary changed after this build started. "
+                        "Discard this proposal and rebuild from the current dictionary."
+                    )
+                current = self.dictionary()
+                updated = Dictionary(
+                    current.pinned, {**current.learned, proposal.model: proposal.learned}
+                )
+                self.set_dictionary(dictionary_file.dumps(updated), proposal.version.strip('"'))
+
+        self._builds.accept(job_id, save)
+
+    def _build_input(self, source: Source) -> BuildInput:
         builder = self._dictionary_builder()
         try:
             ref = self.choose_model(None)
         except NoDefaultModel as exc:
-            raise ValueError(str(exc)) from None
-        speech_key = self.store.get_setting(key_setting(ref.provider.id))
-        if isinstance(ref.provider, Downloadable):
-            speech_key = ""
-        if speech_key is None:
-            raise ValueError(f"No API key set for {ref.provider.name}.")
-        audio = self.store.dictionary_audio()
-        if not audio:
-            raise ValueError("Import audio from Wispr Flow or a folder first.")
+            raise ValueError("Pick a default model first.") from exc
+        except UnknownModel as exc:
+            raise ValueError(str(exc)) from exc
         with self._dictionary_lock:
             current, version = self.dictionary(), self.dictionary_version()
-        with self._audio_build_lock:
-            if self._audio_build["phase"] in ("transcribing", "building"):
-                raise ValueError("An audio dictionary build is already running.")
-            self._audio_build = {
-                "phase": "transcribing",
-                "completed": 0,
-                "total": len(audio),
-                "model": ref.id,
-                "dictionaryModel": builder[2],
-            }
-        threading.Thread(
-            target=self._build_audio_dictionary,
-            args=(ref, speech_key, builder, audio, current, version),
-            daemon=True,
-        ).start()
-
-    def _build_audio_dictionary(
-        self,
-        ref: ModelRef,
-        speech_key: str,
-        builder: tuple[str, str, str],
-        audio: list[DictionaryAudio],
-        current: Dictionary,
-        version: str,
-    ) -> None:
-        transcripts: list[str] = []
-        try:
-            for number, item in enumerate(audio, 1):
-                try:
-                    data = self.store.dictionary_audio_path(item).read_bytes()
-                    if hashlib.sha256(data).hexdigest() != item.id:
-                        raise ValueError("The imported audio changed on disk; import it again.")
-                    result = ref.provider.transcribe(Clip(data, item.mime), ref.model, speech_key)
-                    if isinstance(result, Failure):
-                        raise ValueError(result.error)
-                    if result.text.strip():
-                        transcripts.append(result.text)
-                except Exception as exc:
-                    raise ValueError(f"Audio {number}/{len(audio)} ({item.name}): {exc}") from exc
-                with self._audio_build_lock:
-                    self._audio_build["completed"] = number
-            if not transcripts:
-                raise ValueError("The selected speech model returned no text from this audio.")
-            with self._audio_build_lock:
-                self._audio_build["phase"] = "building"
-            provider, api_key, model = builder
-            learned = llm.propose_learned(
-                provider, api_key, model, current, transcripts, ref.id, call=self._llm_call
+        if source == "history":
+            transcripts = self.store.recent_transcripts(
+                ref.provider.id, ref.model, llm.MAX_TRANSCRIPTS
             )
-            proposal = dictionary_file.propose(current, learned, ref.id).as_json()
-            proposal["version"] = f'"{version}"'
-            with self._audio_build_lock:
-                self._audio_build.update(phase="done", proposal=proposal)
-        except Exception as exc:
-            with self._audio_build_lock:
-                self._audio_build.update(phase="error", error=str(exc))
-        finally:
-            transcripts.clear()
-            self._release_after_use(ref)
+            if not transcripts:
+                raise ValueError(
+                    f"Nothing to learn from yet: the history has no transcripts from {ref.label}."
+                )
+            return BuildInput(source, ref, "", builder, current, version, tuple(transcripts))
+        speech_key = (
+            ""
+            if isinstance(ref.provider, Downloadable)
+            else self.store.get_setting(key_setting(ref.provider.id))
+        )
+        if speech_key is None:
+            raise ValueError(f"No API key set for {ref.provider.name}.")
+        audio = tuple(
+            (item, self.store.dictionary_audio_path(item)) for item in self.store.dictionary_audio()
+        )
+        if not audio:
+            raise ValueError("Import audio from Wispr Flow or a folder first.")
+        return BuildInput(source, ref, speech_key, builder, current, version, audio=audio)
 
     # Shortcut capture: the page asks, the menu-bar app's global listener records the keys.
 
@@ -793,49 +724,53 @@ class Dictum:
             api_key = self.store.get_setting(key_setting(ref.provider.id))
             if isinstance(ref.provider, Downloadable):
                 api_key = ""
-            result: Transcript | Failure
-            timing = Timing(None, None, False)
-            if api_key is None:
-                result = Failure(f"No API key set for {ref.provider.name}")
-            else:
-                started = time.monotonic()
-                clip: Clip | None = None
-                try:
-                    data = self.store.audio_path(recording).read_bytes()
-                    mime = recording.mime
-                    if not mime.startswith("audio/"):
-                        mime = sniff_mime(data) or mime
-                    clip = Clip(data, mime)
-                    clip = replace(clip, upload_url=_finish(upload, ref, clip))
-                    upload = None
-                    result = ref.provider.transcribe(clip, ref.model, api_key)
-                except Exception as exc:
-                    result = Failure(f"{type(exc).__name__}: {exc}")
-                timing = Timing(
-                    clip.seconds if clip else None,
-                    time.monotonic() - started,
-                    clip.upload_url is not None if clip else False,
+            with ExitStack() as resources:
+                result: Transcript | Failure
+                timing = Timing(None, None, False)
+                if api_key is None:
+                    result = Failure(f"No API key set for {ref.provider.name}")
+                else:
+                    started = time.monotonic()
+                    clip: Clip | None = None
+                    try:
+                        resources.enter_context(self._speech.use(ref))
+                        data = self.store.audio_path(recording).read_bytes()
+                        mime = recording.mime
+                        if not mime.startswith("audio/"):
+                            mime = sniff_mime(data) or mime
+                        clip = Clip(data, mime)
+                        clip = replace(clip, upload_url=_finish(upload, ref, clip))
+                        upload = None
+                        result = ref.provider.transcribe(clip, ref.model, api_key)
+                    except Exception as exc:
+                        result = Failure(f"{type(exc).__name__}: {exc}")
+                    timing = Timing(
+                        clip.seconds if clip else None,
+                        time.monotonic() - started,
+                        clip.upload_url is not None if clip else False,
+                    )
+                raw = result.text if isinstance(result, Transcript) else None
+                status = self.jev_status()
+                initial = (
+                    processing.pending(
+                        raw, contextual=status.dictionary, formatting=status.formatting
+                    )
+                    if raw is not None
+                    else None
                 )
-            raw = result.text if isinstance(result, Transcript) else None
-            status = self.jev_status()
-            initial = (
-                processing.pending(raw, contextual=status.dictionary, formatting=status.formatting)
-                if raw is not None
-                else None
-            )
-            attempt_id = self.store.add_transcription(
-                recording.id,
-                provider=ref.provider.id,
-                model=ref.model,
-                status="ok" if raw is not None else "error",
-                text=raw,
-                raw_text=raw,
-                error=result.error if isinstance(result, Failure) else None,
-                audio_seconds=timing.audio_seconds,
-                elapsed_seconds=timing.elapsed_seconds,
-                fast=timing.fast,
-                processing=initial,
-            )
+                attempt_id = self.store.add_transcription(
+                    recording.id,
+                    provider=ref.provider.id,
+                    model=ref.model,
+                    status="ok" if raw is not None else "error",
+                    text=raw,
+                    raw_text=raw,
+                    error=result.error if isinstance(result, Failure) else None,
+                    audio_seconds=timing.audio_seconds,
+                    elapsed_seconds=timing.elapsed_seconds,
+                    fast=timing.fast,
+                    processing=initial,
+                )
             if raw is not None and initial is not None:
                 started = time.monotonic()
                 try:
@@ -879,11 +814,6 @@ class Dictum:
                     upload.abort()
             except Exception as exc:
                 self.report_status(lastError=f"Upload cleanup: {type(exc).__name__}: {exc}")
-            finally:
-                try:
-                    self._release_after_use(ref)
-                except Exception as exc:
-                    self.report_status(lastError=f"Model cleanup: {type(exc).__name__}: {exc}")
 
     def correct(self, raw: str, groups: Groups, status: JevStatus) -> Processed:
         return process_text(

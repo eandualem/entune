@@ -3,9 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-import time
 from pathlib import Path
-from typing import Any
 
 import pytest
 from starlette.testclient import TestClient
@@ -16,6 +14,7 @@ from dictum.recorder import wav_bytes
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store
+from tests.conftest import wait_for_build
 from tests.dictionary_samples import proposed
 from tests.test_server import StubProvider
 
@@ -31,16 +30,6 @@ def flow_db(path: Path, clips: list[bytes | None]) -> sqlite3.Connection:
     )
     db.commit()
     return db
-
-
-def wait_for_build(client: TestClient) -> dict[str, Any]:
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        state: dict[str, Any] = client.get("/api/dictionary/audio/build").json()
-        if state["phase"] in ("done", "error"):
-            return state
-        time.sleep(0.01)
-    pytest.fail("Audio dictionary build did not finish")
 
 
 def test_wispr_snapshot_reads_committed_wal_and_ignores_later_writes(tmp_path: Path) -> None:
@@ -133,11 +122,11 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
     store = Store(tmp_path)
     dictum = Dictum(store, [stub], llm_call=fake)
     client = TestClient(create_app(dictum), base_url="http://localhost")
-    assert client.post("/api/dictionary/audio/build").status_code == 400
+    assert client.post("/api/dictionary/build", json={"source": "audio"}).status_code == 400
     client.put(
         "/api/settings", json={"keys": {"stub": "k", "openai": "k"}, "defaultModel": "stub/good"}
     )
-    assert "Import audio" in client.post("/api/dictionary/audio/build").text
+    assert "Import audio" in client.post("/api/dictionary/build", json={"source": "audio"}).text
     pinned = {"spelling": "PinnedName", "description": "person", "heard": ["pin name"]}
     original = {"pinned": [pinned], "learned": {"stub/other": [{"spelling": "OtherOnly"}]}}
     client.put("/api/dictionary", json=original)
@@ -147,10 +136,11 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
             "/api/dictionary/audio", files={"audio": (f"{i}.wav", wav_bytes(bytes([i, 0]) * 16))}
         )
     try:
-        assert client.post("/api/dictionary/audio/build").status_code == 202
+        started = client.post("/api/dictionary/build", json={"source": "audio"})
+        assert started.status_code == 202
         assert entered.wait(5)
-        assert client.post("/api/dictionary/audio/build").status_code == 400
-        assert client.delete("/api/dictionary/audio/build").status_code == 409
+        assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 409
+        assert client.delete(f"/api/dictionary/build/{started.json()['id']}").status_code == 409
         client.put(
             "/api/settings",
             json={"defaultModel": "stub/other", "dictionaryModel": "openai:gpt-6-astra"},
@@ -158,23 +148,18 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
     finally:
         release.set()
     result = wait_for_build(client)
-    assert result["phase"] == "done", result
+    assert result["phase"] == "ready", result
     assert calls == ["good", "good"] and len(prompts) == 2
     assert '"spelling": "Claude Code"' in prompts[1]  # next chunk gets the working list
     assert result["proposal"]["model"] == "stub/good"
     assert result["proposal"]["version"] == before.headers["etag"]
     assert client.get("/api/dictionary").json() == before.json()  # review before saving
-    accepted = before.json()
-    accepted["learned"]["stub/good"] = result["proposal"]["learned"]
-    assert (
-        client.put(
-            "/api/dictionary", json=accepted, headers={"If-Match": before.headers["etag"]}
-        ).status_code
-        == 200
-    )
-    assert client.get("/api/dictionary").json()["pinned"] == before.json()["pinned"]
-    assert client.delete("/api/dictionary/audio/build").status_code == 200
-    assert client.get("/api/dictionary/audio/build").json() == {"phase": "idle"}
+    assert client.post(f"/api/dictionary/build/{result['id']}/accept").status_code == 200
+    saved = client.get("/api/dictionary").json()
+    assert saved["pinned"] == before.json()["pinned"]
+    assert saved["learned"]["stub/other"] == before.json()["learned"]["stub/other"]
+    assert saved["learned"]["stub/good"] == result["proposal"]["learned"]
+    assert client.get("/api/dictionary/build").json()["phase"] == "accepted"
     assert store.list_recordings() == [] and store.timed_transcriptions() == []
     assert not any(
         "I use cloud code" in p.read_bytes().decode(errors="ignore")
@@ -202,14 +187,16 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
     client.post("/api/dictionary/audio", files={"audio": ("clip.wav", wav_bytes(b"\0\0" * 16))})
     for model in ("good", "other", "bad"):
         client.put("/api/settings", json={"defaultModel": f"stub/{model}"})
-        assert client.post("/api/dictionary/audio/build").status_code == 202
+        started = client.post("/api/dictionary/build", json={"source": "audio"})
+        assert started.status_code == 202
         result = wait_for_build(client)
         if model == "bad":
-            assert result["phase"] == "error" and "HTTP 401 Unauthorized\n{}" in result["error"]
+            assert result["phase"] == "failed" and "HTTP 401 Unauthorized\n{}" in result["error"]
             assert "proposal" not in result
         else:
-            assert result["phase"] == "done", result
+            assert result["phase"] == "ready", result
             assert result["proposal"]["model"] == f"stub/{model}"
+        assert client.delete(f"/api/dictionary/build/{result['id']}").status_code == 200
     assert len(stub.calls) == 3 and len(prompts) == 2  # no fallback or retry
     assert client.get("/api/dictionary/audio").json() == {"count": 1}
     assert store.list_recordings() == []

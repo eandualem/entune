@@ -21,7 +21,9 @@ src/dictum/
   dictionary_legacy.py  old-file conversion and the confirmed-correction API boundary
   jev.py          Jev, TypeSafe's decision model: one request per transcript deciding each
                   dictionary match in context, and one for paragraph breaks and bullets
-  llm.py          dictionary-build orchestration, model choices and provider calls
+  builds.py       shared history/audio job: frozen snapshot, progress, cancellation, proposal
+  resources.py    speech leases, local foreground priority, warming and owned cleanup
+  llm.py          sequential dictionary refinement, model choices and provider calls
   prompts/        packaged generation text and structured Jev questions/criteria/examples;
                   a small resource loader substitutes literal values
   shortcuts.py    shortcut strings: hold key, hands-free chord
@@ -60,6 +62,35 @@ preceding text. History polling invalidates on processing updates as well as
 new recordings. Dictum owns a lazy Jev event loop and HTTP pool: cancellable
 requests share one processing deadline, including bounded retries, and the
 CLI closes the client at shutdown. Speech and processing failures are distinct.
+
+History/audio builds share one job owner; only a server-held proposal can be accepted
+against its original dictionary revision. A job snapshots source records, speech/model
+keys and groups before starting. Its worker never reads changing Settings or the history
+store. Audio bytes are read one clip at a time and verified against the imported hash.
+Temporary transcripts stay in memory; neither cancellation nor restart adds a resume cache.
+Generation uses one cancellable event loop for sequential steps, with a 20-minute total
+limit per generation step. Status counts all prompt characters, including the growing
+working dictionary. This is not a token estimate or a guarantee against provider limits.
+
+SpeechResources grants one local operation at a time; waiting dictation precedes background
+clips/warming. Cloud inference can proceed concurrently. Warm requests coalesce to the latest
+selection. An in-use model stays alive through raw-transcript persistence, then releases
+before Jev processing. A background clip must release resources before proceeding. No
+proposal is published until generation clients and inference leases exit and transient text
+is cleared. Failed background cleanup fails the build; foreground cleanup reports a warning
+without erasing already-persisted speech.
+
+Shutdown rejects new work, cancels generation and owns worker/client/upload/download/helper
+cleanup. Jev has a separate two-second close bound; builds and speech resources share a further
+two-second wait. The service returns whether cleanup finished and logs incomplete cleanup.
+Synchronous speech/HTTP/native inference cannot be forcibly interrupted safely: after the
+wait, owned daemon workers may still drain until process exit. No later clip or generation
+step starts. Force exit cannot guarantee remote job deletion or final temporary-file cleanup.
+Downloads stop at their next network boundary, keep resumable `.part` weights, and close
+before their owning HTTP client. Conversion subprocesses have a five-minute timeout and
+remove temporary inputs in `finally`; Parakeet owns its helper and per-call temporary WAV.
+Injected HTTP clients remain the caller's responsibility. Original recordings/imports are
+never cleanup targets.
 
 Principles, from AGENTS.md: explicit configuration (a missing default model
 is a visible error, not a guess); adapters return the provider's error

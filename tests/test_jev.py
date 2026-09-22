@@ -16,7 +16,6 @@ from starlette.testclient import TestClient
 
 from dictum import dictionary, jev, matching
 from dictum.processing import process_text
-from dictum.providers.registry import ModelRef
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store
@@ -442,11 +441,12 @@ def test_postprocessing_exceptions_cannot_erase_speech_or_skip_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with closing(Store(tmp_path)) as store:
-        service = Dictum(store, [StubProvider()])
+        provider = StubProvider()
+        closed: list[bool] = []
+        monkeypatch.setattr(provider, "close", lambda: closed.append(True), raising=False)
+        service = Dictum(store, [provider])
         service.set_key("stub", "k")
         service.set_default_model("stub/good")
-        released: list[ModelRef] = []
-        monkeypatch.setattr(service, "_release_after_use", released.append)
 
         def broken(*args: object) -> None:
             raise KeyError("unexpected processing failure")
@@ -456,7 +456,7 @@ def test_postprocessing_exceptions_cannot_erase_speech_or_skip_release(
         attempt = result.transcriptions[0]
         assert attempt.status == "ok" and attempt.raw_text == attempt.text
         assert attempt.correction is not None and attempt.correction.status == "failed"
-        assert attempt.correction.replacements == 0 and len(released) == 1
+        assert attempt.correction.replacements == 0
         assert store.audio_path(result).read_bytes() == WEBM_HEADER
 
         monkeypatch.setattr(store, "finish_processing", broken)
@@ -468,7 +468,7 @@ def test_postprocessing_exceptions_cannot_erase_speech_or_skip_release(
         )
         saved = store.get_recording(result.id)
         assert saved is not None and saved.transcriptions[0].raw_text == attempt.raw_text
-        assert len(released) == 2
+        assert service.close() and closed == [True]
 
 
 def test_formatting_without_context_keeps_direct_replacement_metrics_separate() -> None:

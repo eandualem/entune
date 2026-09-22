@@ -20,7 +20,7 @@ from dictum.recorder import wav_bytes
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store
-from tests.conftest import WEBM_HEADER, mock_client
+from tests.conftest import WEBM_HEADER, mock_client, wait_for_build
 from tests.dictionary_samples import JEV, group, proposed
 
 
@@ -399,27 +399,28 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
 
     dictum = Dictum(Store(tmp_path), [stub], llm_call=fake)
     client = TestClient(create_app(dictum), base_url="http://localhost")
-    res = client.post("/api/dictionary/build")
+    res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 400 and "Add an Anthropic or OpenAI key" in res.text
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
-    res = client.post("/api/dictionary/build")
+    res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 400 and "No API key set for OpenAI" in res.text
     client.put("/api/settings", json={"keys": {"openai": "sk-1", "stub": "k"}})
-    res = client.post("/api/dictionary/build")
+    res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 400 and "Pick a default model first" in res.text
     client.put("/api/settings", json={"defaultModel": "stub/good"})
     rec = client.post(
         "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}, data={"model": "stub/bad"}
     ).json()
     dictum.store.add_transcription(rec["id"], "stub", "other", "ok", "from another model", None)
-    res = client.post("/api/dictionary/build")
+    res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 400 and "no transcripts from Stub / good" in res.text
 
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
     client.put("/api/dictionary", json={"pinned": [CLAUDE_CODE]})
-    res = client.post("/api/dictionary/build")
-    assert res.status_code == 200, res.text
-    proposal = res.json()
+    res = client.post("/api/dictionary/build", json={"source": "history"})
+    assert res.status_code == 202, res.text
+    first = wait_for_build(client)
+    proposal = first["proposal"]
     assert calls == [("openai:gpt-6-astra", "sk-1")]
     assert proposal["model"] == "stub/good"
     assert len(proposal["learned"]) == 1
@@ -429,14 +430,18 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     # Nothing is saved until the page accepts.
     assert client.get("/api/dictionary").json()["learned"] == {}
     # An edit during the next build invalidates acceptance of that snapshot.
-    pending = client.post("/api/dictionary/build").json()
-    current = client.get("/api/dictionary").json()
-    stale_document = {**current, "learned": {pending["model"]: pending["learned"]}}
-    stale = client.put(
-        "/api/dictionary", json=stale_document, headers={"If-Match": pending["version"]}
+    assert client.delete(f"/api/dictionary/build/{first['id']}").status_code == 200
+    assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 202
+    pending = wait_for_build(client)
+    current = client.get("/api/dictionary")  # even reloading cannot rebase a stale proposal
+    stale = client.post(
+        f"/api/dictionary/build/{pending['id']}/accept",
+        headers={"If-Match": current.headers["etag"]},
     )
     assert stale.status_code == 409
-    assert client.get("/api/dictionary").json() == current
+    assert client.get("/api/dictionary").json() == current.json()
+    assert client.get("/api/dictionary/build").json()["phase"] == "ready"
+    assert dictum.close()
 
 
 def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvider) -> None:

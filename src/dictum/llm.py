@@ -400,7 +400,7 @@ def _openai_text(events: list[dict[str, Any]]) -> str:
     return "\n".join(block["text"] for block in blocks if block.get("type") == "output_text")
 
 
-def propose_learned(
+async def propose_learned(
     provider: str,
     api_key: str,
     model: str,
@@ -408,6 +408,8 @@ def propose_learned(
     transcripts: Sequence[str],
     speech_model: str,
     call: Caller = call_model,
+    *,
+    progress: Callable[[int, int, int], None] | None = None,
 ) -> Groups:
     """Ask the model for a new `learned` section for `speech_model`, from its transcripts.
 
@@ -419,11 +421,14 @@ def propose_learned(
     proposed = current.learned_for(speech_model)
     steps = batches(transcripts)
     for number, step in enumerate(steps, 1):
+        await asyncio.sleep(0)  # cancellation between chunks even for immediate test callers
         user_prompt = build_user_prompt(current, step, speech_model, proposed, (number, len(steps)))
+        system_prompt = prompts.text("dictionary-system.txt")
+        if progress:
+            progress(number, len(steps), len(system_prompt) + len(user_prompt))
         try:
-            reply = asyncio.run(
-                call(provider, api_key, model, prompts.text("dictionary-system.txt"), user_prompt)
-            )
+            async with asyncio.timeout(1200):
+                reply = await call(provider, api_key, model, system_prompt, user_prompt)
             proposed = parse_reply(reply, proposed, transcripts=step, pinned=current.pinned)
         except Exception as exc:
             raise ValueError(f"Step {number} of {len(steps)}: {type(exc).__name__}: {exc}") from exc
