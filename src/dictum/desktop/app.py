@@ -414,7 +414,7 @@ class DictumApp:
             # Delivered on the UI thread: on macOS the paste goes through HIToolbox, which
             # only allows it there.
             text = attempt.text
-            processing_notice = notice(attempt.correction, attempt.formatting)
+            processing_notice = notice(attempt.correction, attempt.formatting, attempt.cleanup)
             self._later(lambda: self._deliver(text, processing_notice))
         elif attempt.status == "ok":
             self._later(lambda: self.platform.actions.notify("Dictum", "No speech detected."))

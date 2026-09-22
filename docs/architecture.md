@@ -19,8 +19,10 @@ src/dictum/
   dictionary.py   versioned confusion groups, meanings/associations, scope, pinning, proposals
   matching.py     derived many-to-many lookup, overlap interpretations and exact edits
   dictionary_legacy.py  old-file conversion and the confirmed-correction API boundary
-  jev.py          Jev, TypeSafe's decision model: one request per transcript deciding each
-                  dictionary match in context, and one for paragraph breaks and bullets
+  jev.py          bounded classification requests for dictionary meanings, fillers and formatting
+  formatting.py   conservative sentence spans and whitespace/bullet edits
+  cleanup.py      bounded repeated-filler candidates; no arbitrary deletion discovery
+  text_edits.py   source-validated stage edits and shared quote/code exclusions
   builds.py       shared history/audio job: frozen snapshot, progress, cancellation, proposal
   resources.py    speech leases, local foreground priority, warming and owned cleanup
   llm.py          sequential dictionary refinement, model choices and provider calls
@@ -52,14 +54,17 @@ the engine starts and stops the recorder; on stop, a persist worker writes
 the clip to disk and history at once, and one transcription worker takes
 clips in the order they were spoken: provider call, raw success persisted,
 eligible meanings/spans retrieved and decided in original context (else only approved
-direct mappings apply), formatting if on, independent stage outcomes stored. The transcript is copied and
+direct mappings apply), opt-in filler reduction then formatting, independent stage
+outcomes and exact changes stored. The transcript is copied and
 pasted on the main thread, because HIToolbox insists on it. With fast mode
 on, the recorder's chunks are streamed to AssemblyAI while recording and a
 clip over two minutes is transcribed from that upload. A local model is
 loaded while it is the selected default and freed when it is not; Parakeet
 lives in a helper process that exits on unload. Failed contextual correction
-keeps the exact raw text and skips formatting; a formatter failure keeps the
-preceding text. History polling invalidates on processing updates as well as
+keeps the exact raw text and skips cleanup/formatting; a failure in either later stage
+keeps its input. No model generates text or deletion offsets. Code validates its own
+proposed spans before applying edits; original speech and operation counts remain separate.
+History polling invalidates on processing updates as well as
 new recordings. Dictum owns a lazy Jev event loop and HTTP pool: cancellable
 requests share one processing deadline, including bounded retries, and the
 desktop owner (or CLI in browser mode) closes the client at shutdown. Speech and

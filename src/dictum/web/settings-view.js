@@ -110,14 +110,15 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     }
   });
 
-  // Jev: its key, the two things it can do to every transcript, and what it has done.
-  const jev = { dictionary: el("jev-dictionary"), formatting: el("jev-formatting"), key: el("key-typesafe") };
+  // Jev: its key, independent processing controls, and what it has done.
+  const jev = { dictionary: el("jev-dictionary"), formatting: el("jev-formatting"), cleanup: el("jev-cleanup"), key: el("key-typesafe") };
   function renderJev() {
     const j = settings.jev;
     jev.key.value = "";
     jev.key.placeholder = j.key_hint ? `saved ${j.key_hint} · type to replace` : "Not set";
     jev.dictionary.checked = j.dictionary;
     jev.formatting.checked = j.formatting;
+    jev.cleanup.checked = j.cleanup;
     for (const name of ["total_seconds", "attempt_seconds", "max_attempts"]) {
       el(`jev-${name}`).value = j.policy[name];
     }
@@ -125,14 +126,18 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const lines = [];
     if (s.transcriptions) {
       lines.push(`${s.transcriptions} processed transcripts · median +${s.median_seconds?.toFixed(1) ?? "–"} s`);
-      for (const [method, label] of [["contextual", "Contextual dictionary"], ["deterministic", "Approved direct mappings"], ["unconditional", "Historical unconditional mappings"], ["formatting", "Formatting"]]) {
+      for (const [method, label] of [["contextual", "Contextual dictionary"], ["deterministic", "Approved direct mappings"], ["unconditional", "Historical unconditional mappings"], ["cleanup", "Filler reduction"], ["formatting", "Formatting"]]) {
         const stage = s.stages[method];
         if (!stage.succeeded && !stage.failed && !stage.replacements && !stage.decisions) continue;
+        if (["cleanup", "formatting"].includes(method)) {
+          lines.push(`${label}: ${stage.succeeded} succeeded, ${stage.failed} failed, ${stage.skipped} skipped; decisions: ${stage.decisions}; recorded span changes: ${stage.changes}; words removed: ${stage.removed_words}; retries: ${stage.retries}; median +${stage.median_seconds?.toFixed(1) ?? "–"} s`);
+          continue;
+        }
         lines.push(`${label}: ${stage.succeeded} succeeded, ${stage.failed} failed, ${stage.skipped} skipped; retries: ${stage.retries}; decisions: ${stage.decisions}; replacements: ${stage.replacements} (${stage.direct_replacements ?? 0} direct); preserved: ${stage.preserved}; unresolved: ${stage.abstained}`);
       }
-      lines.push("Counts describe processing, not accuracy. Legacy counters are excluded.");
+      lines.push("Counts describe processing, not accuracy. Span counts cover recorded edits only; legacy counters are excluded.");
     }
-    el("jev-summary").textContent = lines.join("\n") || (j.key_hint ? "" : "Add a TypeSafe key to turn either on.");
+    el("jev-summary").textContent = lines.join("\n") || (j.key_hint ? "" : "Add a TypeSafe key to enable processing.");
   }
   el("jev-policy-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -145,7 +150,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     if (!key) { flash(el("jev-key-status"), "Nothing to save", "ok"); return; }
     if (await saveSetting({ keys: { typesafe: key } }, el("jev-key-status"))) await loadSettings();
   });
-  for (const name of ["dictionary", "formatting"]) {
+  for (const name of ["dictionary", "formatting", "cleanup"]) {
     jev[name].addEventListener("change", async () => {
       if (!(await saveSetting({ jev: { [name]: jev[name].checked } }, el("jev-key-status")))) jev[name].checked = !jev[name].checked;
     });

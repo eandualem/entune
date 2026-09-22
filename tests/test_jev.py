@@ -14,7 +14,7 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from dictum import dictionary, jev, matching
+from dictum import dictionary, jev, matching, text_edits
 from dictum.processing import process_text
 from dictum.server import create_app
 from dictum.service import Dictum
@@ -213,6 +213,7 @@ def test_shutdown_cancels_inflight_work_and_rejects_new_requests() -> None:
 def test_formatting_inserts_breaks_and_bullets_and_keeps_every_word() -> None:
     text = "Two things. First, the key. And the model.  Second, the port. Then unrelated news."
     plan = {
+        "S00": {"continues": 1.0, "new_paragraph": 0.0, "list_item": 0.0},
         "S01": {"continues": 0.1, "new_paragraph": 0.1, "list_item": 0.8},
         "S02": {"continues": 0.6, "new_paragraph": 0.05, "list_item": 0.35},
         "S03": {"continues": 0.2, "new_paragraph": 0.1, "list_item": 0.7},
@@ -220,26 +221,26 @@ def test_formatting_inserts_breaks_and_bullets_and_keeps_every_word() -> None:
     }
     requests, handler = answering(lambda name, _: plan[name])
     with closing(jev.Client(httpx.MockTransport(handler))) as client:
-        formatted = jev.format_text(text, call(client))
+        formatted = text_edits.apply(text, jev.format_edits(text, call(client)).changes)
     assert (
         formatted == "Two things.\n\n- First, the key.\n- And the model.\n- Second, the port.\n\n"
         "Then unrelated news."
     )
     assert formatted.replace("\n", " ").replace("- ", "").split() == text.split()
     assert list(requests[0]["state"]["sentences"]) == ["S00", "S01", "S02", "S03", "S04"]
-    assert "S00" not in requests[0]["questions"]  # first-item semantics change in #117
+    assert "S00" in requests[0]["questions"]
     weak = {name: {"continues": 0.5, "new_paragraph": 0.5, "list_item": 0.0} for name in plan}
     with closing(
         jev.Client(httpx.MockTransport(answering(lambda name, _: weak[name])[1]))
     ) as client:
-        assert jev.format_text(text, call(client)) == text
+        assert jev.format_edits(text, call(client)).changes == ()
         context = call(client)
-        assert jev.format_text("One sentence only.", context) == "One sentence only."
+        assert jev.format_edits("One sentence only.", context).changes == ()
         assert context.attempts == 0
 
 
-def test_correction_failure_returns_exact_raw_and_skips_formatting() -> None:
-    raw = "  Jeff is fast.\nAnother sentence.  "
+def test_correction_failure_returns_exact_raw_and_skips_later_stages() -> None:
+    raw = "  Um um Jeff is fast.\nAnother sentence.  "
     seen = []
 
     def malformed(request: httpx.Request) -> httpx.Response:
@@ -252,12 +253,14 @@ def test_correction_failure_returns_exact_raw_and_skips_formatting() -> None:
             GROUPS,
             contextual=True,
             formatting=True,
+            cleanup=True,
             key="ts-key",
             client=client,
             policy=jev.Policy(),
         )
         assert result.text == raw
         assert result.correction.status == "failed" and result.formatting.status == "skipped"
+        assert result.cleanup.status == "skipped" and not result.cleanup.changes
         assert result.correction.attempts == 1 and result.correction.decisions == 0
         assert result.correction.replacements == 0 and len(seen) == 1
         missing = process_text(
@@ -389,32 +392,40 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
         assert attempt.correction.status == "failed" and attempt.raw_text == attempt.text
 
 
-def test_correction_and_formatting_share_one_deadline() -> None:
+def test_all_three_stages_share_one_deadline() -> None:
     async def respond(request: httpx.Request) -> httpx.Response:
-        if "sentences" in json.loads(request.content)["state"]:
+        state = json.loads(request.content)["state"]
+        if "sentences" in state:
             await asyncio.sleep(1)
             return answering(lambda *_: {"continues": 0.0, "new_paragraph": 1.0, "list_item": 0.0})[
                 1
             ](request)
+        if "fillers" in state:
+            await asyncio.sleep(0.04)
+            return answering(lambda *_: {"hesitation": 1.0})[1](request)
         await asyncio.sleep(0.08)
         return answering(lambda *_: {"i0": 1.0, "unresolved": 0.0})[1](request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as client:
         started = time.monotonic()
         result = process_text(
-            "Jeff is fast. Next topic.",
+            "Um um Jeff is fast. Next topic.",
             GROUPS,
             contextual=True,
             formatting=True,
+            cleanup=True,
             key="ts-key",
             client=client,
             policy=jev.Policy(total_seconds=0.2, attempt_seconds=1.0),
         )
         assert time.monotonic() - started < 0.6
-    assert result.text == "Jev is fast. Next topic."
+    assert result.text == "Um Jev is fast. Next topic."
     assert result.correction.status == "succeeded" and result.formatting.status == "failed"
-    assert result.correction.attempts == result.formatting.attempts == 1
-    assert 0.15 <= result.correction.seconds + result.formatting.seconds < 0.6
+    assert result.cleanup.status == "succeeded" and result.cleanup.removed_words == 1
+    assert result.correction.attempts == result.cleanup.attempts == result.formatting.attempts == 1
+    assert (
+        0.15 <= sum(s.seconds for s in (result.correction, result.cleanup, result.formatting)) < 0.6
+    )
 
 
 def test_network_timeout_retries_but_honors_retry_after_dates() -> None:
@@ -489,7 +500,7 @@ def test_formatting_without_context_keeps_direct_replacement_metrics_separate() 
     assert len(requests) == 1 and "sentences" in requests[0]["state"]
     assert result.correction.method == "deterministic" and result.correction.replacements == 1
     assert result.correction.decisions == result.correction.attempts == 0
-    assert result.formatting.status == "succeeded" and result.formatting.decisions == 1
+    assert result.formatting.status == "succeeded" and result.formatting.decisions == 2
 
 
 def test_identical_output_senses_aggregate_and_unknown_is_not_a_literal_meaning() -> None:
