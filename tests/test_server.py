@@ -267,12 +267,12 @@ def test_an_earlier_dictionary_form_is_converted_once(client: TestClient, tmp_pa
 def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     settings = client.get("/api/settings").json()
     assert [p["id"] for p in settings["llmProviders"]] == ["anthropic", "openai"]
-    assert settings["llmProviders"][0]["defaultModel"] == "anthropic:claude-fable-5-1"
+    assert settings["llmProviders"][0]["defaultModel"] == "anthropic:claude-sonnet-5"
     assert settings["llmProviders"][0]["models"][0] == {
-        "id": "anthropic:claude-fable-5-1",
-        "name": "Claude Fable 5.1",
+        "id": "anthropic:claude-sonnet-5",
+        "name": "Claude Sonnet 5",
     }
-    assert settings["llmProviders"][1]["models"][0]["id"] == "openai:gpt-6-astra"
+    assert settings["llmProviders"][1]["models"][0]["id"] == "openai:gpt-5.4-mini"
     assert settings["dictionaryModel"] is None
     bad = client.put("/api/settings", json={"dictionaryModel": "gemini:pro"})
     assert bad.status_code == 400 and "provider:model" in bad.text
@@ -280,7 +280,7 @@ def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     assert ok.status_code == 200
     settings = client.get("/api/settings").json()
     # A key is enough: the suggested model of the first provider with one is the default.
-    assert settings["dictionaryModel"] == "anthropic:claude-fable-5-1"
+    assert settings["dictionaryModel"] == "anthropic:claude-sonnet-5"
     assert settings["llmProviders"][0]["keyHint"] == "••••1234"
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
     assert client.get("/api/settings").json()["dictionaryModel"] == "openai:gpt-6-astra"

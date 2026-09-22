@@ -21,14 +21,11 @@ import httpx
 from dictum import dictionary as dictionary_file
 from dictum.dictionary import Dictionary, Entries
 
-# Providers we route to, with the model suggested first. The dictionary is built rarely
-# and its mistakes compound, so the strongest model of each provider is the default.
+# Providers we route to, with a reasonably priced model suggested first.
 LLM_PROVIDERS: dict[str, tuple[str, str]] = {
-    "anthropic": ("Anthropic", "anthropic:claude-fable-5-1"),
-    "openai": ("OpenAI", "openai:gpt-6-astra"),
+    "anthropic": ("Anthropic", "anthropic:claude-sonnet-5"),
+    "openai": ("OpenAI", "openai:gpt-5.4-mini"),
 }
-# Older Claude models use a token budget; current models use high reasoning effort.
-THINKING_BUDGET = 32_000
 MAX_OUTPUT_TOKENS = 8192
 MAX_TRANSCRIPTS = 300
 # A long history goes to the model in several steps, each with this much transcript,
@@ -44,13 +41,14 @@ class ModelChoice:
 
 _MODELS = {
     "anthropic": (
+        ("claude-sonnet-5", "Claude Sonnet 5"),
         ("claude-fable-5-1", "Claude Fable 5.1"),
         ("claude-opus-5", "Claude Opus 5"),
-        ("claude-sonnet-5", "Claude Sonnet 5"),
         ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
         ("claude-haiku-4-5", "Claude Haiku 4.5"),
     ),
     "openai": (
+        ("gpt-5.4-mini", "GPT-5.4 mini"),
         ("gpt-6-astra", "GPT-6 Astra"),
         ("gpt-5.6-sol", "GPT-5.6 Sol"),
         ("gpt-5.6-terra", "GPT-5.6 Terra"),
@@ -240,8 +238,8 @@ async def call_model(
             "max_tokens": MAX_OUTPUT_TOKENS,
             "stream": True,
         }
-        # Keep budget-based thinking for older/custom IDs supported before this
-        # adapter; newer Claude families use adaptive thinking and reject a budget.
+        # Use moderate effort for adaptive models; older models need no explicit
+        # thinking budget for dictionary extraction.
         adaptive = name.startswith(
             (
                 "claude-fable-5",
@@ -255,12 +253,7 @@ async def call_model(
             )
         )
         if adaptive:
-            payload.update(thinking={"type": "adaptive"}, output_config={"effort": "high"})
-        else:
-            payload.update(
-                thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
-                max_tokens=MAX_OUTPUT_TOKENS + THINKING_BUDGET,
-            )
+            payload.update(thinking={"type": "adaptive"}, output_config={"effort": "medium"})
     elif provider == "openai":
         url = "https://api.openai.com/v1/responses"
         headers = {"Authorization": f"Bearer {api_key}"}
@@ -273,7 +266,7 @@ async def call_model(
             "stream": True,
         }
         if name.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
-            payload["reasoning"] = {"effort": "high"}
+            payload["reasoning"] = {"effort": "medium"}
     else:
         raise ValueError(f"Unknown dictionary provider: {provider}")
 

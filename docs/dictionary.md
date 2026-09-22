@@ -108,7 +108,9 @@ transcripts (at most 300), the pinned section as
 approved and as evidence of who the user is and what they talk about, and
 that model's previous learned list to revise, to the language model chosen
 in Settings (with no choice, the suggested model of the first provider with
-a key), at high reasoning effort. A long history goes in steps of about
+a key). The suggestions are Claude Sonnet 5 and GPT-5.4 mini, with medium
+reasoning effort where supported; older Claude models run without extended
+thinking. A long history goes in steps of about
 24,000 characters of transcript, splitting a long transcript at word
 boundaries. Every supplied transcript is processed. Each step sees the
 working dictionary, starting with this model's existing learned entries,

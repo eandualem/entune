@@ -182,12 +182,10 @@ def test_provider_failures_surface_verbatim() -> None:
         )
 
 
-def test_catalog_lists_the_strongest_model_first() -> None:
+def test_catalog_lists_affordable_defaults_first() -> None:
     anthropic = llm.catalog("anthropic")
-    assert (
-        anthropic[0].id == "anthropic:claude-fable-5-1" and anthropic[0].name == "Claude Fable 5.1"
-    )
-    assert llm.catalog("openai")[0].id == "openai:gpt-6-astra"
+    assert anthropic[0].id == "anthropic:claude-sonnet-5" and anthropic[0].name == "Claude Sonnet 5"
+    assert llm.catalog("openai")[0].id == "openai:gpt-5.4-mini"
     assert all(c.id.startswith("openai:") for c in llm.catalog("openai"))
     assert not any("image" in c.id for c in llm.catalog("openai"))
 
@@ -251,8 +249,10 @@ def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
 @pytest.mark.parametrize(
     "model",
     [
+        "anthropic:claude-sonnet-5",
         "anthropic:claude-fable-5-1",
         "anthropic:claude-haiku-4-5",
+        "openai:gpt-5.4-mini",
         "openai:gpt-6-astra",
     ],
 )
@@ -272,11 +272,11 @@ def test_direct_request_keeps_prompts_model_and_reasoning(
             assert body["system"] == "system"
             assert body["messages"] == [{"role": "user", "content": "user"}]
             if "haiku" in model:
-                assert body["thinking"] == {"type": "enabled", "budget_tokens": 32000}
-                assert body["max_tokens"] == 40192
+                assert "thinking" not in body
             else:
                 assert body["thinking"] == {"type": "adaptive"}
-                assert body["output_config"] == {"effort": "high"}
+                assert body["output_config"] == {"effort": "medium"}
+            assert body["max_tokens"] == 8192
             return sse(
                 {"type": "message_start", "message": {"stop_reason": None}},
                 {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking"}},
@@ -305,7 +305,7 @@ def test_direct_request_keeps_prompts_model_and_reasoning(
                 {"type": "message_stop"},
             )
         assert body["instructions"] == "system" and body["input"] == "user"
-        assert body["reasoning"] == {"effort": "high"} and body["store"] is False
+        assert body["reasoning"] == {"effort": "medium"} and body["store"] is False
         assert body["max_output_tokens"] == 8192
         return openai_done("reply")
 
