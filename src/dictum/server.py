@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
+from zipfile import ZipFile
 
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
@@ -455,12 +459,67 @@ def create_app(app: Dictum) -> Starlette:
             headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"},
         )
 
+    def export_transcripts(_: Request) -> Response:
+        return JSONResponse(
+            {"recordings": [_recording_json(r) for r in app.store.list_recordings()]},
+            headers={
+                "Content-Disposition": 'attachment; filename="dictum-transcripts.json"',
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    def export_audio(_: Request) -> Response:
+        # Build on disk, off the event loop: years of audio must not fill memory.
+        # FileResponse streams it; the temporary copy is removed after download.
+        directory = TemporaryDirectory(prefix="dictum-export-")
+        path = Path(directory.name) / "dictum-audio.zip"
+        try:
+            recordings = app.store.list_recordings()
+            imported = app.store.dictionary_audio()
+            manifest: dict[str, list[dict[str, Any]]] = {"recordings": [], "dictionary_audio": []}
+            with ZipFile(path, "w", strict_timestamps=False) as archive:
+                for recording in recordings:
+                    source = app.store.audio_path(recording)
+                    name = f"audio/{source.name}"
+                    archive.write(source, name)
+                    manifest["recordings"].append(
+                        {
+                            "id": recording.id,
+                            "created_at": recording.created_at,
+                            "file": name,
+                            "mime": recording.mime,
+                        }
+                    )
+                for audio in imported:
+                    source = app.store.dictionary_audio_path(audio)
+                    name = f"dictionary-audio/{source.name}"
+                    archive.write(source, name)
+                    manifest["dictionary_audio"].append({**asdict(audio), "file": name})
+                archive.writestr(
+                    "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2)
+                )
+        except Exception as exc:
+            directory.cleanup()
+            if isinstance(exc, OSError):
+                return _bad(f"Could not export audio: {exc}", 500)
+            raise
+        return FileResponse(
+            path,
+            media_type="application/zip",
+            filename="dictum-audio.zip",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+            background=BackgroundTask(directory.cleanup),
+        )
+
     return Starlette(
         middleware=[Middleware(NoCache), Middleware(LocalOnly)],
         routes=[
             Route("/", index),
             Route("/api/settings", get_settings, methods=["GET"]),
             Route("/api/settings", put_settings, methods=["PUT"]),
+            Route("/api/exports/audio", export_audio),
+            Route("/api/exports/transcripts", export_transcripts),
             Route("/api/dictionary", get_dictionary, methods=["GET"]),
             Route("/api/dictionary", put_dictionary, methods=["PUT"]),
             Route("/api/dictionary/build", build_dictionary, methods=["POST"]),
