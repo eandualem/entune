@@ -203,6 +203,10 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .defs b { color: var(--text); font-weight: 600; }
 .defs.more { margin-top: var(--sp-10); padding-top: var(--sp-10); border-top: 1px solid var(--line-faint); }
 .help-panel .link { margin-top: var(--sp-10); font-size: var(--fs-12-5); }
+.audio-onboarding { padding: var(--sp-14) var(--sp-16); margin-bottom: var(--sp-12); border-radius: var(--r-10); background: var(--surface-raised); }
+.audio-onboarding summary { cursor: pointer; font-size: var(--fs-13); font-weight: 600; }
+.audio-actions { display: flex; flex-wrap: wrap; gap: var(--sp-8); }
+.audio-onboarding .err { color: var(--error); white-space: pre-wrap; }
 .proposal { border-radius: var(--r-10); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--accent-wash-hover); margin-bottom: var(--sp-12); }
 .proposal-head { display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-12) var(--sp-16); border-bottom: 1px solid var(--line-faint); }
 .proposal-title { font-weight: 600; }

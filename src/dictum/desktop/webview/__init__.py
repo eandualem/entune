@@ -88,6 +88,7 @@ class WebviewPlatform:
         webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
         if sys.platform == "darwin":
             _grant_media_capture()
+            _allow_directory_uploads()
             _terminate_through(tray._quit)
         window.create()
         webview.start(private_mode=False)  # the page keeps its appearance choice
@@ -336,6 +337,39 @@ def _grant_media_capture() -> None:
                 decide,
                 selector=b"webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:",
                 signature=b"v@:@@@q@?",
+            )
+        ],
+    )
+
+
+def _allow_directory_uploads() -> None:
+    """pywebview's Cocoa file-input handler ignores WebKit's directory-selection flag."""
+    import objc
+    from Foundation import NSURL
+    from webview.platforms.cocoa import BrowserView
+
+    def choose(self: Any, view: Any, parameters: Any, frame: Any, handler: Any) -> None:
+        instance = next(i for i in BrowserView.instances.values() if i.webview == view)
+        kind = (
+            webview.FileDialog.FOLDER if parameters.allowsDirectories() else webview.FileDialog.OPEN
+        )
+        files = instance.create_file_dialog(
+            kind,
+            "",
+            parameters.allowsMultipleSelection(),
+            "",
+            parameters._acceptedMIMETypes(),
+            main_thread=True,
+        )
+        handler([NSURL.fileURLWithPath_(path) for path in files] if files else None)
+
+    objc.classAddMethods(
+        BrowserView.BrowserDelegate,
+        [
+            objc.selector(
+                choose,
+                selector=b"webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:",
+                signature=b"v@:@@@@?",
             )
         ],
     )
