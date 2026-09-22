@@ -42,9 +42,12 @@ uv run dictum
 On macOS this opens Dictum's window (history, dictionary, settings) and
 puts a microphone icon in the menu bar; closing the window leaves it running
 there. Elsewhere, or with `--no-menu`, it is the page alone, opened in your
-browser at `http://localhost:4187`. The page's own Record button, the
-history, retry and the dictionary work wherever Python runs; the global
-shortcut and the automatic paste need the macOS menu-bar app for now.
+browser at `http://localhost:4187`. The page provides recording, history, retry
+and dictionary controls. Native
+shortcuts, paste, the recording indicator and permission setup are implemented
+for macOS only. Windows and Linux browser-mode installation and audio/provider
+availability are not verified end to end; portable dependencies are not a
+promise of native parity.
 `dictum --help` lists `--port`, `--data DIR`, `--no-open` and `--no-menu`.
 
 ## Permissions (macOS)
@@ -122,7 +125,7 @@ reach other apps as a modifier. Pick another key if you need fn elsewhere.
 | AssemblyAI | universal-3-5-pro | sync endpoint; clips over two minutes use the long-form endpoint |
 | Groq | whisper-large-v3-turbo | OpenAI-style transcriptions endpoint |
 | Soniox | stt-async-v5 | upload, poll, fetch; the upload is deleted afterwards |
-| Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | whisper.cpp on this machine; no key, nothing leaves the Mac |
+| Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
 | Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
 
 Enter a provider's API key in Settings and its model appears in the model
@@ -249,17 +252,33 @@ so prefer the standalone one. See [packaging](docs/packaging.md).
 
 ## Data and privacy
 
-Recordings, transcripts, settings and keys live in a local SQLite database
-and files at `~/Library/Application Support/dictum` on macOS or
-`~/.local/share/dictum` elsewhere, or wherever `DICTUM_DATA` or `--data`
-points. Nothing leaves your machine except:
+Recordings, transcripts, settings and keys live in a local SQLite database and
+files. `--data` overrides `DICTUM_DATA`; otherwise the directory is
+`~/Library/Application Support/dictum` on macOS, `%APPDATA%/dictum` on Windows
+(falling back to `~/AppData/Roaming/dictum`), and `$XDG_DATA_HOME/dictum` or
+`~/.local/share/dictum` elsewhere. Defining a data path does not establish platform support.
 
-- the audio clip, sent to the speech-to-text provider you picked for that
-  recording;
-- when you build from history or imported audio, the relevant transcripts, sent to the
-  language-model provider you chose in Settings.
+Enabled features determine what is sent out:
 
-No telemetry, no accounts, no cloud storage.
+- **Cloud speech:** the selected provider receives the audio clip; AssemblyAI fast
+  mode starts uploading during recording. Local Whisper.cpp and Parakeet transcribe
+  on this machine, without sending audio to a speech service.
+- **Dictionary builds:** the chosen Anthropic or OpenAI model receives raw source
+  transcripts and the pinned/working confusion groups, including definitions and
+  personal context. Refinement sends the current dictionary again with each chunk.
+- **Jev correction:** TypeSafe receives the original transcript, matched occurrences
+  and their eligible meanings, spellings, definitions and personal context.
+  **Jev formatting** sends the text being formatted and its sentence spans.
+  Turning on either feature sends text even when speech recognition is local.
+- **Optional model downloads:** Hugging Face serves local model weights; no dictation
+  audio or text is included. Parakeet's separately installed engine has its own
+  package downloads. Export files are generated locally and saved through the
+  browser or native Save panel.
+
+There is no Dictum account, telemetry or hosted history storage. Local speech alone
+does not make every enabled feature offline. Temporary onboarding transcripts are
+not retained by Dictum; this does not establish the remote providers' retention
+policies. Those depend on the provider and account you use.
 
 Saved audio and transcripts never automatically expire or get deleted, including
 audio imported for dictionary builds. **Settings → Data & Privacy** exports all

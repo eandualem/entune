@@ -89,3 +89,60 @@ quits rather than answering the shortcut twice.
 
 Not done: Developer ID signing and notarisation, which are needed only to
 hand the app to other Macs without Gatekeeper warnings.
+
+## Cocoa compatibility checks
+
+`desktop/macos/webview.py` owns Dictum's pywebview adaptations. It installs
+Objective-C methods once per process and binds them to the active window only
+while the shell runs. After teardown, capture is denied and file selection
+completes with no selection. Tested dependency versions are pywebview 6.2.1 and
+PyObjC 12.2.2; moving these hooks into a module does not remove upstream coupling.
+
+Upgrade checks must cover these specific dependencies:
+
+- `BrowserView.BrowserDelegate` media selector
+  `webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:`
+  (`v@:@@@q@?`): grant only microphone requests by our known WebView's main frame
+  on the configured local origin. Camera, other origins/ports, subframes and
+  unknown views are denied. macOS's separate microphone permission still applies.
+- `webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:`
+  (`v@:@@@@?`): use WebKit's directory flag, the requesting instance in
+  `BrowserView.instances`, and `create_file_dialog(..., main_thread=True)`.
+  Ordinary files retain upstream's private `_acceptedMIMETypes()` dependency;
+  folders do not need it. Selection, cancellation and failure must each complete
+  the handler once. Compatibility failures log and notify instead of hanging.
+- `BrowserView.AppDelegate.applicationShouldTerminate:` uses the upstream
+  `I@:@` signature. Cmd-Q/menu Quit/logout runs the desktop owner's capture
+  flush and service cleanup **before** returning `NSTerminateNow`; AppKit can
+  terminate without running Python `finally`. A quit exception cancels native
+  termination. Tray Quit uses the same owner, then permits window destruction;
+  ordinary Close continues to hide. Capture waiting is three seconds, followed
+  by the service's bounded cleanup, not a claim that microphone/OS calls have a
+  hard total deadline. Unfinished drain is reported, and no late paste is allowed.
+- Frameless title-bar layout depends on `standardWindowButton_`, its superview
+  and the parent container's frames. Check all three traffic-light controls,
+  resize/text size, drag area and full-screen entry/exit. A changed hierarchy
+  reports an error; full-screen positioning remains AppKit's responsibility.
+- `ALLOW_DOWNLOADS` delegates to pywebview's Cocoa download handling and native
+  Save panel. Verify audio ZIP, transcript JSON and individual audio downloads,
+  including cancel. No custom download delegate is installed by Dictum.
+
+Run the normal gates and `tests/test_webview.py` for selector registration,
+origin/type gating, picker callback completion, title-bar failure handling,
+close/destroy and capture/cleanup order. `tests/test_app.py` covers native
+permission recovery and capture delivery without changing system grants.
+Then use a separately launched signed bundle, an unused port and an isolated
+`--data` directory for native checks. Never quit the user's running instance,
+reset their permissions, or use private recordings/API keys in a smoke test.
+Automated callback checks do not establish real permission-dialog or Save-panel
+interaction; record which native interactions were actually exercised.
+
+Check that the installed bundle contains the web assets, all prompt resources,
+and `dictum/providers/local/parakeet_helper.py`. Verify the helper path resolves
+inside the bundle while `engine_python()` resolves outside it to the separately
+installed engine. Test its protocol without downloading weights or transcribing
+private audio; run real engine/inference tests only with an explicit test corpus.
+
+Windows has no native shortcut/paste/indicator/permission/lifecycle implementation
+or supported desktop package yet. Its data-directory branch and portable WebView
+libraries do not change that; Windows native work is tracked separately in #36.
