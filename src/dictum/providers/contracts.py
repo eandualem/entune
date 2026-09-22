@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from dictum.audio import extension_for, wav_duration_seconds, webm_duration_seconds
 
@@ -52,3 +52,10 @@ class Provider(Protocol):
     def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         """The provider's transcript of the clip, or its error verbatim; nothing else."""
         ...
+
+
+@runtime_checkable
+class Closeable(Protocol):
+    """An optional resource owner; close only after in-flight users have returned."""
+
+    def close(self) -> None: ...

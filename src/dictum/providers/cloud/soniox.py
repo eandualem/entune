@@ -36,8 +36,13 @@ class Soniox:
         client: httpx.Client | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        self._owns_client = client is None
         self._client = client or httpx.Client(timeout=DEFAULT_TIMEOUT)
         self._sleep = sleep
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
 
     def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         headers = {"Authorization": f"Bearer {api_key}"}

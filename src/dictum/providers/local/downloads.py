@@ -18,6 +18,7 @@ class Download:
         self._client, self._files, self._size = client, files, size
         self.received = sum(_have(target) for _, target in files)
         self.error: str | None = None
+        self._cancel = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True, name="dictum-download")
 
     @property
@@ -31,8 +32,15 @@ class Download:
     def start(self) -> None:
         self._thread.start()
 
+    def close(self) -> None:
+        """Keep resumable bytes, stop at the next network boundary and own the join."""
+        self._cancel.set()
+        self._thread.join()
+
     def _run(self) -> None:
         for url, target in self._files:
+            if self._cancel.is_set():
+                return
             if target.exists():
                 continue
             if not self._fetch(url, target):
@@ -74,6 +82,8 @@ class Download:
                         expected = int(length) if length is not None else None
                     with part.open("ab" if have else "wb") as out:
                         for chunk in response.iter_bytes():
+                            if self._cancel.is_set():
+                                return False
                             out.write(chunk)
                             self.received += len(chunk)
                     if expected is not None and part.stat().st_size != expected:
@@ -81,6 +91,8 @@ class Download:
                 else:
                     self.error = f"HTTP {response.status_code} from {url}"
                     return False
+            if self._cancel.is_set():
+                return False
             part.replace(target)
         except (httpx.HTTPError, OSError, ValueError) as exc:
             self.error = f"{type(exc).__name__}: {exc}"

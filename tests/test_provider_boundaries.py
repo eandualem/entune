@@ -40,13 +40,14 @@ def test_shared_conversion_uses_explicit_rate_and_cleans_up_failure(
     monkeypatch.setattr("dictum.providers.local.audio.shutil.which", lambda _: "/test/ffmpeg")
 
     def convert(
-        command: list[str], *, capture_output: bool, check: bool
+        command: list[str], *, capture_output: bool, check: bool, timeout: float
     ) -> subprocess.CompletedProcess[bytes]:
         source = Path(command[command.index("-i") + 1])
         paths.append(source)
         assert source.read_bytes() == b"encoded audio"
         assert command[command.index("-ar") + 1] == "16000"
         assert capture_output and check
+        assert timeout == 300
         raise subprocess.CalledProcessError(1, command)
 
     monkeypatch.setattr("dictum.providers.local.audio.subprocess.run", convert)

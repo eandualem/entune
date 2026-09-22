@@ -288,3 +288,47 @@ def test_aborting_an_upload_discards_audio_waiting_for_a_slow_connection() -> No
         upload._thread.join(2)
         assert not upload._thread.is_alive()
         assert sent == [] and upload._queue.empty()
+
+
+def test_adapters_close_owned_clients_but_leave_injected_clients_to_the_caller(
+    tmp_path: Path,
+) -> None:
+    from dictum.providers.cloud.assemblyai import AssemblyAI
+    from dictum.providers.cloud.groq import Groq
+    from dictum.providers.cloud.soniox import Soniox
+    from dictum.providers.local.parakeet import Parakeet
+    from dictum.providers.local.whisper import WhisperCpp
+
+    owned: list[AssemblyAI | Groq | Soniox | WhisperCpp | Parakeet] = [
+        AssemblyAI(),
+        Groq(),
+        Soniox(),
+        WhisperCpp(tmp_path),
+        Parakeet(tmp_path),
+    ]
+    for provider in owned:
+        provider.close()
+        assert provider._client.is_closed
+    with mock_client(lambda req: httpx.Response(200)) as client:
+        injected: list[AssemblyAI | Groq | Soniox | WhisperCpp | Parakeet] = [
+            AssemblyAI(client),
+            Groq(client),
+            Soniox(client),
+            WhisperCpp(tmp_path, client=client),
+            Parakeet(tmp_path, client=client),
+        ]
+        for provider in injected:
+            provider.close()
+            assert not client.is_closed
+
+
+def test_provider_close_aborts_owned_streaming_upload() -> None:
+    from dictum.providers.cloud.assemblyai import AssemblyAI, StreamingUpload
+
+    with mock_client(lambda req: httpx.Response(200, json={"upload_url": "test"})) as client:
+        provider = AssemblyAI(client)
+        upload = provider.begin_upload("key", 16000)
+        provider.close()
+        assert isinstance(upload, StreamingUpload)
+        assert upload._aborted.is_set() and not upload._thread.is_alive()
+        assert not client.is_closed

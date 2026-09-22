@@ -99,8 +99,10 @@ def test_propose_uses_chosen_model_and_does_not_change_the_live_dictionary() -> 
         return REPLY
 
     current = Dictionary()
-    learned = llm.propose_learned(
-        "anthropic", "k", "anthropic:claude-sonnet-5", current, [TEXT], "s/m", call=fake
+    learned = asyncio.run(
+        llm.propose_learned(
+            "anthropic", "k", "anthropic:claude-sonnet-5", current, [TEXT], "s/m", call=fake
+        )
     )
     assert learned[0].meanings[0].spelling == "Claude Code" and not current
     assert seen["model"] == "anthropic:claude-sonnet-5" and seen["provider"] == "anthropic"
@@ -186,14 +188,16 @@ def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
             "other/model": (group("Elsewhere", "else where"),),
         },
     )
-    learned = llm.propose_learned(
-        "openai",
-        "k",
-        "openai:gpt-6-astra",
-        current,
-        ["cloud code", "clod code", "third"],
-        "s/m",
-        call=fake,
+    learned = asyncio.run(
+        llm.propose_learned(
+            "openai",
+            "k",
+            "openai:gpt-6-astra",
+            current,
+            ["cloud code", "clod code", "third"],
+            "s/m",
+            call=fake,
+        )
     )
     target = next(g for g in learned if g.meanings[0].spelling == "Claude Code")
     assert (
@@ -221,14 +225,16 @@ def test_a_later_step_failure_returns_no_partial_dictionary(
         raise RuntimeError("HTTP 529")
 
     with pytest.raises(ValueError, match="Step 2 of 2: RuntimeError: HTTP 529"):
-        llm.propose_learned(
-            "openai",
-            "k",
-            "openai:gpt-6-astra",
-            Dictionary(),
-            ["cloud code", "three"],
-            "s/m",
-            call=failing,
+        asyncio.run(
+            llm.propose_learned(
+                "openai",
+                "k",
+                "openai:gpt-6-astra",
+                Dictionary(),
+                ["cloud code", "three"],
+                "s/m",
+                call=failing,
+            )
         )
 
 
@@ -237,8 +243,10 @@ def test_provider_failures_surface_verbatim() -> None:
         raise RuntimeError("status_code: 401, authentication_error")
 
     with pytest.raises(ValueError, match="RuntimeError: status_code: 401"):
-        llm.propose_learned(
-            "openai", "k", "openai:gpt-5.6-terra", Dictionary(), ["x"], "s/m", call=failing
+        asyncio.run(
+            llm.propose_learned(
+                "openai", "k", "openai:gpt-5.6-terra", Dictionary(), ["x"], "s/m", call=failing
+            )
         )
 
 
@@ -295,8 +303,8 @@ def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
     monkeypatch.setenv("OPENAI_BASE_URL", "https://elsewhere.invalid")
 
     def build(key: str) -> Groups:
-        return llm.propose_learned(
-            "openai", key, "openai:gpt-6-astra", Dictionary(), ["text"], "s/m"
+        return asyncio.run(
+            llm.propose_learned("openai", key, "openai:gpt-6-astra", Dictionary(), ["text"], "s/m")
         )
 
     with ThreadPoolExecutor(3) as pool:
