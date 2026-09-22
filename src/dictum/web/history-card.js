@@ -47,6 +47,13 @@ function player(url, label, seconds) {
 // Stage counts describe processing, not the accuracy of the delivered words.
 function processingLines(t) {
   const lines = [];
+  if (t.status === "ok" && t.error) {
+    const line = document.createElement("div");
+    line.className = "jev err";
+    line.setAttribute("role", "status");
+    line.textContent = t.error;
+    lines.push(line);
+  }
   for (const [name, stage] of [["Dictionary", t.correction], ["Filler reduction", t.cleanup], ["Formatting", t.formatting]]) {
     if (!stage || stage.status === "disabled") continue;
     const line = document.createElement("div");

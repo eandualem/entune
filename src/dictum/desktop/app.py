@@ -444,6 +444,8 @@ class DictumApp:
                 self.dictum.operations.stage(operation, "delivering")
                 self._wait_for_keys_up(operation)
                 message = notice(attempt.correction, attempt.formatting, attempt.cleanup)
+                if attempt.error:
+                    message = " ".join(part for part in (message, attempt.error) if part)
                 self._later(
                     lambda: self._deliver(attempt.text or "", message, operation, recording)
                 )

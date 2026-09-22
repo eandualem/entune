@@ -936,8 +936,7 @@ class Dictum:
                 except Exception as exc:
                     # Completed stages were saved individually. A final-write failure
                     # must never revert a successful earlier enhancement to raw speech.
-                    processed = processing.failed(
-                        latest.text,
+                    processed = processing.interrupted(
                         latest,
                         f"Could not save processing: {type(exc).__name__}: {exc}",
                     )

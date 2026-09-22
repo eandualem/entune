@@ -15,7 +15,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from dictum import dictionary, jev, matching, text_edits
-from dictum.processing import process_text
+from dictum.processing import Processed, process_text
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store
@@ -470,12 +470,68 @@ def test_postprocessing_exceptions_cannot_erase_speech_or_skip_release(
         result = service.record_and_transcribe(WEBM_HEADER, None, None)
         attempt = result.transcriptions[0]
         assert attempt.status == "ok" and attempt.text == attempt.raw_text
-        assert attempt.correction is not None and "Could not save processing" in (
-            attempt.correction.error or ""
-        )
+        assert "Could not save final processing state" in (attempt.error or "")
         saved = store.get_recording(result.id)
         assert saved is not None and saved.transcriptions[0].raw_text == attempt.raw_text
         assert service.close() and closed == [True]
+
+
+def test_final_write_failure_preserves_completed_stage_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with closing(Store(tmp_path)) as store:
+        persist = store.finish_processing
+
+        def fail_final(attempt_id: int, result: Processed, *, final: bool = True) -> None:
+            if final:
+                raise OSError("disk unavailable")
+            persist(attempt_id, result, final=False)
+
+        monkeypatch.setattr(store, "finish_processing", fail_final)
+        with closing(
+            jev.Client(httpx.MockTransport(answering(lambda *_: {"i0": 1.0})[1]))
+        ) as network:
+            service = Dictum(store, [StubProvider()], jev_client=network)
+            with TestClient(create_app(service), base_url="http://localhost") as client:
+                assert (
+                    client.put(
+                        "/api/settings",
+                        json={
+                            "keys": {"stub": "k", "typesafe": "ts-key"},
+                            "defaultModel": "stub/good",
+                            "jev": {"dictionary": True},
+                        },
+                    ).status_code
+                    == 200
+                )
+                assert (
+                    client.put(
+                        "/api/dictionary",
+                        json={
+                            "version": 2,
+                            "pinned": [GROUPS[1].as_json()],
+                        },
+                    ).status_code
+                    == 200
+                )
+                recording = client.post(
+                    "/api/recordings",
+                    files={
+                        "audio": ("clip", WEBM_HEADER, ""),
+                    },
+                ).json()
+                attempt = recording["transcriptions"][0]
+                assert attempt["text"] == "hello there, I use Claude Code"
+                assert "disk unavailable" in attempt["error"]
+                assert attempt["correction"]["status"] == "succeeded"
+                saved = store.get_recording(recording["id"])
+                assert saved is not None
+                durable = saved.transcriptions[0]
+                assert durable.raw_text == "hello there, I use cloud code"
+                assert durable.correction is not None
+                assert durable.correction.status == "succeeded"
+                assert durable.correction.output == attempt["text"]
+                assert durable.correction.selections and durable.correction.changes
 
 
 def test_formatting_with_dictionary_disabled_does_not_apply_even_direct_mappings() -> None:
