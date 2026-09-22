@@ -14,21 +14,27 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from dictum import jev
-from dictum.dictionary import Entry, matches
+from dictum import dictionary, jev, matching
 from dictum.processing import process_text
 from dictum.providers.registry import ModelRef
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store
 from tests.conftest import WEBM_HEADER
+from tests.dictionary_samples import JEV, group
 from tests.test_server import StubProvider
 
-ENTRIES = (
-    Entry("JEV", "TypeSafe's decision model; not a person named Jeff", ("Jeff", "jav")),
-    Entry("Claude Code", "", ("cloud code",)),
-    Entry("Dictum", "the dictation app", ("victim",)),
+GROUPS = (
+    JEV,
+    group("Claude Code", "cloud code", literal="Program code for cloud infrastructure."),
+    group("Dictum", "victim"),
 )
+
+
+def matches(groups: tuple[Any, ...], text: str) -> list[matching.Component]:
+    return matching.components(matching.matches(groups, text))
+
+
 Handler = Callable[[httpx.Request], httpx.Response]
 
 
@@ -44,7 +50,8 @@ def answering(
         assert body["model"] == jev.MODEL
         answers = {}
         for name, question in body["questions"].items():
-            p = decide(name, question)
+            p = {option: 0.0 for option in question["criteria"]}
+            p.update(decide(name, question))
             answers[name] = {
                 "type": "choice",
                 "choice": max(p, key=lambda k: p[k]),
@@ -61,40 +68,36 @@ def call(client: jev.Client, policy: jev.Policy | None = None) -> jev.Call:
     return jev.Call(client, "ts-key", policy, time.monotonic() + policy.total_seconds)
 
 
-def test_decide_sends_only_matched_entries_and_vetoes_on_probability() -> None:
-    text = "Jeff is my brother. jav is fast, and cloud code runs it."
+@pytest.mark.parametrize("pinned", [False, True])
+def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> None:
+    text = "My colleague Jeff called. Use Jeff to classify. Send the animated GIF."
     requests, handler = answering(
         lambda name, _: (
-            {"term": 0.1, "recognised": 0.9} if name == "o0" else {"term": 0.97, "recognised": 0.03}
+            {"i1": 0.95, "unresolved": 0.05}
+            if name in ("o0", "o2")
+            else {"i0": 0.95, "unresolved": 0.05}
         )
     )
     with closing(jev.Client(httpx.MockTransport(handler))) as client:
         context = call(client)
-        decisions = jev.decide(text, matches(ENTRIES, text), context)
-        assert [(d.match.spelling, d.replace, d.recognised) for d in decisions] == [
-            ("JEV", False, 0.9),
-            ("JEV", True, 0.03),
-            ("Claude Code", True, 0.03),
-        ]
+        document = dictionary.Dictionary(learned={"speech/model": GROUPS})
+        if pinned:
+            document = dictionary.pin(document, "speech/model", "g_jev", "a_jev")
+        decisions = jev.decide(text, matches(document.effective("speech/model"), text), context)
+        edits = tuple(d.edit for d in decisions if d.edit)
+        assert (
+            matching.apply(text, edits)
+            == "My colleague Jeff called. Use Jev to classify. Send the animated GIF."
+        )
         assert context.attempts == 1 and context.decisions == 3
         assert jev.decide(text, [], call(client)) == []
     state = requests[0]["state"]
-    assert state["transcript"] == text
-    assert state["terms"] == {
-        "JEV": {"spelling": "JEV", "meaning": "TypeSafe's decision model; not a person named Jeff"},
-        "Claude_Code": {
-            "spelling": "Claude Code",
-            "meaning": "the term 'Claude Code', as this person spells it",
-        },
-    }
-    assert state["occurrences"]["o1"] == {
-        "heard": "jav",
-        "before": "Jeff is my brother. ",
-        "after": " is fast, and cloud code runs it.",
-    }
-    question = requests[0]["questions"]["o2"]
-    assert "`terms.Claude_Code`" in question["instructions"]["question"]
-    assert set(question["criteria"]) == {"term", "recognised"}
+    assert state["transcript"] == text and set(state["meanings"]) == {"a_jev", "b_jeff", "c_gif"}
+    assert state["meanings"]["b_jeff"]["personal_context"] is None
+    assert state["occurrences"]["o1"]["before"] == "My colleague Jeff called. Use "
+    question = requests[0]["questions"]["o0"]
+    assert set(question["criteria"]) == {"i0", "i1", "unresolved"}
+    assert question["instructions"] and "interpretations.i0" in question["criteria"]["i0"]
 
 
 @pytest.mark.parametrize(
@@ -102,25 +105,25 @@ def test_decide_sends_only_matched_entries_and_vetoes_on_probability() -> None:
     [
         {},
         {"probabilities": None},
-        {"probabilities": {"term": True, "recognised": False}},
-        {"probabilities": {"term": 0.9, "recognised": 0.9}},
-        {"probabilities": {"term": float("nan"), "recognised": 0.0}},
-        {"probabilities": {"term": 1.0}},
-        {"probabilities": {"term": 1.0, "recognised": 0.0}, "type": "choice", "choice": "unknown"},
+        {"probabilities": {"i0": True, "unresolved": False}},
+        {"probabilities": {"i0": 0.9, "unresolved": 0.9}},
+        {"probabilities": {"i0": float("nan"), "unresolved": 0.0}},
+        {"probabilities": {"i0": 1.0}},
+        {"probabilities": {"i0": 1.0, "unresolved": 0.0}, "type": "choice", "choice": "unknown"},
         {
-            "probabilities": {"term": 1.0, "recognised": 0.0},
+            "probabilities": {"i0": 1.0, "unresolved": 0.0},
             "type": "choice",
-            "choice": "recognised",
+            "choice": "unresolved",
         },
     ],
 )
 def test_missing_or_invalid_probabilities_and_choices_are_rejected(answer: object) -> None:
     with pytest.raises(jev.JevError, match="unusable answer"):
-        jev._probabilities(answer, {"term", "recognised"})
+        jev._probabilities(answer, {"i0", "unresolved"})
 
 
 def test_transient_retry_reuses_client_and_nonretryable_answers_stop() -> None:
-    requests, good = answering(lambda *_: {"term": 0.95, "recognised": 0.05})
+    requests, good = answering(lambda *_: {"i0": 0.95, "unresolved": 0.05})
     calls = 0
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -130,10 +133,10 @@ def test_transient_retry_reuses_client_and_nonretryable_answers_stop() -> None:
 
     with closing(jev.Client(httpx.MockTransport(respond))) as client:
         context = call(client)
-        jev.decide("Jeff", matches(ENTRIES, "Jeff"), context)
+        jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
         assert context.attempts == 2 and len(requests) == 1
         pool = client._http
-        jev.decide("Jeff", matches(ENTRIES, "Jeff"), call(client))
+        jev.decide("Jeff", matches(GROUPS, "Jeff"), call(client))
         assert client._http is pool
     assert pool is not None and pool.is_closed
 
@@ -152,7 +155,7 @@ def test_transient_retry_reuses_client_and_nonretryable_answers_stop() -> None:
         with closing(jev.Client(httpx.MockTransport(reject))) as client:
             context = call(client)
             with pytest.raises(jev.JevError) as caught:
-                jev.decide("Jeff", matches(ENTRIES, "Jeff"), context)
+                jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
             assert "ts-key" not in str(caught.value)
             assert context.attempts == 1
 
@@ -175,7 +178,7 @@ def test_total_deadline_cancels_a_dripping_body_and_releases_the_socket() -> Non
         context = call(client, jev.Policy(total_seconds=0.15, attempt_seconds=1.0))
         started = time.monotonic()
         with pytest.raises(jev.JevError):
-            jev.decide("Jeff", matches(ENTRIES, "Jeff"), context)
+            jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
         elapsed = time.monotonic() - started
         assert 0.1 <= elapsed < 0.6
         assert closed.wait(0.3) and context.attempts == 1
@@ -196,7 +199,7 @@ def test_shutdown_cancels_inflight_work_and_rejects_new_requests() -> None:
 
     client = jev.Client(httpx.MockTransport(stalled))
     with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(jev.decide, "Jeff", matches(ENTRIES, "Jeff"), call(client))
+        future = executor.submit(jev.decide, "Jeff", matches(GROUPS, "Jeff"), call(client))
         assert entered.wait(1)
         started = time.monotonic()
         client.close()
@@ -204,7 +207,7 @@ def test_shutdown_cancels_inflight_work_and_rejects_new_requests() -> None:
         with pytest.raises(jev.JevError, match="shutting down"):
             future.result(timeout=1)
     with pytest.raises(jev.JevError, match="shutting down"):
-        jev.decide("Jeff", matches(ENTRIES, "Jeff"), call(client))
+        jev.decide("Jeff", matches(GROUPS, "Jeff"), call(client))
     client.close()
 
 
@@ -247,7 +250,7 @@ def test_correction_failure_returns_exact_raw_and_skips_formatting() -> None:
     with closing(jev.Client(httpx.MockTransport(malformed))) as client:
         result = process_text(
             raw,
-            ENTRIES,
+            GROUPS,
             contextual=True,
             formatting=True,
             key="ts-key",
@@ -260,7 +263,7 @@ def test_correction_failure_returns_exact_raw_and_skips_formatting() -> None:
         assert result.correction.replacements == 0 and len(seen) == 1
         missing = process_text(
             raw,
-            ENTRIES,
+            GROUPS,
             contextual=True,
             formatting=True,
             key=None,
@@ -275,19 +278,19 @@ def test_formatter_failure_preserves_successful_correction() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         if "sentences" in json.loads(request.content)["state"]:
             return httpx.Response(401, text="invalid key")
-        return answering(lambda *_: {"term": 1.0, "recognised": 0.0})[1](request)
+        return answering(lambda *_: {"i0": 1.0, "unresolved": 0.0})[1](request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
             "Jeff is fast. Next topic.",
-            ENTRIES,
+            GROUPS,
             contextual=True,
             formatting=True,
             key="ts-key",
             client=client,
             policy=jev.Policy(),
         )
-    assert result.text == "JEV is fast. Next topic."
+    assert result.text == "Jev is fast. Next topic."
     assert result.correction.status == "succeeded" and result.correction.replacements == 1
     assert result.formatting.status == "failed" and result.formatting.attempts == 1
     assert result.correction.seconds > 0 and result.formatting.seconds > 0
@@ -296,7 +299,7 @@ def test_formatter_failure_preserves_successful_correction() -> None:
 def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> None:
     store = Store(tmp_path)
     seen_pending = []
-    handler = answering(lambda *_: {"term": 0.05, "recognised": 0.95})[1]
+    handler = answering(lambda *_: {"i0": 0.05, "i1": 0.95})[1]
 
     def respond(request: httpx.Request) -> httpx.Response:
         current = store.list_recordings()[0].transcriptions[0]
@@ -331,7 +334,7 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
             )
             client.put(
                 "/api/dictionary",
-                json={"pinned": [{"spelling": "Claude Code", "heard": ["cloud code"]}]},
+                json={"version": 2, "pinned": [GROUPS[1].as_json()]},
             )
             attempt = client.post(
                 "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}
@@ -342,7 +345,7 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
                 and attempt["correction"]["replacements"] == 0
             )
             assert seen_pending[-1] != store.history_version()
-            handler = answering(lambda *_: {"term": 0.9, "recognised": 0.1})[1]
+            handler = answering(lambda *_: {"i0": 0.9, "unresolved": 0.1})[1]
             attempt = client.post(
                 "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}
             ).json()["transcriptions"][0]
@@ -395,13 +398,13 @@ def test_correction_and_formatting_share_one_deadline() -> None:
                 1
             ](request)
         await asyncio.sleep(0.08)
-        return answering(lambda *_: {"term": 1.0, "recognised": 0.0})[1](request)
+        return answering(lambda *_: {"i0": 1.0, "unresolved": 0.0})[1](request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as client:
         started = time.monotonic()
         result = process_text(
             "Jeff is fast. Next topic.",
-            ENTRIES,
+            GROUPS,
             contextual=True,
             formatting=True,
             key="ts-key",
@@ -409,7 +412,7 @@ def test_correction_and_formatting_share_one_deadline() -> None:
             policy=jev.Policy(total_seconds=0.2, attempt_seconds=1.0),
         )
         assert time.monotonic() - started < 0.6
-    assert result.text == "JEV is fast. Next topic."
+    assert result.text == "Jev is fast. Next topic."
     assert result.correction.status == "succeeded" and result.formatting.status == "failed"
     assert result.correction.attempts == result.formatting.attempts == 1
     assert 0.15 <= result.correction.seconds + result.formatting.seconds < 0.6
@@ -423,11 +426,11 @@ def test_network_timeout_retries_but_honors_retry_after_dates() -> None:
         attempts += 1
         if attempts == 1:
             raise httpx.ReadTimeout("stalled ts-key")
-        return answering(lambda *_: {"term": 1.0, "recognised": 0.0})[1](request)
+        return answering(lambda *_: {"i0": 1.0, "unresolved": 0.0})[1](request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as client:
         context = call(client)
-        assert jev.decide("Jeff", matches(ENTRIES, "Jeff"), context)[0].replace
+        assert jev.decide("Jeff", matches(GROUPS, "Jeff"), context)[0].edit is not None
         assert context.attempts == 2
     from email.utils import formatdate
 
@@ -475,15 +478,132 @@ def test_formatting_without_context_keeps_direct_replacement_metrics_separate() 
     with closing(jev.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             "Jeff is fast. Next topic.",
-            ENTRIES,
+            (group("Jev", "Jeff", direct=True),),
             contextual=False,
             formatting=True,
             key="ts-key",
             client=client,
             policy=jev.Policy(),
         )
-    assert result.text == "JEV is fast.\n\nNext topic."
+    assert result.text == "Jev is fast.\n\nNext topic."
     assert len(requests) == 1 and "sentences" in requests[0]["state"]
-    assert result.correction.method == "unconditional" and result.correction.replacements == 1
+    assert result.correction.method == "deterministic" and result.correction.replacements == 1
     assert result.correction.decisions == result.correction.attempts == 0
     assert result.formatting.status == "succeeded" and result.formatting.decisions == 1
+
+
+def test_identical_output_senses_aggregate_and_unknown_is_not_a_literal_meaning() -> None:
+    from tests.dictionary_samples import CLOUD
+
+    requests, handler = answering(lambda *_: {"i0": 0.3, "i1": 0.35, "i2": 0.35})
+    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+        result = process_text(
+            "Cloud storage is remote.",
+            (CLOUD,),
+            contextual=True,
+            formatting=False,
+            key="ts-key",
+            client=client,
+            policy=jev.Policy(),
+        )
+    assert result.text == "Cloud storage is remote."
+    assert result.correction.preserved == 1 and result.correction.abstained == 0
+    assert len(requests) == 1 and result.correction.decisions == 1
+    # A painting title is not supplied as a meaning; this stub exercises the application
+    # abstention, not a prediction that a live model would identify missing coverage.
+    _, handler = answering(lambda *_: {"unresolved": 1.0})
+    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+        result = process_text(
+            "Cloud is her painting title.",
+            (CLOUD,),
+            contextual=True,
+            formatting=False,
+            key="ts-key",
+            client=client,
+            policy=jev.Policy(),
+        )
+    assert result.text == "Cloud is her painting title." and result.correction.abstained == 1
+    assert result.correction.status == "succeeded" and result.correction.replacements == 0
+
+
+def test_jif_has_two_evidenced_outputs_and_low_confidence_can_miss_a_correction() -> None:
+    for selected, expected in [("i0", "Use Jev here."), ("i1", "Use GIF here.")]:
+        _, handler = answering(lambda *_, option=selected: {option: 0.95, "unresolved": 0.05})
+        with closing(jev.Client(httpx.MockTransport(handler))) as client:
+            result = process_text(
+                "Use Jif here.",
+                (JEV,),
+                contextual=True,
+                formatting=False,
+                key="ts-key",
+                client=client,
+                policy=jev.Policy(),
+            )
+        assert result.text == expected and result.correction.replacements == 1
+    # Constructed loss: old aggressive binary veto would replace at term=.6/literal=.4.
+    # The new policy abstains. This is policy behavior, not a measured model prediction.
+    _, handler = answering(lambda *_: {"i0": 0.6, "i1": 0.35, "unresolved": 0.05})
+    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+        result = process_text(
+            "Use Jeff to classify.",
+            (JEV,),
+            contextual=True,
+            formatting=False,
+            key="ts-key",
+            client=client,
+            policy=jev.Policy(),
+        )
+    assert result.text == "Use Jeff to classify." and result.correction.abstained == 1
+
+
+def test_shorter_interpretation_can_win_over_phrase_and_edits_do_not_cascade() -> None:
+    groups = (group("Agent Backbone", "agent back bone"), group("backbone", "back bone"))
+    requests, handler = answering(lambda *_: {"i1": 0.95, "unresolved": 0.05})
+    raw = "😀 Restart agent back bone."
+    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+        result = process_text(
+            raw,
+            groups,
+            contextual=True,
+            formatting=False,
+            key="ts-key",
+            client=client,
+            policy=jev.Policy(),
+        )
+    assert result.text == "😀 Restart agent backbone."
+    assert requests[0]["state"]["transcript"] == raw
+    spans = requests[0]["state"]["occurrences"]["o0"]["interpretations"]
+    assert {(v[0]["start"], v[0]["end"]) for v in spans.values()} == {(10, 25), (16, 25)}
+    assert result.correction.decisions == 1  # classify the overlap as one coherent choice
+
+
+def test_direct_only_needs_no_request_but_failure_in_mixed_text_still_returns_all_raw() -> None:
+    direct = group("Dictum", "dictim", direct=True)
+
+    def failure(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text="unavailable")
+
+    with closing(jev.Client(httpx.MockTransport(failure))) as client:
+        result = process_text(
+            "Open dictim.",
+            (direct,),
+            contextual=True,
+            formatting=False,
+            key=None,
+            client=client,
+            policy=jev.Policy(),
+        )
+        assert result.text == "Open Dictum." and result.correction.attempts == 0
+        assert result.correction.direct_replacements == 1 and result.correction.decisions == 0
+        raw = "Open dictim. Use Jeff to classify."
+        result = process_text(
+            raw,
+            (direct, JEV),
+            contextual=True,
+            formatting=False,
+            key="ts-key",
+            client=client,
+            policy=jev.Policy(),
+        )
+    assert result.text == raw and result.correction.status == "failed"
+    assert result.correction.replacements == result.correction.direct_replacements == 0

@@ -246,6 +246,18 @@ document.addEventListener("visibilitychange", () => {
 
 // Copy (click on the transcript) and re-transcribe, delegated so re-renders need no rebinding.
 historyList.addEventListener("click", async (e) => {
+  const recovery = e.target.closest(".safe-copy");
+  if (recovery) {
+    const card = recovery.closest(".card"), message = card.querySelector(".card-row .status");
+    recovery.disabled = true;
+    try {
+      const result = await api(`/api/recordings/${card.dataset.id}/transcriptions/${recovery.dataset.attempt}/safe-copy`, { method: "POST" });
+      await navigator.clipboard.writeText(result.text);
+      message.textContent = `Copied · ${result.replacements} direct mappings · ${result.unresolved} unresolved`;
+    } catch (err) { message.textContent = errorText(err); }
+    finally { recovery.disabled = false; }
+    return;
+  }
   const block = e.target.closest(".transcript, .failed, .copy-raw");
   if (block) {
     const card = block.closest(".card");

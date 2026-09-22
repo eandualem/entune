@@ -16,8 +16,9 @@ src/dictum/
                   cloud/: adapters, HTTP response helpers and upload capability
                   local/: Whisper.cpp and Parakeet, lifecycle capability, shared
                   downloads and conversion; Parakeet's helper runs in its external engine
-  dictionary.py   shared pinned entries and per-model learned entries (spelling, description,
-                  heard phrases), the indexed matcher, proposals
+  dictionary.py   versioned confusion groups, meanings/associations, scope, pinning, proposals
+  matching.py     derived many-to-many lookup, overlap interpretations and exact edits
+  dictionary_legacy.py  old-file conversion and the confirmed-correction API boundary
   jev.py          Jev, TypeSafe's decision model: one request per transcript deciding each
                   dictionary match in context, and one for paragraph breaks and bullets
   llm.py          dictionary-build orchestration, model choices and provider calls
@@ -47,8 +48,8 @@ Data flow for a dictation: the hotkey listener's thread feeds the engine;
 the engine starts and stops the recorder; on stop, a persist worker writes
 the clip to disk and history at once, and one transcription worker takes
 clips in the order they were spoken: provider call, raw success persisted,
-dictionary matches found and, with Jev on, decided in context (else all
-replaced), formatting if on, independent stage outcomes stored. The transcript is copied and
+eligible meanings/spans retrieved and decided in original context (else only approved
+direct mappings apply), formatting if on, independent stage outcomes stored. The transcript is copied and
 pasted on the main thread, because HIToolbox insists on it. With fast mode
 on, the recorder's chunks are streamed to AssemblyAI while recording and a
 clip over two minutes is transcribed from that upload. A local model is

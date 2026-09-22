@@ -1,8 +1,9 @@
-Pinned by the user (approved, shared by every speech model, do not change):
+Pinned meanings/associations (shared and protected; context decides):
 $pinned
 
-Step $number of $count. Working learned dictionary for $speech_model (revise; unmentioned entries stay unchanged):
+Step $number of $count. Working learned confusion groups for $speech_model:
 $learned
 
-Raw transcripts from $speech_model for this step ($transcript_count):
+Raw transcript snippets from $speech_model ($transcript_count), keyed by source ID.
+Evidence offsets index characters in the corresponding value, before any correction:
 $transcripts

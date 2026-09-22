@@ -167,21 +167,17 @@ provider's response verbatim.
 
 ## Personal dictionary
 
-Speech models mishear the words that matter most to you: names, products,
-your own tools. The Dictionary tab holds an entry per term: how you spell
-it, what it means to you, and every phrase a model has written instead of
-it. Each heard phrase is fixed in every transcript afterwards. There is no
-limit on the list; it is meant to grow, and matching stays fast however
-long it gets. Edit it by hand, or click **Build from history** to have a
-language model of your choice, Anthropic or OpenAI on your own key, read
-your recent transcripts and propose entries with descriptions, which you
-review before anything is saved. What it learns is kept per speech model,
-from that model's own transcripts, since a local model's mishearings are
-not AssemblyAI's. Entries you add or pin are shared by every model and
-never changed by the language model. If you dictate to AI agents, they can
-post corrections once you have confirmed a mistranscription with them.
-The suggested models, Claude Fable 5.1 and GPT-6 Astra, are the current
-strongest from each provider; any model id the provider accepts works.
+Speech models mishear names, products and everyday words. The Dictionary tab groups
+recognized forms with their possible meanings, definitions and exact output spellings.
+Explicit associations decide which meanings can compete for a form; context decides
+which one applies. Edit groups directly, or ask the configured language model to build
+or refine them from this speech model's raw history, then accept its proposal.
+
+Learned associations stay specific to the speech model. Pinning shares and protects a
+meaning and its associations across models, without giving it priority over competitors.
+Existing dictionaries are backed up before conversion and retained for review. Confirmed
+agent corrections still use the existing local API. Generation suggestions are Sonnet 5
+and GPT-5.4 mini; the model selected in Settings is honored.
 
 **Build from your audio**, in the Dictionary tab, imports original audio from
 Wispr Flow on this Mac (including its local backups) or an audio folder. Other
@@ -190,30 +186,26 @@ audio file in `dictionary-audio/`, separate from recording history, and can reus
 it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
 up to 199 MB can be uploaded; the chosen provider must support the audio format
 and length. A build uses the speech and dictionary models selected when it starts.
-Fresh transcripts stay in memory only for that build, which proposes entries for
+Fresh transcripts stay in memory only for that build, which proposes confusion groups for
 that speech model. Review and accept the proposal to change your dictionary;
-pinned entries remain shared. Provider failures stop the build visibly, without
+pinned meanings remain shared. Provider failures stop the build visibly, without
 fallback or a partial dictionary. Audio already imported is kept.
 
 ### Jev decides each match in context
 
-A plain replacement cannot tell "Jeff" the person from "JEV" the model.
-With a [TypeSafe](https://typesafe.ai) key saved under Settings ›
-Providers, Dictum sends each transcript, the entries that matched and
-their descriptions to **Jev**, TypeSafe's decision model, and asks one
-question per match: did the speaker mean the term, or the words as heard?
-Jev answers with probabilities in about 0.4 s and never writes text; a
-match is replaced unless Jev is sure the words were meant literally. It
-costs a fraction of a cent per dictation on your own key.
+With a [TypeSafe](https://typesafe.ai) key and contextual correction enabled, **Jev**
+classifies eligible meanings using the original transcript. Jev generates no replacement
+text: Dictum applies the selected stored spelling. A literal Jeff or GIF is a meaning in
+its own right. Unsupported or uncertain choices preserve the original occurrence.
+Meanings that produce identical text have their probability support combined.
 
-Measured on 2026-09-21 over 181 real Parakeet transcripts and their 48
-dictionary matches, labelled by the intended reading: plain replacement
-got 42 right, Jev with descriptions got 48, including a wrong dictionary
-entry it refused every time. Each history card shows replacements, preserved
-occurrences and independent stage outcomes; Settings sums the work performed,
-not an accuracy score. A second switch, **Formatting**, asks Jev
-where a paragraph or a bullet point begins and inserts only line breaks:
-every word stays.
+Only explicitly approved, unambiguous direct mappings bypass classification. Pinning or
+having a single recorded candidate is not enough. With contextual correction off, only
+those direct mappings apply. The previous binary classifier's cached accuracy and timings
+are documented separately; they do not establish the new classifier's quality or latency.
+History and Settings report work performed, including direct changes and abstentions,
+rather than an accuracy score. Optional formatting inserts paragraph breaks and bullets
+without generated prose.
 
 Successful speech and its original text are saved before correction. If
 contextual correction fails, Dictum delivers the untouched original and
@@ -221,7 +213,9 @@ shows a noninterrupting notice; formatting failure keeps the preceding text.
 Settings > Providers controls the processing wait: initially five seconds
 total, three per attempt, and at most two attempts per request. Transient
 failures can retry within that shared deadline. **Copy original** in history
-copies the provider's text without altering history or already-pasted text.
+copies the provider's text without altering history or already-pasted text. After a
+correction failure, **Apply safe mappings and copy** offers a derived result using only
+approved direct mappings; ambiguous spans remain untouched.
 
 Details: [the dictionary file](docs/dictionary.md) and
 [the agents' API](docs/agents-api.md).
