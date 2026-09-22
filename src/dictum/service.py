@@ -10,11 +10,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from dictum import dictionary as dictionary_file
-from dictum import jev, llm, shortcuts
+from dictum import llm, shortcuts
 from dictum.audio import sniff_mime
 from dictum.dictionary import Dictionary, Entries, Proposal
-from dictum.providers import Clip, Failure, ModelRef, Provider, Transcript, resolve_model
-from dictum.providers.base import Downloadable, LocalModelStatus, Streams, Upload
+from dictum.processing import Corrected, process_text
+from dictum.providers.cloud.contracts import Streams, Upload
+from dictum.providers.contracts import Clip, Failure, Provider, Transcript
+from dictum.providers.local.contracts import Downloadable, LocalModelStatus
+from dictum.providers.registry import ModelRef, resolve_model
 from dictum.shortcuts import Shortcuts
 from dictum.store import DictionaryAudio, Recording, Store, Transcription
 
@@ -63,17 +66,6 @@ class JevSummary:
     kept: int
     failed: int
     median_seconds: float | None
-
-
-@dataclass(frozen=True)
-class Corrected:
-    """A transcript after the dictionary, with what Jev did to it, if anything."""
-
-    text: str
-    seconds: float | None = None
-    fixed: int | None = None
-    kept: int | None = None
-    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -762,39 +754,14 @@ class Dictum:
         return updated
 
     def correct(self, raw: str, entries: Entries) -> Corrected:
-        """The dictionary applied to a raw transcript, through Jev when that is on.
-
-        A Jev request that fails never loses the transcript: every match is replaced
-        instead, and the reason is kept with the transcription for the user to read.
-        """
-        found = dictionary_file.matches(entries, raw)
         status = self.jev_status()
-        key = self.store.get_setting(key_setting(JEV_PROVIDER))
-        text = dictionary_file.replace(raw, found)
-        seconds: float | None = None
-        fixed = kept = None
-        errors = []
-        if status.dictionary and key is not None:
-            seconds, fixed, kept = 0.0, len(found), 0
-            if found:
-                try:
-                    decisions, elapsed = jev.decide(raw, found, key)
-                    text = dictionary_file.replace(raw, [d.match for d in decisions if d.replace])
-                    seconds, fixed = elapsed, sum(1 for d in decisions if d.replace)
-                    kept = len(decisions) - fixed
-                except jev.JevError as exc:
-                    errors.append(f"contextual dictionary: {exc}")
-        elif status.dictionary:
-            errors.append("contextual dictionary: no TypeSafe API key")
-        if status.formatting and key is not None:
-            try:
-                text, elapsed = jev.format_text(text, key)
-                seconds = (seconds or 0.0) + elapsed
-            except jev.JevError as exc:
-                errors.append(f"formatting: {exc}")
-        elif status.formatting:
-            errors.append("formatting: no TypeSafe API key")
-        return Corrected(text, seconds, fixed, kept, "; ".join(errors) or None)
+        return process_text(
+            raw,
+            entries,
+            contextual=status.dictionary,
+            formatting=status.formatting,
+            key=self.store.get_setting(key_setting(JEV_PROVIDER)),
+        )
 
     def record_and_transcribe(
         self, data: bytes, label: str | None, ref: str | None, upload: Upload | None = None

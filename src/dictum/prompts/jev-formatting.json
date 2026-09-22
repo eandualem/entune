@@ -1,0 +1,30 @@
+{
+  "type": "choice",
+  "instructions": {
+    "question": "How does sentence `sentences.$sentence` relate to the sentences before it in this dictated note?",
+    "focus": "This is spoken dictation transcribed as one block, with fillers. Judge from the words only; the sentences keep their order and wording."
+  },
+  "criteria": {
+    "continues": {
+      "what": "Continues the same thought or topic as the previous sentence; running prose.",
+      "not_for": "A sentence that opens a new topic, or that is one entry of an enumeration."
+    },
+    "new_paragraph": {
+      "what": "Starts a clearly different topic, request or step than the previous sentence, where a writer would begin a new paragraph.",
+      "not_for": "Elaboration, examples or a follow-up of the previous sentence.",
+      "examples": [
+        "Okay, now the second thing I want to talk about is the settings page.",
+        "Another issue is the microphone."
+      ]
+    },
+    "list_item": {
+      "what": "One entry in an enumeration of parallel items, often introduced with words such as first, secondly, thirdly, one, two, three, next, finally.",
+      "not_for": "A sentence that merely mentions a number or an order.",
+      "examples": [
+        "First of all, we don't want to make it very long.",
+        "Secondly, we want to add tags.",
+        "Three, I don't see any formatting."
+      ]
+    }
+  }
+}

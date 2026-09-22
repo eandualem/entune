@@ -10,7 +10,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from dictum import llm, onboarding
-from dictum.providers.base import Clip, Transcript
+from dictum.providers.contracts import Clip, Transcript
 from dictum.recorder import wav_bytes
 from dictum.server import create_app
 from dictum.service import Dictum

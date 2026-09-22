@@ -12,7 +12,7 @@ import pytest
 from dictum.desktop.app import DictumApp
 from dictum.desktop.engine import ShortcutEngine
 from dictum.desktop.platform import State
-from dictum.providers.base import Clip, Failure, TranscribeResult, Transcript
+from dictum.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from dictum.recorder import Capture, SinkFactory
 from dictum.service import Dictum
 from dictum.store import Store

@@ -1,0 +1,15 @@
+{
+  "type": "choice",
+  "instructions": {
+    "question": "In `occurrences.$occurrence`, the speech recogniser wrote `occurrences.$occurrence.heard`. Did the speaker mean the term described in `terms.$term`, or the recognised words with their ordinary meaning?",
+    "focus": "Read `occurrences.$occurrence.before` and `occurrences.$occurrence.after`, and `transcript` for the topic. The recogniser often mishears this term as these words."
+  },
+  "criteria": {
+    "term": {
+      "what": "The speaker meant $spelling: $meaning"
+    },
+    "recognised": {
+      "what": "The words $heard as recognised, with their ordinary meaning."
+    }
+  }
+}

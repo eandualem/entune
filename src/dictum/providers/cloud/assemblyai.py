@@ -25,16 +25,14 @@ from collections.abc import Callable, Iterator
 
 import httpx
 
-from dictum.providers.base import (
+from dictum.providers.cloud.contracts import Upload
+from dictum.providers.cloud.http import (
     DEFAULT_TIMEOUT,
-    Clip,
-    Failure,
-    TranscribeResult,
-    Upload,
     failure_from_body,
     failure_from_response,
     text_or_failure,
 )
+from dictum.providers.contracts import Clip, Failure, TranscribeResult
 from dictum.recorder import wav_bytes
 
 SYNC_URL = "https://sync.assemblyai.com/transcribe"
