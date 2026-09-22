@@ -1,7 +1,7 @@
 Pinned meanings/associations (shared and protected; context decides):
 $pinned
 
-Step $number of $count. Working learned confusion groups for $speech_model:
+Step $number of $count. Working confusion groups (including pinned) for $speech_model:
 $learned
 
 Raw transcript snippets from $speech_model ($transcript_count), keyed by source ID.

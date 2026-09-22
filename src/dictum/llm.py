@@ -108,7 +108,7 @@ def build_user_prompt(
         learned=json.dumps(
             [
                 e.as_json()
-                for e in (current.learned_for(speech_model) if proposed is None else proposed)
+                for e in (current.effective(speech_model) if proposed is None else proposed)
             ],
             ensure_ascii=False,
         ),
@@ -138,15 +138,16 @@ def parse_reply(
         raise ValueError("The model must return groups and remove lists")
     revised = dictionary_file.parse_groups(data["groups"], "the model's reply")
     removed = data["remove"]
-    old = {g.id: g for g in proposed}
+    old = {g.id: g for g in pinned}
+    old.update({g.id: g for g in proposed})
     if not isinstance(removed, list) or not all(isinstance(v, str) and v in old for v in removed):
         raise ValueError("remove must name existing learned group IDs")
     if set(removed) & {g.id for g in revised}:
         raise ValueError("A group cannot be revised and removed together")
-    known_groups = {g.id for g in (*pinned, *proposed)}
-    known_meanings = {m.id: m for g in (*pinned, *proposed) for m in g.meanings}
+    known_groups = set(old)
+    known_meanings = {m.id: m for g in old.values() for m in g.meanings}
     known_links: dict[tuple[str, str], list[dictionary_file.Association]] = {}
-    for group in (*pinned, *proposed):
+    for group in old.values():
         for form in group.recognized_forms:
             for association in form.associations:
                 known_links.setdefault((key(form.text), association.meaning_id), []).append(
@@ -154,7 +155,7 @@ def parse_reply(
                 )
     approved = {
         (g.id, key(f.text)): (f.direct, f.direct_reason)
-        for g in proposed
+        for g in old.values()
         for f in g.recognized_forms
         if f.direct
     }
@@ -191,8 +192,7 @@ def parse_reply(
                 seen_meanings.append(m)
     meanings = {**known_meanings, **{m.id: m for g in revised for m in g.meanings}}
     preview = (
-        *pinned,
-        *(g for g in proposed if g.id not in set(removed) | {r.id for r in revised}),
+        *(g for g in old.values() if g.id not in set(removed) | {r.id for r in revised}),
         *revised,
     )
     forms = [f for g in preview for f in g.recognized_forms]
@@ -272,10 +272,12 @@ def parse_reply(
         if (
             current is None
             or (current.direct, current.direct_reason) != approval
-            or meanings[approval[0]] != known_meanings[approval[0]]
+            or (meanings[approval[0]].spelling, meanings[approval[0]].casing)
+            != (known_meanings[approval[0]].spelling, known_meanings[approval[0]].casing)
         ):
             raise ValueError("The generator cannot remove or change an approved direct mapping")
-    dictionary_file.validate(Dictionary(pinned, {"working": result}))
+    dictionary_file.protect_pinned(pinned, result)
+    dictionary_file.validate(Dictionary(learned={"working": result}))
     return result
 
 
@@ -418,7 +420,8 @@ async def propose_learned(
     carrying the provider's or the model's own words
     when a step fails; nothing partial is returned.
     """
-    proposed = current.learned_for(speech_model)
+    current = dictionary_file.share(current, set())
+    proposed = current.effective(speech_model)
     steps = batches(transcripts)
     for number, step in enumerate(steps, 1):
         await asyncio.sleep(0)  # cancellation between chunks even for immediate test callers

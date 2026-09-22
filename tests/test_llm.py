@@ -63,7 +63,7 @@ def test_reply_has_persistent_ids_and_validated_source_occurrences(reply: str) -
     assert TEXT not in json.dumps(learned[0].as_json())  # no source excerpt persisted
 
 
-def test_provenance_glossary_direct_and_pinned_changes_are_rejected() -> None:
+def test_provenance_glossary_and_unapproved_direct_changes_are_rejected() -> None:
     payload = proposed(TEXT)
     groups = payload["groups"]
     assert isinstance(groups, list)
@@ -84,8 +84,13 @@ def test_provenance_glossary_direct_and_pinned_changes_are_rejected() -> None:
     pinned = group("Claude Code", "cloud code")
     revised = pinned.as_json()
     revised["meanings"][0]["meaning"] = "Changed by the generator"
-    with pytest.raises(ValueError, match="conflicting definitions"):
+    result = llm.parse_reply(json.dumps({"groups": [revised], "remove": []}), pinned=(pinned,))
+    assert result[0].meanings[0].meaning == "Changed by the generator"
+    revised["recognized_forms"] = []
+    with pytest.raises(ValueError, match="pinned variant"):
         llm.parse_reply(json.dumps({"groups": [revised], "remove": []}), pinned=(pinned,))
+    with pytest.raises(ValueError, match="pinned meaning"):
+        llm.parse_reply(json.dumps({"groups": [], "remove": [pinned.id]}), pinned=(pinned,))
     for content in ("no JSON", '{"groups":[}', '{"entries": []}'):
         with pytest.raises(ValueError):
             llm.parse_reply(content)
@@ -119,7 +124,7 @@ def test_generation_can_add_literal_competitors_to_protected_pinned_knowledge() 
     result = llm.parse_reply(
         json.dumps({"groups": [literal.as_json()], "remove": []}), pinned=(pinned,)
     )
-    assert result[0].meanings[0].spelling == "cloud"
+    assert result[-1].meanings[0].spelling == "cloud"
     assert pinned.meanings[0].spelling == "Claude"
 
 
@@ -154,7 +159,7 @@ def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
         if len(seen) == 1:
             return json.dumps(proposed("cloud code"))
         working = json.loads(
-            user.split("Working learned confusion groups for s/m:\n")[1].split("\n\n")[0]
+            user.split("Working confusion groups (including pinned) for s/m:\n")[1].split("\n\n")[0]
         )
         target = next(g for g in working if g["meanings"][0]["spelling"] == "Claude Code")
         stable_id = target["meanings"][0]["id"]
@@ -205,7 +210,7 @@ def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
         and target.meanings[0].meaning == "An AI coding assistant."
     )
     assert {f.text for f in target.recognized_forms} == {"cloud code", "clod code", "Claude Code"}
-    assert {g.id for g in learned} == {"g_keep", target.id}
+    assert {g.id for g in learned} == {"g_jev", "g_keep", target.id}
     assert all("Elsewhere" not in prompt and "Jev" in prompt for prompt in seen)
     assert "An AI coding assistant." in seen[2] and "Wrong" not in seen[2]
     assert len(current.learned_for("s/m")) == 2  # still a proposal

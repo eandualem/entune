@@ -71,11 +71,7 @@ def call(client: jev.Client, policy: jev.Policy | None = None) -> jev.Call:
 def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> None:
     text = "My colleague Jeff called. Use Jeff to classify. Send the animated GIF."
     requests, handler = answering(
-        lambda name, _: (
-            {"i1": 0.95, "unresolved": 0.05}
-            if name in ("o0", "o2")
-            else {"i0": 0.95, "unresolved": 0.05}
-        )
+        lambda name, _: {"i1": 1.0} if name in ("o0", "o2") else {"i0": 1.0}
     )
     with closing(jev.Client(httpx.MockTransport(handler))) as client:
         context = call(client)
@@ -95,7 +91,7 @@ def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> N
     assert state["meanings"]["b_jeff"]["personal_context"] is None
     assert state["occurrences"]["o1"]["before"] == "My colleague Jeff called. Use "
     question = requests[0]["questions"]["o0"]
-    assert set(question["criteria"]) == {"i0", "i1", "unresolved"}
+    assert set(question["criteria"]) == {"i0", "i1"}
     assert question["instructions"] and "interpretations.i0" in question["criteria"]["i0"]
 
 
@@ -104,25 +100,25 @@ def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> N
     [
         {},
         {"probabilities": None},
-        {"probabilities": {"i0": True, "unresolved": False}},
-        {"probabilities": {"i0": 0.9, "unresolved": 0.9}},
-        {"probabilities": {"i0": float("nan"), "unresolved": 0.0}},
+        {"probabilities": {"i0": True, "i1": False}},
+        {"probabilities": {"i0": 0.9, "i1": 0.9}},
+        {"probabilities": {"i0": float("nan")}},
         {"probabilities": {"i0": 1.0}},
-        {"probabilities": {"i0": 1.0, "unresolved": 0.0}, "type": "choice", "choice": "unknown"},
+        {"probabilities": {"i0": 1.0}, "type": "choice", "choice": "unknown"},
         {
-            "probabilities": {"i0": 1.0, "unresolved": 0.0},
+            "probabilities": {"i0": 1.0},
             "type": "choice",
-            "choice": "unresolved",
+            "choice": "i1",
         },
     ],
 )
 def test_missing_or_invalid_probabilities_and_choices_are_rejected(answer: object) -> None:
     with pytest.raises(jev.JevError, match="unusable answer"):
-        jev._probabilities(answer, {"i0", "unresolved"})
+        jev._probabilities(answer, {"i0", "i1"})
 
 
 def test_transient_retry_reuses_client_and_nonretryable_answers_stop() -> None:
-    requests, good = answering(lambda *_: {"i0": 0.95, "unresolved": 0.05})
+    requests, good = answering(lambda *_: {"i0": 1.0})
     calls = 0
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -280,7 +276,7 @@ def test_formatter_failure_preserves_successful_correction() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         if "sentences" in json.loads(request.content)["state"]:
             return httpx.Response(401, text="invalid key")
-        return answering(lambda *_: {"i0": 1.0, "unresolved": 0.0})[1](request)
+        return answering(lambda *_: {"i0": 1.0})[1](request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
@@ -347,7 +343,7 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
                 and attempt["correction"]["replacements"] == 0
             )
             assert seen_pending[-1] != store.history_version()
-            handler = answering(lambda *_: {"i0": 0.9, "unresolved": 0.1})[1]
+            handler = answering(lambda *_: {"i0": 0.9, "i1": 0.1})[1]
             attempt = client.post(
                 "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}
             ).json()["transcriptions"][0]
@@ -404,7 +400,7 @@ def test_all_three_stages_share_one_deadline() -> None:
             await asyncio.sleep(0.04)
             return answering(lambda *_: {"hesitation": 1.0})[1](request)
         await asyncio.sleep(0.08)
-        return answering(lambda *_: {"i0": 1.0, "unresolved": 0.0})[1](request)
+        return answering(lambda *_: {"i0": 1.0})[1](request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as client:
         started = time.monotonic()
@@ -436,7 +432,7 @@ def test_network_timeout_retries_but_honors_retry_after_dates() -> None:
         attempts += 1
         if attempts == 1:
             raise httpx.ReadTimeout("stalled ts-key")
-        return answering(lambda *_: {"i0": 1.0, "unresolved": 0.0})[1](request)
+        return answering(lambda *_: {"i0": 1.0})[1](request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as client:
         context = call(client)
@@ -503,60 +499,34 @@ def test_formatting_without_context_keeps_direct_replacement_metrics_separate() 
     assert result.formatting.status == "succeeded" and result.formatting.decisions == 2
 
 
-def test_identical_output_senses_aggregate_and_unknown_is_not_a_literal_meaning() -> None:
+def test_identical_output_senses_do_not_pool_scores() -> None:
     from tests.dictionary_samples import CLOUD
 
-    requests, handler = answering(lambda *_: {"i0": 0.3, "i1": 0.35, "i2": 0.35})
+    requests, handler = answering(lambda *_: {"i0": 0.4, "i1": 0.3, "i2": 0.3})
     with closing(jev.Client(httpx.MockTransport(handler))) as client:
-        result = process_text(
-            "Cloud storage is remote.",
-            (CLOUD,),
-            contextual=True,
-            formatting=False,
-            key="ts-key",
-            client=client,
-            policy=jev.Policy(),
+        decisions = jev.decide(
+            "Ask cloud here.", matches((CLOUD,), "Ask cloud here."), call(client)
         )
-    assert result.text == "Cloud storage is remote."
-    assert result.correction.preserved == 1 and result.correction.abstained == 0
-    assert len(requests) == 1 and result.correction.decisions == 1
-    # A painting title is not supplied as a meaning; this stub exercises the application
-    # abstention, not a prediction that a live model would identify missing coverage.
-    _, handler = answering(lambda *_: {"unresolved": 1.0})
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
-        result = process_text(
-            "Cloud is her painting title.",
-            (CLOUD,),
-            contextual=True,
-            formatting=False,
-            key="ts-key",
-            client=client,
-            policy=jev.Policy(),
-        )
-    assert result.text == "Cloud is her painting title." and result.correction.abstained == 1
-    assert result.correction.status == "succeeded" and result.correction.replacements == 0
+    assert decisions[0].edit is not None and decisions[0].edit.text == "Claude"
+    assert decisions[0].meaning_ids == ("a_claude",)
+    assert "unresolved" not in requests[0]["questions"]["o0"]["criteria"]
 
 
-def test_jif_has_two_evidenced_outputs_and_low_confidence_can_miss_a_correction() -> None:
-    for selected, expected in [("i0", "Use Jev here."), ("i1", "Use GIF here.")]:
-        _, handler = answering(lambda *_, option=selected: {option: 0.95, "unresolved": 0.05})
-        with closing(jev.Client(httpx.MockTransport(handler))) as client:
-            result = process_text(
-                "Use Jif here.",
-                (JEV,),
-                contextual=True,
-                formatting=False,
-                key="ts-key",
-                client=client,
-                policy=jev.Policy(),
-            )
-        assert result.text == expected and result.correction.replacements == 1
-    # Constructed loss: old aggressive binary veto would replace at term=.6/literal=.4.
-    # The new policy abstains. This is policy behavior, not a measured model prediction.
-    _, handler = answering(lambda *_: {"i0": 0.6, "i1": 0.35, "unresolved": 0.05})
+@pytest.mark.parametrize(
+    "scores, expected",
+    [
+        ({"i0": 0.51, "i1": 0.49}, "Use Jev here."),
+        ({"i0": 0.49, "i1": 0.51}, "Use GIF here."),
+    ],
+)
+def test_jif_uses_highest_eligible_meaning_even_when_scores_are_close(
+    scores: dict[str, float],
+    expected: str,
+) -> None:
+    _, handler = answering(lambda *_: scores)
     with closing(jev.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
-            "Use Jeff to classify.",
+            "Use Jif here.",
             (JEV,),
             contextual=True,
             formatting=False,
@@ -564,12 +534,33 @@ def test_jif_has_two_evidenced_outputs_and_low_confidence_can_miss_a_correction(
             client=client,
             policy=jev.Policy(),
         )
-    assert result.text == "Use Jeff to classify." and result.correction.abstained == 1
+    assert result.text == expected and result.correction.abstained == 0
+
+
+def test_exact_tie_honors_validated_provider_choice_not_json_or_candidate_order() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "answers": {
+                    "o0": {
+                        "type": "choice",
+                        "choice": "i1",
+                        "probabilities": {"i0": 0.5, "i1": 0.5},
+                    }
+                }
+            },
+        )
+
+    with closing(jev.Client(httpx.MockTransport(respond))) as client:
+        decisions = jev.decide("Jif", matches((JEV,), "Jif"), call(client))
+    assert decisions[0].edit is not None and decisions[0].edit.text == "GIF"
+    assert decisions[0].meaning_ids == ("c_gif",)
 
 
 def test_shorter_interpretation_can_win_over_phrase_and_edits_do_not_cascade() -> None:
     groups = (group("Agent Backbone", "agent back bone"), group("backbone", "back bone"))
-    requests, handler = answering(lambda *_: {"i1": 0.95, "unresolved": 0.05})
+    requests, handler = answering(lambda *_: {"i1": 1.0})
     raw = "😀 Restart agent back bone."
     with closing(jev.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
