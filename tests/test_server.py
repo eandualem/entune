@@ -337,12 +337,19 @@ def test_dictionary_direct_mappings_are_explicit_and_scope_is_preserved(
         },
     )
     assert saved.status_code == 200, saved.text
-    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    client.put(
+        "/api/settings",
+        json={
+            "keys": {"stub": "k", "typesafe": "ts-key"},
+            "defaultModel": "stub/good",
+            "jev": {"dictionary": True},
+        },
+    )
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     attempt = rec["transcriptions"][0]
     assert attempt["raw_text"] == "hello there, I use cloud code"
     assert attempt["text"] == "hello there, I use Claude Code"
-    assert attempt["correction"]["method"] == "deterministic"
+    assert attempt["correction"]["method"] == "contextual"
     assert (
         attempt["correction"]["direct_replacements"] == attempt["correction"]["replacements"] == 1
     )
@@ -621,7 +628,14 @@ def test_a_clip_missing_from_disk_becomes_a_stored_error(
 def test_a_broken_dictionary_file_does_not_lose_a_transcript(
     client: TestClient, tmp_path: Path, stub: StubProvider
 ) -> None:
-    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    client.put(
+        "/api/settings",
+        json={
+            "keys": {"stub": "k", "typesafe": "ts-key"},
+            "defaultModel": "stub/good",
+            "jev": {"dictionary": True},
+        },
+    )
     (tmp_path / "dictionary.json").write_text("{broken", encoding="utf-8")
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     attempt = rec["transcriptions"][0]

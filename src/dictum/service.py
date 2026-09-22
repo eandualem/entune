@@ -556,6 +556,7 @@ class Dictum:
             self.dictionary().effective(f"{attempt.provider}/{attempt.model}"),
             contextual=False,
             formatting=False,
+            direct=True,
             key=None,
             client=self._jev_client,
             policy=self.jev_policy(),
@@ -796,21 +797,33 @@ class Dictum:
                 )
             if raw is not None and initial is not None:
                 started = time.monotonic()
+                latest = initial
+
+                def checkpoint(result: Processed) -> None:
+                    nonlocal latest
+                    self.store.finish_processing(attempt_id, result, final=False)
+                    latest = result
+
                 try:
                     # A damaged dictionary must not stop speech transcription or its persistence.
-                    entries = self.dictionary().effective(ref.id)
-                    processed = self.correct(raw, entries, status)
+                    entries = self.dictionary().effective(ref.id) if status.dictionary else ()
+                    processed = self.correct(raw, entries, status, checkpoint=checkpoint)
                 except Exception as exc:
                     processed = processing.failed(
-                        raw, initial, f"{type(exc).__name__}: {exc}", time.monotonic() - started
+                        latest.text,
+                        latest,
+                        f"{type(exc).__name__}: {exc}",
+                        time.monotonic() - started,
                     )
                 try:
                     self.store.finish_processing(attempt_id, processed)
                 except Exception as exc:
-                    # The durable row still contains raw speech. Deliver that same result and
-                    # report the processing-save failure even if this second DB write failed.
+                    # Completed stages were saved individually. A final-write failure
+                    # must never revert a successful earlier enhancement to raw speech.
                     processed = processing.failed(
-                        raw, initial, f"Could not save processing: {type(exc).__name__}: {exc}"
+                        latest.text,
+                        latest,
+                        f"Could not save processing: {type(exc).__name__}: {exc}",
                     )
                     saved = self.store.get_recording(recording.id)
                     assert saved is not None
@@ -819,7 +832,12 @@ class Dictum:
                         transcriptions=[
                             replace(
                                 a,
-                                text=raw,
+                                text=latest.text,
+                                error=(
+                                    f"Could not save final processing state: "
+                                    f"{type(exc).__name__}: {exc}"
+                                ),
+                                processing_state="complete",
                                 correction=processed.correction,
                                 formatting=processed.formatting,
                                 cleanup=processed.cleanup,
@@ -839,7 +857,14 @@ class Dictum:
             except Exception as exc:
                 self.report_status(lastError=f"Upload cleanup: {type(exc).__name__}: {exc}")
 
-    def correct(self, raw: str, groups: Groups, status: JevStatus) -> Processed:
+    def correct(
+        self,
+        raw: str,
+        groups: Groups,
+        status: JevStatus,
+        *,
+        checkpoint: Callable[[Processed], None] | None = None,
+    ) -> Processed:
         return process_text(
             raw,
             groups,
@@ -849,6 +874,8 @@ class Dictum:
             key=self.store.get_setting(key_setting(JEV_PROVIDER)),
             client=self._jev_client,
             policy=self.jev_policy(),
+            checkpoint=checkpoint,
+            progress=lambda stage: self.report_status(stage=stage),
         )
 
     def record_and_transcribe(

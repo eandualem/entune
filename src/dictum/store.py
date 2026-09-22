@@ -18,7 +18,7 @@ from typing import Literal
 
 from dictum.audio import extension_for, identify
 from dictum.dictionary_legacy import Correction as SubmittedCorrection
-from dictum.processing import Processed, Stage, failed
+from dictum.processing import Processed, Selection, Stage, interrupted
 from dictum.text_edits import Change
 
 Status = Literal["ok", "error"]
@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     fast INTEGER NOT NULL DEFAULT 0,
     correction TEXT,
     formatting TEXT,
-    cleanup TEXT
+    cleanup TEXT,
+    processing_state TEXT NOT NULL DEFAULT 'complete'
 );
 CREATE INDEX IF NOT EXISTS transcriptions_by_recording ON transcriptions(recording_id);
 CREATE TABLE IF NOT EXISTS corrections (
@@ -83,6 +84,11 @@ MIGRATIONS = [
     ("transcriptions", "correction", "ALTER TABLE transcriptions ADD COLUMN correction TEXT"),
     ("transcriptions", "formatting", "ALTER TABLE transcriptions ADD COLUMN formatting TEXT"),
     ("transcriptions", "cleanup", "ALTER TABLE transcriptions ADD COLUMN cleanup TEXT"),
+    (
+        "transcriptions",
+        "processing_state",
+        "ALTER TABLE transcriptions ADD COLUMN processing_state TEXT NOT NULL DEFAULT 'complete'",
+    ),
 ]
 
 
@@ -105,6 +111,7 @@ class Transcription:
     cleanup: Stage | None = None
     # Preserve old recorded metrics without treating them as trustworthy stage outcomes.
     legacy_processing: dict[str, object] | None = None
+    processing_state: str = "complete"
 
 
 @dataclass(frozen=True)
@@ -159,20 +166,21 @@ class Store:
             self._db.commit()
         # A previous process may have stopped after saving speech but before processing.
         rows = self._db.execute(
-            "SELECT * FROM transcriptions WHERE correction LIKE '%pending%'"
+            "SELECT * FROM transcriptions WHERE processing_state = 'processing'"
+            " OR correction LIKE '%pending%' OR cleanup LIKE '%pending%'"
+            " OR formatting LIKE '%pending%'"
         ).fetchall()
         for row in rows:
             attempt = _transcription(row)
-            if attempt.correction is not None and attempt.correction.status == "pending":
-                raw = attempt.raw_text if attempt.raw_text is not None else attempt.text or ""
+            if attempt.correction is not None:
                 initial = Processed(
-                    raw,
+                    attempt.text or "",
                     attempt.correction,
                     attempt.formatting or Stage("disabled", "formatting"),
                     attempt.cleanup or Stage("disabled", "cleanup"),
                 )
                 self.finish_processing(
-                    attempt.id, failed(raw, initial, "Processing interrupted before completion")
+                    attempt.id, interrupted(initial, "Processing interrupted before completion")
                 )
 
     def close(self) -> None:
@@ -270,8 +278,9 @@ class Store:
             cursor = self._db.execute(
                 "INSERT INTO transcriptions"
                 " (recording_id, provider, model, status, text, error, created_at, raw_text,"
-                "  audio_seconds, elapsed_seconds, fast, correction, formatting, cleanup)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  audio_seconds, elapsed_seconds, fast, correction, formatting, cleanup,"
+                " processing_state)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     recording_id,
                     provider,
@@ -287,21 +296,24 @@ class Store:
                     json.dumps(asdict(processing.correction)) if processing else None,
                     json.dumps(asdict(processing.formatting)) if processing else None,
                     json.dumps(asdict(processing.cleanup)) if processing else None,
+                    "processing" if processing else "complete",
                 ),
             )
             return int(cursor.lastrowid or 0)
 
-    def finish_processing(self, attempt_id: int, result: Processed) -> None:
+    def finish_processing(self, attempt_id: int, result: Processed, *, final: bool = True) -> None:
         """Update only optional processing; speech status and raw text are immutable."""
         with self._lock, self._db:
             self._db.execute(
-                "UPDATE transcriptions SET text = ?, correction = ?, formatting = ?, cleanup = ?"
+                "UPDATE transcriptions SET text = ?, correction = ?, formatting = ?, cleanup = ?,"
+                " processing_state = ?"
                 " WHERE id = ? AND status = 'ok'",
                 (
                     result.text,
                     json.dumps(asdict(result.correction)),
                     json.dumps(asdict(result.formatting)),
                     json.dumps(asdict(result.cleanup)),
+                    "complete" if final else "processing",
                     attempt_id,
                 ),
             )
@@ -421,6 +433,10 @@ def _transcription(row: sqlite3.Row) -> Transcription:
             changes = stage.get("changes")
             stage["changes"] = (
                 tuple(Change(**change) for change in changes) if changes is not None else None
+            )
+            stage["selections"] = tuple(
+                Selection(**{**selection, "meaning_ids": tuple(selection["meaning_ids"])})
+                for selection in stage.get("selections", ())
             )
             fields[name] = Stage(**stage)
         else:

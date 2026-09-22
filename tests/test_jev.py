@@ -478,7 +478,7 @@ def test_postprocessing_exceptions_cannot_erase_speech_or_skip_release(
         assert service.close() and closed == [True]
 
 
-def test_formatting_without_context_keeps_direct_replacement_metrics_separate() -> None:
+def test_formatting_with_dictionary_disabled_does_not_apply_even_direct_mappings() -> None:
     requests, handler = answering(
         lambda *_: {"continues": 0.0, "new_paragraph": 1.0, "list_item": 0.0}
     )
@@ -492,9 +492,9 @@ def test_formatting_without_context_keeps_direct_replacement_metrics_separate() 
             client=client,
             policy=jev.Policy(),
         )
-    assert result.text == "Jev is fast.\n\nNext topic."
+    assert result.text == "Jeff is fast.\n\nNext topic."
     assert len(requests) == 1 and "sentences" in requests[0]["state"]
-    assert result.correction.method == "deterministic" and result.correction.replacements == 1
+    assert result.correction.status == "disabled" and result.correction.replacements == 0
     assert result.correction.decisions == result.correction.attempts == 0
     assert result.formatting.status == "succeeded" and result.formatting.decisions == 2
 
@@ -609,3 +609,40 @@ def test_direct_only_needs_no_request_but_failure_in_mixed_text_still_returns_al
         )
     assert result.text == raw and result.correction.status == "failed"
     assert result.correction.replacements == result.correction.direct_replacements == 0
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": {"code": "insufficient_quota", "message": "Top up your account"}},
+        {"error": "credit balance too low"},
+        {"error": {"code": "invalid_api_key"}},
+    ],
+)
+def test_explicit_terminal_error_never_retries_even_with_429(body: dict[str, object]) -> None:
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(429, json=body)
+
+    with closing(jev.Client(httpx.MockTransport(respond))) as client:
+        context = call(client)
+        with pytest.raises(jev.JevError):
+            jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
+    assert context.attempts == 1 and len(requests) == 1
+
+
+def test_disabled_dictionary_does_not_read_broken_file_or_run_approved_mappings(
+    tmp_path: Path,
+) -> None:
+    with closing(Store(tmp_path)) as store:
+        service = Dictum(store, [StubProvider()])
+        service.set_key("stub", "k")
+        service.set_default_model("stub/good")
+        (tmp_path / "dictionary.json").write_text("{broken")
+        result = service.record_and_transcribe(WEBM_HEADER, None, None)
+        attempt = result.transcriptions[0]
+        assert attempt.text == attempt.raw_text
+        assert attempt.correction is not None and attempt.correction.status == "disabled"
+        service.close()
