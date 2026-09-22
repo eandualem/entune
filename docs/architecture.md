@@ -46,14 +46,19 @@ src/dictum/
 Data flow for a dictation: the hotkey listener's thread feeds the engine;
 the engine starts and stops the recorder; on stop, a persist worker writes
 the clip to disk and history at once, and one transcription worker takes
-clips in the order they were spoken: provider call, dictionary matches
-found and, with Jev on, decided in context (else all replaced), formatting
-if on, timing stored. The transcript is copied and
+clips in the order they were spoken: provider call, raw success persisted,
+dictionary matches found and, with Jev on, decided in context (else all
+replaced), formatting if on, independent stage outcomes stored. The transcript is copied and
 pasted on the main thread, because HIToolbox insists on it. With fast mode
 on, the recorder's chunks are streamed to AssemblyAI while recording and a
 clip over two minutes is transcribed from that upload. A local model is
 loaded while it is the selected default and freed when it is not; Parakeet
-lives in a helper process that exits on unload.
+lives in a helper process that exits on unload. Failed contextual correction
+keeps the exact raw text and skips formatting; a formatter failure keeps the
+preceding text. History polling invalidates on processing updates as well as
+new recordings. Dictum owns a lazy Jev event loop and HTTP pool: cancellable
+requests share one processing deadline, including bounded retries, and the
+CLI closes the client at shutdown. Speech and processing failures are distinct.
 
 Principles, from AGENTS.md: explicit configuration (a missing default model
 is a visible error, not a guess); adapters return the provider's error
