@@ -84,7 +84,7 @@ class FakeActions:
     ) -> Delivery:
         if check:
             check()
-        if self.outcome != "no_target":
+        if self.outcome in ("inserted", "unverified"):
             self.pasted += 1
         return self.outcome
 
@@ -334,6 +334,23 @@ def test_without_accessibility_the_transcript_is_copied_and_explained(tmp_path: 
     assert platform.actions.clipboard == "hello from the fake" and platform.actions.pasted == 0
     assert platform.actions.notices[0][0] == "Entune: copied, not pasted"
     assert platform.permissions.requested == ["post"]
+
+
+def test_accessibility_lost_while_running_is_explained_not_called_a_missing_field(
+    tmp_path: Path,
+) -> None:
+    app, platform, entune = make(tmp_path)
+    platform.actions.outcome = "no_permission"
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_shortcuts("alt_r", None, "ctrl+esc")
+    app.engine.press("alt_r")  # type: ignore[union-attr]
+    app.engine.release("alt_r")  # type: ignore[union-attr]
+    wait_for(lambda: bool(platform.actions.notices))
+    title, message = platform.actions.notices[0]
+    assert platform.actions.clipboard == "hello from the fake" and platform.actions.pasted == 0
+    assert title == "Entune: copied, not pasted" and "Allow Accessibility" in message
+    assert "no active text field" not in message and platform.permissions.requested == ["post"]
 
 
 def test_a_failed_transcription_is_a_notification_and_the_icon_recovers(tmp_path: Path) -> None:

@@ -218,7 +218,8 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
         assert started.status_code == 202
         result = wait_for_build(client)
         if model == "bad":
-            assert result["phase"] == "failed" and "HTTP 401 Unauthorized\n{}" in result["error"]
+            assert result["phase"] == "failed" and "could not transcribe it" in result["error"]
+            assert result["errorDetail"] == "HTTP 401 Unauthorized\n{}"
             assert "proposal" not in result
         else:
             assert result["phase"] == "ready", result

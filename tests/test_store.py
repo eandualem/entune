@@ -211,3 +211,37 @@ def test_restart_leaves_a_cancelled_attempt_whose_text_says_pending(tmp_path: Pa
     with closing(Store(tmp_path)) as reopened:
         attempt = reopened.list_recordings()[0].transcriptions[0]
         assert attempt.processing_state == "cancelled"
+
+
+def test_unrecorded_edits_stay_distinct_from_none(tmp_path: Path) -> None:
+    from contextlib import closing
+
+    from entune.app.metrics import processing_summary
+    from entune.processing.results import Processed, Stage
+
+    with closing(Store(tmp_path)) as store:
+        recording = store.create_recording(WEBM_HEADER)
+        for changes in (None, ()):
+            attempt = store.add_transcription(
+                recording.id, "p", "m", "ok", "text", None, raw_text="text"
+            )
+            store.finish_processing(
+                attempt,
+                Processed(
+                    "text",
+                    Stage("skipped", "contextual", changes=(), output="text"),
+                    Stage("succeeded", "formatting", decisions=1, changes=changes),
+                ),
+            )
+        attempt = store.add_transcription(recording.id, "p", "m", "ok", "text", None, raw_text="t")
+        store.finish_processing(
+            attempt,
+            Processed(
+                "text",
+                Stage("failed", "contextual", error="HTTP 529"),
+                Stage("skipped", "formatting", error="dictionary failed"),
+            ),
+        )
+        formatting = processing_summary(store).stages["formatting"]
+        assert (formatting.succeeded, formatting.changes, formatting.unrecorded) == (2, 0, 1)
+        assert (formatting.skipped, formatting.blocked) == (1, 1)

@@ -5,8 +5,12 @@ import { api, el, errorText } from "./ui.js";
 const PAGE = 60;
 const NOTES = {
   entune: "Recordings you made in Entune.",
-  wispr: "Audio Wispr Flow kept on this Mac, including its backups. Only the audio is copied.",
   folder: "WAV, MP3, M4A, FLAC, OGG or WebM files, up to 199 MB each, dated by when they were modified.",
+};
+// Other providers: transcription apps whose recordings Entune can import. Each entry is
+// an importer that exists; the stored source is the provider's id.
+const PROVIDERS = {
+  wispr: "Wispr Flow keeps its recordings, including backups, on this Mac. Entune copies the audio only, never Wispr's transcripts.",
 };
 
 export function duration(seconds) {
@@ -44,10 +48,13 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   }
   const nearest = (value) => edges.reduce((best, edge, i) => Math.abs(edge - value) < Math.abs(edges[best] - value) ? i : best, 0);
 
+  // The stored source of the recordings shown: the tab, or the provider picked under it.
+  const shownSource = () => (source === "provider" ? el("audio-provider").value : source);
+
   function choose() {
     const skip = source === "entune" && el("audio-other-models").checked ? getModel()?.id : null;
     list = items
-      .filter((item) => item.source === source && !(skip && item.models.includes(skip)))
+      .filter((item) => item.source === shownSource() && !(skip && item.models.includes(skip)))
       .map((item, order) => ({ ...item, order }))
       .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? "") || a.order - b.order);
     positions();
@@ -58,10 +65,11 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
 
   function draw() {
     for (const tab of dialog.querySelectorAll("[data-source]")) tab.setAttribute("aria-selected", String(tab.dataset.source === source));
-    el("audio-source-note").textContent = NOTES[source];
-    el("import-wispr").hidden = source !== "wispr";
+    el("audio-provider-pick").hidden = source !== "provider";
+    el("audio-source-note").textContent = source === "provider" ? PROVIDERS[shownSource()] : NOTES[source];
+    el("import-wispr").hidden = shownSource() !== "wispr";
     el("choose-audio-folder").hidden = source !== "folder";
-    const some = items.some((item) => item.source === source);
+    const some = items.some((item) => item.source === shownSource());
     el("import-wispr").textContent = some ? "Import new Wispr audio" : "Import from Wispr Flow";
     el("choose-audio-folder").textContent = some ? "Add another folder…" : "Choose folder…";
     el("audio-other-models").closest("label").hidden = source !== "entune";
@@ -69,7 +77,8 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     el("audio-empty").hidden = !loaded || list.length > 0;
     el("audio-empty").textContent = source === "entune"
       ? (items.some((item) => item.source === "entune") ? "Every recording here was already transcribed by this speech model." : "No Entune recordings yet.")
-      : "Nothing imported from this source yet.";
+      : source === "provider" ? `Nothing imported from ${el("audio-provider").selectedOptions[0]?.textContent ?? "this provider"} yet.`
+        : "No audio files imported yet.";
     const chosen = list.slice(from, to);
     const seconds = (values) => values.reduce((sum, item) => sum + (item.seconds ?? 0), 0);
     const unknown = chosen.filter((item) => item.seconds == null).length;
@@ -153,6 +162,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   el("audio-other-models").addEventListener("change", choose);
   el("audio-detail").addEventListener("toggle", () => draw());
   el("audio-more").addEventListener("click", () => { shown += PAGE; draw(); });
+  el("audio-provider").addEventListener("change", () => { el("audio-import-status").textContent = ""; choose(); });
   for (const tab of dialog.querySelectorAll("[data-source]")) {
     tab.addEventListener("click", () => { source = tab.dataset.source; el("audio-import-status").textContent = ""; choose(); });
   }
