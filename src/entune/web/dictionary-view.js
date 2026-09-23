@@ -15,7 +15,6 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
   let proposalModel = null;
   const dictionaryBox = el("dictionary");
   const buildBtn = el("build-dictionary");
-  const refineBtn = el("refine-dictionary");
   const buildStatus = el("build-status");
   const proposalPanel = el("proposal");
   const proposalBody = el("proposal-body");
@@ -23,7 +22,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
   let missingKey = false; // the saved dictionary model's provider has no key
   const onboarding = createAudioOnboarding({
     getModel, getSettings, getDictionaryModelName: () => missingKey ? null : languageName(getSettings()?.dictionaryModel),
-    onBuild(selection) { return builds.start("audio", selection); },
+    onBuild(selection) { return builds.start("audio", { mode: mode(), ...selection }); },
     onBusy(value) { importing = value; gate(); },
   });
 
@@ -75,7 +74,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
   });
   function gate() {
     const ready = Boolean(getModel() && getSettings()?.dictionaryModel && !missingKey);
-    buildBtn.disabled = refineBtn.disabled = importing || building || !ready;
+    buildBtn.disabled = importing || building || !ready;
     el("open-audio-dialog").disabled = building;
   }
   el("open-audio-dialog").addEventListener("click", () => onboarding.open().catch((err) => flash(buildStatus, errorText(err), "err")));
@@ -124,6 +123,14 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     dictVersion = res.headers.get("etag");
     renderDictionary(text);
     return true;
+  }
+
+  // One action: with no entries that apply to the selected speech model (pinned or its
+  // learned), suggestions start a dictionary; once any apply, they refine it, which can
+  // also add missing entries. The server's effective dictionary is the same union.
+  function mode() {
+    const learned = dict.learned[getModel()?.id] ?? [];
+    return dict.pinned.length || learned.length ? "refine" : "generate";
   }
 
   // The default model's learned list, made if absent. Pinned is shared by every model.
@@ -337,10 +344,10 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
       const none = document.createElement("div");
       none.className = "entry-row none";
       none.textContent = filter === "learned"
-        ? "Nothing learned for this speech model yet. “Suggest new entries” above finds its common mistakes."
+        ? "Nothing learned for this speech model yet. “Get suggestions” above finds its common mistakes."
         : filter === "pinned"
           ? "No pinned entries. Pin a learned entry to use it with every speech model, or add one yourself."
-          : "Your dictionary is empty. Start with “Suggest new entries” above, or add an entry yourself.";
+          : "Your dictionary is empty. Start with “Get suggestions” above, or add an entry yourself.";
       rows.push(none);
     }
     el("dict-rows").replaceChildren(...rows);
@@ -355,9 +362,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     const speech = model ? modelName(model.id, [model]) : "the selected speech model";
     el("groups-count").textContent = { all: total ? `Pinned entries apply to every speech model; learned ones only to ${speech}.` : "",
       pinned: "Used with every speech model.", learned: `Used only with ${speech}.` }[filter];
-    el("learn-source").textContent = model
-      ? "Suggestions from your recent transcripts. Nothing changes until you review them."
-      : "Choose a speech model in the toolbar first.";
+    el("learn-source").textContent = !model ? "Choose a speech model in the toolbar first."
+      : mode() === "generate" ? "Finds words your speech model gets wrong in recent transcripts and suggests first entries. Nothing changes until you review them."
+        : "Checks how your entries did in recent transcripts and suggests fixes and missing entries. Nothing changes until you review them.";
     fillModels();
     if (jsonText !== undefined) dictionaryBox.value = jsonText;
     lockEditors();
@@ -528,8 +535,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     if (!proposalChanges.length) proposalBody.append(node("p", "No changes suggested. Finish to close this review; the same dictations can be used again later."));
   }
   const scope = () => el("learning-reuse").checked ? "all" : "new";
-  buildBtn.addEventListener("click", () => builds.start("history", {mode: "generate", scope: scope()}));
-  refineBtn.addEventListener("click", () => builds.start("history", {mode: "refine", scope: scope()}));
+  buildBtn.addEventListener("click", () => builds.start("history", {mode: mode(), scope: scope()}));
 
   return { load: loadDictionary, showHelp, refreshAudio: () => onboarding.load(), refreshModels: fillModels };
 }
