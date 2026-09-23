@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from dictum.providers.local.whisper import WhisperCpp
-from dictum.providers.registry import ModelRef
-from dictum.resources import SpeechResources
+from entune.providers.local.whisper import WhisperCpp
+from entune.providers.registry import ModelRef
+from entune.resources import SpeechResources
 from tests.test_server import StubProvider
 from tests.test_whisper import wait_until
 
@@ -113,14 +113,14 @@ def test_cleanup_finishes_before_background_can_return_and_failure_releases_slot
 def test_raw_speech_is_saved_before_unload_or_processing_can_fail(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dictum.providers.contracts import Transcript
-    from dictum.service import Dictum
-    from dictum.store import Store
+    from entune.providers.contracts import Transcript
+    from entune.service import Entune
+    from entune.store import Store
     from tests.conftest import WEBM_HEADER
 
     local = WhisperCpp(tmp_path)
     store = Store(tmp_path / "data")
-    app = Dictum(store, [local])
+    app = Entune(store, [local])
     recording = store.create_recording(WEBM_HEADER)
     monkeypatch.setattr(local, "transcribe", lambda *args: Transcript("raw speech"))
     cleaned: list[bool] = []

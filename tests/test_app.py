@@ -10,13 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from dictum.desktop.app import DictumApp
-from dictum.desktop.engine import ShortcutEngine
-from dictum.desktop.platform import Delivery, State
-from dictum.providers.contracts import Clip, Failure, TranscribeResult, Transcript
-from dictum.recorder import Capture, SinkFactory
-from dictum.service import Dictum
-from dictum.store import Store
+from entune.desktop.app import EntuneApp
+from entune.desktop.engine import ShortcutEngine
+from entune.desktop.platform import Delivery, State
+from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
+from entune.recorder import Capture, SinkFactory
+from entune.service import Entune
+from entune.store import Store
 
 
 class FakeTray:
@@ -205,12 +205,12 @@ class StubProvider:
         return self.uploads[-1]
 
 
-def make(tmp_path: Path, **kwargs: bool) -> tuple[DictumApp, FakePlatform, Dictum]:
-    dictum = Dictum(Store(tmp_path), [StubProvider()])
+def make(tmp_path: Path, **kwargs: bool) -> tuple[EntuneApp, FakePlatform, Entune]:
+    entune = Entune(Store(tmp_path), [StubProvider()])
     platform = FakePlatform(**kwargs)
     second = Capture(b"\x00\x00" * 16_000, 16_000)  # one second, above the tap threshold
-    app = DictumApp(dictum, platform, "http://localhost:0/", recorder=FakeRecorder(second))
-    return app, platform, dictum
+    app = EntuneApp(entune, platform, "http://localhost:0/", recorder=FakeRecorder(second))
+    return app, platform, entune
 
 
 def wait_for(condition: Callable[[], bool], seconds: float = 3.0) -> None:
@@ -228,8 +228,8 @@ def test_no_shortcut_means_no_listener_and_a_hint(tmp_path: Path) -> None:
 
 
 def test_shortcut_without_permission_asks_for_it_then_listens_once_granted(tmp_path: Path) -> None:
-    app, platform, dictum = make(tmp_path, listen=False)
-    dictum.set_shortcuts("alt_r", None)  # on_change -> apply_shortcut on the fake UI thread
+    app, platform, entune = make(tmp_path, listen=False)
+    entune.set_shortcuts("alt_r", None)  # on_change -> apply_shortcut on the fake UI thread
     assert not platform.hotkeys.running
     assert platform.permissions.requested == ["listen"]
     assert "Input Monitoring" in platform.tray.status
@@ -237,13 +237,13 @@ def test_shortcut_without_permission_asks_for_it_then_listens_once_granted(tmp_p
     app._recheck_permission()  # what the periodic timer does
     assert platform.hotkeys.running and platform.hotkeys.engine is app.engine
     assert platform.tray.status == "Dictate: hold alt_r"
-    status = dictum.desktop_status()
+    status = entune.desktop_status()
     assert status["desktop"] is True and status["listening"] is True and status["canListen"]
 
 
 def test_a_shortcut_with_fn_also_needs_accessibility(tmp_path: Path) -> None:
-    app, platform, dictum = make(tmp_path, post=False)
-    dictum.set_shortcuts("fn", None)
+    app, platform, entune = make(tmp_path, post=False)
+    entune.set_shortcuts("fn", None)
     assert not platform.hotkeys.running
     assert platform.permissions.requested == ["post"]
     assert "Accessibility" in platform.tray.status
@@ -255,26 +255,26 @@ def test_a_shortcut_with_fn_also_needs_accessibility(tmp_path: Path) -> None:
 
 
 def test_a_dictation_is_transcribed_copied_and_pasted(tmp_path: Path) -> None:
-    app, platform, dictum = make(tmp_path)
-    dictum.set_key("stub", "k")
-    dictum.set_default_model("stub/good")
-    dictum.set_shortcuts("alt_r", None)
+    app, platform, entune = make(tmp_path)
+    entune.set_key("stub", "k")
+    entune.set_default_model("stub/good")
+    entune.set_shortcuts("alt_r", None)
     app.engine.press("alt_r")  # type: ignore[union-attr]
     assert platform.tray.states[-1] == "recording"
     app.engine.release("alt_r")  # type: ignore[union-attr]
     wait_for(lambda: platform.actions.pasted == 1)
     assert platform.actions.clipboard == "hello from the fake"
     wait_for(lambda: platform.tray.states[-1] == "idle")
-    assert dictum.store.list_recordings()[0].transcriptions[0].text == "hello from the fake"
+    assert entune.store.list_recordings()[0].transcriptions[0].text == "hello from the fake"
 
 
 def test_quiet_microphone_warns_once_and_still_saves_the_recording(tmp_path: Path) -> None:
-    app, platform, dictum = make(tmp_path)
-    dictum.set_key("stub", "k")
-    dictum.set_default_model("stub/good")
-    dictum.report_status(lastError="microphone unavailable")
+    app, platform, entune = make(tmp_path)
+    entune.set_key("stub", "k")
+    entune.set_default_model("stub/good")
+    entune.report_status(lastError="microphone unavailable")
     app.start_recording()
-    assert dictum.desktop_status()["lastError"] is None
+    assert entune.desktop_status()["lastError"] is None
     assert isinstance(app.recorder, FakeRecorder)
     app.recorder.quiet = True
     app._recheck_permission()
@@ -288,7 +288,7 @@ def test_quiet_microphone_warns_once_and_still_saves_the_recording(tmp_path: Pat
     assert platform.tray.states[-2:] == ["quiet", "recording"]
     app.stop_recording()
     wait_for(lambda: platform.actions.pasted == 1)
-    assert len(dictum.store.list_recordings()) == 1
+    assert len(entune.store.list_recordings()) == 1
     app.start_recording()
     app.recorder.quiet = True
     app._recheck_permission()
@@ -299,19 +299,19 @@ def test_quiet_microphone_warns_once_and_still_saves_the_recording(tmp_path: Pat
 def test_fast_mode_streams_the_recording_and_hands_the_upload_to_the_provider(
     tmp_path: Path,
 ) -> None:
-    app, platform, dictum = make(tmp_path)
-    stub = dictum.providers[0]
+    app, platform, entune = make(tmp_path)
+    stub = entune.providers[0]
     assert isinstance(stub, StubProvider)
-    dictum.set_key("stub", "k")
-    dictum.set_default_model("stub/good")
-    dictum.set_shortcuts("alt_r", None)
+    entune.set_key("stub", "k")
+    entune.set_default_model("stub/good")
+    entune.set_shortcuts("alt_r", None)
     app.start_recording()
     assert stub.uploads == []  # off by default: nothing streamed
     app.stop_recording()
     wait_for(lambda: platform.tray.states[-1] == "idle")
     assert stub.clips[-1].upload_url is None
 
-    dictum.set_fast_mode(True)
+    entune.set_fast_mode(True)
     app.start_recording()
     (upload,) = stub.uploads
     assert upload.fed == [app.recorder.capture.pcm]  # type: ignore[attr-defined]
@@ -322,34 +322,34 @@ def test_fast_mode_streams_the_recording_and_hands_the_upload_to_the_provider(
 
 
 def test_without_accessibility_the_transcript_is_copied_and_explained(tmp_path: Path) -> None:
-    app, platform, dictum = make(tmp_path, post=False)
-    dictum.set_key("stub", "k")
-    dictum.set_default_model("stub/good")
-    dictum.set_shortcuts("alt_r", None, "ctrl+esc")  # no Fn: listening needs no active tap
+    app, platform, entune = make(tmp_path, post=False)
+    entune.set_key("stub", "k")
+    entune.set_default_model("stub/good")
+    entune.set_shortcuts("alt_r", None, "ctrl+esc")  # no Fn: listening needs no active tap
     app.engine.press("alt_r")  # type: ignore[union-attr]
     app.engine.release("alt_r")  # type: ignore[union-attr]
     wait_for(lambda: bool(platform.actions.notices))
     assert platform.actions.clipboard == "hello from the fake" and platform.actions.pasted == 0
-    assert platform.actions.notices[0][0] == "Dictum: copied, not pasted"
+    assert platform.actions.notices[0][0] == "Entune: copied, not pasted"
     assert platform.permissions.requested == ["post"]
 
 
 def test_a_failed_transcription_is_a_notification_and_the_icon_recovers(tmp_path: Path) -> None:
-    app, platform, dictum = make(tmp_path)
-    dictum.set_key("stub", "k")
-    dictum.set_default_model("stub/bad")
-    dictum.set_shortcuts("alt_r", None)
+    app, platform, entune = make(tmp_path)
+    entune.set_key("stub", "k")
+    entune.set_default_model("stub/bad")
+    entune.set_shortcuts("alt_r", None)
     app.engine.press("alt_r")  # type: ignore[union-attr]
     app.engine.release("alt_r")  # type: ignore[union-attr]
     wait_for(lambda: bool(platform.actions.notices))
     title, message = platform.actions.notices[0]
-    assert title == "Dictum: stub / bad failed" and message.startswith("HTTP 401")
+    assert title == "Entune: stub / bad failed" and message.startswith("HTTP 401")
     wait_for(lambda: platform.tray.states[-1] == "idle")
 
 
 def test_no_default_model_is_told_not_hidden(tmp_path: Path) -> None:
-    app, platform, dictum = make(tmp_path)
-    dictum.set_shortcuts("alt_r", None)
+    app, platform, entune = make(tmp_path)
+    entune.set_shortcuts("alt_r", None)
     app.engine.press("alt_r")  # type: ignore[union-attr]
     app.engine.release("alt_r")  # type: ignore[union-attr]
     wait_for(lambda: bool(platform.actions.notices))
@@ -357,14 +357,14 @@ def test_no_default_model_is_told_not_hidden(tmp_path: Path) -> None:
 
 
 def test_capture_needs_permission_then_uses_the_listener(tmp_path: Path) -> None:
-    _app, platform, dictum = make(tmp_path, listen=False)
-    dictum.start_capture()
-    assert platform.hotkeys.capturing is None and dictum.capture_status().state == "idle"
+    _app, platform, entune = make(tmp_path, listen=False)
+    entune.start_capture()
+    assert platform.hotkeys.capturing is None and entune.capture_status().state == "idle"
     platform.permissions.listen = True
-    dictum.start_capture()
+    entune.start_capture()
     assert platform.hotkeys.running and platform.hotkeys.capturing is not None
     platform.hotkeys.capturing(("cmd", "fn"))
-    assert dictum.capture_status().keys == "cmd+fn"
+    assert entune.capture_status().keys == "cmd+fn"
 
 
 def test_menu_actions_and_first_run_window(tmp_path: Path) -> None:
@@ -374,8 +374,8 @@ def test_menu_actions_and_first_run_window(tmp_path: Path) -> None:
     assert platform.window.shown == ["#settings", ""]
     platform.tray.quit()
     assert platform.quit_called and not platform.hotkeys.running
-    dictum_ = _app.dictum
-    dictum_.show_window()  # a second launch asks for the window
+    entune_ = _app.entune
+    entune_.show_window()  # a second launch asks for the window
     assert platform.window.shown[-1] == ""
 
 
@@ -383,12 +383,12 @@ def test_menu_actions_and_first_run_window(tmp_path: Path) -> None:
 def test_the_window_opens_on_settings_only_until_a_shortcut_exists(
     tmp_path: Path, configured: bool
 ) -> None:
-    dictum = Dictum(Store(tmp_path), [StubProvider()])
+    entune = Entune(Store(tmp_path), [StubProvider()])
     if configured:
-        dictum.set_shortcuts("alt_r", None)
+        entune.set_shortcuts("alt_r", None)
     platform = FakePlatform()
-    app = DictumApp(
-        dictum,
+    app = EntuneApp(
+        entune,
         platform,
         "http://localhost:0/",
         show_window=True,
@@ -402,58 +402,58 @@ def test_the_window_opens_on_settings_only_until_a_shortcut_exists(
 
 
 def test_missing_permissions_reopen_setup_and_recover_without_recording(tmp_path: Path) -> None:
-    app, platform, dictum = make(tmp_path, listen=False, post=False)
+    app, platform, entune = make(tmp_path, listen=False, post=False)
     platform.permissions.microphone = "not_requested"
-    dictum.set_shortcuts("fn", "cmd+fn")
+    entune.set_shortcuts("fn", "cmd+fn")
     app._server_answers = lambda: True
     app._show_window_when_served(time.monotonic())
     assert platform.window.shown == ["#settings"]
-    assert dictum.request_permission("microphone", False)
+    assert entune.request_permission("microphone", False)
     assert platform.permissions.requested == ["listen", "microphone"]
     platform.permissions.microphone = "denied"
-    dictum.request_permission("microphone", False)
+    entune.request_permission("microphone", False)
     assert platform.permissions.requested[-1] == "settings:microphone"
     platform.permissions.microphone = "granted"
     platform.permissions.listen = platform.permissions.post = True
     app._recheck_permission()
-    assert dictum.desktop_status()["permissions"] == {
+    assert entune.desktop_status()["permissions"] == {
         "microphone": "granted",
         "inputMonitoring": "granted",
         "accessibility": "granted",
     }
     assert platform.hotkeys.running
-    assert not app._recording and not dictum.store.list_recordings()
+    assert not app._recording and not entune.store.list_recordings()
     app._show_window_when_served(time.monotonic())
     assert platform.window.shown[-1] == ""
 
 
 def test_an_unrelated_change_keeps_the_engine_mid_recording(tmp_path: Path) -> None:
-    app, _platform, dictum = make(tmp_path)
-    dictum.set_shortcuts("alt_r", None)
+    app, _platform, entune = make(tmp_path)
+    entune.set_shortcuts("alt_r", None)
     engine = app.engine
     assert engine is not None
     engine.press("alt_r")  # recording, key held
     assert engine.recording
-    dictum.set_fast_mode(True)  # any settings change used to rebuild the engine
+    entune.set_fast_mode(True)  # any settings change used to rebuild the engine
     assert app.engine is engine and engine.recording
-    dictum.set_shortcuts("alt_r", "cmd+alt_r")  # a real shortcut change still replaces it
+    entune.set_shortcuts("alt_r", "cmd+alt_r")  # a real shortcut change still replaces it
     assert app.engine is not engine
 
 
 def test_cancelling_a_capture_reaches_the_listener(tmp_path: Path) -> None:
-    _app, platform, dictum = make(tmp_path)
-    dictum.start_capture()
+    _app, platform, entune = make(tmp_path)
+    entune.start_capture()
     assert platform.hotkeys.capturing is not None
-    dictum.cancel_capture()
+    entune.cancel_capture()
     assert platform.hotkeys.capturing is None
 
 
 def test_new_recording_is_blocked_until_processing_and_delivery_finish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, platform, dictum = make(tmp_path)
-    dictum.set_key("stub", "k")
-    dictum.set_default_model("stub/good")
+    app, platform, entune = make(tmp_path)
+    entune.set_key("stub", "k")
+    entune.set_default_model("stub/good")
     entered, release = threading.Event(), threading.Event()
 
     def speech(clip: Clip, model: str, key: str) -> Transcript:
@@ -461,7 +461,7 @@ def test_new_recording_is_blocked_until_processing_and_delivery_finish(
         assert release.wait(2)
         return Transcript("single operation")
 
-    monkeypatch.setattr(dictum.providers[0], "transcribe", speech)
+    monkeypatch.setattr(entune.providers[0], "transcribe", speech)
     app.start_recording()
     app.stop_recording()
     assert entered.wait(1)
@@ -470,54 +470,54 @@ def test_new_recording_is_blocked_until_processing_and_delivery_finish(
     assert platform.tray.states[-1] == "transcribing"
     assert "Finish the current dictation" in platform.actions.notices[-1][1]
     release.set()
-    wait_for(lambda: dictum.operations.status() is None)
-    assert platform.actions.pasted == 1 and len(dictum.store.list_recordings()) == 1
+    wait_for(lambda: entune.operations.status() is None)
+    assert platform.actions.pasted == 1 and len(entune.store.list_recordings()) == 1
 
 
 def test_clearing_the_shortcuts_mid_recording_finishes_the_clip(tmp_path: Path) -> None:
-    app, platform, dictum = make(tmp_path)
-    dictum.set_key("stub", "k")
-    dictum.set_default_model("stub/good")
-    dictum.set_shortcuts(None, "cmd+alt_r")
+    app, platform, entune = make(tmp_path)
+    entune.set_key("stub", "k")
+    entune.set_default_model("stub/good")
+    entune.set_shortcuts(None, "cmd+alt_r")
     engine = app.engine
     assert engine is not None
     engine.press("cmd")
     engine.press("alt_r")  # hands-free recording
     assert app.recorder.recording  # type: ignore[attr-defined]
-    dictum.set_shortcuts(None, None)  # the engine goes: the clip is finished, not abandoned
+    entune.set_shortcuts(None, None)  # the engine goes: the clip is finished, not abandoned
     assert not app.recorder.recording  # type: ignore[attr-defined]
     wait_for(lambda: platform.actions.pasted == 1)
 
 
 def test_a_stopped_clip_is_in_history_before_its_transcription_runs(tmp_path: Path) -> None:
-    app, platform, dictum = make(tmp_path)
-    dictum.set_shortcuts("alt_r", None)  # no model set: transcription cannot even start
+    app, platform, entune = make(tmp_path)
+    entune.set_shortcuts("alt_r", None)  # no model set: transcription cannot even start
     app.start_recording()
     app.stop_recording()
-    wait_for(lambda: len(dictum.store.list_recordings()) == 1)
-    (recording,) = dictum.store.list_recordings()
-    wait_for(lambda: len(dictum.store.get_recording(recording.id).transcriptions) == 1)  # type: ignore[union-attr]
+    wait_for(lambda: len(entune.store.list_recordings()) == 1)
+    (recording,) = entune.store.list_recordings()
+    wait_for(lambda: len(entune.store.get_recording(recording.id).transcriptions) == 1)  # type: ignore[union-attr]
     assert "No default model" in (platform.actions.notices[-1][1])
 
 
 def test_quitting_right_after_a_recording_still_saves_it(tmp_path: Path) -> None:
-    app, platform, dictum = make(tmp_path)
-    dictum.set_shortcuts("alt_r", None)
+    app, platform, entune = make(tmp_path)
+    entune.set_shortcuts("alt_r", None)
     app.start_recording()
     app.stop_recording()
     app.quit()
     assert platform.quit_called
-    assert len(dictum.store.list_recordings()) == 1
+    assert len(entune.store.list_recordings()) == 1
 
 
 def test_cancelling_retains_capture_aborts_upload_and_prevents_transcription_or_paste(
     tmp_path: Path,
 ) -> None:
-    app, platform, dictum = make(tmp_path)
-    dictum.set_key("stub", "k")
-    dictum.set_default_model("stub/good")
-    dictum.set_fast_mode(True)
-    dictum.set_shortcuts("fn", "cmd+fn")
+    app, platform, entune = make(tmp_path)
+    entune.set_key("stub", "k")
+    entune.set_default_model("stub/good")
+    entune.set_fast_mode(True)
+    entune.set_shortcuts("fn", "cmd+fn")
     engine = app.engine
     assert engine is not None
     engine.press("cmd")
@@ -532,12 +532,12 @@ def test_cancelling_retains_capture_aborts_upload_and_prevents_transcription_or_
     engine.release("fn")
     assert upload.aborted and app._upload is None
     assert not app._recording and not app.recorder.recording  # type: ignore[attr-defined]
-    wait_for(lambda: dictum.operations.status() is None)
+    wait_for(lambda: entune.operations.status() is None)
     assert platform.tray.states[-1] == "idle"
-    saved = dictum.store.list_recordings()
+    saved = entune.store.list_recordings()
     assert len(saved) == 1 and saved[0].transcriptions == []
     assert "audio saved" in (saved[0].notice or "")
-    assert dictum.store.audio_path(saved[0]).exists()
+    assert entune.store.audio_path(saved[0]).exists()
     assert platform.actions.clipboard is None and platform.actions.pasted == 0
     engine.press("fn")
     engine.release("fn")
@@ -545,42 +545,42 @@ def test_cancelling_retains_capture_aborts_upload_and_prevents_transcription_or_
 
 
 def test_persisted_audio_is_released_while_waiting_for_the_next_recording(tmp_path: Path) -> None:
-    app, _platform, dictum = make(tmp_path)
+    app, _platform, entune = make(tmp_path)
     capture = Capture(b"\x00\x00" * 16_000, 16_000)
     reference = weakref.ref(capture)
-    operation = dictum.operations.begin("dictation", "saving")
+    operation = entune.operations.begin("dictation", "saving")
     app._captures.put((capture, None, operation))
     del capture
-    wait_for(lambda: len(dictum.store.list_recordings()) == 1)
+    wait_for(lambda: len(entune.store.list_recordings()) == 1)
     wait_for(lambda: reference() is None)
 
 
 def test_correction_failure_delivers_raw_with_a_noninterrupting_notice(tmp_path: Path) -> None:
-    app, platform, dictum = make(tmp_path)
-    dictum.set_key("stub", "k")
-    dictum.set_default_model("stub/good")
-    dictum.store.set_setting("jev_dictionary", "1")
+    app, platform, entune = make(tmp_path)
+    entune.set_key("stub", "k")
+    entune.set_default_model("stub/good")
+    entune.store.set_setting("jev_dictionary", "1")
     (tmp_path / "dictionary.json").write_text("{broken")
-    recording = dictum.store_recording(b"audio", "audio/wav")
-    operation = dictum.operations.begin("dictation", "transcribing")
+    recording = entune.store_recording(b"audio", "audio/wav")
+    operation = entune.operations.begin("dictation", "transcribing")
     app._transcribe_and_deliver(recording, 1.0, None, operation)
     assert platform.actions.clipboard == "hello from the fake"
     assert platform.actions.pasted == 1 and not platform.window.shown
     assert any("Last completed text retained" in message for _, message in platform.actions.notices)
     assert not any("transcription failed" in title for title, _ in platform.actions.notices)
-    assert dictum.operations.status() is None
+    assert entune.operations.status() is None
 
 
 def test_quit_discards_pending_delivery_and_does_not_restart_shortcuts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app, platform, dictum = make(tmp_path)
-    dictum.set_shortcuts("alt_r", None)
+    app, platform, entune = make(tmp_path)
+    entune.set_shortcuts("alt_r", None)
     callbacks: list[Callable[[], None]] = []
     monkeypatch.setattr(platform, "run_on_ui_thread", callbacks.append)
-    recording = dictum.store_recording(b"audio", "audio/wav")
-    operation = dictum.operations.begin("dictation", "delivering")
+    recording = entune.store_recording(b"audio", "audio/wav")
+    operation = entune.operations.begin("dictation", "delivering")
     app._later(lambda: app._deliver("late result", None, operation, recording))
     app.quit()
     for callback in callbacks:
@@ -596,9 +596,9 @@ def test_quit_reports_capture_save_failure_and_still_closes_resources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app, platform, dictum = make(tmp_path)
+    app, platform, entune = make(tmp_path)
     closed: list[bool] = []
-    close = dictum.close
+    close = entune.close
 
     def cleanup() -> bool:
         closed.append(True)
@@ -607,8 +607,8 @@ def test_quit_reports_capture_save_failure_and_still_closes_resources(
     def fail_save(*args: object) -> None:
         raise OSError("test disk is full")
 
-    monkeypatch.setattr(dictum, "store_recording", fail_save)
-    monkeypatch.setattr(dictum, "close", cleanup)
+    monkeypatch.setattr(entune, "store_recording", fail_save)
+    monkeypatch.setattr(entune, "close", cleanup)
     app.start_recording()
     app.quit()
     app.close()
@@ -622,19 +622,19 @@ def test_capture_flush_wait_is_bounded_and_timeout_visible(
 ) -> None:
     import threading
 
-    from dictum.desktop import app as desktop
+    from entune.desktop import app as desktop
 
-    app, platform, dictum = make(tmp_path)
+    app, platform, entune = make(tmp_path)
     release = threading.Event()
-    save = dictum.store_recording
+    save = entune.store_recording
 
     def slow_save(data: bytes, mime: str) -> Recording:
         assert release.wait(2)
         return save(data, mime)
 
-    from dictum.store import Recording
+    from entune.store import Recording
 
-    monkeypatch.setattr(dictum, "store_recording", slow_save)
+    monkeypatch.setattr(entune, "store_recording", slow_save)
     monkeypatch.setattr(desktop, "QUIT_FLUSH_SECONDS", 0.04)
     try:
         app.start_recording()
@@ -645,7 +645,7 @@ def test_capture_flush_wait_is_bounded_and_timeout_visible(
         assert any("quit deadline" in message for _, message in platform.actions.notices)
     finally:
         release.set()
-    wait_for(lambda: len(dictum.store.list_recordings()) == 1)
+    wait_for(lambda: len(entune.store.list_recordings()) == 1)
 
 
 def test_quit_waits_for_capture_start_then_saves_it(
@@ -654,7 +654,7 @@ def test_quit_waits_for_capture_start_then_saves_it(
 ) -> None:
     import threading
 
-    app, platform, dictum = make(tmp_path)
+    app, platform, entune = make(tmp_path)
     entered, release = threading.Event(), threading.Event()
     start = app.recorder.start
 
@@ -678,4 +678,4 @@ def test_quit_waits_for_capture_start_then_saves_it(
         quitting.join(2)
     assert not capture.is_alive() and not quitting.is_alive()
     assert platform.quit_called and not app._recording
-    assert len(dictum.store.list_recordings()) == 1
+    assert len(entune.store.list_recordings()) == 1

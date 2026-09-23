@@ -10,19 +10,19 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from dictum import llm, onboarding
-from dictum.providers.contracts import Clip, Transcript
-from dictum.recorder import wav_bytes
-from dictum.server import create_app
-from dictum.service import Dictum
-from dictum.store import Store
+from entune import llm, onboarding
+from entune.providers.contracts import Clip, Transcript
+from entune.recorder import wav_bytes
+from entune.server import create_app
+from entune.service import Entune
+from entune.store import Store
 from tests.conftest import WEBM_HEADER, wait_for_build
 from tests.test_server import StubProvider
 
 
 @pytest.fixture
-def app(store: Store) -> Iterator[Dictum]:
-    app = Dictum(store, [StubProvider()])
+def app(store: Store) -> Iterator[Entune]:
+    app = Entune(store, [StubProvider()])
     app.set_key("stub", "speech-secret")
     app.set_key("openai", "build-secret")
     app.set_default_model("stub/good")
@@ -36,7 +36,7 @@ def app(store: Store) -> Iterator[Dictum]:
 
 
 def test_competing_sources_and_named_actions_share_one_job(
-    app: Dictum, monkeypatch: pytest.MonkeyPatch
+    app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     release, started = threading.Event(), threading.Event()
 
@@ -89,7 +89,7 @@ def test_competing_sources_and_named_actions_share_one_job(
 
 
 def test_generation_cancel_closes_request_before_publishing_and_discards_text(
-    app: Dictum, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    app: Entune, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     entered, cleaned = threading.Event(), threading.Event()
 
@@ -122,7 +122,7 @@ def test_generation_cancel_closes_request_before_publishing_and_discards_text(
 
 
 def test_cancel_during_speech_waits_for_cleanup_and_never_starts_next_clip(
-    app: Dictum, monkeypatch: pytest.MonkeyPatch
+    app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     entered, release = threading.Event(), threading.Event()
     calls: list[str] = []
@@ -161,7 +161,7 @@ def test_cancel_during_speech_waits_for_cleanup_and_never_starts_next_clip(
 
 
 def test_cancel_between_chunks_stops_refinement_and_reports_full_input_size(
-    app: Dictum, monkeypatch: pytest.MonkeyPatch
+    app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[int] = []
     monkeypatch.setattr(llm, "BATCH_CHARS", 30)
@@ -185,7 +185,7 @@ def test_cancel_between_chunks_stops_refinement_and_reports_full_input_size(
 
 
 def test_failure_scrubs_keys_and_keeps_originals(
-    app: Dictum, monkeypatch: pytest.MonkeyPatch
+    app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def fake(*args: str) -> str:
         raise ValueError("rejected build-secret")
@@ -201,7 +201,7 @@ def test_failure_scrubs_keys_and_keeps_originals(
 
 
 def test_shutdown_is_bounded_and_drains_a_blocked_speech_owner(
-    app: Dictum, monkeypatch: pytest.MonkeyPatch
+    app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     entered, release, closed = threading.Event(), threading.Event(), threading.Event()
 
@@ -237,9 +237,9 @@ def test_shutdown_is_bounded_and_drains_a_blocked_speech_owner(
 
 
 def test_shutdown_deadline_also_bounds_waiting_for_a_source_snapshot(
-    app: Dictum, monkeypatch: pytest.MonkeyPatch
+    app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dictum.builds import BuildInput, JobConflict, Source
+    from entune.builds import BuildInput, JobConflict, Source
 
     entered, release = threading.Event(), threading.Event()
     prepare = app._build_input

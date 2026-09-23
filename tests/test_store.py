@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from dictum.store import Store
+from entune.store import Store
 from tests.conftest import WEBM_HEADER
 
 
@@ -35,7 +35,7 @@ def test_clearing_a_setting(tmp_path: Path) -> None:
 def test_raw_text_column_is_added_to_an_older_database(tmp_path: Path) -> None:
     import sqlite3
 
-    db = sqlite3.connect(tmp_path / "dictum.db")
+    db = sqlite3.connect(tmp_path / "entune.db")
     db.executescript(
         "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
         "CREATE TABLE recordings (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,"
@@ -140,7 +140,7 @@ def test_legacy_metrics_survive_without_becoming_current_outcomes(tmp_path: Path
 def test_interrupted_processing_reopens_as_raw_success_with_a_failure(tmp_path: Path) -> None:
     from contextlib import closing
 
-    from dictum.processing import pending
+    from entune.processing import pending
 
     raw = "  Jeff.\n"
     with closing(Store(tmp_path)) as store:
@@ -193,8 +193,8 @@ def test_restart_retains_completed_enhancement_and_fails_only_unfinished_stage(
     from contextlib import closing
     from dataclasses import replace
 
-    from dictum.processing import Stage, pending
-    from dictum.text_edits import Change
+    from entune.processing import Stage, pending
+    from entune.text_edits import Change
 
     raw = "Jeff works. Next."
     with closing(Store(tmp_path)) as store:
@@ -228,7 +228,7 @@ def test_restart_retains_completed_enhancement_and_fails_only_unfinished_stage(
 def test_restart_leaves_a_cancelled_attempt_whose_text_says_pending(tmp_path: Path) -> None:
     from contextlib import closing
 
-    from dictum.processing import Processed, Stage
+    from entune.processing import Processed, Stage
 
     text = "The pending task."
     with closing(Store(tmp_path)) as store:

@@ -7,10 +7,10 @@ from typing import Any
 import httpx
 import pytest
 
-from dictum.providers.contracts import Clip, Failure, Transcript
-from dictum.providers.local.whisper import CATALOGUE, WhisperCpp, pcm16k
-from dictum.providers.registry import resolve_model
-from dictum.recorder import wav_bytes
+from entune.providers.contracts import Clip, Failure, Transcript
+from entune.providers.local.whisper import CATALOGUE, WhisperCpp, pcm16k
+from entune.providers.registry import resolve_model
+from entune.recorder import wav_bytes
 from tests.conftest import mock_client
 
 
@@ -79,7 +79,7 @@ def test_a_failed_download_is_reported_in_the_catalogue(tmp_path: Path) -> None:
 def test_invalid_resumed_download_never_becomes_a_ready_model(
     tmp_path: Path, status: int, interval: str, body: bytes
 ) -> None:
-    from dictum.providers.local.downloads import Download
+    from entune.providers.local.downloads import Download
 
     target = tmp_path / "model.bin"
     part = target.with_suffix(".bin.part")
@@ -95,7 +95,7 @@ def test_invalid_resumed_download_never_becomes_a_ready_model(
 
 
 def test_range_refusal_accepts_only_a_verified_complete_part(tmp_path: Path) -> None:
-    from dictum.providers.local.downloads import Download
+    from entune.providers.local.downloads import Download
 
     target = tmp_path / "model.bin"
     target.with_suffix(".bin.part").write_bytes(b"abc")
@@ -203,13 +203,13 @@ def test_rapid_selection_changes_coalesce_to_the_latest_model(
 ) -> None:
     import threading
 
-    from dictum.service import Dictum
-    from dictum.store import Store
+    from entune.service import Entune
+    from entune.store import Store
 
     for name in ("base.en", "small.en"):
         (tmp_path / f"ggml-{name}.bin").write_bytes(b"model")
     local = WhisperCpp(tmp_path)
-    app = Dictum(Store(tmp_path), [local])
+    app = Entune(Store(tmp_path), [local])
     entered, release = threading.Event(), threading.Event()
     warmed: list[str] = []
 
@@ -238,7 +238,7 @@ def test_shutdown_stops_download_before_next_chunk_and_keeps_resumable_bytes(
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
-    from dictum.providers.local.downloads import Download
+    from entune.providers.local.downloads import Download
 
     entered, release = threading.Event(), threading.Event()
 
@@ -275,7 +275,7 @@ def test_converter_timeout_removes_its_temporary_audio(
 ) -> None:
     import subprocess
 
-    from dictum.providers.local import audio
+    from entune.providers.local import audio
 
     temporary: list[Path] = []
 
@@ -285,9 +285,9 @@ def test_converter_timeout_removes_its_temporary_audio(
         assert temporary[0].read_bytes() == b"clip"
         raise subprocess.TimeoutExpired(command, 300)
 
-    monkeypatch.setattr("dictum.providers.local.audio.shutil.which", lambda name: "/fake/ffmpeg")
-    monkeypatch.setattr("dictum.providers.local.audio.subprocess.run", timeout)
-    monkeypatch.setattr("dictum.providers.local.audio.tempfile.tempdir", str(tmp_path))
+    monkeypatch.setattr("entune.providers.local.audio.shutil.which", lambda name: "/fake/ffmpeg")
+    monkeypatch.setattr("entune.providers.local.audio.subprocess.run", timeout)
+    monkeypatch.setattr("entune.providers.local.audio.tempfile.tempdir", str(tmp_path))
     with pytest.raises(subprocess.TimeoutExpired):
         audio.to_wav_with_ffmpeg(b"clip", sample_rate=16_000)
     assert not temporary[0].exists()
