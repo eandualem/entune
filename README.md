@@ -1,4 +1,9 @@
-# Entune
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/entune-logo-dark.svg" />
+    <img src="docs/brand/entune-logo-light.svg" alt="Entune" height="64" />
+  </picture>
+</h1>
 
 **Dictate with the speech-to-text engine you choose, on your own API keys.**
 
