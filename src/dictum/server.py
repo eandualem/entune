@@ -362,10 +362,12 @@ def create_app(app: Dictum) -> Starlette:
             body = await request.json()
             if (
                 not isinstance(body, dict)
-                or set(body) - {"source", "scope", "audio_ids"}
+                or set(body) - {"source", "mode", "scope", "audio_ids"}
                 or body.get("source") not in ("history", "audio")
             ):
                 raise ValueError("Choose source history or audio")
+            if body.get("mode") not in ("generate", "refine"):
+                raise ValueError("Choose mode generate or refine")
             ids = body.get("audio_ids")
             if ids is not None and (
                 not isinstance(ids, list) or not all(isinstance(i, str) for i in ids)
@@ -374,6 +376,7 @@ def create_app(app: Dictum) -> Starlette:
             state = await run_in_threadpool(
                 app.start_dictionary_build,
                 body["source"],
+                mode=body["mode"],
                 scope=body.get("scope", "new"),
                 audio_ids=ids,
             )

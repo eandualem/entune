@@ -1,0 +1,70 @@
+$foundation
+
+## Your task: initial generation
+
+You receive transcripts from one speech recognizer and propose dictionary entries for the
+confusions they show. The current dictionary, if any, is included so you do not repeat
+it; in this task you cannot change or remove anything in it.
+
+Look broadly: names of people, products, companies, tools and projects; technical terms;
+acronyms; words the recognizer splits or merges; phrases it breaks the same way. For each
+credible confusion, add a group with the intended meaning, the literal meaning when the
+recognized form is itself a real word or name, and the recognized form linked to both.
+To attach a new form to a meaning that already exists, add a group whose form links to
+that meaning's id, without defining the meaning again.
+
+Reply with JSON only, in exactly this shape:
+{"additions": [group, ...]}
+Reply {"additions": []} when nothing is credible.
+
+The examples below show complete inputs and valid responses. Their terms are
+illustrations: a term is neither wrong nor evidenced in your transcripts because it
+appears here.
+
+### Example: two confusions, one with a literal competitor
+
+Input:
+Task: propose new dictionary entries for the speech recognizer example/recognizer from the transcripts below. Return additions only, or none.
+
+Current dictionary for this recognizer. All of it already exists: do not add it again.
+pinned_meaning_ids: []
+groups:
+[]
+
+Transcripts (JSON). Each has an id, a kind and its text.
+[
+{"id": "s_2c1fd6cd1dd864bc79c0c2f6", "kind": "raw_speech", "text": "Store the settings as jason and load them when the app starts."},
+{"id": "s_73376bf17afcee0bfc7af715", "kind": "raw_speech", "text": "Jason said the post grass database is almost full."}
+]
+
+Why: "jason" in the first transcript makes no sense as a name next to settings and loading; JSON fits and sounds alike. The second "Jason" is a person, so the name stays a literal competitor and is not evidence for JSON. "post grass" is not a phrase; Postgres fits a database that is filling up.
+
+Response:
+{
+"additions": [
+{"id": "new_g1", "meanings": [{"id": "new_m1", "spelling": "JSON", "meaning": "JSON (JavaScript Object Notation), a text format for structured data: settings and configuration files, API requests and responses, serializing and parsing objects.", "personal_context": null, "casing": "fixed"}, {"id": "new_m2", "spelling": "Jason", "meaning": "Jason, a person's given name; someone who says, asks or does something.", "personal_context": null, "casing": "fixed"}], "recognized_forms": [{"text": "jason", "associations": [{"meaning_id": "new_m1", "basis": "text", "evidence": [{"source": "s_2c1fd6cd1dd864bc79c0c2f6", "start": 22, "end": 27}]}, {"meaning_id": "new_m2", "basis": "literal", "evidence": []}]}]},
+{"id": "new_g2", "meanings": [{"id": "new_m3", "spelling": "Postgres", "meaning": "Postgres (PostgreSQL), an open-source relational database: tables, SQL queries, migrations, database servers and their storage.", "personal_context": null, "casing": "fixed"}], "recognized_forms": [{"text": "post grass", "associations": [{"meaning_id": "new_m3", "basis": "text", "evidence": [{"source": "s_73376bf17afcee0bfc7af715", "start": 15, "end": 25}]}]}]}
+]
+}
+
+### Example: nothing credible
+
+Input:
+Task: propose new dictionary entries for the speech recognizer example/recognizer from the transcripts below. Return additions only, or none.
+
+Current dictionary for this recognizer. All of it already exists: do not add it again.
+pinned_meaning_ids: []
+groups:
+[]
+
+Transcripts (JSON). Each has an id, a kind and its text.
+[
+{"id": "s_b7b09c32f1757d4cfbed961e", "kind": "raw_speech", "text": "Let's meet on Thursday to go through the budget with the finance team."}
+]
+
+Why: Every word is plausible as written. Correct vocabulary is not added.
+
+Response:
+{
+"additions": []
+}

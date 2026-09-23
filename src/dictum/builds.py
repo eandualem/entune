@@ -40,6 +40,7 @@ class BuildInput:
     transcripts: tuple[llm.LearningText, ...] = ()
     audio: tuple[tuple[DictionaryAudio, Path], ...] = ()
     scope: str = "new"
+    mode: llm.Mode = "generate"
 
 
 class DictionaryBuilds:
@@ -90,6 +91,7 @@ class DictionaryBuilds:
                 "id": uuid.uuid4().hex,
                 "phase": "queued",
                 "source": spec.source,
+                "mode": spec.mode,
                 "scope": spec.scope,
                 "model": spec.speech.id,
                 "dictionaryModel": spec.builder[2],
@@ -229,6 +231,7 @@ class DictionaryBuilds:
                 (),
                 spec.speech.id,
                 call=self._call,
+                mode=spec.mode,
                 inputs=inputs,
                 working=self._working,
                 resume=self._completed_batches,
@@ -272,9 +275,7 @@ class DictionaryBuilds:
                             # during inference. It can be reused on Retry, never delivered.
                             if not self._closed:
                                 self._texts[item.id] = llm.LearningText(
-                                    item.id,
-                                    result.text,
-                                    {"source": "temporary_audio", "speech_model": spec.speech.id},
+                                    item.id, result.text, "temporary_audio"
                                 )
                             self._checkpoint()
                         except CancelledError:

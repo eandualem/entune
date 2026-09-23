@@ -391,6 +391,12 @@ def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     assert client.get("/api/settings").json()["dictionaryModel"] == "openai:gpt-6-astra"
 
 
+def test_learning_needs_an_explicit_mode(client: TestClient) -> None:
+    for body in ({"source": "history"}, {"source": "history", "mode": "guess"}):
+        response = client.post("/api/dictionary/build", json=body)
+        assert response.status_code == 400 and "generate or refine" in response.text
+
+
 def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     tmp_path: Path, stub: StubProvider
 ) -> None:
@@ -407,25 +413,25 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
 
     dictum = Dictum(Store(tmp_path), [stub], llm_call=fake)
     client = TestClient(create_app(dictum), base_url="http://localhost")
-    res = client.post("/api/dictionary/build", json={"source": "history"})
+    res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
     assert res.status_code == 400 and "Add an Anthropic or OpenAI key" in res.text
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
-    res = client.post("/api/dictionary/build", json={"source": "history"})
+    res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
     assert res.status_code == 400 and "No API key set for OpenAI" in res.text
     client.put("/api/settings", json={"keys": {"openai": "sk-1", "stub": "k"}})
-    res = client.post("/api/dictionary/build", json={"source": "history"})
+    res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
     assert res.status_code == 400 and "Pick a default model first" in res.text
     client.put("/api/settings", json={"defaultModel": "stub/good"})
     rec = client.post(
         "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}, data={"model": "stub/bad"}
     ).json()
     dictum.store.add_transcription(rec["id"], "stub", "other", "ok", "from another model", None)
-    res = client.post("/api/dictionary/build", json={"source": "history"})
+    res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
     assert res.status_code == 400 and "No new history to learn from for Stub / good" in res.text
 
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
     client.put("/api/dictionary", json={"pinned": [CLAUDE_CODE]})
-    res = client.post("/api/dictionary/build", json={"source": "history"})
+    res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
     assert res.status_code == 202, res.text
     first = wait_for_build(client)
     proposal = first["proposal"]
@@ -440,7 +446,12 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     # Separate edits are blocked during generation and review. Out-of-process file
     # changes still invalidate a snapshot; this is a final guard, not merge UX.
     assert client.delete(f"/api/dictionary/build/{first['id']}").status_code == 200
-    assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 202
+    assert (
+        client.post(
+            "/api/dictionary/build", json={"mode": "generate", "source": "history"}
+        ).status_code
+        == 202
+    )
     pending = wait_for_build(client)
     current = client.get("/api/dictionary")
     assert client.put("/api/dictionary", json=current.json()).status_code == 409

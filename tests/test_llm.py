@@ -26,17 +26,21 @@ def test_user_prompt_carries_only_this_models_working_groups_and_literal_data() 
             "other/model": (group("Elsewhere", "else where"),),
         },
     )
-    prompt = llm.build_user_prompt(
-        current, ["first", "second"], "stub/good", (group("Groq", "grok"),), (2, 3)
-    )
-    assert "Jev" in prompt and "Groq" in prompt
-    assert "Soniox" not in prompt and "Elsewhere" not in prompt
-    assert "Step 2 of 3" in prompt and "stub/good" in prompt
-    assert json.dumps(llm.sources(["first", "second"])) in prompt
-    assert "glossary" in prompts.text("dictionary-system.txt")
-    assert "empty list when the term is only ever spelled right" not in prompts.text(
-        "dictionary-system.txt"
-    )
+    snippets = [llm.Snippet(llm.source_id(t), "raw_speech", t, None) for t in ("first", "second")]
+    modes: tuple[llm.Mode, ...] = ("generate", "refine")
+    for mode in modes:
+        prompt = llm.build_user_prompt(
+            mode, current, snippets, "stub/good", (*current.pinned, group("Groq", "grok"))
+        )
+        assert "Jev" in prompt and "Groq" in prompt and "stub/good" in prompt
+        assert "Soniox" not in prompt and "Elsewhere" not in prompt
+        assert "Step" not in prompt and '"g_jev"' in prompt
+        assert all(s.source in prompt for s in snippets)
+        assert 'pinned_meaning_ids: ["a_jev", "b_jeff", "c_gif"]' in prompt
+    for mode in modes:
+        system = llm.system_prompt(mode)
+        assert "glossary" in system and "$" not in system
+        assert system.startswith(prompts.text("dictionary-foundation.txt").rstrip())
 
 
 def test_all_supplied_text_is_processed_in_bounded_steps(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -53,7 +57,7 @@ def test_all_supplied_text_is_processed_in_bounded_steps(monkeypatch: pytest.Mon
 
 @pytest.mark.parametrize("reply", [REPLY, f"```json\n{REPLY}\n```"])
 def test_reply_has_persistent_ids_and_validated_source_occurrences(reply: str) -> None:
-    learned = llm.parse_reply(reply, transcripts=[TEXT])
+    learned = llm.parse_generation(reply, transcripts=[TEXT])
     assert len(learned) == 1 and learned[0].id.startswith("g_")
     (meaning,) = learned[0].meanings
     assert meaning.id.startswith("m_") and meaning.spelling == "Claude Code"
@@ -65,35 +69,44 @@ def test_reply_has_persistent_ids_and_validated_source_occurrences(reply: str) -
 
 def test_provenance_glossary_and_unapproved_direct_changes_are_rejected() -> None:
     payload = proposed(TEXT)
-    groups = payload["groups"]
+    groups = payload["additions"]
     assert isinstance(groups, list)
     record = groups[0]
     record["recognized_forms"][0]["associations"][0]["evidence"][0]["start"] = 7
     with pytest.raises(ValueError, match="exact whole"):
-        llm.parse_reply(json.dumps(payload), transcripts=[TEXT])
+        llm.parse_generation(json.dumps(payload), transcripts=[TEXT])
     with pytest.raises(ValueError, match="unavailable source"):
-        llm.parse_reply(REPLY, transcripts=["different text"])
+        llm.parse_generation(REPLY, transcripts=["different text"])
     payload = proposed(TEXT)
-    record = payload["groups"][0]
+    record = payload["additions"][0]
     record["recognized_forms"][0].update(direct="new_meaning", direct_reason="The model says so")
     with pytest.raises(ValueError, match="cannot approve"):
-        llm.parse_reply(json.dumps(payload), transcripts=[TEXT])
+        llm.parse_generation(json.dumps(payload), transcripts=[TEXT])
     record["recognized_forms"] = [record["recognized_forms"][1]]
     with pytest.raises(ValueError, match="glossary"):
-        llm.parse_reply(json.dumps(payload), transcripts=[TEXT])
+        llm.parse_generation(json.dumps(payload), transcripts=[TEXT])
     pinned = group("Claude Code", "cloud code")
     revised = pinned.as_json()
     revised["meanings"][0]["meaning"] = "Changed by the generator"
-    result = llm.parse_reply(json.dumps({"groups": [revised], "remove": []}), pinned=(pinned,))
+
+    def refine(additions: list[Any], revisions: list[Any], removals: list[str]) -> str:
+        return json.dumps({"additions": additions, "revisions": revisions, "removals": removals})
+
+    result = llm.parse_refinement(refine([], [revised], []), (pinned,), pinned=(pinned,))
     assert result[0].meanings[0].meaning == "Changed by the generator"
+    with pytest.raises(ValueError, match="cannot revise"):
+        llm.parse_generation(json.dumps({"additions": [revised]}), (pinned,), pinned=(pinned,))
     revised["recognized_forms"] = []
     with pytest.raises(ValueError, match="pinned variant"):
-        llm.parse_reply(json.dumps({"groups": [revised], "remove": []}), pinned=(pinned,))
-    with pytest.raises(ValueError, match="pinned meaning"):
-        llm.parse_reply(json.dumps({"groups": [], "remove": [pinned.id]}), pinned=(pinned,))
-    for content in ("no JSON", '{"groups":[}', '{"entries": []}'):
+        llm.parse_refinement(refine([], [revised], []), (pinned,), pinned=(pinned,))
+    with pytest.raises(ValueError, match="Pinned groups cannot be removed"):
+        llm.parse_refinement(refine([], [], [pinned.id]), (pinned,), pinned=(pinned,))
+    for content in ("no JSON", '{"additions":[}', '{"groups": [], "remove": []}'):
         with pytest.raises(ValueError):
-            llm.parse_reply(content)
+            llm.parse_generation(content)
+    for content in ('{"additions": []}', '{"additions": [], "revisions": [], "remove": []}'):
+        with pytest.raises(ValueError, match="exactly"):
+            llm.parse_refinement(content)
 
 
 def test_propose_uses_chosen_model_and_does_not_change_the_live_dictionary() -> None:
@@ -106,12 +119,19 @@ def test_propose_uses_chosen_model_and_does_not_change_the_live_dictionary() -> 
     current = Dictionary()
     learned = asyncio.run(
         llm.propose_learned(
-            "anthropic", "k", "anthropic:claude-sonnet-5", current, [TEXT], "s/m", call=fake
+            "anthropic",
+            "k",
+            "anthropic:claude-sonnet-5",
+            current,
+            [TEXT],
+            "s/m",
+            call=fake,
+            mode="generate",
         )
     )
     assert learned[0].meanings[0].spelling == "Claude Code" and not current
     assert seen["model"] == "anthropic:claude-sonnet-5" and seen["provider"] == "anthropic"
-    assert seen["system"] == prompts.text("dictionary-system.txt") and TEXT in seen["user"]
+    assert seen["system"] == llm.system_prompt("generate") and TEXT in seen["user"]
 
 
 def test_generation_can_add_literal_competitors_to_protected_pinned_knowledge() -> None:
@@ -121,8 +141,8 @@ def test_generation_can_add_literal_competitors_to_protected_pinned_knowledge() 
         (Meaning("new_weather", "cloud", "Water droplets in the sky.", casing="ordinary"),),
         (Form("cloud", (Association("new_weather", basis="literal"),)),),
     )
-    result = llm.parse_reply(
-        json.dumps({"groups": [literal.as_json()], "remove": []}), pinned=(pinned,)
+    result = llm.parse_generation(
+        json.dumps({"additions": [literal.as_json()]}), (pinned,), pinned=(pinned,)
     )
     assert result[-1].meanings[0].spelling == "cloud"
     assert pinned.meanings[0].spelling == "Claude"
@@ -130,11 +150,11 @@ def test_generation_can_add_literal_competitors_to_protected_pinned_knowledge() 
 
 def test_case_only_duplicates_and_changes_to_approved_outputs_are_rejected() -> None:
     payload = proposed(TEXT)
-    record = payload["groups"][0]
+    record = payload["additions"][0]
     duplicate = {**record["meanings"][0], "id": "new_duplicate", "spelling": "CLAUDE CODE"}
     record["meanings"].append(duplicate)
     with pytest.raises(ValueError, match="case alone"):
-        llm.parse_reply(json.dumps(payload), transcripts=[TEXT])
+        llm.parse_generation(json.dumps(payload), transcripts=[TEXT])
 
     approved = group("Dictum", "dictim", direct=True)
     changed = replace(
@@ -143,7 +163,10 @@ def test_case_only_duplicates_and_changes_to_approved_outputs_are_rejected() -> 
         recognized_forms=(approved.recognized_forms[0],),
     )
     with pytest.raises(ValueError, match="approved direct mapping"):
-        llm.parse_reply(json.dumps({"groups": [changed.as_json()], "remove": []}), (approved,))
+        llm.parse_refinement(
+            json.dumps({"additions": [], "revisions": [changed.as_json()], "removals": []}),
+            (approved,),
+        )
 
 
 def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
@@ -157,10 +180,8 @@ def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
         nonlocal stable_id
         seen.append(user)
         if len(seen) == 1:
-            return json.dumps(proposed("cloud code"))
-        working = json.loads(
-            user.split("Working confusion groups (including pinned) for s/m:\n")[1].split("\n\n")[0]
-        )
+            return json.dumps({**proposed("cloud code"), "revisions": [], "removals": []})
+        working = json.loads(user.split("groups:\n")[1].split("\n\n")[0])
         target = next(g for g in working if g["meanings"][0]["spelling"] == "Claude Code")
         stable_id = target["meanings"][0]["id"]
         if len(seen) == 2:
@@ -183,8 +204,8 @@ def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
                     ],
                 }
             )
-            return json.dumps({"groups": [target], "remove": ["g_wrong"]})
-        return '{"groups": [], "remove": []}'
+            return json.dumps({"additions": [], "revisions": [target], "removals": ["g_wrong"]})
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     current = Dictionary(
         (JEV,),
@@ -202,6 +223,7 @@ def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
             ["cloud code", "clod code", "third"],
             "s/m",
             call=fake,
+            mode="refine",
         )
     )
     target = next(g for g in learned if g.meanings[0].spelling == "Claude Code")
@@ -239,6 +261,7 @@ def test_a_later_step_failure_returns_no_partial_dictionary(
                 ["cloud code", "three"],
                 "s/m",
                 call=failing,
+                mode="generate",
             )
         )
 
@@ -250,7 +273,14 @@ def test_provider_failures_surface_verbatim() -> None:
     with pytest.raises(ValueError, match="RuntimeError: status_code: 401"):
         asyncio.run(
             llm.propose_learned(
-                "openai", "k", "openai:gpt-5.6-terra", Dictionary(), ["x"], "s/m", call=failing
+                "openai",
+                "k",
+                "openai:gpt-5.6-terra",
+                Dictionary(),
+                ["x"],
+                "s/m",
+                call=failing,
+                mode="generate",
             )
         )
 
@@ -299,7 +329,7 @@ def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
         seen.append(request.headers["authorization"])
         assert str(request.url) == "https://api.openai.com/v1/responses"
         assert os.environ["OPENAI_API_KEY"] == "original"
-        return openai_done('{"groups": [], "remove": []}')
+        return openai_done('{"additions": []}')
 
     def client(**kwargs: Any) -> httpx.AsyncClient:
         assert kwargs["trust_env"] is False
@@ -311,7 +341,9 @@ def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
 
     def build(key: str) -> Groups:
         return asyncio.run(
-            llm.propose_learned("openai", key, "openai:gpt-6-astra", Dictionary(), ["text"], "s/m")
+            llm.propose_learned(
+                "openai", key, "openai:gpt-6-astra", Dictionary(), ["text"], "s/m", mode="generate"
+            )
         )
 
     with ThreadPoolExecutor(3) as pool:
@@ -354,7 +386,7 @@ def test_direct_request_keeps_prompts_model_and_reasoning(
             else:
                 assert body["thinking"] == {"type": "adaptive"}
                 assert body["output_config"] == {"effort": "medium"}
-            assert body["max_tokens"] == 8192
+            assert body["max_tokens"] == llm.MAX_OUTPUT_TOKENS == 32_000
             return sse(
                 {"type": "message_start", "message": {"stop_reason": None}},
                 {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking"}},
@@ -384,7 +416,7 @@ def test_direct_request_keeps_prompts_model_and_reasoning(
             )
         assert body["instructions"] == "system" and body["input"] == "user"
         assert body["reasoning"] == {"effort": "medium"} and body["store"] is False
-        assert body["max_output_tokens"] == 8192
+        assert body["max_output_tokens"] == llm.MAX_OUTPUT_TOKENS
         return openai_done("reply")
 
     monkeypatch.setattr(
@@ -413,7 +445,7 @@ def test_direct_request_keeps_prompts_model_and_reasoning(
                     },
                 },
             ),
-            "max_output_tokens",
+            "32000-token output limit, which includes reasoning",
         ),
         (
             sse(
@@ -458,3 +490,56 @@ def test_direct_errors_and_unfinished_replies_are_visible_without_retry(
     with pytest.raises(ValueError, match=expected):
         asyncio.run(llm.call_model("openai", "key", "openai:gpt-6-astra", "", ""))
     assert calls == 1
+
+
+def test_a_reply_cut_by_the_output_limit_names_the_limit() -> None:
+    events: list[dict[str, Any]] = [
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking"}},
+        {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}},
+    ]
+    with pytest.raises(ValueError, match="32000-token output limit, which includes thinking"):
+        llm._anthropic_text(events)
+
+
+def test_refinement_names_each_group_once_and_only_existing_ones() -> None:
+    learned = group("Keep", "keep term")
+    other = group("Other", "other term")
+
+    def refine(additions: list[Any], revisions: list[Any], removals: list[Any]) -> str:
+        return json.dumps({"additions": additions, "revisions": revisions, "removals": removals})
+
+    with pytest.raises(ValueError, match="existing groups: g_new"):
+        llm.parse_refinement(refine([], [{**learned.as_json(), "id": "g_new"}], []), (learned,))
+    with pytest.raises(ValueError, match="new_ group ID"):
+        llm.parse_refinement(refine([learned.as_json()], [], []), (learned,))
+    with pytest.raises(ValueError, match="existing learned groups: g_absent"):
+        llm.parse_refinement(refine([], [], ["g_absent"]), (learned,))
+    with pytest.raises(ValueError, match="once"):
+        llm.parse_refinement(refine([], [learned.as_json()], [learned.id]), (learned,))
+    assert llm.parse_refinement(refine([], [], [learned.id]), (learned, other)) == (other,)
+    # Generation cannot redefine an existing meaning, only link a new form to it.
+    link = {
+        "id": "new_g",
+        "meanings": [],
+        "recognized_forms": [
+            {
+                "text": "keep turn",
+                "associations": [
+                    {
+                        "meaning_id": learned.meanings[0].id,
+                        "basis": "text",
+                        "evidence": [{"source": llm.source_id("keep turn"), "start": 0, "end": 9}],
+                    }
+                ],
+            }
+        ],
+    }
+    result = llm.parse_generation(
+        json.dumps({"additions": [link]}), (learned,), transcripts=["keep turn"]
+    )
+    assert len(result) == 2 and result[1].recognized_forms[0].text == "keep turn"
+    redefine = {**link, "meanings": [learned.meanings[0].__dict__ | {"meaning": "Changed."}]}
+    with pytest.raises(ValueError, match="cannot redefine"):
+        llm.parse_generation(
+            json.dumps({"additions": [redefine]}), (learned,), transcripts=["keep turn"]
+        )

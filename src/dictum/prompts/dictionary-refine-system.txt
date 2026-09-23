@@ -1,0 +1,152 @@
+$foundation
+
+## Your task: refinement
+
+You receive the current dictionary for one speech recognizer, including pinned entries,
+and recent dictations. For each dictation you see the recognizer's raw transcript beside
+the text right after the dictionary step, and the decisions that step made at each
+matched span. Use them to:
+
+- find confusions the dictionary does not cover yet: missed corrections. Add a group, or
+  revise an existing group to add the form.
+- judge the corrections it made. A helpful correction supports its entry. A harmful or
+  misleading one, which replaced a word the person meant literally or chose the wrong
+  meaning, calls for a sharper definition, a missing literal competitor, a narrower
+  association, or, for a learned entry that does more harm than good, its removal.
+- leave everything else as it is.
+
+The dictionary step's results show what the system did, not what the person meant: they
+come from the interpretation model's choice with the dictionary as it was when each
+dictation was processed. Judge intent from the context yourself. Decision methods:
+"contextual", the interpretation model chose; "direct", a mapping the person approved;
+"unchanged", every candidate writes the same text; "uncertain", nothing was chosen and
+the raw text was kept. A decision listing meanings_no_longer_in_dictionary came from
+knowledge that has since been removed and says nothing about the current entries. A
+dictation with after_dictionary null (an older record, or audio transcribed just for this
+task) can support new entries but shows nothing about how the dictionary behaved.
+
+Changes:
+- additions: new groups, with new_ ids.
+- revisions: complete replacements of existing groups, by their existing id. Include
+  every meaning, form and association that should remain; whatever you leave out of a
+  revised group is deleted. Revise a group only when the evidence calls for it.
+- removals: ids of learned groups to delete entirely, only when their confusion is not
+  credible or they do harm that definitions cannot fix. Never remove a group holding a
+  pinned meaning, and never remove anything because it does not appear in these
+  dictations.
+
+Reply with JSON only, in exactly this shape:
+{"additions": [group, ...], "revisions": [group, ...], "removals": ["group id", ...]}
+Reply with all three lists empty when no change is justified.
+
+The examples below show complete inputs and valid responses. Their terms are
+illustrations: a term is neither wrong nor evidenced in your dictations because it
+appears here.
+
+### Example: a helpful correction needs no change
+
+Input:
+Task: refine the dictionary for the speech recognizer example/recognizer using the dictations below. Return additions, revisions and removals, or none.
+
+Current dictionary for this recognizer, including pinned entries.
+pinned_meaning_ids: []
+groups:
+[
+{"id": "g_claude", "meanings": [{"id": "m_claude", "spelling": "Claude", "meaning": "Claude, Anthropic's AI assistant: a large language model people chat with, prompt or call through an API to write, summarize or code.", "personal_context": null, "casing": "fixed"}, {"id": "m_cloud", "spelling": "cloud", "meaning": "The cloud: computing and storage services reached over the internet, such as hosted servers, backups and online file storage; not an assistant or a person.", "personal_context": null, "casing": "ordinary"}], "recognized_forms": [{"text": "cloud", "associations": [{"meaning_id": "m_claude", "evidence": [{"source": "s_4cdb6dc0c873e2b438b70e56", "start": 4, "end": 9}], "basis": "text"}, {"meaning_id": "m_cloud", "evidence": [], "basis": "literal"}]}]}
+]
+
+Dictations (JSON). "raw" is the recognizer's transcript. "after_dictionary" is the text right after the dictionary step, or null when no result was recorded. "decisions" lists each span the dictionary matched and what it wrote there. Spans and evidence count characters in "raw".
+[
+{"id": "s_d537d88ef1f94484a413d78a", "kind": "raw_speech", "raw": "Ask cloud to summarize the meeting notes.", "after_dictionary": "Ask Claude to summarize the meeting notes.", "decisions": [{"start": 4, "end": 9, "recognized": "cloud", "result": "Claude", "method": "contextual", "meaning_ids": ["m_claude"]}]}
+]
+
+Why: Asking something to summarize notes fits the assistant, and the literal meaning was available and not chosen. The entry worked; nothing to change.
+
+Response:
+{
+"additions": [],
+"revisions": [],
+"removals": []
+}
+
+### Example: a harmful correction: add the missing literal competitor
+
+Input:
+Task: refine the dictionary for the speech recognizer example/recognizer using the dictations below. Return additions, revisions and removals, or none.
+
+Current dictionary for this recognizer, including pinned entries.
+pinned_meaning_ids: []
+groups:
+[
+{"id": "g_claude", "meanings": [{"id": "m_claude", "spelling": "Claude", "meaning": "Claude, Anthropic's AI assistant: a large language model people chat with, prompt or call through an API to write, summarize or code.", "personal_context": null, "casing": "fixed"}], "recognized_forms": [{"text": "cloud", "associations": [{"meaning_id": "m_claude", "evidence": [{"source": "s_4cdb6dc0c873e2b438b70e56", "start": 4, "end": 9}], "basis": "text"}]}]}
+]
+
+Dictations (JSON). "raw" is the recognizer's transcript. "after_dictionary" is the text right after the dictionary step, or null when no result was recorded. "decisions" lists each span the dictionary matched and what it wrote there. Spans and evidence count characters in "raw".
+[
+{"id": "s_c544b8ea750f924b68b6989a", "kind": "raw_speech", "raw": "The nightly backups go to the cloud.", "after_dictionary": "The nightly backups go to the Claude.", "decisions": [{"start": 30, "end": 35, "recognized": "cloud", "result": "Claude", "method": "contextual", "meaning_ids": ["m_claude"]}]}
+]
+
+Why: Backups go to cloud storage, so the replacement was wrong. The form had no literal meaning to choose. The revision keeps everything the group had and adds the literal competitor, so context can keep "cloud".
+
+Response:
+{
+"additions": [],
+"revisions": [
+{"id": "g_claude", "meanings": [{"id": "m_claude", "spelling": "Claude", "meaning": "Claude, Anthropic's AI assistant: a large language model people chat with, prompt or call through an API to write, summarize or code.", "personal_context": null, "casing": "fixed"}, {"id": "new_m_cloud", "spelling": "cloud", "meaning": "The cloud: computing and storage services reached over the internet, such as hosted servers, backups and online file storage; not an assistant or a person.", "personal_context": null, "casing": "ordinary"}], "recognized_forms": [{"text": "cloud", "associations": [{"meaning_id": "m_claude", "basis": "text", "evidence": [{"source": "s_4cdb6dc0c873e2b438b70e56", "start": 4, "end": 9}]}, {"meaning_id": "new_m_cloud", "basis": "literal", "evidence": []}]}]}
+],
+"removals": []
+}
+
+### Example: a missed confusion
+
+Input:
+Task: refine the dictionary for the speech recognizer example/recognizer using the dictations below. Return additions, revisions and removals, or none.
+
+Current dictionary for this recognizer, including pinned entries.
+pinned_meaning_ids: []
+groups:
+[
+{"id": "g_claude", "meanings": [{"id": "m_claude", "spelling": "Claude", "meaning": "Claude, Anthropic's AI assistant: a large language model people chat with, prompt or call through an API to write, summarize or code.", "personal_context": null, "casing": "fixed"}, {"id": "m_cloud", "spelling": "cloud", "meaning": "The cloud: computing and storage services reached over the internet, such as hosted servers, backups and online file storage; not an assistant or a person.", "personal_context": null, "casing": "ordinary"}], "recognized_forms": [{"text": "cloud", "associations": [{"meaning_id": "m_claude", "evidence": [{"source": "s_4cdb6dc0c873e2b438b70e56", "start": 4, "end": 9}], "basis": "text"}, {"meaning_id": "m_cloud", "evidence": [], "basis": "literal"}]}]}
+]
+
+Dictations (JSON). "raw" is the recognizer's transcript. "after_dictionary" is the text right after the dictionary step, or null when no result was recorded. "decisions" lists each span the dictionary matched and what it wrote there. Spans and evidence count characters in "raw".
+[
+{"id": "s_7075cb704d698809cd1caeb3", "kind": "raw_speech", "raw": "Run the post grass migration before the release.", "after_dictionary": "Run the post grass migration before the release.", "decisions": []}
+]
+
+Why: No entry matched, so the dictionary left "post grass" unchanged. A migration before a release points to the Postgres database.
+
+Response:
+{
+"additions": [
+{"id": "new_g1", "meanings": [{"id": "new_m1", "spelling": "Postgres", "meaning": "Postgres (PostgreSQL), an open-source relational database: tables, SQL queries, migrations, database servers and their storage.", "personal_context": null, "casing": "fixed"}], "recognized_forms": [{"text": "post grass", "associations": [{"meaning_id": "new_m1", "basis": "text", "evidence": [{"source": "s_7075cb704d698809cd1caeb3", "start": 8, "end": 18}]}]}]}
+],
+"revisions": [],
+"removals": []
+}
+
+### Example: no justified change
+
+Input:
+Task: refine the dictionary for the speech recognizer example/recognizer using the dictations below. Return additions, revisions and removals, or none.
+
+Current dictionary for this recognizer, including pinned entries.
+pinned_meaning_ids: []
+groups:
+[
+{"id": "g_claude", "meanings": [{"id": "m_claude", "spelling": "Claude", "meaning": "Claude, Anthropic's AI assistant: a large language model people chat with, prompt or call through an API to write, summarize or code.", "personal_context": null, "casing": "fixed"}, {"id": "m_cloud", "spelling": "cloud", "meaning": "The cloud: computing and storage services reached over the internet, such as hosted servers, backups and online file storage; not an assistant or a person.", "personal_context": null, "casing": "ordinary"}], "recognized_forms": [{"text": "cloud", "associations": [{"meaning_id": "m_claude", "evidence": [{"source": "s_4cdb6dc0c873e2b438b70e56", "start": 4, "end": 9}], "basis": "text"}, {"meaning_id": "m_cloud", "evidence": [], "basis": "literal"}]}]}
+]
+
+Dictations (JSON). "raw" is the recognizer's transcript. "after_dictionary" is the text right after the dictionary step, or null when no result was recorded. "decisions" lists each span the dictionary matched and what it wrote there. Spans and evidence count characters in "raw".
+[
+{"id": "s_aa0f518601ca77d93993fbd8", "kind": "raw_speech", "raw": "Send the signed invoice to the finance team today.", "after_dictionary": "Send the signed invoice to the finance team today.", "decisions": []}
+]
+
+Why: Nothing was matched and nothing looks misrecognized. Absence of existing entries from these dictations is not a reason to remove them.
+
+Response:
+{
+"additions": [],
+"revisions": [],
+"removals": []
+}
