@@ -372,3 +372,37 @@ def test_processing_records_identify_source_snippets_and_original_offsets(
             assert span["source"] in llm.sources(step.snippets)
             assert llm.sources(step.snippets)[span["source"]] == snippet
     assert steps[-1].completed == ("attempt-42",)
+
+
+def test_audio_from_other_models_creates_then_refines_the_selected_models_dictionary(
+    tmp_path: Path,
+) -> None:
+    prompts: list[str] = []
+    heard = "hello there, I use cloud code"  # what StubProvider returns for "good"
+
+    async def call(provider: str, key: str, model: str, system: str, user: str) -> str:
+        prompts.append(user)
+        return json.dumps(proposed(heard) if len(prompts) == 1 else {"groups": [], "remove": []})
+
+    with closing(Store(tmp_path)) as store:
+        other = store.create_recording(WEBM_HEADER)
+        store.add_transcription(other.id, "other", "x", "ok", "original words", None)
+        app, client = setup(store, call)
+        items = client.get("/api/dictionary/audio").json()["items"]
+        assert [item["models"] for item in items] == [["other/x"]]
+        for applied in (True, False):
+            job = client.post(
+                "/api/dictionary/build",
+                json={"source": "audio", "audio_ids": [f"recording:{other.id}"]},
+            ).json()
+            assert wait_for_build(client)["phase"] == "ready"
+            accepted = client.post(f"/api/dictionary/build/{job['id']}/accept").json()
+            assert accepted["applied"] is applied
+        # The generator received the selected model's text; refinement also saw what it learned.
+        assert heard in prompts[0] and "Claude Code" not in prompts[0].split("Source")[0]
+        assert "Claude Code" in prompts[1].split("Source")[0]
+        learned = app.dictionary().learned
+        assert list(learned) == ["stub/good"] and len(learned["stub/good"]) == 1
+        attempts = store.get_recording(other.id).transcriptions  # type: ignore[union-attr]
+        assert [(a.model, a.text) for a in attempts] == [("x", "original words")]
+        app.close()
