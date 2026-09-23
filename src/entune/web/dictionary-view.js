@@ -60,8 +60,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     missingKey = Boolean(owner && !owner.keyHint);
     note.hidden = keyed.length > 0 && !missingKey;
     note.textContent = missingKey
-      ? `${languageName(current)} needs an API key for ${owner.name}: add it in Settings › Providers, or choose another model.`
-      : "Add an Anthropic or OpenAI key in Settings › Providers to choose a dictionary model.";
+      ? `${languageName(current)} needs an API key for ${owner.name}: add it in Settings › Dictionary setup, or choose another model.`
+      : "Add an Anthropic or OpenAI key in Settings › Dictionary setup to choose a suggestion model.";
     if (!keyed.length) modelSelect.add(new Option("No key yet", ""));
     modelSelect.disabled = building || !keyed.length;
     gate();
@@ -237,7 +237,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
         head.append(node("h3", "New entry"), node("span", "", "spacer"),
           button("Collapse", () => showNewGroup(false)), button("Discard", discardNewGroup));
         panel.append(head);
-        panel.append(node("p", "Write what you meant, then each spelling the speech model writes for it.", "caption hint editor-intro"));
+        panel.append(node("p", "Write what you meant, then each spelling the speech model writes for it.", "caption editor-intro"));
         field(panel, "Use with", scope, (v) => { scope = v; }, [["pinned", "All speech models (pinned)"], ...(model ? [["learned", `Only ${modelName(model.id, [model])} (learned)`]] : [])]);
       }
       for (const meaning of draft.meanings) {
@@ -537,5 +537,5 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
   const scope = () => el("learning-reuse").checked ? "all" : "new";
   buildBtn.addEventListener("click", () => builds.start("history", {mode: mode(), scope: scope()}));
 
-  return { load: loadDictionary, showHelp, refreshAudio: () => onboarding.load(), refreshModels: fillModels };
+  return { load: loadDictionary, refreshAudio: () => onboarding.load(), refreshModels: fillModels };
 }

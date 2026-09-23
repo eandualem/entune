@@ -40,7 +40,7 @@ function alignWindowButtons() {
 window.addEventListener("pywebviewready", alignWindowButtons);
 alignWindowButtons();
 
-// ---- Preferences kept in this window: theme, text size, hints ----
+// ---- Preferences kept in this window: theme and text size ----
 function applyTheme(theme) {
   if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
   else delete document.documentElement.dataset.theme;
@@ -76,34 +76,27 @@ document.addEventListener("keydown", (e) => {
   applyScale(step === 0 ? "default" : SCALES[Math.max(0, Math.min(SCALES.length - 1, at + step))]);
 });
 
-const hintsInput = el("hints");
-hintsInput.checked = document.documentElement.dataset.hints !== "off";
-hintsInput.addEventListener("change", () => {
-  if (hintsInput.checked) delete document.documentElement.dataset.hints;
-  else document.documentElement.dataset.hints = "off";
-  try { hintsInput.checked ? localStorage.removeItem("hints") : localStorage.setItem("hints", "off"); } catch (e) {}
-  if (!hintsInput.checked) dictionary.showHelp(false);
-});
-
 // ---- Views and the settings rail ----
-const views = { history: el("view-history"), dictionary: el("view-dictionary"), settings: el("view-settings") };
-const selectTab = segmentedGroup({ history: el("tab-history"), dictionary: el("tab-dictionary"), settings: el("tab-settings") }, showView);
+const views = { history: el("view-history"), models: el("view-models"), dictionary: el("view-dictionary"), settings: el("view-settings") };
+const selectTab = segmentedGroup({ history: el("tab-history"), models: el("tab-models"), dictionary: el("tab-dictionary"), settings: el("tab-settings") }, showView);
 function showView(name) {
   for (const key in views) views[key].toggleAttribute("data-active", key === name);
   views[name].scrollTop = 0;
   if (name === "history") loadHistory().catch((err) => { status.textContent = errorText(err); });
+  if (name === "models") loadMetrics().catch((err) => { status.textContent = errorText(err); });
   if (name === "dictionary") dictionary.refreshAudio().catch((err) => { status.textContent = errorText(err); });
   if (name === "settings") settingsView.refreshJev().catch((err) => { status.textContent = errorText(err); });
-  if (name === "settings" && sections.agents.hasAttribute("data-active")) settingsView.refreshCorrections();
+  if (name === "settings" && sections.integrations.hasAttribute("data-active")) settingsView.refreshCorrections();
   permissionsView.setActive(name === "settings" && sections.general.hasAttribute("data-active"));
 }
 function show(name) { selectTab(name); showView(name); }
 
-const sections = { general: el("settings-general"), providers: el("settings-providers"), local: el("settings-local"), privacy: el("settings-privacy"), agents: el("settings-agents") };
-const selectSection = segmentedGroup({ general: el("sec-general"), providers: el("sec-providers"), local: el("sec-local"), privacy: el("sec-privacy"), agents: el("sec-agents") }, showSection);
+const SECTIONS = ["general", "processing", "dictionary", "integrations", "privacy"];
+const sections = Object.fromEntries(SECTIONS.map((name) => [name, el(`settings-${name}`)]));
+const selectSection = segmentedGroup(Object.fromEntries(SECTIONS.map((name) => [name, el(`sec-${name}`)])), showSection);
 function showSection(name) {
   for (const key in sections) sections[key].toggleAttribute("data-active", key === name);
-  if (name === "agents") settingsView.refreshCorrections();
+  if (name === "integrations") settingsView.refreshCorrections();
   permissionsView.setActive(name === "general" && views.settings.hasAttribute("data-active"));
 }
 function openSettings(section) { show("settings"); selectSection(section); showSection(section); }
@@ -145,19 +138,8 @@ modelSelect.addEventListener("change", async () => {
 
 fastInput.addEventListener("change", () => settingsView.save({ fastMode: fastInput.checked }, null));
 
-// ---- Performance by model: a popover behind the chart button ----
-const metricsPopover = el("metrics");
-const metricsToggle = el("metrics-toggle");
+// ---- Performance by model: the comparison on the Models page ----
 const metricsRows = el("metrics-rows");
-function showMetrics(open) {
-  metricsPopover.hidden = !open;
-  metricsToggle.setAttribute("aria-expanded", String(open));
-}
-metricsToggle.addEventListener("click", () => showMetrics(metricsPopover.hidden));
-document.addEventListener("click", (e) => {
-  if (!metricsPopover.hidden && !metricsPopover.contains(e.target) && !metricsToggle.contains(e.target)) showMetrics(false);
-});
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !metricsPopover.hidden) showMetrics(false); });
 
 function audioLength(seconds) {
   if (seconds < 60) return `${Math.max(1, Math.round(seconds))} s`;
@@ -166,8 +148,8 @@ function audioLength(seconds) {
 }
 async function loadMetrics() {
   const rows = await api("/api/metrics");
-  metricsToggle.hidden = rows.length === 0;
-  if (rows.length === 0) showMetrics(false);
+  // Until a model has been used there is nothing to compare, so setup comes first.
+  el("compare").hidden = rows.length === 0;
   const cell = (text, title = "") => Object.assign(document.createElement("span"), { textContent: text, title });
   metricsRows.replaceChildren(
     ...rows.map((m) => {
@@ -234,7 +216,7 @@ function renderStart() {
     return li;
   };
   stepsList.replaceChildren(
-    step(haveModel, "Add a provider", ["A key, or a downloaded model."], { label: "Providers", go: () => openSettings("providers") }),
+    step(haveModel, "Add a speech model", ["A cloud service's key, or a model downloaded to this Mac."], { label: "Models", go: () => show("models") }),
     step(haveDefault, "Pick the default model", ["The picker in the toolbar; it applies at once."], null),
     step(recordingsCount > 0, "Dictate", dictate, shortcuts.hold || shortcuts.toggle ? null : { label: "Set a shortcut", go: () => openSettings("general") }),
   );
@@ -343,5 +325,6 @@ initRecording({
 });
 await settingsView.load();
 if (location.hash === "#settings") show("settings");
+else if (location.hash === "#models") show("models");
 else if (location.hash === "#dictionary") show("dictionary");
 else show("history");
