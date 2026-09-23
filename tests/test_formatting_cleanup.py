@@ -7,13 +7,13 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
+from entune.app.entune import Entune
 from entune.processing import cleanup, formatting, jev, jev_client, text_edits
 from entune.processing.pipeline import process_text
 from entune.processing.results import notice
 from entune.processing.text_edits import Change
 from entune.providers.contracts import Transcript
 from entune.server import create_app
-from entune.service import Entune
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
 from tests.dictionary_samples import JEV

@@ -24,19 +24,17 @@ from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from entune import __version__
+from entune.app.dictionary_file import DictionaryChanged
+from entune.app.entune import Entune
+from entune.app.metrics import model_metrics, processing_summary
+from entune.app.models import NoDefaultModel, UnknownModel
+from entune.app.operations import Busy
+from entune.app.settings import JEV_PROVIDER
 from entune.audio.formats import extension_for, safe_mime
 from entune.desktop import shortcuts
 from entune.learning import audio_import, suggestion_model
 from entune.learning.builds import JobConflict
-from entune.operations import Busy
 from entune.processing import jev_client
-from entune.service import (
-    JEV_PROVIDER,
-    DictionaryChanged,
-    Entune,
-    NoDefaultModel,
-    UnknownModel,
-)
 from entune.storage.records import Recording
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -122,7 +120,7 @@ def _recording_json(recording: Recording) -> dict[str, Any]:
 
 
 def _shortcuts_json(app: Entune) -> dict[str, str | None]:
-    shortcuts = app.shortcuts()
+    shortcuts = app.settings.shortcuts()
     return {
         "hold": "+".join(shortcuts.hold) if shortcuts.hold else None,
         "toggle": "+".join(shortcuts.toggle) if shortcuts.toggle else None,
@@ -154,9 +152,9 @@ def create_app(app: Entune) -> Starlette:
                         "streams": s.streams,
                         "local": s.local,
                     }
-                    for s in app.provider_statuses()
+                    for s in app.models.provider_statuses()
                 ],
-                "defaultModel": app.default_model(),
+                "defaultModel": app.models.default_model(),
                 "shortcuts": _shortcuts_json(app),
                 "llmProviders": [
                     {
@@ -166,14 +164,14 @@ def create_app(app: Entune) -> Starlette:
                         "defaultModel": s.default_model,
                         "models": [{"id": m.id, "name": m.name} for m in s.models],
                     }
-                    for s in app.llm_provider_statuses()
+                    for s in app.settings.suggestion_providers()
                 ],
-                "dictionaryModel": app.dictionary_model(),
-                "fastMode": app.fast_mode(),
+                "dictionaryModel": app.settings.dictionary_model(),
+                "fastMode": app.settings.fast_mode(),
                 "jev": {
-                    **asdict(app.jev_status()),
-                    "policy": asdict(app.jev_policy()),
-                    "summary": asdict(app.jev_summary()),
+                    **asdict(app.settings.jev_status()),
+                    "policy": asdict(app.settings.jev_policy()),
+                    "summary": asdict(processing_summary(app.store)),
                 },
             }
         )
@@ -203,7 +201,7 @@ def create_app(app: Entune) -> Starlette:
                 if not isinstance(key, str) or not key.strip():
                     raise ValueError(f"Empty or invalid key for {provider_id}")
             default_model = _optional_text(body.get("defaultModel"), "defaultModel")
-            if default_model is not None and app.resolve(default_model) is None:
+            if default_model is not None and app.models.resolve(default_model) is None:
                 raise UnknownModel(default_model)
             dictionary_model = _optional_text(body.get("dictionaryModel"), "dictionaryModel")
             if dictionary_model:
@@ -250,7 +248,7 @@ def create_app(app: Entune) -> Starlette:
                     or jev_settings.get("cleanup")
                 )
                 and JEV_PROVIDER not in keys
-                and app.jev_status().key_hint is None
+                and app.settings.jev_status().key_hint is None
             ):
                 raise ValueError("Save a TypeSafe API key first.")
             shortcut_settings = body.get("shortcuts", {})
@@ -266,23 +264,23 @@ def create_app(app: Entune) -> Starlette:
             # Validate the complete request before storing any field: a bad shortcut
             # or model must not leave a seemingly failed Save with some keys changed.
             for provider_id, key in keys.items():
-                app.set_key(provider_id, key)
+                app.settings.set_key(provider_id, key)
             if "defaultModel" in body:
-                app.set_default_model(default_model)
+                app.models.set_default_model(default_model)
             if "dictionaryModel" in body:
-                app.set_dictionary_model(dictionary_model or None)
+                app.settings.set_dictionary_model(dictionary_model or None)
             if "fastMode" in body:
-                app.set_fast_mode(body["fastMode"])
+                app.settings.set_fast_mode(body["fastMode"])
             if jev_settings:
-                app.set_jev(
+                app.settings.set_jev(
                     jev_settings.get("dictionary"),
                     jev_settings.get("formatting"),
                     jev_settings.get("cleanup"),
                 )
             if policy is not None:
-                app.set_jev_policy(policy)
+                app.settings.set_jev_policy(policy)
             if "shortcuts" in body:
-                app.set_shortcuts(hold, toggle, cancel)
+                app.settings.set_shortcuts(hold, toggle, cancel)
         except UnknownModel as exc:
             return _bad(f"Unknown model: {exc}")
         except ValueError as exc:
@@ -290,7 +288,7 @@ def create_app(app: Entune) -> Starlette:
         return JSONResponse({"ok": True})
 
     def _dictionary_response(app: Entune) -> Response:
-        text, version = app.dictionary_snapshot()
+        text, version = app.dictionary.dictionary_snapshot()
         return PlainTextResponse(
             text,
             media_type="application/json",
@@ -307,7 +305,7 @@ def create_app(app: Entune) -> Starlette:
         expected = request.headers.get("if-match")
         try:
             await run_in_threadpool(
-                app.set_dictionary,
+                app.dictionary.set_dictionary,
                 (await request.body()).decode("utf-8"),
                 expected.strip('"') if expected else None,
             )
@@ -331,7 +329,7 @@ def create_app(app: Entune) -> Starlette:
                     "Pinning needs a model, optional group and meaning IDs, and If-Match"
                 )
             await run_in_threadpool(
-                app.pin_meaning,
+                app.dictionary.pin_meaning,
                 body["model"],
                 body.get("group"),
                 body.get("meaning"),
@@ -346,7 +344,9 @@ def create_app(app: Entune) -> Starlette:
     async def safe_mapping_recovery(request: Request) -> Response:
         try:
             result = await run_in_threadpool(
-                app.safe_mapping_recovery, request.path_params["id"], request.path_params["attempt"]
+                app.dictation.safe_mapping_recovery,
+                request.path_params["id"],
+                request.path_params["attempt"],
             )
         except ValueError as exc:
             return _bad(str(exc))
@@ -361,7 +361,7 @@ def create_app(app: Entune) -> Starlette:
         except ValueError:
             return _bad("Body must be JSON")
         try:
-            added = await run_in_threadpool(app.add_agent_corrections, body)
+            added = await run_in_threadpool(app.dictionary.add_agent_corrections, body)
         except ValueError as exc:
             return _bad(str(exc), 409 if isinstance(exc, Busy) else 400)
         return JSONResponse({"added": [e.as_json() for e in added]})
@@ -369,7 +369,7 @@ def create_app(app: Entune) -> Starlette:
     # Deleting all local data: the page lists the scope first, then sends the phrase
     # the person typed; the server checks it too.
     def data_inventory(_: Request) -> Response:
-        return JSONResponse(app.data_inventory())
+        return JSONResponse(app.data.data_inventory())
 
     async def reset_data(request: Request) -> Response:
         try:
@@ -379,7 +379,7 @@ def create_app(app: Entune) -> Starlette:
         if not isinstance(body, dict) or body.get("confirm") != RESET_PHRASE:
             return _bad(f'Type "{RESET_PHRASE}" to confirm', 400)
         try:
-            result = await run_in_threadpool(app.reset_data)
+            result = await run_in_threadpool(app.data.reset_data)
         except (JobConflict, Busy) as exc:
             return _bad(str(exc), 409)
         except ValueError as exc:
@@ -394,7 +394,9 @@ def create_app(app: Entune) -> Starlette:
 
     def build_status(request: Request) -> Response:
         try:
-            return JSONResponse(app.dictionary_build_status(request.path_params.get("job_id")))
+            return JSONResponse(
+                app.learning.dictionary_build_status(request.path_params.get("job_id"))
+            )
         except (JobConflict, Busy) as exc:
             return _bad(str(exc), 409)
 
@@ -415,7 +417,7 @@ def create_app(app: Entune) -> Starlette:
             ):
                 raise ValueError("audio_ids must list saved recording IDs")
             state = await run_in_threadpool(
-                app.start_dictionary_build,
+                app.learning.start_dictionary_build,
                 body["source"],
                 mode=body["mode"],
                 scope=body.get("scope", "new"),
@@ -430,10 +432,10 @@ def create_app(app: Entune) -> Starlette:
     async def act_on_build(request: Request) -> Response:
         action = request.path_params.get("action", "discard")
         methods = {
-            "cancel": app.cancel_dictionary_build,
-            "accept": app.accept_dictionary_build,
-            "discard": app.discard_dictionary_build,
-            "retry": app.retry_dictionary_build,
+            "cancel": app.learning.cancel_dictionary_build,
+            "accept": app.learning.accept_dictionary_build,
+            "discard": app.learning.discard_dictionary_build,
+            "retry": app.learning.retry_dictionary_build,
         }
         if action not in methods:
             return _bad("Unknown dictionary job action", 404)
@@ -443,7 +445,9 @@ def create_app(app: Entune) -> Starlette:
                 if not isinstance(body, dict) or set(body) - {"selected"}:
                     raise ValueError("Apply a list of selected proposals")
                 await run_in_threadpool(
-                    app.accept_dictionary_build, request.path_params["job_id"], body.get("selected")
+                    app.learning.accept_dictionary_build,
+                    request.path_params["job_id"],
+                    body.get("selected"),
                 )
             else:
                 await run_in_threadpool(methods[action], request.path_params["job_id"])
@@ -451,7 +455,7 @@ def create_app(app: Entune) -> Starlette:
             return _bad(str(exc), 409)
         except ValueError as exc:
             return _bad(str(exc))
-        return JSONResponse(app.dictionary_build_status())
+        return JSONResponse(app.learning.dictionary_build_status())
 
     def dictionary_audio(_: Request) -> Response:
         # Which speech models already transcribed each recording, so the page can offer
@@ -486,7 +490,7 @@ def create_app(app: Entune) -> Starlette:
 
     def imported[T](action: Callable[..., T], *args: object) -> T:
         """An import runs whole or not at all around a data reset."""
-        with app.using_data("audio import"):
+        with app.data.using_data("audio import"):
             return action(*args)
 
     async def import_dictionary_audio(request: Request) -> Response:
@@ -520,15 +524,15 @@ def create_app(app: Entune) -> Starlette:
         return JSONResponse(result)
 
     async def start_capture(_: Request) -> Response:
-        if not app.can_capture():
+        if not app.capture.can_capture():
             return _bad("Recording a shortcut needs the menu-bar app; type the keys instead.", 409)
-        return JSONResponse(asdict(app.start_capture()), status_code=202)
+        return JSONResponse(asdict(app.capture.start_capture()), status_code=202)
 
     async def capture_status(_: Request) -> Response:
-        return JSONResponse(asdict(app.capture_status()))
+        return JSONResponse(asdict(app.capture.capture_status()))
 
     async def cancel_capture(_: Request) -> Response:
-        app.cancel_capture()
+        app.capture.cancel_capture()
         return JSONResponse({"ok": True})
 
     def status(_: Request) -> Response:
@@ -536,13 +540,13 @@ def create_app(app: Entune) -> Starlette:
             {
                 "version": __version__,
                 "shortcuts": _shortcuts_json(app),
-                "defaultModel": app.default_model(),
-                **app.desktop_status(),
+                "defaultModel": app.models.default_model(),
+                **app.desktop.desktop_status(),
             }
         )
 
     async def show_window(_: Request) -> Response:
-        if not app.show_window():
+        if not app.desktop.show_window():
             return _bad("No desktop app is running to show a window", 409)
         return JSONResponse({"ok": True})
 
@@ -556,12 +560,12 @@ def create_app(app: Entune) -> Starlette:
             return _bad("Body must be JSON")
         if not isinstance(body, dict) or not isinstance(body.get("openSettings", False), bool):
             return _bad("openSettings must be a boolean")
-        if not app.request_permission(name, body.get("openSettings", False)):
+        if not app.desktop.request_permission(name, body.get("openSettings", False)):
             return _bad("Open the Entune desktop app to set up permissions", 409)
         return JSONResponse({"ok": True}, status_code=202)
 
     def models(_: Request) -> Response:
-        return JSONResponse([asdict(m) for m in app.available_models()])
+        return JSONResponse([asdict(m) for m in app.models.available_models()])
 
     def list_recordings(request: Request) -> Response:
         try:
@@ -596,7 +600,7 @@ def create_app(app: Entune) -> Starlette:
                 return _bad("operation must be a recording identifier")
         try:
             recording = await run_in_threadpool(
-                app.record_and_transcribe, data, label, ref, operation_id=operation_id
+                app.dictation.record_and_transcribe, data, label, ref, operation_id=operation_id
             )
         except NoDefaultModel as exc:
             return _bad(str(exc))
@@ -631,31 +635,31 @@ def create_app(app: Entune) -> Starlette:
             return _bad("Body must be JSON")
         if not isinstance(body, dict):
             return _bad("Body must be a JSON object")
-        ref = app.resolve(body["model"]) if isinstance(body.get("model"), str) else None
+        ref = app.models.resolve(body["model"]) if isinstance(body.get("model"), str) else None
         if ref is None:
             return _bad(f"Unknown model: {body.get('model')}")
-        updated = await run_in_threadpool(app.transcribe_recording, recording, ref.id)
+        updated = await run_in_threadpool(app.dictation.transcribe_recording, recording, ref.id)
         return JSONResponse(_recording_json(updated))
 
     def local_models(_: Request) -> Response:
-        return JSONResponse([asdict(m) for m in app.local_models()])
+        return JSONResponse([asdict(m) for m in app.models.local_models()])
 
     async def download_local_model(request: Request) -> Response:
         try:
-            await run_in_threadpool(app.download_local_model, request.path_params["name"])
+            await run_in_threadpool(app.models.download_local_model, request.path_params["name"])
         except ValueError as exc:
             return _bad(str(exc), 404)
         return JSONResponse({"ok": True})
 
     async def remove_local_model(request: Request) -> Response:
         try:
-            await run_in_threadpool(app.remove_local_model, request.path_params["name"])
+            await run_in_threadpool(app.models.remove_local_model, request.path_params["name"])
         except ValueError as exc:
             return _bad(str(exc), 404)
         return JSONResponse({"ok": True})
 
     def metrics(_: Request) -> Response:
-        return JSONResponse([asdict(m) for m in app.metrics()])
+        return JSONResponse([asdict(m) for m in model_metrics(app.store, app.providers)])
 
     def audio(request: Request) -> Response:
         recording = app.store.get_recording(int(request.path_params["id"]))
@@ -692,7 +696,7 @@ def create_app(app: Entune) -> Starlette:
 
     def export_transcripts(_: Request) -> Response:
         try:
-            with app.using_data("export"):
+            with app.data.using_data("export"):
                 recordings = app.store.list_recordings()
         except Busy as exc:
             return _bad(str(exc), 409)
@@ -712,7 +716,10 @@ def create_app(app: Entune) -> Starlette:
         path = Path(directory.name) / "entune-audio.zip"
         try:
             # A data reset waits until the archive is built; afterwards it has its own copy.
-            with app.using_data("export"), ZipFile(path, "w", strict_timestamps=False) as archive:
+            with (
+                app.data.using_data("export"),
+                ZipFile(path, "w", strict_timestamps=False) as archive,
+            ):
                 recordings = app.store.list_recordings()
                 imported = app.store.dictionary_audio()
                 manifest: dict[str, list[dict[str, Any]]] = {

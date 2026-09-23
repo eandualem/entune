@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from entune.app.entune import Entune
 from entune.audio.formats import wav_bytes
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import entries as dictionary_entries
@@ -21,7 +22,6 @@ from entune.learning import batches, suggestion_model
 from entune.learning import inputs as learning_inputs
 from entune.providers.contracts import Clip, Failure, Transcript
 from entune.server import create_app
-from entune.service import Entune
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, wait_for_build
 from tests.dictionary_samples import JEV, group, proposed
@@ -30,9 +30,9 @@ from tests.test_server import StubProvider
 
 def setup(store: Store, caller: suggestion_model.Caller) -> tuple[Entune, TestClient]:
     app = Entune(store, [StubProvider()], llm_call=caller)
-    app.set_key("stub", "speech-key")
-    app.set_key("openai", "generation-key")
-    app.set_default_model("stub/good")
+    app.settings.set_key("stub", "speech-key")
+    app.settings.set_key("openai", "generation-key")
+    app.models.set_default_model("stub/good")
     return app, TestClient(create_app(app), base_url="http://localhost")
 
 
@@ -227,7 +227,7 @@ def test_retry_audio_reuses_successes_and_generation_checkpoint_without_persisti
         ready = wait_for_build(client)
         assert ready["phase"] == "ready" and len(speech_calls) == 3
         assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200
-        assert not app._builds._texts and store.list_recordings() == []
+        assert not app.builds._texts and store.list_recordings() == []
         app.close()
     assert not any(
         b"temporary private cloud code words" in path.read_bytes()
@@ -285,7 +285,7 @@ def test_learning_is_rejected_while_speech_is_running(
         app, client = setup(store, call)
         monkeypatch.setattr(app.providers[0], "transcribe", speech)
         with ThreadPoolExecutor(1) as pool:
-            future = pool.submit(app.record_and_transcribe, WEBM_HEADER, None, None)
+            future = pool.submit(app.dictation.record_and_transcribe, WEBM_HEADER, None, None)
             try:
                 assert entered.wait(1)
                 result = client.post(
@@ -367,7 +367,7 @@ def test_stop_during_audio_keeps_its_success_for_retry_and_discard_clears_it(
         assert wait_for_build(client)["phase"] == "ready"
         assert speech_calls == 2
         client.delete(f"/api/dictionary/build/{job['id']}")
-        assert not app._builds._texts and store.list_recordings() == []
+        assert not app.builds._texts and store.list_recordings() == []
         app.close()
 
 
@@ -435,7 +435,7 @@ def test_audio_from_other_models_creates_then_refines_the_selected_models_dictio
         assert (
             '"kind": "temporary_audio"' in prompts[1] and '"after_dictionary": null' in prompts[1]
         )
-        learned = app.dictionary().learned
+        learned = app.dictionary.dictionary().learned
         assert list(learned) == ["stub/good"] and len(learned["stub/good"]) == 1
         attempts = store.get_recording(other.id).transcriptions  # type: ignore[union-attr]
         assert [(a.model, a.text) for a in attempts] == [("x", "original words")]
