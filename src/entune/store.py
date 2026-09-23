@@ -264,8 +264,8 @@ class Store:
         the folder is cleared. The log is emptied in place, because this process may
         still be writing to it. Anything else in the folder is left untouched."""
         with self._lock:
+            ours, others = self.managed()  # before closing: a listing error changes nothing
             self._db.close()
-            ours, others = self.managed()
             try:
                 for path in ours:
                     if path.name == LOG and path.is_file() and not path.is_symlink():
