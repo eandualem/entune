@@ -9,9 +9,9 @@ import os
 import statistics
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import CancelledError
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
@@ -21,7 +21,7 @@ from entune.audio import sniff_mime
 from entune.builds import BuildInput, DictionaryBuilds, Source
 from entune.dictionary import Dictionary, Groups, Proposal
 from entune.dictionary_legacy import Correction, add_corrections, read_entries
-from entune.operations import Operation, Operations
+from entune.operations import Busy, Operation, Operations
 from entune.processing import Processed, Stage, process_text
 from entune.providers.cloud.contracts import Streams, Upload
 from entune.providers.contracts import Clip, Failure, Provider, Transcript
@@ -171,6 +171,9 @@ class Entune:
         self._permission_listeners: list[Callable[[str, bool], None]] = []
         self._desktop_status: dict[str, object] = {"desktop": False}
         self._capture_lock = threading.Lock()
+        self._import_lock = threading.Lock()
+        self._imports = 0  # audio imports in progress; a reset waits for none
+        self._resetting = False
         self._capture = CaptureStatus("idle", None)
         self._speech = SpeechResources(
             providers, lambda message: self.report_status(lastError=message)
@@ -277,6 +280,19 @@ class Entune:
             "other": [p.name for p in others],
         }
 
+    @contextmanager
+    def importing(self) -> Iterator[None]:
+        """Mark an audio import in progress; none may start while data is being deleted."""
+        with self._import_lock:
+            if self._resetting:
+                raise Busy("Entune is deleting all data; import again afterwards.")
+            self._imports += 1
+        try:
+            yield
+        finally:
+            with self._import_lock:
+                self._imports -= 1
+
     def reset_data(self) -> dict[str, list[str]]:
         """Delete everything Entune keeps locally and continue with an empty folder.
 
@@ -288,16 +304,28 @@ class Entune:
         with self._builds.idle(), self.operations.idle(), self._speech.use(None):
             if any(status.state == "downloading" for status in self.local_models()):
                 raise ValueError("A model is still downloading; wait for it to finish first.")
-            self._builds.forget()
-            self._speech.select(None)
-            for provider in self.providers:
-                if isinstance(provider, Downloadable):
-                    provider.unload()
+            with self._import_lock:
+                if self._imports:
+                    raise Busy("Audio is still being imported; wait for it to finish first.")
+                self._resetting = True
             try:
-                with self._dictionary_lock:
-                    deleted, kept = self.store.reset()
+                return self._reset_now()
             finally:
-                self._changed()
+                with self._import_lock:
+                    self._resetting = False
+
+    def _reset_now(self) -> dict[str, list[str]]:
+        """The deletion itself; the caller holds every lock and has checked for work."""
+        self._builds.forget()
+        self._speech.select(None)
+        for provider in self.providers:
+            if isinstance(provider, Downloadable):
+                provider.unload()
+        try:
+            with self._dictionary_lock:
+                deleted, kept = self.store.reset()
+        finally:
+            self._changed()
         return {"deleted": deleted, "kept": kept}
 
     def metrics(self) -> list[ModelMetrics]:
