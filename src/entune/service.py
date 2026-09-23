@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import statistics
 import threading
 import time
@@ -12,6 +13,7 @@ from collections.abc import Callable
 from concurrent.futures import CancelledError
 from contextlib import ExitStack
 from dataclasses import asdict, dataclass, replace
+from pathlib import Path
 
 from entune import dictionary as dictionary_file
 from entune import jev, llm, processing, shortcuts
@@ -253,6 +255,48 @@ class Entune:
             ):
                 return provider
         raise ValueError(f"Unknown local model: {name}")
+
+    # Deleting all local data
+
+    def data_inventory(self) -> dict[str, object]:
+        """What a reset would delete, with sizes, and what it would leave in the folder."""
+
+        def size(path: Path) -> int:
+            if path.is_symlink() or not path.is_dir():
+                return path.lstat().st_size
+            return sum(
+                (Path(root) / name).lstat().st_size
+                for root, _, files in os.walk(path)  # symlinked folders are not followed
+                for name in files
+            )
+
+        ours, others = self.store.managed()
+        return {
+            "folder": str(self.store.data_dir),
+            "items": [{"name": p.name, "bytes": size(p)} for p in ours],
+            "other": [p.name for p in others],
+        }
+
+    def reset_data(self) -> dict[str, list[str]]:
+        """Delete everything Entune keeps locally and continue with an empty folder.
+
+        Refused while a dictation, suggestion run or model download is under way. New
+        operations wait until it is done; local models are unloaded before their files go."""
+        with self.operations.idle():
+            self._builds.forget()
+            self._speech.select(None)
+            with self._speech.use(None):
+                if any(status.state == "downloading" for status in self.local_models()):
+                    raise ValueError("A model is still downloading; wait for it to finish first.")
+                for provider in self.providers:
+                    if isinstance(provider, Downloadable):
+                        for status in provider.catalogue():
+                            provider.remove(status.name)
+                        provider.unload()
+                with self._dictionary_lock:
+                    deleted, kept = self.store.reset()
+        self._changed()
+        return {"deleted": deleted, "kept": kept}
 
     def metrics(self) -> list[ModelMetrics]:
         """How each model has performed in real use, fast mode apart.

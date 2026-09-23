@@ -132,6 +132,9 @@ def _optional_text(value: object, name: str) -> str | None:
     return value
 
 
+RESET_PHRASE = "delete everything"
+
+
 def create_app(app: Entune) -> Starlette:
     async def index(_: Request) -> Response:
         return FileResponse(WEB_DIR / "index.html")
@@ -350,6 +353,26 @@ def create_app(app: Entune) -> Starlette:
         except ValueError as exc:
             return _bad(str(exc), 409 if isinstance(exc, Busy) else 400)
         return JSONResponse({"added": [e.as_json() for e in added]})
+
+    # Deleting all local data: the page lists the scope first, then sends the phrase
+    # the person typed; the server checks it too.
+    def data_inventory(_: Request) -> Response:
+        return JSONResponse(app.data_inventory())
+
+    async def reset_data(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict) or body.get("confirm") != RESET_PHRASE:
+            return _bad(f'Type "{RESET_PHRASE}" to confirm', 400)
+        try:
+            result = await run_in_threadpool(app.reset_data)
+        except (JobConflict, Busy) as exc:
+            return _bad(str(exc), 409)
+        except ValueError as exc:
+            return _bad(str(exc), 409)
+        return JSONResponse(result)
 
     def build_status(request: Request) -> Response:
         try:
@@ -703,6 +726,8 @@ def create_app(app: Entune) -> Starlette:
             Route("/api/settings", put_settings, methods=["PUT"]),
             Route("/api/exports/audio", export_audio),
             Route("/api/exports/transcripts", export_transcripts),
+            Route("/api/data", data_inventory),
+            Route("/api/data/reset", reset_data, methods=["POST"]),
             Route("/api/dictionary", get_dictionary, methods=["GET"]),
             Route("/api/dictionary/pin", pin_meaning, methods=["POST"]),
             Route(
