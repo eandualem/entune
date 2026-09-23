@@ -15,7 +15,7 @@ from pathlib import Path
 import uvicorn
 
 from entune import __version__
-from entune.desktop import create_platform
+from entune.desktop.platform import create_platform
 from entune.paths import default_data_dir
 from entune.providers.registry import default_providers
 from entune.server import create_app
