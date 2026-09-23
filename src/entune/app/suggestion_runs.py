@@ -144,6 +144,7 @@ class DictionaryBuilds:
                 phase="queued", dictionaryModel=fresh.builder[2], version=f'"{fresh.revision}"'
             )
             self._state.pop("error", None)
+            self._state.pop("errorDetail", None)
             self._proposal = None
             self._launch()
             return self.status()
@@ -259,7 +260,11 @@ class DictionaryBuilds:
                 resume=self._completed_batches,
                 checkpoint=completed,
                 progress=lambda step, total, size: self._progress(
-                    phase="building", step=step, steps=total, inputCharacters=size
+                    phase="building",
+                    step=step,
+                    steps=total,
+                    inputCharacters=size,
+                    stepStartedAt=time.time(),  # the page shows how long this part has run
                 ),
             )
         finally:
@@ -269,7 +274,7 @@ class DictionaryBuilds:
     def _run(self) -> None:
         spec = self._spec
         assert spec is not None
-        outcome, error = "complete", None
+        outcome, error, detail = "complete", None, None
         try:
             self._checkpoint()
             if spec.source == "audio":
@@ -292,7 +297,9 @@ class DictionaryBuilds:
                                     Clip(data, item.mime), spec.speech.model, spec.speech_key
                                 )
                             if isinstance(result, Failure):
-                                raise ValueError(result.error)
+                                raise generate.StepFailed(
+                                    f"{spec.speech.label} could not transcribe it.", result.error
+                                )
                             # Preserve a successful in-flight result even if Stop arrived
                             # during inference. It can be reused on Retry, never delivered.
                             if not self._closed:
@@ -303,8 +310,14 @@ class DictionaryBuilds:
                         except CancelledError:
                             raise
                         except Exception as exc:
-                            raise ValueError(
-                                f"Audio {number}/{len(spec.audio)} ({item.name}): {exc}"
+                            detail = (
+                                exc.detail
+                                if isinstance(exc, generate.StepFailed)
+                                else f"{type(exc).__name__}: {exc}"
+                            )
+                            raise generate.StepFailed(
+                                f"Recording {number} of {len(spec.audio)} ({item.name}): {exc}",
+                                detail,
                             ) from exc
                     self._progress(completed=number)
                 inputs = [self._texts[item.id] for item, _ in spec.audio]
@@ -319,9 +332,15 @@ class DictionaryBuilds:
             outcome = "stopped"
         except Exception as exc:
             outcome, error = "failed", str(exc)
+            detail = (
+                exc.detail
+                if isinstance(exc, generate.StepFailed)
+                else f"{type(exc).__name__}: {exc}"
+            )
             for secret in (spec.speech_key, spec.builder[1]):
                 if secret:
                     error = error.replace(secret, "[redacted]")
+                    detail = detail.replace(secret, "[redacted]")
         finally:
             with self._lock:
                 if self._closed:
@@ -343,6 +362,7 @@ class DictionaryBuilds:
                     )
                     if error:
                         self._state["error"] = error
+                        self._state["errorDetail"] = detail
                     if self._operation and phase == "ready":
                         self._operations.stage(self._operation, "review")
                     else:

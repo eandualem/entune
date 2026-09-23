@@ -137,7 +137,11 @@
               <span class="caption">Transcribe Entune recordings again, or import audio from Wispr Flow or a folder.</span>
             </div>
             <div class="learn-status" id="learn-status" hidden>
-              <p class="learn-progress" id="dictionary-build-status" role="status"></p>
+              <span class="spinner" id="build-spinner" aria-hidden="true" hidden></span>
+              <div class="learn-progress-box">
+                <p class="learn-progress" id="dictionary-build-status" role="status"></p>
+                <details class="build-error-detail" id="build-error-detail" hidden><summary>Technical details</summary><pre id="build-error-text"></pre></details>
+              </div>
               <div class="learn-status-actions">
                 <button type="button" class="btn ghost" id="cancel-dictionary-build" hidden>Stop</button>
                 <button type="button" class="btn" id="retry-dictionary-build" hidden>Retry the rest</button>

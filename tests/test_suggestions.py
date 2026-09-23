@@ -71,12 +71,28 @@ def test_reply_has_persistent_ids_and_validated_source_occurrences(reply: str) -
     assert TEXT not in json.dumps(learned[0].as_json())  # no source excerpt persisted
 
 
+def test_a_miscounted_span_is_moved_to_the_occurrence_and_an_absent_form_is_rejected() -> None:
+    text = 'He said "use cloud code" and later cloud code again.'
+    payload = proposed(text)
+    evidence = payload["additions"][0]["recognized_forms"][0]["associations"][0]["evidence"][0]
+    real = evidence["start"]
+    for start in (real + 3, real - 2, real + 25):  # off-by-some counts, as a model makes them
+        evidence.update(start=start, end=start + 10)
+        (group,) = replies.parse_generation(json.dumps(payload), transcripts=[text])
+        (item,) = group.recognized_forms[0].associations[0].evidence
+        assert text[item.start : item.end] == "cloud code"
+        assert item.start == (real if start < real + 12 else text.rindex("cloud code"))
+    payload["additions"][0]["recognized_forms"][0]["text"] = "claude coat"
+    with pytest.raises(ValueError, match="exact whole recognized form"):
+        replies.parse_generation(json.dumps(payload), transcripts=[text])
+
+
 def test_provenance_glossary_and_unapproved_direct_changes_are_rejected() -> None:
     payload = proposed(TEXT)
     groups = payload["additions"]
     assert isinstance(groups, list)
     record = groups[0]
-    record["recognized_forms"][0]["associations"][0]["evidence"][0]["start"] = 7
+    record["recognized_forms"][0]["text"] = "cloud coat"  # not in the cited source
     with pytest.raises(ValueError, match="exact whole"):
         replies.parse_generation(json.dumps(payload), transcripts=[TEXT])
     with pytest.raises(ValueError, match="unavailable source"):
@@ -255,7 +271,7 @@ def test_a_later_step_failure_returns_no_partial_dictionary(
             return json.dumps(proposed("cloud code"))
         raise RuntimeError("HTTP 529")
 
-    with pytest.raises(ValueError, match="Step 2 of 2: RuntimeError: HTTP 529"):
+    with pytest.raises(generate.StepFailed, match="Part 2 of 2: the suggestion model") as failed:
         asyncio.run(
             generate.propose_learned(
                 "openai",
@@ -268,13 +284,14 @@ def test_a_later_step_failure_returns_no_partial_dictionary(
                 mode="generate",
             )
         )
+    assert failed.value.detail == "RuntimeError: HTTP 529"
 
 
 def test_provider_failures_surface_verbatim() -> None:
     async def failing(*_: str) -> str:
         raise RuntimeError("status_code: 401, authentication_error")
 
-    with pytest.raises(ValueError, match="RuntimeError: status_code: 401"):
+    with pytest.raises(generate.StepFailed, match="refused the key") as failed:
         asyncio.run(
             generate.propose_learned(
                 "openai",
@@ -287,6 +304,7 @@ def test_provider_failures_surface_verbatim() -> None:
                 mode="generate",
             )
         )
+    assert failed.value.detail == "RuntimeError: status_code: 401, authentication_error"
 
 
 def test_catalog_lists_affordable_defaults_first() -> None:

@@ -6,6 +6,7 @@ import json
 import re
 import uuid
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 from entune.dictionary import changes as dictionary_changes
@@ -101,6 +102,7 @@ def _apply(
         if f.direct
     }
     supplied = sources(transcripts)
+    revised = _locate(revised, supplied)
     # New temporary IDs are assigned once by code. Revisions keep persisted IDs.
     ids: dict[str, str] = {}
     seen_meanings = list(known_meanings.values())
@@ -220,3 +222,44 @@ def _apply(
     dictionary_changes.protect_pinned(pinned, result)
     dictionary_document.validate(Dictionary(learned={"working": result}))
     return result
+
+
+def _occurrences(source: str, form: str) -> list[tuple[int, int]]:
+    """Every whole-word occurrence of `form` in `source`, compared as validation compares."""
+    words = form.split()
+    if not words:
+        return []
+    pattern = r"(?<!\w)" + r"\s+".join(re.escape(w) for w in words) + r"(?!\w)"
+    return [
+        (m.start(), m.end())
+        for m in re.finditer(pattern, source, re.IGNORECASE)
+        if key(m.group()) == key(form)
+    ]
+
+
+def _locate(revised: Groups, supplied: dict[str, str]) -> Groups:
+    """Point each evidence span at an actual occurrence of its form in its source.
+
+    The model names an occurrence by source and character span, and counting characters
+    across a long batch is unreliable for a model: one miscount used to reject the whole
+    step. A span that is not exactly the form moves to the nearest whole-word occurrence
+    of that form in the same source. Evidence for a form that does not occur in that
+    source is left unchanged, so validation still rejects it."""
+    located = []
+    for group in revised:
+        forms = []
+        for form in group.recognized_forms:
+            links = []
+            for link in form.associations:
+                evidence = []
+                for item in link.evidence:
+                    source = supplied.get(item.source)
+                    spans = _occurrences(source, form.text) if source is not None else []
+                    if spans and (item.start, item.end) not in spans:
+                        start, end = min(spans, key=lambda span: abs(span[0] - item.start))
+                        item = replace(item, start=start, end=end)
+                    evidence.append(item)
+                links.append(replace(link, evidence=tuple(dict.fromkeys(evidence))))
+            forms.append(replace(form, associations=tuple(links)))
+        located.append(replace(group, recognized_forms=tuple(forms)))
+    return tuple(located)

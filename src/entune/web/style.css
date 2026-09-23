@@ -367,6 +367,12 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .learn { padding: var(--sp-14) var(--sp-16); margin-bottom: var(--sp-14); border-radius: var(--r-10); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--line-soft); }
 .learn-note { margin: var(--sp-8) 0 0; }
 .learn-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8) var(--sp-12); margin-top: var(--sp-12); padding-top: var(--sp-12); border-top: 1px solid var(--line-faint); }
+.learn-progress-box { flex: 1 1 20rem; min-width: 0; }
+.spinner { flex: none; width: 0.9rem; height: 0.9rem; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+.build-error-detail { margin-top: var(--sp-6); font-size: var(--fs-12); color: var(--text-muted); }
+.build-error-detail pre { margin: var(--sp-6) 0 0; padding: var(--sp-8) var(--sp-10); border-radius: var(--r-8); background: var(--well); white-space: pre-wrap; overflow-wrap: anywhere; font: var(--fs-12)/1.5 var(--mono); }
 .learn-progress { flex: 1 1 20rem; min-width: 0; margin: 0; font-size: var(--fs-12-5); color: var(--text-muted); overflow-wrap: anywhere; }
 .learn-progress.err { color: var(--error); }
 .learn-status-actions { display: flex; flex-wrap: wrap; gap: var(--sp-6); }
