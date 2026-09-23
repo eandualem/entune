@@ -16,13 +16,7 @@ import uvicorn
 
 from entune import __version__
 from entune.desktop import create_platform
-from entune.paths import (
-    LegacyDataInUse,
-    adopt_legacy_files,
-    data_override,
-    default_data_dir,
-    migrate_legacy_data,
-)
+from entune.paths import default_data_dir
 from entune.providers.registry import default_providers
 from entune.server import create_app
 from entune.service import Entune
@@ -75,21 +69,11 @@ def install_app(directory: Path, source: Path | None) -> None:
     if sys.platform != "darwin":
         sys.exit("install-app writes a macOS application bundle; nothing to do here.")
     from entune.desktop.macos.bundle import install_app as write_bundle
-    from entune.desktop.macos.bundle import retire_legacy_app, signing_identity
+    from entune.desktop.macos.bundle import signing_identity
 
     app = write_bundle(directory, source)
     what = "a copy of the standalone bundle" if source else "a launcher for this same Entune"
     print(f"Installed {app}: {what}. Open it from there.", flush=True)
-    legacy = retire_legacy_app(directory)
-    if legacy == "trashed":
-        print("Moved the former Dictum.app to the Trash; your data moves on Entune's first start.")
-    elif legacy == "running":
-        print(
-            "Dictum, Entune's former name, is still running. Quit it from its menu-bar icon,"
-            " then open Entune: your data moves over on its first start. Then delete"
-            " Dictum.app, or run this install again to move it to the Trash.",
-            flush=True,
-        )
     if signing_identity() is None:
         print(
             "Signed ad hoc: macOS will ask for its permissions again after every rebuild."
@@ -157,37 +141,14 @@ def main(argv: list[str] | None = None) -> None:
         # Opening the app again should bring the running one forward, not complain.
         if _show_running_window(args.port):
             return
-        message = (
-            f"Port {args.port} is in use. Is Entune, or Dictum (its former name), already"
-            " running? Quit it, or use --port."
-        )
+        message = f"Port {args.port} is in use. Is Entune already running? Quit it, or use --port."
         if sys.platform == "darwin" and not args.no_menu:
             from entune.desktop.macos.actions import notify
 
             notify("Entune is already running", message)
         sys.exit(message)
-    # Only now, with no other instance on the port, is the old data folder safe to move;
-    # and before anything creates the new one.
-    try:
-        moved = (
-            migrate_legacy_data(data_dir) if args.data is None and data_override() is None else None
-        )
-        adopt_legacy_files(data_dir)  # also a --data or DICTUM_DATA folder from Dictum
-    except LegacyDataInUse as exc:
-        # Starting with an empty folder instead would leave the data behind for good.
-        message = (
-            f"Your data in {exc} is still open, most likely in Dictum (Entune's former name)."
-            " Quit Dictum from its menu-bar icon, then open Entune again; your data moves over."
-        )
-        if sys.platform == "darwin" and not args.no_menu:
-            from entune.desktop.macos.actions import notify
-
-            notify("Quit Dictum first", message)
-        sys.exit(message)
     if not sys.stderr.isatty():
         _log_to_file(data_dir)
-    if moved is not None:
-        print(f"Moved your data from {moved} to {data_dir}.", flush=True)
     entune = Entune(Store(data_dir), default_providers(data_dir / "models"))
     entune.warm_default_model()
     server = uvicorn.Server(

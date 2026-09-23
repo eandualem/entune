@@ -293,11 +293,6 @@ as evidence: normal audio-build snippets are discarded. General definitions and 
 personal usage remain as dictionary content. Old evidence can survive later chunks;
 new links cannot claim unavailable source text.
 
-On first load, old dictionaries are backed up byte-for-byte as
-`dictionary.pre-v2-<hash>.json` before atomic conversion. Every old entry, description,
-heard form and model key is retained, including collisions and zero-heard vocabulary.
-No competing ordinary definitions are invented. Imported groups are marked for review;
-review definitions and casing, add necessary competitors, or deliberately remove them.
 Undefined meanings are retained but cannot support contextual selection. Builds can
 propose deliberate removal/refinement; only acceptance changes learned data.
 

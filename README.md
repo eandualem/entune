@@ -315,9 +315,6 @@ files. `--data` overrides `ENTUNE_DATA`; otherwise the directory is
 `~/Library/Application Support/entune` on macOS, `%APPDATA%/entune` on Windows
 (falling back to `~/AppData/Roaming/entune`), and `$XDG_DATA_HOME/entune` or
 `~/.local/share/entune` elsewhere. Defining a data path does not establish platform support.
-Entune was called Dictum: its first start moves an existing `dictum` data folder to
-`entune`, keeping everything, and `DICTUM_DATA` still works. See
-[packaging](docs/packaging.md#from-dictum-to-entune).
 
 Enabled features determine what is sent out:
 

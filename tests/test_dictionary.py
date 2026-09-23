@@ -6,7 +6,7 @@ import pytest
 
 from entune import dictionary, matching
 from entune.dictionary import Dictionary
-from entune.dictionary_legacy import Correction, add_corrections
+from entune.dictionary_corrections import Correction, add_corrections
 from tests.dictionary_samples import CLOUD, JEV, group
 
 
@@ -22,38 +22,6 @@ def test_groups_round_trip_keep_distinct_meanings_and_explicit_associations(tmp_
     assert {m.spelling for m in gif.meanings} == {"Jev", "GIF"}
     assert {m.spelling for m in jif.meanings} == {"Jev", "GIF"}
     assert not matching.matches(original.effective("other/model"), "cloud")
-
-
-def test_migration_keeps_every_record_with_backup_and_no_invented_meanings(tmp_path: Path) -> None:
-    old = {
-        "pinned": [{"spelling": "Jev", "heard": ["Jeff"]}],
-        "learned": {
-            "local/small.en": [
-                {"spelling": "cloud", "description": "Weather cloud", "heard": []},
-                {"spelling": "cloud", "description": "Computing cloud", "heard": []},
-                {"spelling": "Claude", "description": "AI assistant", "heard": ["cloud", "Jeff"]},
-                {"spelling": "Vocabulary", "heard": []},
-            ]
-        },
-    }
-    raw = json.dumps(old).encode()
-    path = tmp_path / dictionary.FILENAME
-    path.write_bytes(raw)
-    converted = dictionary.load(tmp_path)
-    assert len(converted.pinned) == 1 and len(converted.learned_for("local/small.en")) == 4
-    assert all(g.needs_review for g in converted.effective("local/small.en"))
-    assert converted.pinned[0].meanings[0].meaning == ""
-    found = matching.matches(converted.effective("local/small.en"), "cloud Jeff")
-    assert len(found[0].meanings) == 3 and len(found[1].meanings) == 2
-    backups = list(tmp_path.glob("dictionary.pre-v2-*.json"))
-    assert len(backups) == 1 and backups[0].read_bytes() == raw
-    saved = path.read_bytes()
-    assert dictionary.load(tmp_path) == converted and path.read_bytes() == saved
-    assert json.loads(saved)["version"] == 2
-    ancient = dictionary.parse('{"terms":["Entune"],"replacements":{"dictam":"Entune"}}')
-    assert len(ancient.pinned) == 2  # retain both source records, no normalized-spelling collapse
-    agents = dictionary.parse('{"agents":{"replacements":{"Jeff":"Jev"}},"pinned":[]}')
-    assert agents.pinned[0].meanings[0].spelling == "Jev"
 
 
 def test_pin_shares_only_chosen_meaning_and_edges_and_context_can_still_compete() -> None:
@@ -141,32 +109,12 @@ def test_corrupt_references_and_direct_approval_are_rejected() -> None:
     data["pinned"][0]["recognized_forms"][0]["direct"] = "a_jev"
     with pytest.raises(ValueError, match="approval reason"):
         dictionary.parse(json.dumps(data))
-    with pytest.raises(ValueError, match="Unsupported dictionary version"):
+    with pytest.raises(ValueError, match='needs "version"'):
         dictionary.parse('{"version":3}')
     with pytest.raises(ValueError, match="Not valid JSON"):
         dictionary.parse("{")
     with pytest.raises(ValueError, match="must be a JSON object"):
         dictionary.parse("[]")
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        '{"words": []}',
-        '{"pinned": "Entune"}',
-        '{"pinned": [{"spelling": ""}]}',
-        '{"pinned": [{"spelling": "x", "heard": "y"}]}',
-        '{"pinned": [{"spelling": "x", "extra": 1}]}',
-        '{"pinned": [{"spelling": "x", "heard": ["-y"]}]}',
-        '{"learned": []}',
-        '{"learned": {"terms": ["x"]}}',
-        '{"learned": {"m": {"replacements": {"a": 1}}}}',
-        '{"pinned": {"extra": 1}}',
-    ],
-)
-def test_legacy_import_still_rejects_malformed_data(text: str) -> None:
-    with pytest.raises(ValueError):
-        dictionary.parse(text)
 
 
 def test_overlaps_keep_phrase_and_word_plans_with_original_offsets() -> None:
@@ -259,17 +207,6 @@ def test_confirmed_agent_boundary_is_idempotent_and_does_not_grant_precedence() 
     again, added = add_corrections(doc, (Correction("jev", heard=("JEFF",)),))
     assert not added and again == doc
     assert len(matching.matches(doc.effective("m"), "Jeff")[0].meanings) == 3
-
-
-def test_the_earlier_single_learned_list_moves_under_the_default_model(tmp_path: Path) -> None:
-    old = '{"pinned":{"terms":[]},"learned":{"terms":["Entune"],"replacements":{}}}'
-    with pytest.raises(ValueError, match="set a default model"):
-        dictionary.parse(old)
-    (tmp_path / dictionary.FILENAME).write_text(old)
-    converted = dictionary.load(tmp_path, "local/small.en")
-    assert [m.spelling for g in converted.learned_for("local/small.en") for m in g.meanings] == [
-        "Entune"
-    ]
 
 
 def test_index_folds_case_as_widely_as_the_matching_regex() -> None:

@@ -19,13 +19,16 @@ from pathlib import Path
 from typing import Literal
 
 from entune.audio import extension_for, identify, webm_duration_seconds
-from entune.dictionary_legacy import Correction as SubmittedCorrection
+from entune.dictionary_corrections import Correction as SubmittedCorrection
 from entune.llm import DictionaryResult, LearningText
-from entune.paths import adopt_legacy_files
 from entune.processing import Processed, Selection, Stage, interrupted
 from entune.text_edits import Change
 
 Status = Literal["ok", "error"]
+
+# Counters from an earlier processing design, still present in databases made then;
+# they are ignored when rows are read.
+OBSOLETE_COLUMNS = ("jev_seconds", "jev_fixed", "jev_kept", "jev_error")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (
@@ -36,7 +39,8 @@ CREATE TABLE IF NOT EXISTS recordings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
     file TEXT NOT NULL,
-    mime TEXT NOT NULL
+    mime TEXT NOT NULL,
+    notice TEXT
 );
 CREATE TABLE IF NOT EXISTS transcriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,7 +71,9 @@ CREATE TABLE IF NOT EXISTS corrections (
 CREATE TABLE IF NOT EXISTS dictionary_audio (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    mime TEXT NOT NULL
+    mime TEXT NOT NULL,
+    created_at TEXT,
+    source TEXT
 );
 CREATE TABLE IF NOT EXISTS learning_runs (
     id TEXT PRIMARY KEY,
@@ -84,33 +90,6 @@ CREATE TABLE IF NOT EXISTS learning_coverage (
     PRIMARY KEY (model, source, input_id)
 );
 """
-
-# Columns added after the first release; applied to databases that predate them.
-MIGRATIONS = [
-    ("recordings", "notice", "ALTER TABLE recordings ADD COLUMN notice TEXT"),
-    ("dictionary_audio", "created_at", "ALTER TABLE dictionary_audio ADD COLUMN created_at TEXT"),
-    ("dictionary_audio", "source", "ALTER TABLE dictionary_audio ADD COLUMN source TEXT"),
-    ("transcriptions", "raw_text", "ALTER TABLE transcriptions ADD COLUMN raw_text TEXT"),
-    ("transcriptions", "audio_seconds", "ALTER TABLE transcriptions ADD COLUMN audio_seconds REAL"),
-    (
-        "transcriptions",
-        "elapsed_seconds",
-        "ALTER TABLE transcriptions ADD COLUMN elapsed_seconds REAL",
-    ),
-    (
-        "transcriptions",
-        "fast",
-        "ALTER TABLE transcriptions ADD COLUMN fast INTEGER NOT NULL DEFAULT 0",
-    ),
-    ("transcriptions", "correction", "ALTER TABLE transcriptions ADD COLUMN correction TEXT"),
-    ("transcriptions", "formatting", "ALTER TABLE transcriptions ADD COLUMN formatting TEXT"),
-    ("transcriptions", "cleanup", "ALTER TABLE transcriptions ADD COLUMN cleanup TEXT"),
-    (
-        "transcriptions",
-        "processing_state",
-        "ALTER TABLE transcriptions ADD COLUMN processing_state TEXT NOT NULL DEFAULT 'complete'",
-    ),
-]
 
 
 @dataclass(frozen=True)
@@ -131,7 +110,6 @@ class Transcription:
     formatting: Stage | None = None
     cleanup: Stage | None = None
     # Preserve old recorded metrics without treating them as trustworthy stage outcomes.
-    legacy_processing: dict[str, object] | None = None
     processing_state: str = "complete"
 
 
@@ -172,21 +150,17 @@ def _now() -> str:
 
 # What a data reset deletes: the database, audio, imported audio, the dictionary and
 # its automatic copies, downloaded models, the backups folder and the log (emptied).
-# Files from Dictum, Entune's former name, are included; nothing else is touched.
+# A copy of the dictionary from its earlier format may still be there too. Nothing else
+# is touched.
 MANAGED = frozenset(
     {
-        *(
-            f"{name}.db{suffix}"
-            for name in ("entune", "dictum")
-            for suffix in ("", "-wal", "-shm", "-journal")
-        ),
+        *(f"entune.db{suffix}" for suffix in ("", "-wal", "-shm", "-journal")),
         "audio",
         "dictionary-audio",
         "dictionary.json",
         "dictionary.json.tmp",
         "models",
         "backups",
-        "dictum.log",
     }
 )
 MANAGED_PATTERNS = ("dictionary.pre-v2-*.json",)
@@ -202,7 +176,6 @@ class Store:
         self._lock = threading.Lock()
         self._history_epoch = uuid.uuid4().hex
         self._durations: dict[tuple[str, int, int], float | None] = {}
-        adopt_legacy_files(data_dir)  # a data folder from before the rename to Entune
         with self._lock:
             self._open()
         # A previous process may have stopped after saving speech but before processing.
@@ -232,10 +205,6 @@ class Store:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode = WAL")
         self._db.executescript(SCHEMA)
-        for table, column, statement in MIGRATIONS:
-            columns = {row["name"] for row in self._db.execute(f"PRAGMA table_info({table})")}
-            if column not in columns:
-                self._db.execute(statement)
         self._db.commit()
 
     def close(self) -> None:
@@ -604,7 +573,7 @@ class Store:
         return [_transcription(row) for row in rows]
 
     def processed_transcriptions(self) -> list[Transcription]:
-        """Attempts with independent processing outcomes; legacy counters are excluded."""
+        """Attempts with independent processing outcomes."""
         with self._lock:
             rows = self._db.execute(
                 "SELECT * FROM transcriptions WHERE correction IS NOT NULL ORDER BY id"
@@ -720,11 +689,6 @@ def _transcription(row: sqlite3.Row) -> Transcription:
             fields[name] = Stage(**stage)
         else:
             fields[name] = None
-    legacy = {
-        name: fields.pop(name, None)
-        for name in ("jev_seconds", "jev_fixed", "jev_kept", "jev_error")
-    }
-    fields["legacy_processing"] = (
-        legacy if any(value is not None for value in legacy.values()) else None
-    )
+    for name in OBSOLETE_COLUMNS:
+        fields.pop(name, None)
     return Transcription(**fields)

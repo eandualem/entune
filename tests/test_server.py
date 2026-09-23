@@ -21,7 +21,7 @@ from entune.server import create_app
 from entune.service import Entune
 from entune.store import Store
 from tests.conftest import WEBM_HEADER, mock_client, wait_for_build
-from tests.dictionary_samples import JEV, group, proposed
+from tests.dictionary_samples import JEV, document, group, proposed
 
 
 class StubProvider:
@@ -153,18 +153,6 @@ def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None
     assert client.get("/api/settings").json()["shortcuts"] == {
         "hold": None,
         "toggle": "cmd+shift+space",
-        "cancel": "fn+ctrl",
-    }
-
-
-def test_legacy_single_shortcut_is_still_read(tmp_path: Path, stub: StubProvider) -> None:
-    store = Store(tmp_path)
-    store.set_setting("shortcut_mode", "toggle")
-    store.set_setting("shortcut_keys", "cmd+d")
-    client = TestClient(create_app(Entune(store, [stub])), base_url="http://localhost")
-    assert client.get("/api/settings").json()["shortcuts"] == {
-        "hold": None,
-        "toggle": "cmd+d",
         "cancel": "fn+ctrl",
     }
 
@@ -326,8 +314,8 @@ def test_dictionary_direct_mappings_are_explicit_and_scope_is_preserved(
     client: TestClient, stub: StubProvider
 ) -> None:
     assert client.get("/api/dictionary").json() == {"version": 2, "pinned": [], "learned": {}}
-    bad = client.put("/api/dictionary", content='{"pinned":[{"spelling":""}]}')
-    assert bad.status_code == 400 and "spelling must be" in bad.text
+    bad = client.put("/api/dictionary", content='{"pinned":[]}')
+    assert bad.status_code == 400 and 'needs "version"' in bad.text
     saved = client.put(
         "/api/dictionary",
         json={
@@ -354,19 +342,6 @@ def test_dictionary_direct_mappings_are_explicit_and_scope_is_preserved(
         attempt["correction"]["direct_replacements"] == attempt["correction"]["replacements"] == 1
     )
     assert attempt["formatting"]["status"] == "disabled"
-
-
-def test_an_earlier_dictionary_is_backed_up_and_converted_once(
-    client: TestClient, tmp_path: Path
-) -> None:
-    legacy = '{"pinned":{"terms":["Entune"],"replacements":{"cloud code":"Claude Code"}}}'
-    (tmp_path / "dictionary.json").write_text(legacy)
-    converted = client.get("/api/dictionary").json()
-    assert [g["meanings"][0]["spelling"] for g in converted["pinned"]] == ["Entune", "Claude Code"]
-    assert all(g["needs_review"] for g in converted["pinned"])
-    assert len(list(tmp_path.glob("dictionary.pre-v2-*.json"))) == 1
-    imported = client.put("/api/dictionary", content=legacy)
-    assert imported.status_code == 200 and imported.json() == converted
 
 
 def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
@@ -430,7 +405,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     assert res.status_code == 400 and "No new transcripts to learn from for Stub / good" in res.text
 
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
-    client.put("/api/dictionary", json={"pinned": [CLAUDE_CODE]})
+    client.put("/api/dictionary", json=document(group("Entune", "in tune")))
     res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
     assert res.status_code == 202, res.text
     first = wait_for_build(client)
@@ -476,7 +451,7 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
     bad = client.post("/api/dictionary/corrections", json={"entries": [{"heard": ["x"]}]})
     assert bad.status_code == 400 and "entries.spelling" in bad.text
 
-    client.put("/api/dictionary", json={"pinned": [CLAUDE_CODE]})
+    client.put("/api/dictionary", json=document(group("Claude Code", "cloud code")))
     res = client.post(
         "/api/dictionary/corrections",
         json={
@@ -760,26 +735,26 @@ def test_a_stale_dictionary_save_is_refused_and_a_fresh_one_accepted(client: Tes
     client.post("/api/dictionary/corrections", json={"terms": ["Soniox"], "source": "agent"})
     stale = client.put(
         "/api/dictionary",
-        json={"pinned": [{"spelling": "Entune"}]},
+        json=document(group("Entune", "in tune")),
         headers={"if-match": version},
     )
     assert stale.status_code == 409 and "changed" in stale.text
     assert client.get("/api/dictionary").json()["pinned"][0]["meanings"][0]["spelling"] == "Soniox"
-    fresh_version = client.get("/api/dictionary").headers["etag"]
+    fresh = client.get("/api/dictionary")
+    current, fresh_version = fresh.json(), fresh.headers["etag"]
     assert fresh_version != version
     ok = client.put(
         "/api/dictionary",
-        content='{"pinned": [{"spelling": "Entune"}], "agents": {"terms": ["Soniox"]}}',
+        json={**current, "pinned": [*current["pinned"], group("Entune", "in tune").as_json()]},
         headers={"if-match": fresh_version},
-    )  # an agents section, from the earlier form, is folded into pinned
+    )
     assert ok.status_code == 200 and ok.headers["etag"] != fresh_version
     assert {m["spelling"] for g in ok.json()["pinned"] for m in g["meanings"]} == {
         "Soniox",
         "Entune",
     }
-    assert "agents" not in ok.json()
-    # Without a version (curl, or a page repairing a broken file) the write goes through.
-    assert client.put("/api/dictionary", content='{"pinned": []}').status_code == 200
+    # Without a version header (curl, or a page repairing a broken file) the write goes through.
+    assert client.put("/api/dictionary", json=document()).status_code == 200
 
 
 def test_history_pages_and_conditional_refresh_include_new_attempts(

@@ -15,7 +15,7 @@ from entune.server import create_app
 from entune.service import Entune
 from entune.store import Store
 from tests.conftest import wait_for_build
-from tests.dictionary_samples import proposed
+from tests.dictionary_samples import document, group, proposed
 from tests.test_server import StubProvider
 
 
@@ -146,8 +146,9 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
         "import audio"
         in client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"}).text
     )
-    pinned = {"spelling": "PinnedName", "description": "person", "heard": ["pin name"]}
-    original = {"pinned": [pinned], "learned": {"stub/other": [{"spelling": "OtherOnly"}]}}
+    original = document(
+        group("PinnedName", "pin name"), learned={"stub/other": (group("OtherOnly", "other only"),)}
+    )
     client.put("/api/dictionary", json=original)
     before = client.get("/api/dictionary")
     for i in range(2):

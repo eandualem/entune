@@ -82,3 +82,14 @@ def proposed(text: str = "I use cloud code.") -> dict[str, Any]:
                 ],
             )
     return {"additions": [record]}
+
+
+def document(*pinned: Group, learned: dict[str, tuple[Group, ...]] | None = None) -> dict[str, Any]:
+    """A dictionary.json body in the current format."""
+    return {
+        "version": 2,
+        "pinned": [g.as_json() for g in pinned],
+        "learned": {
+            model: [g.as_json() for g in groups] for model, groups in (learned or {}).items()
+        },
+    }

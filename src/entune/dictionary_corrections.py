@@ -1,7 +1,8 @@
-"""Lossless import boundary for old files and the existing agent-corrections API.
+"""Confirmed corrections from other apps, added to the pinned dictionary.
 
-The runtime only uses confusion groups. Old records are retained and marked for review;
-conversion cannot invent definitions, literal competitors, or acoustic verification.
+Agents and apps you dictate to post what the person confirmed (`POST
+/api/dictionary/corrections`); each becomes a pinned meaning with its recognized forms,
+and competes normally: no implicit priority.
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ from entune.dictionary import (
     Dictionary,
     Form,
     Group,
-    Groups,
     Meaning,
     key,
     merge,
@@ -78,51 +78,6 @@ def read_entries(value: object, where: str) -> tuple[Correction, ...]:
 
 def _id(prefix: str, value: str) -> str:
     return prefix + hashlib.sha256(value.encode()).hexdigest()[:24]
-
-
-def _convert(entries: tuple[Correction, ...], scope: str) -> Groups:
-    groups = []
-    for i, entry in enumerate(entries):
-        identity = f"{scope}:{i}:{entry.as_json()}"
-        mid = _id("m_", identity)
-        meaning = Meaning(mid, entry.spelling, entry.description)
-        forms = [Form(h, (Association(mid, basis="legacy"),)) for h in entry.heard]
-        # Existing correctly recognized vocabulary is retained; at collisions it can
-        # supply a literal competitor. Its casing/definition still needs review.
-        if (entry.spelling[0].isalnum() or entry.spelling[0] == "_") and key(
-            entry.spelling
-        ) not in {key(f.text) for f in forms}:
-            forms.append(Form(entry.spelling, (Association(mid, basis="literal"),)))
-        groups.append(Group(_id("g_", identity), (meaning,), tuple(forms), needs_review=True))
-    return tuple(groups)
-
-
-def convert(data: dict[str, object], legacy_model: str | None = None) -> Dictionary:
-    if "terms" in data or "replacements" in data:
-        return Dictionary(_convert(read_entries(data, "dictionary"), "pinned"))
-    if unknown := set(data) - {"pinned", "learned", "agents"}:
-        raise ValueError(f"Unknown keys: {', '.join(sorted(unknown))}")
-    learned = data.get("learned", {})
-    if isinstance(learned, dict) and ("terms" in learned or "replacements" in learned):
-        # The earlier single learned list belongs to the default model of its time.
-        if legacy_model is None:
-            raise ValueError(
-                "learned is one list for every model (the earlier form); set a default model"
-                " and it moves under that model, or key it by provider/model"
-            )
-        learned = {legacy_model: learned}
-    if not isinstance(learned, dict):
-        raise ValueError("learned must be an object keyed by speech model")
-    return Dictionary(
-        (
-            *_convert(read_entries(data.get("pinned", []), "pinned"), "pinned"),
-            *_convert(read_entries(data.get("agents", []), "agents"), "agents"),
-        ),
-        {
-            model: _convert(read_entries(value, f"learned.{model}"), model)
-            for model, value in learned.items()
-        },
-    )
 
 
 def add_corrections(

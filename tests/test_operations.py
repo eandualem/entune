@@ -193,14 +193,3 @@ def test_model_selected_at_speech_start_and_later_change_does_not_redirect(
     assert service.store.list_recordings()[0].transcriptions[0].model == "bad"
     assert platform.actions.pasted == 1
     app.close()
-
-
-def test_existing_fn_escape_setting_uses_safe_default_without_rewriting_settings(
-    tmp_path: Path,
-) -> None:
-    app, _, service = configured(tmp_path)
-    service.store.set_setting("shortcut_hold", "fn")
-    service.store.set_setting("shortcut_cancel", "esc+fn")
-    assert service.shortcuts().cancel == ("fn", "ctrl")
-    assert service.store.get_setting("shortcut_cancel") == "esc+fn"
-    app.close()
