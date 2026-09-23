@@ -261,6 +261,8 @@ def test_catalog_lists_affordable_defaults_first() -> None:
     assert llm.catalog("openai")[0].id == "openai:gpt-5.4-mini"
     assert all(c.id.startswith("openai:") for c in llm.catalog("openai"))
     assert not any("image" in c.id for c in llm.catalog("openai"))
+    offered = {c.id for c in (*anthropic, *llm.catalog("openai"))}
+    assert {"anthropic:claude-opus-5-5", "openai:gpt-6-sol", "openai:gpt-6-luna"} <= offered
 
 
 def sse(*events: dict[str, Any]) -> httpx.Response:
@@ -324,9 +326,12 @@ def test_concurrent_builds_keep_each_calls_key_until_it_finishes(
     [
         "anthropic:claude-sonnet-5",
         "anthropic:claude-fable-5-1",
+        "anthropic:claude-opus-5-5",
         "anthropic:claude-haiku-4-5",
         "openai:gpt-5.4-mini",
         "openai:gpt-6-astra",
+        "openai:gpt-6-sol",
+        "openai:gpt-6-luna",
     ],
 )
 def test_direct_request_keeps_prompts_model_and_reasoning(
