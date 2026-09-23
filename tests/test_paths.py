@@ -123,3 +123,21 @@ def test_a_certificate_named_for_entune_is_preferred(monkeypatch: pytest.MonkeyP
     listed = '1) AB "Dictum Developer"\n2) CD "Entune Developer"\n'
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=listed))
     assert bundle.signing_identity() == "Entune Developer"
+
+
+def test_data_open_elsewhere_is_never_moved_whatever_the_port(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = legacy_folder(home)
+    holder = sqlite3.connect(old / "dictum.db")  # Dictum, idle, on some other port
+    holder.execute("SELECT count(*) FROM settings").fetchone()
+    try:
+        with pytest.raises(paths.LegacyDataInUse):
+            paths.migrate_legacy_data(home / "entune")
+        monkeypatch.setattr(cli, "port_is_free", lambda port: True)
+        with pytest.raises(SystemExit, match="Quit Dictum"):
+            cli.main(["--no-menu", "--port", "4188"])
+        assert (old / "dictum.db").exists() and not (home / "entune").exists()
+    finally:
+        holder.close()
+    assert paths.migrate_legacy_data(home / "entune") == old

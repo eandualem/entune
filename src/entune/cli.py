@@ -16,7 +16,7 @@ import uvicorn
 
 from entune import __version__
 from entune.desktop import create_platform
-from entune.paths import data_override, default_data_dir, migrate_legacy_data
+from entune.paths import LegacyDataInUse, data_override, default_data_dir, migrate_legacy_data
 from entune.providers.registry import default_providers
 from entune.server import create_app
 from entune.service import Entune
@@ -162,7 +162,21 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(message)
     # Only now, with no other instance on the port, is the old data folder safe to move;
     # and before anything creates the new one.
-    moved = migrate_legacy_data(data_dir) if args.data is None and data_override() is None else None
+    try:
+        moved = (
+            migrate_legacy_data(data_dir) if args.data is None and data_override() is None else None
+        )
+    except LegacyDataInUse as exc:
+        # Starting with an empty folder instead would leave the data behind for good.
+        message = (
+            f"Your data in {exc} is still open, most likely in Dictum (Entune's former name)."
+            " Quit Dictum from its menu-bar icon, then open Entune again; your data moves over."
+        )
+        if sys.platform == "darwin" and not args.no_menu:
+            from entune.desktop.macos.actions import notify
+
+            notify("Quit Dictum first", message)
+        sys.exit(message)
     if not sys.stderr.isatty():
         _log_to_file(data_dir)
     if moved is not None:
