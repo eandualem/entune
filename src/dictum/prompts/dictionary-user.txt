@@ -1,0 +1,14 @@
+Pinned meanings/associations (shared and protected; context decides):
+$pinned
+
+Step $number of $count. Working confusion groups (including pinned) for $speech_model:
+$learned
+
+Source transcript snippets from $speech_model ($transcript_count), keyed by source ID.
+Evidence offsets index characters in the corresponding value, within the snippet. Source type and original-input offsets are in the records below;
+legacy_final sources have no recorded original and must not be treated as raw evidence:
+$transcripts
+
+Processing records for these input identities (machine-generated changes are not ground truth;
+legacy final text is explicitly labeled when the original was not recorded):
+$records

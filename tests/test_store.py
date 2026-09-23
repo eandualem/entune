@@ -109,3 +109,141 @@ def test_history_page_queries_do_not_grow_with_recording_count(tmp_path: Path) -
     store._db.set_trace_callback(None)
     assert len(page) == 25 and len(queries) == 2
     assert all([t.status for t in r.transcriptions] == ["error", "ok"] for r in page)
+
+
+def test_legacy_metrics_survive_without_becoming_current_outcomes(tmp_path: Path) -> None:
+    from contextlib import closing
+
+    with closing(Store(tmp_path)) as store:
+        recording = store.create_recording(WEBM_HEADER)
+        store.add_transcription(
+            recording.id, "p", "m", "ok", "old correction", None, raw_text="raw"
+        )
+        with store._db:
+            store._db.execute("ALTER TABLE transcriptions ADD COLUMN jev_fixed INTEGER")
+            store._db.execute("ALTER TABLE transcriptions ADD COLUMN jev_error TEXT")
+            store._db.execute("UPDATE transcriptions SET jev_fixed = 1, jev_error = 'HTTP 529'")
+    with closing(Store(tmp_path)) as reopened:
+        attempt = reopened.list_recordings()[0].transcriptions[0]
+        assert (attempt.text, attempt.raw_text) == ("old correction", "raw")
+        assert attempt.correction is None and attempt.formatting is None
+        assert attempt.legacy_processing == {
+            "jev_seconds": None,
+            "jev_fixed": 1,
+            "jev_kept": None,
+            "jev_error": "HTTP 529",
+        }
+        assert reopened.processed_transcriptions() == []
+        assert reopened.audio_path(recording).read_bytes() == WEBM_HEADER
+
+
+def test_interrupted_processing_reopens_as_raw_success_with_a_failure(tmp_path: Path) -> None:
+    from contextlib import closing
+
+    from dictum.processing import pending
+
+    raw = "  Jeff.\n"
+    with closing(Store(tmp_path)) as store:
+        recording = store.create_recording(WEBM_HEADER)
+        store.add_transcription(
+            recording.id,
+            "p",
+            "m",
+            "ok",
+            raw,
+            None,
+            raw_text=raw,
+            processing=pending(raw, contextual=True, formatting=True, cleanup=True),
+        )
+    with closing(Store(tmp_path)) as reopened:
+        attempt = reopened.list_recordings()[0].transcriptions[0]
+        assert attempt.status == "ok" and attempt.text == attempt.raw_text == raw
+        assert attempt.correction is not None and attempt.correction.status == "failed"
+        assert attempt.correction.replacements == 0 and attempt.correction.attempts == 0
+        assert attempt.formatting is not None and attempt.formatting.status == "skipped"
+        assert attempt.cleanup is not None and attempt.cleanup.status == "skipped"
+        assert not attempt.cleanup.changes and attempt.cleanup.removed_words == 0
+
+
+def test_older_formatting_does_not_gain_invented_edit_counts(tmp_path: Path) -> None:
+    from contextlib import closing
+
+    with closing(Store(tmp_path)) as store:
+        recording = store.create_recording(WEBM_HEADER)
+        store.add_transcription(
+            recording.id, "p", "m", "ok", "- First.\n- Next.", None, raw_text="First. Next."
+        )
+        with store._db:
+            store._db.execute("ALTER TABLE transcriptions DROP COLUMN cleanup")
+            store._db.execute(
+                "UPDATE transcriptions SET formatting = ?",
+                ('{"status":"succeeded","method":"formatting","decisions":1}',),
+            )
+    with closing(Store(tmp_path)) as reopened:
+        attempt = reopened.list_recordings()[0].transcriptions[0]
+        assert attempt.cleanup is None
+        assert attempt.formatting is not None and attempt.formatting.changes is None
+        assert attempt.formatting.decisions == 1
+        assert attempt.raw_text == "First. Next." and attempt.text == "- First.\n- Next."
+
+
+def test_restart_retains_completed_enhancement_and_fails_only_unfinished_stage(
+    tmp_path: Path,
+) -> None:
+    from contextlib import closing
+    from dataclasses import replace
+
+    from dictum.processing import Stage, pending
+    from dictum.text_edits import Change
+
+    raw = "Jeff works. Next."
+    with closing(Store(tmp_path)) as store:
+        recording = store.create_recording(WEBM_HEADER)
+        initial = pending(raw, contextual=True, formatting=True, cleanup=True)
+        attempt_id = store.add_transcription(
+            recording.id, "p", "m", "ok", raw, None, raw_text=raw, processing=initial
+        )
+        checkpoint = replace(
+            initial,
+            text="Jev works. Next.",
+            correction=Stage(
+                "succeeded",
+                "contextual",
+                output="Jev works. Next.",
+                replacements=1,
+                changes=(Change(0, 4, "Jeff", "Jev"),),
+            ),
+        )
+        store.finish_processing(attempt_id, checkpoint, final=False)
+    with closing(Store(tmp_path)) as reopened:
+        attempt = reopened.list_recordings()[0].transcriptions[0]
+        assert attempt.text == "Jev works. Next." and attempt.raw_text == raw
+        assert attempt.processing_state == "complete"
+        assert attempt.correction is not None and attempt.correction.status == "succeeded"
+        assert attempt.correction.output == attempt.text
+        assert attempt.cleanup is not None and attempt.cleanup.status == "failed"
+        assert attempt.formatting is not None and attempt.formatting.status == "skipped"
+
+
+def test_restart_leaves_a_cancelled_attempt_whose_text_says_pending(tmp_path: Path) -> None:
+    from contextlib import closing
+
+    from dictum.processing import Processed, Stage
+
+    text = "The pending task."
+    with closing(Store(tmp_path)) as store:
+        recording = store.create_recording(WEBM_HEADER)
+        done = Processed(
+            text,
+            Stage("succeeded", "contextual", output=text),
+            Stage("disabled", "formatting"),
+            Stage("disabled", "cleanup"),
+        )
+        attempt_id = store.add_transcription(
+            recording.id, "p", "m", "ok", text, None, raw_text=text, processing=done
+        )
+        store.finish_processing(attempt_id, done)
+        store.cancel_recording(recording.id, attempt_id)
+    with closing(Store(tmp_path)) as reopened:
+        attempt = reopened.list_recordings()[0].transcriptions[0]
+        assert attempt.processing_state == "cancelled"

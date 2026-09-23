@@ -91,8 +91,22 @@ focused input and copies it to the clipboard. The history page stays as
 the place to browse, retry and copy.
 
 Also in scope since 2026-09-17 (issue #22): a personal dictionary, and a
-language model that builds it from the history on request. The model
+language model that builds it from the history on request. That model
 never touches a transcript on its way to the user; that stays out.
+
+In scope since 2026-09-21, the owner's decision after a measured trial:
+Jev, TypeSafe's decision model, on every transcript, as the feature that
+sets Dictum apart. Since 2026-09-22 (issue #114), the dictionary uses confusion
+groups with stable meanings and explicit recognized-form associations. Jev
+selects eligible meanings in context; pinned knowledge is shared and protected
+without semantic priority. A second switch places paragraph breaks and bullets.
+Since issue #117, another opt-in reduces code-proposed repeated English fillers
+to one occurrence after Jev classifies hesitation, preserving uncertain/meaningful uses.
+Jev generates nothing, so no generated text ever reaches the user. Nothing
+from the dictionary goes to the speech provider any more: the provider
+transcribes the raw speech and the dictionary is applied afterwards. All
+Jev uses are settings, each with its measured cost in time shown, and the
+numbers that show the improvement are kept (`docs/dictionary.md`).
 
 In scope since 2026-09-18 (issue #20): fast mode as an opt-in setting that
 streams the recording to the provider while it is made, never changing the
@@ -100,7 +114,7 @@ plain path; local models (whisper.cpp, and Parakeet through a user-installed
 engine) with a Download button, taking memory only while selected; and the
 performance table built from every transcription's timing.
 
-Out of scope for now: streaming endpoints, LLM cleanup or formatting passes,
+Out of scope for now: streaming endpoints, generative cleanup or rewriting passes,
 multi-user, authentication, cloud storage, platforms other than macOS
 (Windows is the last step before sharing, issue #36). Simplicity is a
 requirement, not a preference.
@@ -108,8 +122,11 @@ requirement, not a preference.
 ## Where the work stands
 
 The current state, what was verified, the open decisions and the next
-steps are in `docs/handoff.md`, updated at every handoff. Read it after
-this file at a fresh start. The owner's priorities on 2026-09-18, in his
-words: "I'm changing my priorities now. I want the dictionary, like the
-issue about the dictionary, to be implemented. And I want also UI
-improvements." Not public yet.
+steps live in the agent memory at `.backbone/memory/` in the main checkout:
+ignored by Git, shared by every CLI, never tracked. `scratchpad.md` there is
+the compact active state, refreshed at every handoff; the other files are
+learnings and gotchas, `index.md` lists them, and `handoff-archive/` holds
+the retired `docs/handoff.md`. Read `scratchpad.md` after this file at a
+fresh start; from a task worktree under `.backbone/worktrees/`, the path is
+the main checkout's. Private continuity, personal instructions and session
+history go there, never into tracked files. Not public yet.

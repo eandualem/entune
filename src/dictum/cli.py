@@ -17,7 +17,7 @@ import uvicorn
 from dictum import __version__
 from dictum.desktop import create_platform
 from dictum.paths import default_data_dir
-from dictum.providers import default_providers
+from dictum.providers.registry import default_providers
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store
@@ -161,7 +161,10 @@ def main(argv: list[str] | None = None) -> None:
     if platform is None:
         if not args.no_open:
             threading.Timer(0.5, webbrowser.open, args=(url,)).start()
-        server.run()
+        try:
+            server.run()
+        finally:
+            dictum.close()
         return
 
     # Desktop mode: the web server runs in a thread, the app owns the main thread.
@@ -169,8 +172,16 @@ def main(argv: list[str] | None = None) -> None:
     threading.Thread(target=server.run, daemon=True).start()
     from dictum.desktop.app import DictumApp
 
-    DictumApp(dictum, platform, url, show_window=not args.no_open).run()
-    server.should_exit = True
+    app = None
+    try:
+        app = DictumApp(dictum, platform, url, show_window=not args.no_open)
+        app.run()
+    finally:
+        server.should_exit = True
+        if app is not None:
+            app.close()
+        else:
+            dictum.close()
 
 
 if __name__ == "__main__":

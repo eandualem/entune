@@ -56,7 +56,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const anyKey = settings.llmProviders.find((p) => p.keyHint);
     if (provider) {
       el("dm-title").textContent = `${provider.name} · ${modelId}`;
-      el("dm-caption").textContent = provider.keyHint ? `key saved ${provider.keyHint} · runs at high reasoning effort` : `no key for ${provider.name} yet: add one to build the dictionary`;
+      el("dm-caption").textContent = provider.keyHint ? `key saved ${provider.keyHint}` : `no key for ${provider.name} yet: add one to build the dictionary`;
     } else {
       el("dm-title").textContent = "No model";
       el("dm-caption").textContent = anyKey ? "" : "Add an Anthropic or OpenAI key to build the dictionary from your history.";
@@ -110,6 +110,56 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     }
   });
 
+  // Jev: its key, independent processing controls, and what it has done.
+  const jev = { dictionary: el("jev-dictionary"), formatting: el("jev-formatting"), cleanup: el("jev-cleanup"), key: el("key-typesafe") };
+  function renderJev() {
+    const j = settings.jev;
+    jev.key.value = "";
+    jev.key.placeholder = j.key_hint ? `saved ${j.key_hint} · type to replace` : "Not set";
+    jev.dictionary.checked = j.dictionary;
+    jev.formatting.checked = j.formatting;
+    jev.cleanup.checked = j.cleanup;
+    for (const name of ["total_seconds", "attempt_seconds", "max_attempts"]) {
+      el(`jev-${name}`).value = j.policy[name];
+    }
+    renderJevSummary();
+  }
+  function renderJevSummary() {
+    const j = settings.jev;
+    const s = j.summary;
+    const lines = [];
+    if (s.transcriptions) {
+      lines.push(`${s.transcriptions} processed transcripts · median +${s.median_seconds?.toFixed(1) ?? "–"} s`);
+      for (const [method, label] of [["contextual", "Contextual dictionary"], ["deterministic", "Approved direct mappings"], ["unconditional", "Historical unconditional mappings"], ["cleanup", "Filler reduction"], ["formatting", "Formatting"]]) {
+        const stage = s.stages[method];
+        if (!stage.succeeded && !stage.failed && !stage.replacements && !stage.decisions) continue;
+        if (["cleanup", "formatting"].includes(method)) {
+          lines.push(`${label}: ${stage.succeeded} succeeded, ${stage.failed} failed, ${stage.skipped} skipped; decisions: ${stage.decisions}; recorded span changes: ${stage.changes}; words removed: ${stage.removed_words}; retries: ${stage.retries}; median +${stage.median_seconds?.toFixed(1) ?? "–"} s`);
+          continue;
+        }
+        lines.push(`${label}: ${stage.succeeded} succeeded, ${stage.failed} failed, ${stage.skipped} skipped; retries: ${stage.retries}; decisions: ${stage.decisions}; replacements: ${stage.replacements} (${stage.direct_replacements ?? 0} direct); preserved: ${stage.preserved}; unresolved: ${stage.abstained}`);
+      }
+      lines.push("Counts describe processing, not accuracy. Span counts cover recorded edits only; legacy counters are excluded.");
+    }
+    el("jev-summary").textContent = lines.join("\n") || (j.key_hint ? "" : "Add a TypeSafe key to enable processing.");
+  }
+  el("jev-policy-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const policy = Object.fromEntries(["total_seconds", "attempt_seconds", "max_attempts"].map((name) => [name, Number(el(`jev-${name}`).value)]));
+    if (await saveSetting({ jev: { policy } }, el("jev-policy-status"))) await loadSettings();
+  });
+  el("jev-key-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const key = jev.key.value.trim();
+    if (!key) { flash(el("jev-key-status"), "Nothing to save", "ok"); return; }
+    if (await saveSetting({ keys: { typesafe: key } }, el("jev-key-status"))) await loadSettings();
+  });
+  for (const name of ["dictionary", "formatting", "cleanup"]) {
+    jev[name].addEventListener("change", async () => {
+      if (!(await saveSetting({ jev: { [name]: jev[name].checked } }, el("jev-key-status")))) jev[name].checked = !jev[name].checked;
+    });
+  }
+
   // Local models: a card per local provider, rows with size, state and one button.
   let localPoll = null;
   let localList = [];
@@ -148,7 +198,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       const isParakeet = provider.id === "parakeet";
       head.innerHTML = isParakeet
         ? `<div class="name strong">Parakeet <span class="caption">· NVIDIA on Apple MLX</span></div><div class="caption hint">The most accurate offline model. Its engine is installed outside Dictum, once; Dictum then finds it.</div>`
-        : `<div class="name strong">Whisper <span class="caption">· whisper.cpp</span></div><div class="caption hint">Downloaded inside Dictum with one click. Runs on this machine; nothing leaves it.</div>`;
+        : `<div class="name strong">Whisper <span class="caption">· whisper.cpp</span></div><div class="caption hint">Downloaded inside Dictum with one click. Speech recognition runs on this machine. Enabled Jev features still send text to TypeSafe.</div>`;
       card.append(head, ...mine.map((m) => localRow(m, isParakeet)));
       const missing = mine.find((m) => m.state === "unavailable");
       if (isParakeet && missing) card.append(engineNote(missing));
@@ -169,7 +219,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const name = document.createElement("div");
     name.innerHTML = `<div class="name"></div><div class="note"></div>`;
     name.querySelector(".name").textContent = m.label;
-    name.querySelector(".note").textContent = isParakeet ? `${m.note} · takes no words, replacements only` : m.note;
+    name.querySelector(".note").textContent = m.note;
     const size = document.createElement("span");
     size.className = "size";
     size.textContent = gb(m.size_bytes);
@@ -247,7 +297,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   function renderAgents() {
     const endpoint = `${location.origin}/api/dictionary/corrections`;
     el("agent-endpoint").textContent = endpoint;
-    el("agent-curl").textContent = `curl -s -m 2 -X POST ${endpoint} \\\n  -H 'content-type: application/json' \\\n  -d '{"replacements": {"cloud code": "Claude Code"}, "terms": ["Dictum"], "source": "my-agent"}'`;
+    el("agent-curl").textContent = `curl -s -m 2 -X POST ${endpoint} \\\n  -H 'content-type: application/json' \\\n  -d '{"entries": [{"spelling": "Claude Code", "description": "Anthropic'"'"'s coding agent", "heard": ["cloud code"]}], "source": "my-agent"}'`;
   }
   for (const button of document.querySelectorAll(".copy-btn")) {
     button.addEventListener("click", async () => {
@@ -297,7 +347,9 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     onShortcutsChanged(settings.shortcuts);
     el("shortcut-hold").textContent = settings.shortcuts.hold ?? "";
     el("shortcut-toggle").textContent = settings.shortcuts.toggle ?? "";
+    el("shortcut-cancel").textContent = settings.shortcuts.cancel ?? "";
     renderDictionaryModel();
+    renderJev();
     renderAgents();
     loadLocalModels().catch(() => {});
     loadCorrections().catch(() => {});
@@ -313,13 +365,10 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   async function saveShortcuts() {
     const hold = el("shortcut-hold").textContent.trim();
     const toggle = el("shortcut-toggle").textContent.trim();
-    try {
-      await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: {}, shortcuts: { hold, toggle } }) });
-      showShortcutStatus("");
-      onShortcutsChanged({ hold: hold || null, toggle: toggle || null });
-    } catch (err) {
-      showShortcutStatus(errorText(err));
-    }
+    const cancel = el("shortcut-cancel").textContent.trim();
+    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: {}, shortcuts: { hold, toggle, cancel } }) });
+    showShortcutStatus("");
+    onShortcutsChanged({ hold: hold || null, toggle: toggle || null, cancel: cancel || null });
   }
 
   async function captureShortcut(display, button) {
@@ -396,8 +445,18 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     button.addEventListener("click", () => captureShortcut(el(button.dataset.target), button));
   }
   for (const button of document.querySelectorAll("button.clear")) {
-    button.addEventListener("click", async () => { el(button.dataset.target).textContent = ""; await saveShortcuts(); });
+    button.addEventListener("click", async () => {
+      const display = el(button.dataset.target);
+      const previous = display.textContent;
+      display.textContent = "";
+      try { await saveShortcuts(); }
+      catch (err) { display.textContent = previous; showShortcutStatus(errorText(err)); }
+    });
   }
 
-  return { load: loadSettings, save: saveSetting, refreshCorrections: () => loadCorrections().catch((err) => onError(errorText(err))) };
+  return {
+    load: loadSettings, save: saveSetting,
+    refreshCorrections: () => loadCorrections().catch((err) => onError(errorText(err))),
+    async refreshJev() { if (settings) { settings.jev.summary = (await api("/api/settings")).jev.summary; renderJevSummary(); } },
+  };
 }

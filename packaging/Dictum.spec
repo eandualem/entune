@@ -18,7 +18,12 @@ a = Analysis(
     datas=[
         (str(PACKAGE_DIR / "web"), "dictum/web"),
         (str(PACKAGE_DIR / "assets"), "dictum/assets"),
-        (str(PACKAGE_DIR / "providers" / "parakeet_helper.py"), "dictum/providers"),
+        *[
+            (str(path), "dictum/prompts")
+            for path in (PACKAGE_DIR / "prompts").iterdir()
+            if path.suffix in {".txt", ".json"}
+        ],
+        (str(PACKAGE_DIR / "providers" / "local" / "parakeet_helper.py"), "dictum/providers/local"),
     ],
     hiddenimports=[
         *collect_submodules("uvicorn"),

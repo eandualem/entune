@@ -42,15 +42,19 @@ uv run dictum
 On macOS this opens Dictum's window (history, dictionary, settings) and
 puts a microphone icon in the menu bar; closing the window leaves it running
 there. Elsewhere, or with `--no-menu`, it is the page alone, opened in your
-browser at `http://localhost:4187`. The page's own Record button, the
-history, retry and the dictionary work wherever Python runs; the global
-shortcut and the automatic paste need the macOS menu-bar app for now.
+browser at `http://localhost:4187`. The page provides recording, history, retry
+and dictionary controls. Native
+shortcuts, paste, the recording indicator and permission setup are implemented
+for macOS only. Windows and Linux browser-mode installation and audio/provider
+availability are not verified end to end; portable dependencies are not a
+promise of native parity.
 `dictum --help` lists `--port`, `--data DIR`, `--no-open` and `--no-menu`.
 
 ## Permissions (macOS)
 
-The first time you set a shortcut, macOS asks for three permissions in
-**System Settings › Privacy & Security**:
+On first opening the installed app, Settings guides you through the three
+permissions Dictum needs. Click **Allow…** beside each; macOS may send you
+to **System Settings › Privacy & Security** to enable Dictum:
 
 | Permission | Why Dictum needs it |
 |---|---|
@@ -62,38 +66,51 @@ With `uvx dictum` they are granted to whatever runs it, your terminal or
 Python, and asked again if that changes. Building `Dictum.app` (below) gives
 macOS a stable app to attach them to.
 
-The order matters. Input Monitoring comes first: until it is granted Dictum
-cannot see the shortcut, so it never records and never asks for the
-microphone. A shortcut that uses fn also needs Accessibility before it
-listens, because owning that key takes an active event tap; Dictum asks.
-Grant them, quit Dictum from the menu bar and open it again, then
-hold the shortcut: the Microphone prompt appears on that first recording.
-There is no way to add an app to the Microphone list by hand.
+Microphone access can be requested from setup without making a recording.
+Each row updates when its permission is granted. If access was denied,
+**Open Settings…** takes you to the relevant pane. If macOS asks you to quit,
+reopen Dictum to continue; missing permissions bring setup back on launch.
+The Fn key needs Accessibility as well as Input Monitoring.
 
 ## Dictating
 
 Set a shortcut once in Settings; Dictum opens there on first run. Click
-"Record shortcut", press the key or combination, let go. Two kinds, and both
+"Set…", press the key or combination, let go. Two recording shortcuts, and both
 can be set:
 
 - **Hold to talk**: one key, for example `fn` or the right Option key.
   Record while held, release to stop.
 - **Hands-free**: a combination, for example `cmd+fn`. Press to start;
-  press again, or press the hold key, to stop.
+  press again, or press the hold key, to stop (on release if that key is also part of Cancel).
 
-While you record, a small "Recording" pill appears, in the bottom-left
-corner of the screen your pointer is on until you drag it somewhere else;
-it stays where you drop it. It says "Transcribing…" until the text lands,
-and never takes focus. On stop, the clip is saved to history at once
-and goes to your default model; the transcript is copied to the clipboard
-and pasted into whatever had focus. Two dictations in a row land in the
-order you spoke them. A failure shows as a notification with the provider's
-message; History has the retry.
+**Cancel:** press `fn+ctrl` during recording, transcription, processing, or pending
+delivery. Cancellation saves usable captured audio for later transcription and prevents
+pasting. A tap shorter than 0.25 seconds contains no usable capture and is not saved.
+Synchronous speech calls may need to drain; the app remains busy until they release
+resources. Existing Fn+Escape cancellation settings use Fn+Control on load because
+Escape can cancel foreground work. Custom shortcuts remain configurable; a modifier
+combination is not universally conflict-free across all applications.
+
+The non-activating pill displays the actual stage: recording, saving, transcribing,
+contextual correction, filler reduction, formatting, or delivery. Disabled stages are
+skipped. One dictation owns the app until delivery completes; a new one must wait.
+Learning owns the same guard through proposal review. The final text is copied once
+and pasted into the **current editable input**, including in a different app from where
+recording began. With no editable target, Dictum reports “Copied to clipboard — no
+active text field.” If a paste cannot be verified through Accessibility, completion
+says so. Completion also appears in the pill, so it does not depend on notification
+permissions. History retains audio and all attempts for retry.
 
 The default model is the picker next to the Record button, the same one as
 in Settings; picking a model applies at once, no Save. The Record button in
 the window records the same WAV the shortcut does, so every model, cloud or
 local, takes it.
+The speech model is sampled when transcription starts, so changing it while speaking
+changes the engine for that recording. Changes after transcription starts apply to
+later attempts. Enhancement switches are sampled after speech succeeds. In fast mode,
+audio already uploaded while recording went to the provider selected at recording
+start. Switching providers does not retract that upload; when transcription starts,
+the old upload is aborted and the saved clip goes to the then-selected provider.
 
 **Fast mode** (Settings, off by default) uploads the audio while you record,
 so a dictation over two minutes is transcribed as soon as you stop instead of
@@ -119,7 +136,7 @@ reach other apps as a modifier. Pick another key if you need fn elsewhere.
 | AssemblyAI | universal-3-5-pro | sync endpoint; clips over two minutes use the long-form endpoint |
 | Groq | whisper-large-v3-turbo | OpenAI-style transcriptions endpoint |
 | Soniox | stt-async-v5 | upload, poll, fetch; the upload is deleted afterwards |
-| Local | Whisper large-v3-turbo, its compact build, small.en, base.en | whisper.cpp on this machine; no key, nothing leaves the Mac |
+| Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
 | Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
 
 Enter a provider's API key in Settings and its model appears in the model
@@ -140,7 +157,7 @@ A local model takes memory only while it is the selected model: it is loaded
 when you pick it, freed when you pick something else, and a model used for a
 single retry is freed right after.
 Measured on 2026-09-18 on an M5: base.en transcribes 25 s of speech in
-under a second. Your dictionary terms are passed as the prompt.
+under a second.
 
 **Parakeet** was the most accurate offline model in our tests, but its
 engine (Apple's MLX and the `parakeet-mlx` package, about 480 MB, Apple
@@ -164,19 +181,91 @@ provider's response verbatim.
 
 ## Personal dictionary
 
-The Dictionary tab holds **terms** the provider should expect (names,
-products, identifiers), sent along with every clip, and **replacements**
-(heard → meant) applied to every transcript. Edit it by hand, or click
-**Build from history** to have a language model of your choice, Anthropic
-or OpenAI on your own key, read your recent transcripts and propose
-additions, which you review before anything is saved. What it learns is
-kept per speech model, from that model's own transcripts, since a local
-model's mishearings are not AssemblyAI's. Entries you add or pin are shared
-by every model and never changed by the language model. If you dictate to
-AI agents, they can post corrections once you have confirmed a
-mistranscription with them.
-The suggested models, Claude Fable 5.1 and GPT-6 Astra, are the current
-strongest from each provider; any model id the provider accepts works.
+Speech models mishear names, products and everyday words. The Dictionary tab groups
+recognized forms with their possible meanings, definitions and exact output spellings.
+Explicit associations decide which meanings can compete for a form; context decides
+which one applies. Edit groups directly, or ask the configured language model to build
+or refine them from this speech model's raw history. Additions, before/after updates,
+and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
+then apply the remainder once. Dismissing a proposal does not delete active knowledge.
+
+Learned associations stay specific to the speech model. Pinning shares and protects a
+meaning and its associations across models, without giving it priority over competitors.
+Existing dictionaries are backed up before conversion and retained for review. Confirmed
+agent corrections still use the existing local API. Generation suggestions are Sonnet 5
+and GPT-5.4 mini; the model selected in Settings is honored.
+
+**Learn from audio**, in the Dictionary tab, selects saved recordings directly or imports audio from
+Wispr Flow on this Mac (including its local backups) or an audio folder. Other
+applications' transcripts are ignored. Dictum keeps a local copy of each distinct
+audio file in `dictionary-audio/`, separate from recording history, and can reuse
+it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
+up to 199 MB can be uploaded; the chosen provider must support the audio format
+and length. A build uses the speech and dictionary models selected when it starts.
+Select individual recordings or a date range; available and selected duration is shown
+where known. Fresh transcripts stay in memory within the workflow and never become
+history attempts. Retry reuses successful transcriptions, including after a later
+generation failure. Finishing, discarding, replacing the workflow, or closing Dictum
+clears that temporary text. Source audio is kept.
+
+History and audio share one exclusive, user-initiated learning workflow. Finish an
+active dictation first. Learning blocks dictation and separate dictionary editing,
+including while proposals await review. Stop or a later failure retains validated
+completed batches for review, with their actual coverage and cause. A running speech
+call may need to finish; a generation request can be interrupted. Apply, discard, or
+retry the completed portion. No changes are applied automatically.
+
+Default history refinement uses up to 300 recent, unprocessed attempts for the selected
+speech model; “All history” deliberately includes older/previously examined data.
+Original speech and its processing records are supplied as distinct evidence, not
+confirmed intended wording. Applying at least one actual change marks only fully
+covered input IDs learned for that model. Applying none leaves them eligible. A
+partially processed transcript remains eligible. New dictations after selection and
+other models' boundaries are unaffected. Pinned definitions can be reviewed and updated;
+the agent cannot delete pinned meanings or remove any existing pinned variant.
+
+
+### Jev decides each match in context
+
+With a [TypeSafe](https://typesafe.ai) key and contextual correction enabled, **Jev**
+classifies eligible meanings using the original transcript. Jev generates no replacement
+text: Dictum applies the selected stored spelling. A literal Jeff or GIF is a meaning in
+its own right. Every valid response selects the highest-scoring eligible meaning, even
+when scores are close. Exact ties use Jev's declared tied winner. Invalid responses
+fail the stage; scores are never invented or pooled by output spelling.
+
+Only explicitly approved, unambiguous direct mappings bypass classification. Pinning or
+having a single recorded candidate is not enough. Turning contextual correction off
+disables the entire dictionary stage. The previous binary classifier's cached accuracy and timings
+are documented separately; they do not establish the new classifier's quality or latency.
+History and Settings report work performed, including direct changes and abstentions,
+rather than an accuracy score. Optional formatting inserts paragraph breaks and bullets,
+including the first list item, while retaining existing structure and words. Lines without
+sentence punctuation stay whole; a single unpunctuated note needs no formatting request.
+
+**Reduce repeated fillers** is a separate opt-in. Code proposes adjacent repeats of
+English `um`, `uh`, `erm` or `like`; Jev classifies hesitation versus meaningful speech.
+Only confidently classified hesitation runs are reduced to one occurrence. Quoted/code
+spans are excluded, and uncertain answers preserve the words. History shows the exact
+deletions and timing separately from dictionary replacements. This initial policy has
+offline/mocked coverage; its live classification quality has not been evaluated.
+
+Successful speech and its original text are saved before correction. If
+contextual correction fails, Dictum delivers the untouched original and
+shows a noninterrupting notice, skipping cleanup and formatting. Those later stages run
+in that order; final failure stops all remaining stages, retains the last completed
+text and explains which stage failed and which later stages were skipped. Every completed
+stage output and occurrence-selection provenance is saved internally. History shows
+only the final result for each attempt; canceled attempts show an audio-saved notice.
+Settings > Providers controls the processing wait: initially five seconds
+total across correction, cleanup and formatting, three per attempt, and at most two
+attempts per request. Each applicable stage sends one request before retries. Transient
+failures can retry within that shared deadline. Explicit exhausted-credit, authentication
+and authorization errors return immediately, including explicit credit failures in HTTP 429.
+These are configurable defaults, not an accuracy or end-to-end latency guarantee. **Copy original** in history
+copies the provider's text without altering history or already-pasted text. After a
+correction failure, **Apply safe mappings and copy** offers a derived result using only
+approved direct mappings; ambiguous spans remain untouched.
 
 Details: [the dictionary file](docs/dictionary.md) and
 [the agents' API](docs/agents-api.md).
@@ -201,17 +290,42 @@ so prefer the standalone one. See [packaging](docs/packaging.md).
 
 ## Data and privacy
 
-Recordings, transcripts, settings and keys live in a local SQLite database
-and files at `~/Library/Application Support/dictum` on macOS or
-`~/.local/share/dictum` elsewhere, or wherever `DICTUM_DATA` or `--data`
-points. Nothing leaves your machine except:
+Recordings, transcripts, settings and keys live in a local SQLite database and
+files. `--data` overrides `DICTUM_DATA`; otherwise the directory is
+`~/Library/Application Support/dictum` on macOS, `%APPDATA%/dictum` on Windows
+(falling back to `~/AppData/Roaming/dictum`), and `$XDG_DATA_HOME/dictum` or
+`~/.local/share/dictum` elsewhere. Defining a data path does not establish platform support.
 
-- the audio clip, sent to the speech-to-text provider you picked for that
-  recording;
-- when you click "Build from history", your recent transcripts, sent to the
-  language-model provider you chose in Settings.
+Enabled features determine what is sent out:
 
-No telemetry, no accounts, no cloud storage.
+- **Cloud speech:** the selected provider receives the audio clip; AssemblyAI fast
+  mode starts uploading during recording. Local Whisper.cpp and Parakeet transcribe
+  on this machine, without sending audio to a speech service.
+- **Dictionary builds:** the chosen Anthropic or OpenAI model receives raw source
+  transcripts, relevant processing records, and the pinned/working confusion groups, including definitions and
+  personal context. Refinement sends the current dictionary again with each chunk.
+- **Jev correction:** TypeSafe receives the original transcript, matched occurrences
+  and their eligible meanings, spellings, definitions and personal context.
+  **Jev filler reduction** sends its input text and code-proposed deletion spans;
+  **Jev formatting** sends the text being formatted and its sentence spans.
+  Turning on any of these features sends text even when speech recognition is local.
+- **Optional model downloads:** Hugging Face serves local model weights; no dictation
+  audio or text is included. Parakeet's separately installed engine has its own
+  package downloads. Export files are generated locally and saved through the
+  browser or native Save panel.
+
+There is no Dictum account, telemetry or hosted history storage. Local speech alone
+does not make every enabled feature offline. Temporary onboarding transcripts are
+kept in memory for workflow retries, never stored as normal attempts, and cleared on
+finish, discard, replacement or closure; this does not establish the remote providers' retention
+policies. Those depend on the provider and account you use.
+
+Saved audio and transcripts never automatically expire or get deleted, including
+audio imported for dictionary builds. **Settings → Data & Privacy** exports all
+original recording and imported audio as a ZIP with a file index, or all saved
+transcription attempts as JSON (including raw text, models and dates). Exports are
+created locally and exclude saved API keys and settings. Temporary transcripts
+from imported audio are not saved or included in the transcript export.
 
 ## Development
 
@@ -219,6 +333,12 @@ The app uses Starlette and SQLite, plain browser JavaScript modules without
 a build step, and httpx for provider calls. Dictionary builds call Anthropic
 or OpenAI directly; the suggested model list is kept in `llm.py`, with a
 custom model field in Settings.
+
+Speech adapters are organized under providers/cloud and providers/local,
+with common contracts separate from HTTP and local lifecycle capabilities.
+Dictionary-generation and Jev instructions, criteria and examples live in
+the packaged src/dictum/prompts/ resources; thresholds and algorithms stay
+in Python.
 
 ```sh
 uv sync                 # environment with dev tools
@@ -231,8 +351,7 @@ uv run mypy             # types, strict
 Pull requests go into `develop`; `main` moves by a release pull request
 after a review of everything on `develop`. See
 [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md),
-[adding a provider](docs/providers.md) and, for where the work stands,
-[the handoff](docs/handoff.md).
+[adding a provider](docs/providers.md).
 
 ## Licence
 

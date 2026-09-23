@@ -7,8 +7,9 @@ from typing import Any
 import httpx
 import pytest
 
-from dictum.providers.base import Clip, Failure, Transcript
-from dictum.providers.local import CATALOGUE, Local, _prompt, pcm16k
+from dictum.providers.contracts import Clip, Failure, Transcript
+from dictum.providers.local.whisper import CATALOGUE, WhisperCpp, pcm16k
+from dictum.providers.registry import resolve_model
 from dictum.recorder import wav_bytes
 from tests.conftest import mock_client
 
@@ -21,11 +22,13 @@ def wait_until(condition: Any, seconds: float = 3.0) -> None:
 
 
 def test_only_downloaded_models_are_offered_and_the_catalogue_says_why(tmp_path: Path) -> None:
-    local = Local(tmp_path)
+    local = WhisperCpp(tmp_path)
     assert not local.models
     assert [m.state for m in local.catalogue()] == ["absent"] * len(CATALOGUE)
     (tmp_path / "ggml-base.en.bin").write_bytes(b"model")
     assert list(local.models) == ["base.en"]
+    saved = resolve_model([local], "local/base.en")
+    assert saved is not None and saved.id == "local/base.en" and saved.provider is local
     ready = [m for m in local.catalogue() if m.state == "ready"]
     assert [m.name for m in ready] == ["base.en"] and ready[0].progress == 1.0
 
@@ -49,7 +52,7 @@ def test_download_resumes_a_partial_file_and_remove_deletes_it(tmp_path: Path) -
 
     tmp_path.mkdir(exist_ok=True)
     (tmp_path / "ggml-base.en.bin.part").write_bytes(body[:400])
-    local = Local(tmp_path, client=mock_client(handler))
+    local = WhisperCpp(tmp_path, client=mock_client(handler))
     local.download("base.en")
     wait_until(lambda: local.models == ("base.en",))
     assert ranges == ["bytes=400-"]
@@ -60,7 +63,9 @@ def test_download_resumes_a_partial_file_and_remove_deletes_it(tmp_path: Path) -
 
 
 def test_a_failed_download_is_reported_in_the_catalogue(tmp_path: Path) -> None:
-    local = Local(tmp_path, client=mock_client(lambda req: httpx.Response(503, content="busy")))
+    local = WhisperCpp(
+        tmp_path, client=mock_client(lambda req: httpx.Response(503, content="busy"))
+    )
     local.download("small.en")
     wait_until(lambda: any(m.state == "error" for m in local.catalogue()))
     (failed,) = [m for m in local.catalogue() if m.state == "error"]
@@ -74,7 +79,7 @@ def test_a_failed_download_is_reported_in_the_catalogue(tmp_path: Path) -> None:
 def test_invalid_resumed_download_never_becomes_a_ready_model(
     tmp_path: Path, status: int, interval: str, body: bytes
 ) -> None:
-    from dictum.providers.local import Download
+    from dictum.providers.local.downloads import Download
 
     target = tmp_path / "model.bin"
     part = target.with_suffix(".bin.part")
@@ -90,7 +95,7 @@ def test_invalid_resumed_download_never_becomes_a_ready_model(
 
 
 def test_range_refusal_accepts_only_a_verified_complete_part(tmp_path: Path) -> None:
-    from dictum.providers.local import Download
+    from dictum.providers.local.downloads import Download
 
     target = tmp_path / "model.bin"
     target.with_suffix(".bin.part").write_bytes(b"abc")
@@ -113,7 +118,7 @@ class FakeEngine:
         return [type("Seg", (), {"text": text})() for text in texts]
 
 
-def test_transcribe_resamples_prompts_with_terms_and_needs_the_file(tmp_path: Path) -> None:
+def test_transcribe_resamples_and_needs_the_file(tmp_path: Path) -> None:
     engine = FakeEngine()
     loaded: list[str] = []
 
@@ -121,17 +126,17 @@ def test_transcribe_resamples_prompts_with_terms_and_needs_the_file(tmp_path: Pa
         loaded.append(path)
         return engine
 
-    local = Local(tmp_path, load_model=load_model)
+    local = WhisperCpp(tmp_path, load_model=load_model)
     clip = Clip(wav_bytes(b"\x00\x00" * 48_000, sample_rate=48_000), "audio/wav")  # 1 s
-    missing = local.transcribe(clip, "base.en", "", terms=("Dictum",))
+    missing = local.transcribe(clip, "base.en", "")
     assert isinstance(missing, Failure) and "not downloaded" in missing.error
     (tmp_path / "ggml-base.en.bin").write_bytes(b"model")
-    result = local.transcribe(clip, "base.en", "", terms=("Dictum", "AssemblyAI"))
+    result = local.transcribe(clip, "base.en", "")
     assert result == Transcript("hello there")
     assert loaded == [str(tmp_path / "ggml-base.en.bin")]
     assert engine.calls[0]["samples"] == 16_000
     assert engine.calls[0]["language"] == "en"
-    assert engine.calls[0]["initial_prompt"] == "Dictum, AssemblyAI"
+    assert "initial_prompt" not in engine.calls[0]
     local.transcribe(clip, "base.en", "")
     assert len(loaded) == 1  # the engine is kept
 
@@ -139,8 +144,6 @@ def test_transcribe_resamples_prompts_with_terms_and_needs_the_file(tmp_path: Pa
 def test_pcm16k_mixes_stereo_and_keeps_16k_as_is() -> None:
     mono = pcm16k(Clip(wav_bytes(b"\x00\x40" * 16_000, sample_rate=16_000), "audio/wav"))
     assert len(mono) == 16_000 and abs(float(mono[0]) - 0.5) < 0.01
-    assert _prompt(()) == ""
-    assert len(_prompt(tuple("term" for _ in range(500)))) <= 800
 
 
 def test_warm_loads_a_downloaded_model_once_and_ignores_the_rest(tmp_path: Path) -> None:
@@ -150,7 +153,7 @@ def test_warm_loads_a_downloaded_model_once_and_ignores_the_rest(tmp_path: Path)
         loaded.append(path)
         return FakeEngine()
 
-    local = Local(tmp_path, load_model=load_model)
+    local = WhisperCpp(tmp_path, load_model=load_model)
     local.warm("base.en")  # not downloaded: nothing happens
     (tmp_path / "ggml-base.en.bin").write_bytes(b"model")
     local.warm("base.en")
@@ -167,7 +170,7 @@ def test_unload_frees_every_model_but_the_kept_one(tmp_path: Path) -> None:
         loaded.append(path)
         return FakeEngine()
 
-    local = Local(tmp_path, load_model=load_model)
+    local = WhisperCpp(tmp_path, load_model=load_model)
     for name in ("base.en", "small.en"):
         (tmp_path / f"ggml-{name}.bin").write_bytes(b"model")
     clip = Clip(wav_bytes(b"\x00\x00" * 16_000), "audio/wav")
@@ -191,7 +194,7 @@ def test_empty_unload_does_not_collect_the_whole_application(
 
     calls: list[bool] = []
     monkeypatch.setattr(gc, "collect", lambda: calls.append(True))
-    Local(tmp_path).unload()
+    WhisperCpp(tmp_path).unload()
     assert calls == []
 
 
@@ -205,7 +208,7 @@ def test_rapid_selection_changes_coalesce_to_the_latest_model(
 
     for name in ("base.en", "small.en"):
         (tmp_path / f"ggml-{name}.bin").write_bytes(b"model")
-    local = Local(tmp_path)
+    local = WhisperCpp(tmp_path)
     app = Dictum(Store(tmp_path), [local])
     entered, release = threading.Event(), threading.Event()
     warmed: list[str] = []
@@ -224,5 +227,67 @@ def test_rapid_selection_changes_coalesce_to_the_latest_model(
             app.set_default_model("local/small.en")
     finally:
         release.set()
-    wait_until(lambda: not app._warming)
+    wait_until(lambda: not app._speech.warming)
     assert warmed == ["base.en", "small.en"]
+    assert app.close()
+
+
+def test_shutdown_stops_download_before_next_chunk_and_keeps_resumable_bytes(
+    tmp_path: Path,
+) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from dictum.providers.local.downloads import Download
+
+    entered, release = threading.Event(), threading.Event()
+
+    class Stream(httpx.SyncByteStream):
+        def __iter__(self) -> Any:
+            yield b"first"
+            entered.set()
+            assert release.wait(3)
+            yield b"second"
+
+    target = tmp_path / "model.bin"
+    with mock_client(lambda req: httpx.Response(200, stream=Stream())) as client:
+        download = Download(client, [("https://models.test/first", target)], 11)
+        download.start()
+        try:
+            assert entered.wait(2)
+            with ThreadPoolExecutor(1) as pool:
+                closing = pool.submit(download.close)
+                try:
+                    assert download._cancel.wait(2)
+                    assert not closing.done()
+                finally:
+                    release.set()
+                closing.result()
+        finally:
+            release.set()
+            download.close()
+        assert not target.exists() and target.with_name("model.bin.part").read_bytes() == b"first"
+        assert not download.running
+
+
+def test_converter_timeout_removes_its_temporary_audio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from dictum.providers.local import audio
+
+    temporary: list[Path] = []
+
+    def timeout(command: list[str], **kwargs: object) -> None:
+        assert kwargs["timeout"] == 300
+        temporary.append(Path(command[command.index("-i") + 1]))
+        assert temporary[0].read_bytes() == b"clip"
+        raise subprocess.TimeoutExpired(command, 300)
+
+    monkeypatch.setattr("dictum.providers.local.audio.shutil.which", lambda name: "/fake/ffmpeg")
+    monkeypatch.setattr("dictum.providers.local.audio.subprocess.run", timeout)
+    monkeypatch.setattr("dictum.providers.local.audio.tempfile.tempdir", str(tmp_path))
+    with pytest.raises(subprocess.TimeoutExpired):
+        audio.to_wav_with_ffmpeg(b"clip", sample_rate=16_000)
+    assert not temporary[0].exists()

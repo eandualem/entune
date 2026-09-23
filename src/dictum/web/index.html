@@ -19,13 +19,13 @@
     </script>
   </head>
   <body>
-    <header class="toolbar">
+    <header class="toolbar pywebview-drag-region">
       <div class="segmented" role="tablist" aria-label="View">
         <button type="button" role="tab" id="tab-history" aria-selected="true" aria-controls="view-history">History</button>
         <button type="button" role="tab" id="tab-dictionary" aria-selected="false" aria-controls="view-dictionary">Dictionary</button>
         <button type="button" role="tab" id="tab-settings" aria-selected="false" aria-controls="view-settings">Settings</button>
       </div>
-      <div class="spacer"></div>
+      <div class="spacer pywebview-drag-region"></div>
       <span class="status" id="status" role="status"></span>
       <div class="perf">
         <div class="popover" id="metrics" hidden>
@@ -74,7 +74,6 @@
               <svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.3"/><path d="M6.2 6.3a1.9 1.9 0 0 1 3.7.5c0 1.1-1.9 1.4-1.9 2.6M8 11.6v.1"/></svg>How the dictionary works
             </button>
             <div class="spacer"></div>
-            <span class="caption save-status" id="build-status" role="status"></span>
             <button type="button" class="btn accent" id="build-dictionary">Build from history</button>
             <button type="button" class="btn mono" id="json-toggle" title="Edit dictionary.json" aria-expanded="false" aria-controls="json-editor">{ }</button>
           </div>
@@ -84,29 +83,58 @@
             <div class="row-actions">
               <button type="button" class="btn accent" id="save-dictionary">Save JSON</button>
               <span class="caption save-status" id="dictionary-status" role="status"></span>
-              <span class="caption hint">The file is <code>dictionary.json</code> in Dictum's data folder. Replacements are whole words, matched regardless of case; the longest phrase wins.</span>
+              <span class="caption hint">The file is <code>dictionary.json</code> in Dictum's data folder. Forms match whole words regardless of case. Context resolves eligible meanings and overlapping phrases.</span>
             </div>
           </div>
 
           <div class="help-panel" id="help-panel" hidden>
             <div class="defs">
-              <b>Word</b><span>A name or term the speech model should expect: <i>Dictum</i>, <i>CLAUDE.md</i>. Sent to the model before it listens.</span>
-              <b>Replacement</b><span>What it heard → what you meant, fixed in every transcript afterwards: <i>cloud code → Claude Code</i>.</span>
-              <b>Pinned</b><span>Entered by you. Used with every model. Never changed by a machine.</span>
+              <b>Group</b><span>Recognized forms linked to possible meanings. For <i>cloud</i>, Claude and a literal cloud can compete; Jev chooses the meaning and Dictum applies its stored spelling.</span>
+              <b>Meaning</b><span>A general definition, optional personal usage, and exact output spelling. Valid decisions select the highest-scoring eligible meaning, even when scores are close. Missing usable definitions are left unresolved.</span>
+              <b>Pinned</b><span>Shared with every model and protected from builds. Pinning shares all variants; reviewed definition updates are allowed; context still decides among competitors.</span>
               <b>Learned</b><span>Proposed from one model's own transcripts and accepted by you. Used only with that model.</span>
             </div>
             <div class="defs more" id="help-more" hidden>
-              <b>Refine</b><span>Sends this model's recent transcripts, with your pinned list as context, to the dictionary model set in Settings. You get a proposal, entries to add and to drop, and nothing is saved until you press Accept.</span>
+              <b>Refine</b><span>Sends this model's recent transcripts, with your pinned list as context, to the dictionary model set in Settings. You get a proposal, groups to add, revise or remove, and nothing is saved until you press Accept.</span>
               <b>Agents</b><span>Agents you dictate to can post a confirmed correction to Dictum's local API. It arrives here as Pinned; remove it if they got it wrong.</span>
-              <b>Limits</b><span>Every provider caps how many words it takes; Parakeet takes none and uses replacements only. The count beside the filters shows what is in use.</span>
+              <b>Size</b><span>Lookup retains competing forms. Unusually complex overlaps are left unresolved; larger dictionaries are not guaranteed to be faster.</span>
             </div>
             <button type="button" class="btn link" id="help-more-toggle">More detail</button>
           </div>
 
+          <details class="audio-onboarding" id="audio-onboarding">
+            <summary>Learn from audio</summary>
+            <p class="caption">Select Dictum recordings, or bring audio from Wispr Flow or a folder. Original audio stays on this Mac for reuse with another model. Fresh transcripts stay in memory for this workflow and its retries; they are not saved to history.</p>
+            <div class="audio-actions">
+              <button type="button" class="btn" id="import-wispr">Import Wispr Flow audio</button>
+              <button type="button" class="btn" id="choose-audio-folder">Choose audio folder</button>
+              <input type="file" id="audio-folder" webkitdirectory multiple hidden />
+            </div>
+            <p class="caption">Wispr imports retained audio from this Mac and its local Flow backups. Folders support WAV, MP3, M4A, FLAC, OGG and WebM, up to 199 MB per file.</p>
+            <p class="caption" id="audio-import-status" role="status"></p>
+            <p class="caption" id="audio-count"></p>
+            <p class="caption" id="audio-models"></p>
+            <div class="audio-actions"><label>From <input type="date" class="input" id="audio-from" /></label><label>Through <input type="date" class="input" id="audio-through" /></label><label><input type="checkbox" id="audio-other-models" /> Only audio the selected model hasn't transcribed</label><button class="btn ghost" id="audio-select-visible" type="button">Select visible</button><button class="btn ghost" id="audio-clear" type="button">Clear selection</button></div>
+            <p class="caption">Date filters use Dictum recording dates. Imports without a source date appear when no dates are selected. Unknown durations are shown separately.</p>
+            <div id="learning-audio-list" class="learning-audio-list"></div>
+            <p class="caption">Keep Dictum running until the proposal is ready. Successful temporary transcripts are reused on Retry. Applying, discarding or closing the app clears them; your imported audio stays saved.</p>
+            <button type="button" class="btn accent" id="build-audio-dictionary" disabled>Build from saved audio</button>
+          </details>
+
+          <div class="row-actions">
+            <p class="caption" id="dictionary-build-status" role="status"></p>
+            <button type="button" class="btn ghost" id="cancel-dictionary-build" hidden>Stop learning</button>
+            <button type="button" class="btn ghost" id="retry-dictionary-build" hidden>Retry remaining work</button>
+            <button type="button" class="btn ghost" id="abandon-dictionary-build" hidden>Discard workflow</button>
+          </div>
+          <p class="caption save-status" id="build-status" role="status"></p>
+
+          <p class="caption" id="dictionary-edit-lock" hidden>Learning owns the dictionary until you apply or discard. Edit the proposals below; separate dictionary editing and dictation are paused.</p>
+          <label class="caption">History for learning <select class="select" id="learning-scope"><option value="new">Recent unprocessed inputs (up to 300)</option><option value="all">All this model’s history, including previously learned inputs</option></select></label>
           <div class="proposal" id="proposal" hidden>
             <div class="proposal-head">
-              <span class="proposal-title">Proposed by the model</span>
-              <span class="caption hint">Nothing is saved until you accept.</span>
+              <span class="proposal-title" id="proposal-title">Proposed by the model</span>
+              <span class="caption hint">Dismiss unwanted proposals with ×. Apply the included changes once.</span>
               <span class="spacer"></span>
               <button type="button" class="btn accent" id="accept-proposal">Accept</button>
               <button type="button" class="btn ghost" id="discard-proposal">Discard</button>
@@ -115,26 +143,20 @@
           </div>
 
           <div class="add-panel">
-            <div class="segmented" role="tablist" aria-label="Add">
-              <button type="button" role="tab" id="add-word-mode" aria-selected="true">Add a word</button>
-              <button type="button" role="tab" id="add-fix-mode" aria-selected="false">Fix a recurring mistake</button>
-            </div>
-            <div class="add-row" id="add-word-row">
-              <input class="input" id="add-term" type="text" placeholder="A name, product or identifier the model should expect" spellcheck="false" />
-              <button type="button" class="btn fill" id="add-term-btn">Pin word</button>
-            </div>
-            <div class="add-row fix" id="add-fix-row" hidden>
-              <input class="input" id="add-heard" type="text" placeholder="What it heard" spellcheck="false" />
+            <div class="add-row fix">
+              <input class="input" id="add-heard" type="text" placeholder="What it heard (comma-separated when several)" spellcheck="false" />
               <span class="arrow" aria-hidden="true">→</span>
               <input class="input" id="add-meant" type="text" placeholder="What you meant" spellcheck="false" />
-              <button type="button" class="btn fill" id="add-replacement-btn">Pin replacement</button>
+              <button type="button" class="btn fill" id="add-entry-btn">Add pinned meaning</button>
+            </div>
+            <div class="add-row">
+              <input class="input" id="add-description" type="text" placeholder="General definition (required); add competing meanings by editing the group" spellcheck="true" />
             </div>
           </div>
 
           <div class="dict-table">
-            <div class="entry-row head"><span>KIND</span><span>ENTRY</span><span>SOURCE</span><span class="actions"><button type="button" class="btn ghost sm" id="pin-all" title="Pin every learned entry: keep them for every model" hidden>Pin all</button></span></div>
+            <div class="entry-row head"><span>CONFUSION GROUPS</span><span></span><span class="actions"><button type="button" class="btn ghost sm" id="pin-all" title="Share every learned meaning and association with every speech model" hidden>Pin all</button></span></div>
             <div id="dict-rows"></div>
-            <div class="entry-row foot" id="term-budget-row" hidden><span class="caption" id="term-budget"></span></div>
           </div>
         </div>
       </section>
@@ -145,6 +167,7 @@
             <button type="button" id="sec-general" aria-selected="true">General</button>
             <button type="button" id="sec-providers" aria-selected="false">Providers</button>
             <button type="button" id="sec-local" aria-selected="false">Local models</button>
+            <button type="button" id="sec-privacy" aria-selected="false">Data &amp; Privacy</button>
             <button type="button" id="sec-agents" aria-selected="false">Agents</button>
             <div class="spacer"></div>
             <p class="hint rail-note">Everything applies as you change it. Keys wait for Save.</p>
@@ -152,6 +175,25 @@
 
           <div class="settings-content">
             <div class="section" id="settings-general" data-active>
+              <section id="permissions" hidden aria-labelledby="permissions-title">
+                <h2 class="sec-label" id="permissions-title">Permissions</h2>
+                <div class="scard">
+                  <div class="scard-head"><div class="name strong" id="permissions-summary">Set up Dictum on this Mac</div><div class="caption" id="permissions-help">Allow these three permissions so you can dictate in any app. macOS asks for each one separately.</div></div>
+                  <div class="srow">
+                    <div><div class="name">Microphone</div><div class="caption">Record your voice when you start dictation.</div></div>
+                    <div class="field permission"><span class="caption" data-permission-status="microphone"></span><button type="button" class="btn" data-permission="microphone">Allow…</button></div>
+                  </div>
+                  <div class="srow">
+                    <div><div class="name">Input Monitoring</div><div class="caption">Use your shortcuts while another app has focus.</div></div>
+                    <div class="field permission"><span class="caption" data-permission-status="inputMonitoring"></span><button type="button" class="btn" data-permission="inputMonitoring">Allow…</button></div>
+                  </div>
+                  <div class="srow">
+                    <div><div class="name">Accessibility</div><div class="caption">Paste into the focused app and use the Fn key.</div></div>
+                    <div class="field permission"><span class="caption" data-permission-status="accessibility"></span><button type="button" class="btn" data-permission="accessibility">Allow…</button></div>
+                  </div>
+                  <div class="srow foot"><span class="caption" id="permissions-status" role="status"></span></div>
+                </div>
+              </section>
               <h2 class="sec-label">Shortcuts</h2>
               <div class="scard">
                 <div class="srow">
@@ -168,6 +210,14 @@
                     <kbd id="shortcut-toggle" data-empty="Not set"></kbd>
                     <button type="button" class="btn capture" data-target="shortcut-toggle">Set…</button>
                     <button type="button" class="btn ghost clear" data-target="shortcut-toggle">Clear</button>
+                  </div>
+                </div>
+                <div class="srow">
+                  <div><div class="name">Cancel dictation</div><div class="caption">Discard the active shortcut recording.</div></div>
+                  <div class="field shortcut">
+                    <kbd id="shortcut-cancel" data-empty="Not set"></kbd>
+                    <button type="button" class="btn capture" data-target="shortcut-cancel">Set…</button>
+                    <button type="button" class="btn ghost clear" data-target="shortcut-cancel">Clear</button>
                   </div>
                 </div>
                 <div class="srow note" id="shortcut-status-row" hidden><span></span><span class="caption" id="shortcut-status" role="status"></span></div>
@@ -211,7 +261,7 @@
               </form>
 
               <div class="scard">
-                <div class="scard-head"><div class="name strong">Dictionary model</div><div class="caption hint">Optional. Only Build from history uses it; dictation, pinned entries and manual editing work without it.</div></div>
+                <div class="scard-head"><div class="name strong">Dictionary model</div><div class="caption hint">Optional. Dictionary builds from history or audio use it; dictation and manual editing work without it.</div></div>
                 <div class="srow summary" id="dm-summary">
                   <div><div class="name" id="dm-title">No model</div><div class="caption" id="dm-caption"></div></div>
                   <div class="field right"><button type="button" class="btn" id="dm-change">Change</button></div>
@@ -223,6 +273,34 @@
                   <div class="srow foot"><button type="submit" class="btn accent">Save</button><button type="button" class="btn ghost" id="dm-cancel">Cancel</button><span class="caption save-status" id="dm-status" role="status"></span></div>
                 </form>
               </div>
+
+              <div class="scard" id="jev-card">
+                <div class="scard-head"><div class="name strong">Jev <span class="caption">· TypeSafe</span></div><div class="caption hint">A decision model that reads each transcript after the speech model and answers questions about it; it never writes text. On your own key, about $0.04 per million tokens: a dictation costs a fraction of a cent.</div></div>
+                <form id="jev-key-form">
+                  <div class="srow"><label class="name" for="key-typesafe">API key</label><input class="input field" id="key-typesafe" type="password" autocomplete="off" placeholder="Not set" /></div>
+                  <div class="srow foot"><button type="submit" class="btn accent">Save key</button><span class="caption save-status" id="jev-key-status" role="status"></span></div>
+                </form>
+                <label class="srow check">
+                  <div><div class="name">Contextual dictionary</div><div class="caption">Jev chooses among eligible meanings using the original context. Off disables the entire dictionary stage, including approved direct mappings.</div></div>
+                  <input type="checkbox" id="jev-dictionary" />
+                </label>
+                <label class="srow check">
+                  <div><div class="name">Formatting</div><div class="caption">Paragraph breaks and bullet points where the dictation clearly has them. Keeps every word and existing structure. Measured time appears in history.</div></div>
+                  <input type="checkbox" id="jev-formatting" />
+                </label>
+                <label class="srow check">
+                  <div><div class="name">Reduce repeated fillers</div><div class="caption">Reduce adjacent repeats of um, uh, erm or like to one occurrence when Jev identifies hesitation. Quoted/code text is excluded; uncertain decisions preserve text. Original transcription is always kept.</div></div>
+                  <input type="checkbox" id="jev-cleanup" />
+                </label>
+                <form id="jev-policy-form">
+                  <div class="srow"><label class="name" for="jev-total_seconds">Maximum processing wait</label><input class="input field" id="jev-total_seconds" type="number" min="0.1" max="30" step="0.1" required aria-label="Maximum processing wait in seconds" /></div>
+                  <div class="srow"><label class="name" for="jev-attempt_seconds">Seconds per attempt</label><input class="input field" id="jev-attempt_seconds" type="number" min="0.1" max="30" step="0.1" required /></div>
+                  <div class="srow"><label class="name" for="jev-max_attempts">Attempts per request</label><input class="input field" id="jev-max_attempts" type="number" min="1" max="3" step="1" required /></div>
+                  <div class="srow note"><span></span><span class="caption">Correction, filler reduction and formatting share the total wait, including retries. If correction fails, the original transcription is delivered. A filler-reduction or formatting failure keeps that stage’s input.</span></div>
+                  <div class="srow foot"><button type="submit" class="btn">Save wait limits</button><span class="caption save-status" id="jev-policy-status" role="status"></span></div>
+                </form>
+                <div class="srow note"><span></span><span class="caption" id="jev-summary" role="status" style="white-space: pre-line"></span></div>
+              </div>
             </div>
 
             <div class="section" id="settings-local">
@@ -231,6 +309,26 @@
                 <span class="caption" id="local-summary"></span>
               </div>
               <div id="local-cards"></div>
+            </div>
+
+            <div class="section" id="settings-privacy">
+              <p class="caption hint">Cloud speech sends audio to your selected provider. Dictionary builds send transcripts and dictionary contents to your chosen language model. Enabled Jev correction, filler reduction and formatting send text, proposed spans and relevant meanings to TypeSafe, even with local speech recognition. Temporary build transcripts are not saved by Dictum; remote retention depends on each provider.</p>
+              <h2 class="sec-label">Your data stays yours</h2>
+              <div class="scard">
+                <div class="scard-head">
+                  <div class="name strong">No expiry</div>
+                  <div class="caption">Dictum never automatically expires or deletes your saved audio or transcripts. This includes audio imported to build dictionaries. Saved files are kept locally.</div>
+                </div>
+                <div class="srow summary">
+                  <div><div class="name">Original audio</div><div class="caption">A ZIP of all recordings and imported dictionary audio. Large exports can take a while to prepare.</div></div>
+                  <a class="btn" href="/api/exports/audio" download>Export audio</a>
+                </div>
+                <div class="srow summary">
+                  <div><div class="name">Transcripts</div><div class="caption">JSON with saved text, raw transcripts, models, dates and every attempt. Transcripts used only to build a dictionary from imported audio are not saved.</div></div>
+                  <a class="btn" href="/api/exports/transcripts" download>Export transcripts</a>
+                </div>
+                <div class="srow foot"><span class="caption">Exports are created on this Mac. Saved API keys and settings are excluded.</span></div>
+              </div>
             </div>
 
             <div class="section" id="settings-agents">

@@ -6,6 +6,7 @@ import { createHistory } from "./history.js";
 import { renderCard } from "./history-card.js";
 import { createDictionary } from "./dictionary-view.js";
 import { createSettings } from "./settings-view.js";
+import { createPermissions } from "./permissions-view.js";
 import { initRecording } from "./recording.js";
 import { ICON, api, el, errorText, fillModels, segmentedGroup } from "./ui.js";
 
@@ -18,10 +19,22 @@ const emptyState = el("empty");
 const stepsList = el("steps");
 
 let models = [];
-let defaultModel = null; // {id, label, term_limit} from /api/models, or null
+let defaultModel = null; // {id, label} from /api/models, or null
 let settings = null; // the last /api/settings answer
 let shortcuts = { hold: null, toggle: null };
 let recordingsCount = 0;
+
+// The Mac's real window controls share the toolbar. Browser windows keep their
+// own chrome; only the native bridge adds the space and follows text scaling.
+window.addEventListener("pywebviewready", () => {
+  if (!window.pywebview.api.layout_titlebar) return;
+  document.documentElement.classList.add("native-mac");
+  const tabs = document.querySelector(".toolbar > .segmented");
+  new ResizeObserver(() => {
+    const box = tabs.getBoundingClientRect();
+    window.pywebview.api.layout_titlebar((box.top + box.height / 2) * 2);
+  }).observe(document.querySelector(".toolbar"));
+});
 
 // ---- Preferences kept in this window: theme, text size, hints ----
 function applyTheme(theme) {
@@ -75,15 +88,19 @@ function showView(name) {
   for (const key in views) views[key].toggleAttribute("data-active", key === name);
   views[name].scrollTop = 0;
   if (name === "history") loadHistory().catch((err) => { status.textContent = errorText(err); });
+  if (name === "dictionary") dictionary.refreshAudio().catch((err) => { status.textContent = errorText(err); });
+  if (name === "settings") settingsView.refreshJev().catch((err) => { status.textContent = errorText(err); });
   if (name === "settings" && sections.agents.hasAttribute("data-active")) settingsView.refreshCorrections();
+  permissionsView.setActive(name === "settings" && sections.general.hasAttribute("data-active"));
 }
 function show(name) { selectTab(name); showView(name); }
 
-const sections = { general: el("settings-general"), providers: el("settings-providers"), local: el("settings-local"), agents: el("settings-agents") };
-const selectSection = segmentedGroup({ general: el("sec-general"), providers: el("sec-providers"), local: el("sec-local"), agents: el("sec-agents") }, showSection);
+const sections = { general: el("settings-general"), providers: el("settings-providers"), local: el("settings-local"), privacy: el("settings-privacy"), agents: el("settings-agents") };
+const selectSection = segmentedGroup({ general: el("sec-general"), providers: el("sec-providers"), local: el("sec-local"), privacy: el("sec-privacy"), agents: el("sec-agents") }, showSection);
 function showSection(name) {
   for (const key in sections) sections[key].toggleAttribute("data-active", key === name);
   if (name === "agents") settingsView.refreshCorrections();
+  permissionsView.setActive(name === "general" && views.settings.hasAttribute("data-active"));
 }
 function openSettings(section) { show("settings"); selectSection(section); showSection(section); }
 
@@ -231,13 +248,28 @@ document.addEventListener("visibilitychange", () => {
 
 // Copy (click on the transcript) and re-transcribe, delegated so re-renders need no rebinding.
 historyList.addEventListener("click", async (e) => {
-  const block = e.target.closest(".transcript, .failed");
+  const recovery = e.target.closest(".safe-copy");
+  if (recovery) {
+    const card = recovery.closest(".card"), message = card.querySelector(".card-row .status");
+    recovery.disabled = true;
+    try {
+      // WebKit only allows a clipboard write that starts in the click, so hand it the pending text.
+      const request = api(`/api/recordings/${card.dataset.id}/transcriptions/${recovery.dataset.attempt}/safe-copy`, { method: "POST" });
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": request.then((r) => new Blob([r.text], { type: "text/plain" })) })]);
+      const result = await request;
+      message.textContent = `Copied · ${result.replacements} direct mappings · ${result.unresolved} unresolved`;
+    } catch (err) { message.textContent = errorText(err); }
+    finally { recovery.disabled = false; }
+    return;
+  }
+  const block = e.target.closest(".transcript, .failed, .copy-raw");
   if (block) {
     const card = block.closest(".card");
-    if (!card.dataset.copy) return;
+    const text = block.matches(".copy-raw") ? card.dataset.raw : card.dataset.copy;
+    if (text === undefined) return;
     const tag = card.querySelector(".copied-tag");
     try {
-      await navigator.clipboard.writeText(card.dataset.copy);
+      await navigator.clipboard.writeText(text);
       tag.textContent = "Copied";
     } catch (err) {
       tag.textContent = `Copy failed: ${errorText(err)}`;
@@ -276,6 +308,7 @@ historyList.addEventListener("click", async (e) => {
 
 // ---- Wire the views, then load the saved configuration ----
 const dictionary = createDictionary({ getModel: () => defaultModel, getSettings: () => settings });
+const permissionsView = createPermissions();
 const settingsView = createSettings({
   async onLoaded(next) {
     settings = next;

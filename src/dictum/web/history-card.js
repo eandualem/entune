@@ -44,6 +44,59 @@ function player(url, label, seconds) {
   return box;
 }
 
+// Stage counts describe processing, not the accuracy of the delivered words.
+function processingLines(t) {
+  const lines = [];
+  if (t.status === "ok" && t.error) {
+    const line = document.createElement("div");
+    line.className = "jev err";
+    line.setAttribute("role", "status");
+    line.textContent = t.error;
+    lines.push(line);
+  }
+  for (const [name, stage] of [["Dictionary", t.correction], ["Filler reduction", t.cleanup], ["Formatting", t.formatting]]) {
+    if (!stage || stage.status === "disabled") continue;
+    const line = document.createElement("div");
+    line.className = stage.status === "failed" ? "jev err" : "jev";
+    line.setAttribute("role", "status");
+    const parts = [name, stage.status];
+    if (stage.status === "failed") {
+      parts.push(name === "Dictionary" ? "original transcription retained" : "prior text retained", stage.error);
+    } else if (name === "Dictionary" && stage.status === "succeeded") {
+      parts.push(`${stage.replacements} replacement${stage.replacements === 1 ? "" : "s"}`);
+      if (stage.method === "contextual") parts.push(`${stage.preserved} preserved`, `${stage.decisions} contextual decision${stage.decisions === 1 ? "" : "s"}`);
+      else parts.push(stage.method === "unconditional" ? "historical unconditional" : "approved direct mappings only");
+      parts.push(`${stage.direct_replacements ?? 0} direct`, `${stage.abstained} unresolved`);
+    }
+    if (name !== "Dictionary" && stage.status === "succeeded") {
+      parts.push(stage.changes == null ? "span changes not recorded" : `${stage.changes.length} span change${stage.changes.length === 1 ? "" : "s"}`, `${stage.decisions} decision${stage.decisions === 1 ? "" : "s"}`);
+      if (name === "Filler reduction") parts.push(`${stage.removed_words} word${stage.removed_words === 1 ? "" : "s"} removed`, `${stage.preserved} preserved`, `${stage.abstained} uncertain`);
+    }
+    if (stage.attempts > 1) parts.push(`${stage.attempts - 1} ${stage.attempts === 2 ? "retry" : "retries"}`);
+    if (stage.seconds) parts.push(`+${stage.seconds.toFixed(1)} s`);
+    line.textContent = parts.join(" · ");
+    lines.push(line);
+    if (stage.changes?.length) {
+      const details = document.createElement("details");
+      details.className = "jev";
+      const summary = document.createElement("summary");
+      summary.textContent = `${name} changes`;
+      const contents = document.createElement("pre");
+      contents.style.whiteSpace = "pre-wrap";
+      contents.textContent = stage.changes.map(change => `${JSON.stringify(change.before)} → ${JSON.stringify(change.after)}`).join("\n");
+      details.append(summary, contents);
+      lines.push(details);
+    }
+  }
+  if (t.legacy_processing) {
+    const line = document.createElement("div");
+    line.className = "jev";
+    line.textContent = "Legacy processing record · excluded from current metrics";
+    lines.push(line);
+  }
+  return lines;
+}
+
 export function renderCard(r, models) {
   const card = document.createElement("article");
   card.className = "card";
@@ -68,7 +121,22 @@ export function renderCard(r, models) {
   head.append(when, model, spacer, copied);
   card.append(head);
 
-  if (latest && latest.status !== "ok") {
+  if (r.notice) {
+    const message = document.createElement("div");
+    message.className = "status"; message.textContent = r.notice;
+    card.append(message);
+  }
+  if (latest?.processing_state === "cancelled") {
+    const canceled = document.createElement("div");
+    canceled.className = "status"; canceled.textContent = "Canceled — audio saved. No text delivered.";
+    card.append(canceled);
+  } else if (latest?.processing_state === "processing") {
+    const pending = document.createElement("div");
+    pending.className = "status";
+    pending.setAttribute("role", "status");
+    pending.textContent = "Processing… Final text will appear when complete.";
+    card.append(pending);
+  } else if (latest && latest.status !== "ok") {
     const failed = document.createElement("div");
     failed.className = "failed";
     const label = document.createElement("div");
@@ -86,6 +154,7 @@ export function renderCard(r, models) {
     block.title = latest.text ? "Click to copy" : "";
     card.append(block);
     card.dataset.copy = latest.text ?? "";
+    card.append(...processingLines(latest));
   }
 
   const row = document.createElement("div");
@@ -103,6 +172,23 @@ export function renderCard(r, models) {
   const rowSpacer = document.createElement("span");
   rowSpacer.className = "spacer";
   row.append(download, rowStatus, rowSpacer);
+  if (!(["processing", "cancelled"].includes(latest?.processing_state)) && latest?.raw_text !== null && latest?.raw_text !== undefined) {
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "btn ghost copy-raw";
+    copy.textContent = "Copy original";
+    copy.title = "Copy the untouched speech-provider result";
+    card.dataset.raw = latest.raw_text;
+    row.append(copy);
+    if (latest.correction?.status === "failed") {
+      const recover = document.createElement("button"); recover.type = "button";
+      recover.className = "btn ghost safe-copy"; recover.textContent = "Apply safe mappings and copy";
+      recover.dataset.attempt = latest.id;
+      recover.title = "Use only explicitly approved direct mappings. Ambiguous words stay original; history and already-pasted text are unchanged.";
+      row.append(recover);
+    }
+
+  }
   let attempts = null;
   if (earlier.length > 0) {
     const toggle = document.createElement("button");
@@ -124,8 +210,9 @@ export function renderCard(r, models) {
       meta.append(`${attemptLabel(t)} · `, time);
       const text = document.createElement("div");
       text.className = t.status === "ok" ? "text" : "text err";
-      text.textContent = t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
-      attempt.append(meta, text);
+      const pending = ["processing", "cancelled"].includes(t.processing_state);
+      text.textContent = pending ? (t.processing_state === "cancelled" ? "Canceled — audio saved. No text delivered." : "Processing…") : t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
+      attempt.append(meta, text, ...(pending ? [] : processingLines(t)));
       attempts.append(attempt);
     }
     toggle.addEventListener("click", () => {

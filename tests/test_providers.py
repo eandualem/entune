@@ -5,11 +5,11 @@ from pathlib import Path
 
 import httpx
 
-from dictum.providers import default_providers, resolve_model
-from dictum.providers.assemblyai import AssemblyAI
-from dictum.providers.base import Clip, Failure, Transcript
-from dictum.providers.groq import Groq
-from dictum.providers.soniox import Soniox
+from dictum.providers.cloud.assemblyai import AssemblyAI
+from dictum.providers.cloud.groq import Groq
+from dictum.providers.cloud.soniox import Soniox
+from dictum.providers.contracts import Clip, Failure, Transcript
+from dictum.providers.registry import default_providers, resolve_model
 from dictum.recorder import wav_bytes
 from tests.conftest import mock_client
 
@@ -181,7 +181,8 @@ def test_assemblyai_short_wav_stays_on_the_sync_endpoint() -> None:
     )
 
 
-def test_terms_are_passed_in_each_providers_own_shape(clip: Clip) -> None:
+def test_no_vocabulary_hint_goes_to_any_provider(clip: Clip) -> None:
+    """The dictionary is applied after the transcript, never sent ahead of the audio."""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -197,21 +198,17 @@ def test_terms_are_passed_in_each_providers_own_shape(clip: Clip) -> None:
             return httpx.Response(200, json={"id": "t1", "status": "completed"})
         return httpx.Response(200, json={"text": "ok"})
 
-    terms = ("Dictum", "Wispr Flow")
-    AssemblyAI(mock_client(handler)).transcribe(clip, "universal-3-5-pro", "k", terms)
-    assert (
-        b'name="config"' in seen[-1].content
-        and b'"keyterms_prompt": ["Dictum", "Wispr Flow"]' in seen[-1].content
-    )
-    Groq(mock_client(handler)).transcribe(clip, "whisper-large-v3-turbo", "k", terms)
-    assert b'name="prompt"\r\n\r\nDictum, Wispr Flow' in seen[-1].content
-    Soniox(mock_client(handler)).transcribe(clip, "stt-async-v5", "k", terms)
+    AssemblyAI(mock_client(handler)).transcribe(clip, "universal-3-5-pro", "k")
+    assert b'name="config"' not in seen[-1].content and b"keyterms" not in seen[-1].content
+    Groq(mock_client(handler)).transcribe(clip, "whisper-large-v3-turbo", "k")
+    assert b'name="prompt"' not in seen[-1].content
+    Soniox(mock_client(handler)).transcribe(clip, "stt-async-v5", "k")
     create = next(r for r in seen if r.url.path == "/v1/transcriptions" and r.method == "POST")
-    assert json.loads(create.content)["context"] == {"terms": ["Dictum", "Wispr Flow"]}
+    assert "context" not in json.loads(create.content)
 
 
 def test_assemblyai_streaming_upload_is_used_only_past_the_sync_limit() -> None:
-    from dictum.providers.assemblyai import StreamingUpload
+    from dictum.providers.cloud.assemblyai import StreamingUpload
 
     uploads: list[bytes] = []
     seen: list[str] = []
@@ -253,7 +250,7 @@ def test_assemblyai_streaming_upload_is_used_only_past_the_sync_limit() -> None:
 
 
 def test_failed_streaming_upload_stops_collecting_recorded_audio() -> None:
-    from dictum.providers.assemblyai import StreamingUpload
+    from dictum.providers.cloud.assemblyai import StreamingUpload
 
     class Offline(httpx.BaseTransport):
         def handle_request(self, request: httpx.Request) -> httpx.Response:
@@ -270,7 +267,7 @@ def test_failed_streaming_upload_stops_collecting_recorded_audio() -> None:
 def test_aborting_an_upload_discards_audio_waiting_for_a_slow_connection() -> None:
     import threading
 
-    from dictum.providers.assemblyai import StreamingUpload
+    from dictum.providers.cloud.assemblyai import StreamingUpload
 
     proceed = threading.Event()
     sent: list[bytes] = []
@@ -286,7 +283,52 @@ def test_aborting_an_upload_discards_audio_waiting_for_a_slow_connection() -> No
         upload = StreamingUpload(client, "k", 16_000)
         upload.feed(b"queued audio")
         upload.abort()
+        assert upload._queue.qsize() == 1  # only the wake-up marker, before the network resumes
         proceed.set()
         upload._thread.join(2)
         assert not upload._thread.is_alive()
         assert sent == [] and upload._queue.empty()
+
+
+def test_adapters_close_owned_clients_but_leave_injected_clients_to_the_caller(
+    tmp_path: Path,
+) -> None:
+    from dictum.providers.cloud.assemblyai import AssemblyAI
+    from dictum.providers.cloud.groq import Groq
+    from dictum.providers.cloud.soniox import Soniox
+    from dictum.providers.local.parakeet import Parakeet
+    from dictum.providers.local.whisper import WhisperCpp
+
+    owned: list[AssemblyAI | Groq | Soniox | WhisperCpp | Parakeet] = [
+        AssemblyAI(),
+        Groq(),
+        Soniox(),
+        WhisperCpp(tmp_path),
+        Parakeet(tmp_path),
+    ]
+    for provider in owned:
+        provider.close()
+        assert provider._client.is_closed
+    with mock_client(lambda req: httpx.Response(200)) as client:
+        injected: list[AssemblyAI | Groq | Soniox | WhisperCpp | Parakeet] = [
+            AssemblyAI(client),
+            Groq(client),
+            Soniox(client),
+            WhisperCpp(tmp_path, client=client),
+            Parakeet(tmp_path, client=client),
+        ]
+        for provider in injected:
+            provider.close()
+            assert not client.is_closed
+
+
+def test_provider_close_aborts_owned_streaming_upload() -> None:
+    from dictum.providers.cloud.assemblyai import AssemblyAI, StreamingUpload
+
+    with mock_client(lambda req: httpx.Response(200, json={"upload_url": "test"})) as client:
+        provider = AssemblyAI(client)
+        upload = provider.begin_upload("key", 16000)
+        provider.close()
+        assert isinstance(upload, StreamingUpload)
+        assert upload._aborted.is_set() and not upload._thread.is_alive()
+        assert not client.is_closed

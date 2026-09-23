@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
+from zipfile import ZipFile
 
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
@@ -18,9 +22,17 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from dictum import __version__, llm, shortcuts
+from dictum import __version__, jev, llm, onboarding, shortcuts
 from dictum.audio import extension_for, safe_mime
-from dictum.service import DictionaryChanged, Dictum, NoDefaultModel, UnknownModel
+from dictum.builds import JobConflict
+from dictum.operations import Busy
+from dictum.service import (
+    JEV_PROVIDER,
+    DictionaryChanged,
+    Dictum,
+    NoDefaultModel,
+    UnknownModel,
+)
 from dictum.store import Recording
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -110,6 +122,7 @@ def _shortcuts_json(app: Dictum) -> dict[str, str | None]:
     return {
         "hold": "+".join(shortcuts.hold) if shortcuts.hold else None,
         "toggle": "+".join(shortcuts.toggle) if shortcuts.toggle else None,
+        "cancel": "+".join(shortcuts.cancel) if shortcuts.cancel else None,
     }
 
 
@@ -150,6 +163,11 @@ def create_app(app: Dictum) -> Starlette:
                 ],
                 "dictionaryModel": app.dictionary_model(),
                 "fastMode": app.fast_mode(),
+                "jev": {
+                    **asdict(app.jev_status()),
+                    "policy": asdict(app.jev_policy()),
+                    "summary": asdict(app.jev_summary()),
+                },
             }
         )
 
@@ -167,8 +185,9 @@ def create_app(app: Dictum) -> Starlette:
             keys = body.get("keys", {})
             if not isinstance(keys, dict):
                 raise ValueError("keys must be an object")
+            known = {p.id for p in app.providers} | llm.LLM_PROVIDERS.keys() | {JEV_PROVIDER}
             for provider_id, key in keys.items():
-                if provider_id not in {p.id for p in app.providers} | llm.LLM_PROVIDERS.keys():
+                if provider_id not in known:
                     raise ValueError(f"Unknown provider: {provider_id}")
                 if not isinstance(key, str) or not key.strip():
                     raise ValueError(f"Empty or invalid key for {provider_id}")
@@ -184,12 +203,50 @@ def create_app(app: Dictum) -> Starlette:
                     )
             if "fastMode" in body and not isinstance(body["fastMode"], bool):
                 raise ValueError("fastMode must be a boolean")
+            jev_settings = body.get("jev", {})
+            if not isinstance(jev_settings, dict) or set(jev_settings) - {
+                "dictionary",
+                "formatting",
+                "cleanup",
+                "policy",
+            }:
+                raise ValueError(
+                    "jev must contain dictionary, formatting, cleanup or policy settings"
+                )
+            for name in ("dictionary", "formatting", "cleanup"):
+                if name in jev_settings and not isinstance(jev_settings[name], bool):
+                    raise ValueError(f"jev.{name} must be a boolean")
+            policy = None
+            if "policy" in jev_settings:
+                value = jev_settings["policy"]
+                if not isinstance(value, dict) or set(value) != {
+                    "total_seconds",
+                    "attempt_seconds",
+                    "max_attempts",
+                }:
+                    raise ValueError(
+                        "jev.policy needs total_seconds, attempt_seconds and max_attempts"
+                    )
+                policy = jev.Policy(**value)
+            if (
+                (
+                    jev_settings.get("dictionary")
+                    or jev_settings.get("formatting")
+                    or jev_settings.get("cleanup")
+                )
+                and JEV_PROVIDER not in keys
+                and app.jev_status().key_hint is None
+            ):
+                raise ValueError("Save a TypeSafe API key first.")
             shortcut_settings = body.get("shortcuts", {})
             if not isinstance(shortcut_settings, dict):
                 raise ValueError("shortcuts must be an object")
             hold = _optional_text(shortcut_settings.get("hold"), "shortcuts.hold")
             toggle = _optional_text(shortcut_settings.get("toggle"), "shortcuts.toggle")
-            shortcuts.parse(hold, toggle)
+            cancel = _optional_text(
+                shortcut_settings.get("cancel", _shortcuts_json(app)["cancel"]), "shortcuts.cancel"
+            )
+            shortcuts.parse(hold, toggle, cancel)
 
             # Validate the complete request before storing any field: a bad shortcut
             # or model must not leave a seemingly failed Save with some keys changed.
@@ -201,8 +258,16 @@ def create_app(app: Dictum) -> Starlette:
                 app.set_dictionary_model(dictionary_model or None)
             if "fastMode" in body:
                 app.set_fast_mode(body["fastMode"])
+            if jev_settings:
+                app.set_jev(
+                    jev_settings.get("dictionary"),
+                    jev_settings.get("formatting"),
+                    jev_settings.get("cleanup"),
+                )
+            if policy is not None:
+                app.set_jev_policy(policy)
             if "shortcuts" in body:
-                app.set_shortcuts(hold, toggle)
+                app.set_shortcuts(hold, toggle, cancel)
         except UnknownModel as exc:
             return _bad(f"Unknown model: {exc}")
         except ValueError as exc:
@@ -234,8 +299,43 @@ def create_app(app: Dictum) -> Starlette:
         except DictionaryChanged as exc:
             return _bad(str(exc), 409)
         except ValueError as exc:
-            return _bad(str(exc))
+            return _bad(str(exc), 409 if isinstance(exc, Busy) else 400)
         return await run_in_threadpool(_dictionary_response, app)
+
+    async def pin_meaning(request: Request) -> Response:
+        try:
+            body = await request.json()
+            version = request.headers.get("if-match")
+            if (
+                not isinstance(body, dict)
+                or set(body) not in ({"model"}, {"model", "group", "meaning"})
+                or not all(isinstance(v, str) and v for v in body.values())
+                or not version
+            ):
+                raise ValueError(
+                    "Pinning needs a model, optional group and meaning IDs, and If-Match"
+                )
+            await run_in_threadpool(
+                app.pin_meaning,
+                body["model"],
+                body.get("group"),
+                body.get("meaning"),
+                version.strip('"'),
+            )
+        except DictionaryChanged as exc:
+            return _bad(str(exc), 409)
+        except ValueError as exc:
+            return _bad(str(exc), 409 if isinstance(exc, Busy) else 400)
+        return await run_in_threadpool(_dictionary_response, app)
+
+    async def safe_mapping_recovery(request: Request) -> Response:
+        try:
+            result = await run_in_threadpool(
+                app.safe_mapping_recovery, request.path_params["id"], request.path_params["attempt"]
+            )
+        except ValueError as exc:
+            return _bad(str(exc))
+        return JSONResponse(result)
 
     def received_corrections(_: Request) -> Response:
         return JSONResponse([asdict(c) for c in app.store.list_corrections()])
@@ -248,15 +348,111 @@ def create_app(app: Dictum) -> Starlette:
         try:
             added = await run_in_threadpool(app.add_agent_corrections, body)
         except ValueError as exc:
-            return _bad(str(exc))
-        return JSONResponse({"added": added.as_json()})
+            return _bad(str(exc), 409 if isinstance(exc, Busy) else 400)
+        return JSONResponse({"added": [e.as_json() for e in added]})
 
-    async def build_dictionary(_: Request) -> Response:
+    def build_status(request: Request) -> Response:
         try:
-            proposal = await run_in_threadpool(app.build_dictionary)
+            return JSONResponse(app.dictionary_build_status(request.path_params.get("job_id")))
+        except (JobConflict, Busy) as exc:
+            return _bad(str(exc), 409)
+
+    async def start_build(request: Request) -> Response:
+        try:
+            body = await request.json()
+            if (
+                not isinstance(body, dict)
+                or set(body) - {"source", "scope", "audio_ids"}
+                or body.get("source") not in ("history", "audio")
+            ):
+                raise ValueError("Choose source history or audio")
+            ids = body.get("audio_ids")
+            if ids is not None and (
+                not isinstance(ids, list) or not all(isinstance(i, str) for i in ids)
+            ):
+                raise ValueError("audio_ids must list saved recording IDs")
+            state = await run_in_threadpool(
+                app.start_dictionary_build,
+                body["source"],
+                scope=body.get("scope", "new"),
+                audio_ids=ids,
+            )
+        except (JobConflict, Busy) as exc:
+            return _bad(str(exc), 409)
         except ValueError as exc:
             return _bad(str(exc))
-        return JSONResponse(proposal.as_json())
+        return JSONResponse(state, status_code=202)
+
+    async def act_on_build(request: Request) -> Response:
+        action = request.path_params.get("action", "discard")
+        methods = {
+            "cancel": app.cancel_dictionary_build,
+            "accept": app.accept_dictionary_build,
+            "discard": app.discard_dictionary_build,
+            "retry": app.retry_dictionary_build,
+        }
+        if action not in methods:
+            return _bad("Unknown dictionary job action", 404)
+        try:
+            if action == "accept":
+                body = await request.json() if await request.body() else {}
+                if not isinstance(body, dict) or set(body) - {"selected"}:
+                    raise ValueError("Apply a list of selected proposals")
+                await run_in_threadpool(
+                    app.accept_dictionary_build, request.path_params["job_id"], body.get("selected")
+                )
+            else:
+                await run_in_threadpool(methods[action], request.path_params["job_id"])
+        except (JobConflict, DictionaryChanged, Busy) as exc:
+            return _bad(str(exc), 409)
+        except ValueError as exc:
+            return _bad(str(exc))
+        return JSONResponse(app.dictionary_build_status())
+
+    def dictionary_audio(_: Request) -> Response:
+        # Which speech models already transcribed each recording, so the page can offer
+        # recordings the selected model has not heard. Imported audio has none.
+        models = {
+            f"recording:{r.id}": sorted(
+                {f"{t.provider}/{t.model}" for t in r.transcriptions if t.status == "ok"}
+            )
+            for r in app.store.list_recordings()
+        }
+        items = [
+            {**asdict(item), "models": models.get(item.id, [])}
+            for item, _ in app.store.learning_audio()
+        ]
+        return JSONResponse(
+            {
+                "count": len(items),
+                "items": items,
+                "seconds": sum(item["seconds"] or 0 for item in items),
+                "unknownDurations": sum(item["seconds"] is None for item in items),
+            }
+        )
+
+    async def import_dictionary_audio(request: Request) -> Response:
+        async with request.form() as form:
+            audio = form.get("audio")
+            if not isinstance(audio, UploadFile):
+                return _bad("No audio file in request")
+            try:
+                added = await run_in_threadpool(
+                    onboarding.import_audio,
+                    app.store,
+                    await audio.read(),
+                    audio.filename or "audio",
+                )
+            except (ValueError, OSError) as exc:
+                return _bad(str(exc))
+        return JSONResponse({"added": added})
+
+    async def import_wispr(_: Request) -> Response:
+        try:
+            result = await run_in_threadpool(onboarding.import_wispr, app.store)
+        except (ValueError, OSError) as exc:
+            return _bad(str(exc))
+        return JSONResponse(result)
 
     async def start_capture(_: Request) -> Response:
         if not app.can_capture():
@@ -284,6 +480,20 @@ def create_app(app: Dictum) -> Starlette:
         if not app.show_window():
             return _bad("No desktop app is running to show a window", 409)
         return JSONResponse({"ok": True})
+
+    async def request_permission(request: Request) -> Response:
+        name = request.path_params["name"]
+        if name not in {"microphone", "inputMonitoring", "accessibility"}:
+            return _bad("Unknown permission")
+        try:
+            body = await request.json()
+        except ValueError:
+            return _bad("Body must be JSON")
+        if not isinstance(body, dict) or not isinstance(body.get("openSettings", False), bool):
+            return _bad("openSettings must be a boolean")
+        if not app.request_permission(name, body.get("openSettings", False)):
+            return _bad("Open the Dictum desktop app to set up permissions", 409)
+        return JSONResponse({"ok": True}, status_code=202)
 
     def models(_: Request) -> Response:
         return JSONResponse([asdict(m) for m in app.available_models()])
@@ -316,13 +526,35 @@ def create_app(app: Dictum) -> Starlette:
             label = audio.content_type
             model = form.get("model")
             ref = model if isinstance(model, str) and model else None
+            operation_id = form.get("operation")
+            if operation_id is not None and not isinstance(operation_id, str):
+                return _bad("operation must be a recording identifier")
         try:
-            recording = await run_in_threadpool(app.record_and_transcribe, data, label, ref)
+            recording = await run_in_threadpool(
+                app.record_and_transcribe, data, label, ref, operation_id=operation_id
+            )
         except NoDefaultModel as exc:
             return _bad(str(exc))
         except UnknownModel as exc:
             return _bad(f"Unknown model: {exc}")
         return JSONResponse(_recording_json(recording))
+
+    def operation_status(_: Request) -> Response:
+        return JSONResponse(app.operations.status())
+
+    def begin_operation(_: Request) -> Response:
+        op = app.operations.begin("dictation", "recording", source="web")
+        return JSONResponse({"id": op.id}, status_code=201)
+
+    def cancel_operation(request: Request) -> Response:
+        current = app.operations.status()
+        if current and current["id"] == request.path_params["operation"]:
+            app.operations.cancel_dictation()
+        return JSONResponse(app.operations.status())
+
+    def abandon_operation(request: Request) -> Response:
+        app.operations.abandon_capture(request.path_params["operation"])
+        return JSONResponse({"notice": "Capture closed; no audio was submitted."})
 
     async def retry(request: Request) -> Response:
         recording = await run_in_threadpool(app.store.get_recording, int(request.path_params["id"]))
@@ -337,7 +569,7 @@ def create_app(app: Dictum) -> Starlette:
         ref = app.resolve(body["model"]) if isinstance(body.get("model"), str) else None
         if ref is None:
             return _bad(f"Unknown model: {body.get('model')}")
-        updated = await run_in_threadpool(app.transcribe, recording, ref)
+        updated = await run_in_threadpool(app.transcribe_recording, recording, ref.id)
         return JSONResponse(_recording_json(updated))
 
     def local_models(_: Request) -> Response:
@@ -372,15 +604,84 @@ def create_app(app: Dictum) -> Starlette:
             headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"},
         )
 
+    def export_transcripts(_: Request) -> Response:
+        return JSONResponse(
+            {"recordings": [_recording_json(r) for r in app.store.list_recordings()]},
+            headers={
+                "Content-Disposition": 'attachment; filename="dictum-transcripts.json"',
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    def export_audio(_: Request) -> Response:
+        # Build on disk, off the event loop: years of audio must not fill memory.
+        # FileResponse streams it; the temporary copy is removed after download.
+        directory = TemporaryDirectory(prefix="dictum-export-")
+        path = Path(directory.name) / "dictum-audio.zip"
+        try:
+            recordings = app.store.list_recordings()
+            imported = app.store.dictionary_audio()
+            manifest: dict[str, list[dict[str, Any]]] = {"recordings": [], "dictionary_audio": []}
+            with ZipFile(path, "w", strict_timestamps=False) as archive:
+                for recording in recordings:
+                    source = app.store.audio_path(recording)
+                    name = f"audio/{source.name}"
+                    archive.write(source, name)
+                    manifest["recordings"].append(
+                        {
+                            "id": recording.id,
+                            "created_at": recording.created_at,
+                            "file": name,
+                            "mime": recording.mime,
+                        }
+                    )
+                for audio in imported:
+                    source = app.store.dictionary_audio_path(audio)
+                    name = f"dictionary-audio/{source.name}"
+                    archive.write(source, name)
+                    manifest["dictionary_audio"].append({**asdict(audio), "file": name})
+                archive.writestr(
+                    "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2)
+                )
+        except Exception as exc:
+            directory.cleanup()
+            if isinstance(exc, OSError):
+                return _bad(f"Could not export audio: {exc}", 500)
+            raise
+        return FileResponse(
+            path,
+            media_type="application/zip",
+            filename="dictum-audio.zip",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+            background=BackgroundTask(directory.cleanup),
+        )
+
     return Starlette(
+        exception_handlers={Busy: lambda request, exc: _bad(str(exc), 409)},
         middleware=[Middleware(NoCache), Middleware(LocalOnly)],
         routes=[
             Route("/", index),
             Route("/api/settings", get_settings, methods=["GET"]),
             Route("/api/settings", put_settings, methods=["PUT"]),
+            Route("/api/exports/audio", export_audio),
+            Route("/api/exports/transcripts", export_transcripts),
             Route("/api/dictionary", get_dictionary, methods=["GET"]),
+            Route("/api/dictionary/pin", pin_meaning, methods=["POST"]),
+            Route(
+                "/api/recordings/{id:int}/transcriptions/{attempt:int}/safe-copy",
+                safe_mapping_recovery,
+                methods=["POST"],
+            ),
             Route("/api/dictionary", put_dictionary, methods=["PUT"]),
-            Route("/api/dictionary/build", build_dictionary, methods=["POST"]),
+            Route("/api/dictionary/build", build_status, methods=["GET"]),
+            Route("/api/dictionary/build", start_build, methods=["POST"]),
+            Route("/api/dictionary/build/{job_id}", build_status, methods=["GET"]),
+            Route("/api/dictionary/build/{job_id}", act_on_build, methods=["DELETE"]),
+            Route("/api/dictionary/build/{job_id}/{action}", act_on_build, methods=["POST"]),
+            Route("/api/dictionary/audio", dictionary_audio, methods=["GET"]),
+            Route("/api/dictionary/audio", import_dictionary_audio, methods=["POST"]),
+            Route("/api/dictionary/audio/wispr", import_wispr, methods=["POST"]),
             Route("/api/dictionary/corrections", agent_corrections, methods=["POST"]),
             Route("/api/dictionary/corrections", received_corrections, methods=["GET"]),
             Route("/api/capture", start_capture, methods=["POST"]),
@@ -388,7 +689,12 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/capture", cancel_capture, methods=["DELETE"]),
             Route("/api/status", status),
             Route("/api/window", show_window, methods=["POST"]),
+            Route("/api/permissions/{name}", request_permission, methods=["POST"]),
             Route("/api/models", models),
+            Route("/api/operations", operation_status, methods=["GET"]),
+            Route("/api/operations", begin_operation, methods=["POST"]),
+            Route("/api/operations/{operation}/cancel", cancel_operation, methods=["POST"]),
+            Route("/api/operations/{operation}", abandon_operation, methods=["DELETE"]),
             Route("/api/recordings", list_recordings, methods=["GET"]),
             Route("/api/recordings", create_recording, methods=["POST"]),
             Route("/api/recordings/{id:int}/transcriptions", retry, methods=["POST"]),

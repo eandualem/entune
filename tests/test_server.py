@@ -2,35 +2,38 @@
 
 from __future__ import annotations
 
+import io
+import json
+import sqlite3
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from zipfile import ZipFile
 
 import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from dictum.providers.base import Clip, Failure, TranscribeResult, Transcript
+from dictum import server
+from dictum.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from dictum.recorder import wav_bytes
 from dictum.server import create_app
 from dictum.service import Dictum
 from dictum.store import Store
-from tests.conftest import WEBM_HEADER, mock_client
+from tests.conftest import WEBM_HEADER, mock_client, wait_for_build
+from tests.dictionary_samples import JEV, group, proposed
 
 
 class StubProvider:
     id: str = "stub"
     name: str = "Stub"
     models: tuple[str, ...] = ("good", "bad")
-    term_limit: int | None = 3
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
 
-    def transcribe(
-        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
-    ) -> TranscribeResult:
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         self.calls.append((clip.mime, model, api_key))
-        self.terms = terms
         if model == "bad":
             return Failure("HTTP 401 Unauthorized\n{}")
         return Transcript("hello there, I use cloud code")
@@ -52,7 +55,7 @@ def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
         {"id": "stub", "name": "Stub", "keyHint": None, "streams": False, "local": False}
     ]
     assert settings["defaultModel"] is None
-    assert settings["shortcuts"] == {"hold": None, "toggle": None}
+    assert settings["shortcuts"] == {"hold": None, "toggle": None, "cancel": "fn+ctrl"}
     assert client.get("/api/models").json() == []
 
     res = client.put(
@@ -63,8 +66,8 @@ def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
     assert settings["providers"][0]["keyHint"] == "••••1234"
     assert settings["defaultModel"] == "stub/good"
     assert client.get("/api/models").json() == [
-        {"id": "stub/good", "label": "Stub / good", "default": True, "term_limit": 3},
-        {"id": "stub/bad", "label": "Stub / bad", "default": False, "term_limit": 3},
+        {"id": "stub/good", "label": "Stub / good", "default": True},
+        {"id": "stub/bad", "label": "Stub / bad", "default": False},
     ]
 
 
@@ -129,7 +132,11 @@ def test_unknown_routes(client: TestClient) -> None:
 
 
 def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None:
-    assert client.get("/api/settings").json()["shortcuts"] == {"hold": None, "toggle": None}
+    assert client.get("/api/settings").json()["shortcuts"] == {
+        "hold": None,
+        "toggle": None,
+        "cancel": "fn+ctrl",
+    }
     res = client.put(
         "/api/settings", json={"shortcuts": {"hold": "Alt_R", "toggle": "Cmd+Shift+Space"}}
     )
@@ -137,6 +144,7 @@ def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None
     assert client.get("/api/settings").json()["shortcuts"] == {
         "hold": "alt_r",
         "toggle": "cmd+shift+space",
+        "cancel": "fn+ctrl",
     }
     bad = client.put("/api/settings", json={"shortcuts": {"hold": "cmd+space", "toggle": ""}})
     assert bad.status_code == 400 and "exactly one key" in bad.text
@@ -145,6 +153,7 @@ def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None
     assert client.get("/api/settings").json()["shortcuts"] == {
         "hold": None,
         "toggle": "cmd+shift+space",
+        "cancel": "fn+ctrl",
     }
 
 
@@ -153,7 +162,43 @@ def test_legacy_single_shortcut_is_still_read(tmp_path: Path, stub: StubProvider
     store.set_setting("shortcut_mode", "toggle")
     store.set_setting("shortcut_keys", "cmd+d")
     client = TestClient(create_app(Dictum(store, [stub])), base_url="http://localhost")
-    assert client.get("/api/settings").json()["shortcuts"] == {"hold": None, "toggle": "cmd+d"}
+    assert client.get("/api/settings").json()["shortcuts"] == {
+        "hold": None,
+        "toggle": "cmd+d",
+        "cancel": "fn+ctrl",
+    }
+
+
+def test_cancel_shortcut_persists_and_can_be_cleared(client: TestClient) -> None:
+    saved = {"hold": "alt_r", "toggle": "cmd+d", "cancel": "ctrl+esc"}
+    assert client.put("/api/settings", json={"shortcuts": saved}).status_code == 200
+    assert client.get("/api/settings").json()["shortcuts"] == saved
+    bad = client.put("/api/settings", json={"shortcuts": {**saved, "cancel": "cmd+d"}})
+    assert bad.status_code == 400
+    assert client.get("/api/settings").json()["shortcuts"] == saved
+    client.put("/api/settings", json={"shortcuts": {"hold": "alt_r", "toggle": "cmd+d"}})
+    assert client.get("/api/settings").json()["shortcuts"] == saved  # older clients preserve it
+    client.put("/api/settings", json={"shortcuts": {**saved, "cancel": ""}})
+    assert client.get("/api/settings").json()["shortcuts"]["cancel"] is None
+
+
+def test_permissions_require_a_desktop_and_validate_before_dispatch(
+    client: TestClient, tmp_path: Path, stub: StubProvider
+) -> None:
+    assert client.post("/api/permissions/microphone", json={}).status_code == 409
+    dictum = Dictum(Store(tmp_path / "desktop"), [stub])
+    requested: list[tuple[str, bool]] = []
+    dictum.on_permission_request(lambda name, settings: requested.append((name, settings)))
+    desktop = TestClient(create_app(dictum), base_url="http://localhost")
+    assert desktop.post("/api/permissions/microphone", json={}).status_code == 202
+    assert (
+        desktop.post("/api/permissions/accessibility", json={"openSettings": True}).status_code
+        == 202
+    )
+    assert requested == [("microphone", False), ("accessibility", True)]
+    for name, body in (("camera", {}), ("microphone", []), ("microphone", {"openSettings": "yes"})):
+        assert desktop.post(f"/api/permissions/{name}", json=body).status_code == 400
+    assert len(requested) == 2
 
 
 def test_audio_download_has_a_filename(client: TestClient) -> None:
@@ -161,6 +206,99 @@ def test_audio_download_has_a_filename(client: TestClient) -> None:
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     res = client.get(f"/api/recordings/{rec['id']}/audio")
     assert res.headers["content-disposition"] == f'inline; filename="dictum-{rec["id"]}.webm"'
+
+
+def test_data_exports_include_all_retained_audio_and_attempts(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    app = Dictum(store, [])
+    app.set_key("openai", "secret-key-not-for-export")
+    (tmp_path / "unrelated.txt").write_text("private unrelated data")
+    # Exceed a history page; a decades-old recording must remain exportable too.
+    recordings = [store.create_recording(WEBM_HEADER) for _ in range(51)]
+    first = recordings[0]
+    store.add_transcription(
+        first.id, "old-provider", "old-model", "error", text=None, error="quota exceeded"
+    )
+    store.add_transcription(
+        first.id, "other-provider", "new-model", "ok", text="Jev", error=None, raw_text="Jeff"
+    )
+    imported = [wav_bytes(bytes([i, 0]) * 160) for i in (1, 2)]
+    for data in imported:
+        store.import_dictionary_audio(data, "meeting.wav", "audio/wav")
+    store.close()
+    with sqlite3.connect(tmp_path / "dictum.db") as db:
+        db.execute(
+            "UPDATE recordings SET created_at = '2000-01-01T00:00:00Z' WHERE id = ?", (first.id,)
+        )
+    store = Store(tmp_path)
+    client = TestClient(create_app(Dictum(store, [])), base_url="http://localhost")
+
+    audio = client.get("/api/exports/audio")
+    assert audio.status_code == 200
+    assert audio.headers["content-disposition"] == 'attachment; filename="dictum-audio.zip"'
+    assert audio.headers["cache-control"] == "no-store"
+    with ZipFile(io.BytesIO(audio.content)) as archive:
+        index = json.loads(archive.read("manifest.json"))
+        assert len(index["recordings"]) == 51
+        for recording in recordings:
+            assert archive.read(f"audio/{recording.file}") == WEBM_HEADER
+        assert index["recordings"][-1]["created_at"] == "2000-01-01T00:00:00Z"
+        assert [row["name"] for row in index["dictionary_audio"]] == ["meeting.wav"] * 2
+        assert [archive.read(row["file"]) for row in index["dictionary_audio"]] == imported
+        assert len(archive.namelist()) == 54  # 51 recordings, two imports, one index
+    assert b"secret-key-not-for-export" not in audio.content
+    assert b"private unrelated data" not in audio.content
+
+    transcripts = client.get("/api/exports/transcripts")
+    assert transcripts.status_code == 200
+    assert (
+        transcripts.headers["content-disposition"]
+        == 'attachment; filename="dictum-transcripts.json"'
+    )
+    assert transcripts.headers["cache-control"] == "no-store"
+    saved = transcripts.json()["recordings"]
+    assert len(saved) == 51  # Imported audio creates no transcript-history rows.
+    assert saved[-1]["id"] == first.id and saved[-1]["file"] == first.file
+    assert saved[-1]["created_at"] == "2000-01-01T00:00:00Z"
+    attempts = saved[-1]["transcriptions"]
+    assert len(attempts) == 2
+    assert (attempts[0]["text"], attempts[0]["raw_text"]) == ("Jev", "Jeff")
+    assert (attempts[0]["provider"], attempts[0]["model"]) == ("other-provider", "new-model")
+    assert (attempts[1]["status"], attempts[1]["error"]) == ("error", "quota exceeded")
+    assert b"secret-key-not-for-export" not in transcripts.content
+    assert b"private unrelated data" not in transcripts.content
+    assert len(store.list_recordings()) == 51 and len(store.dictionary_audio()) == 2
+    store.close()
+
+
+def test_exports_of_empty_store(client: TestClient) -> None:
+    assert client.get("/api/exports/transcripts").json() == {"recordings": []}
+    with ZipFile(io.BytesIO(client.get("/api/exports/audio").content)) as archive:
+        assert archive.namelist() == ["manifest.json"]
+        assert json.loads(archive.read("manifest.json")) == {
+            "recordings": [],
+            "dictionary_audio": [],
+        }
+
+
+def test_audio_export_cleans_up_and_reports_missing_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def temporary_directory(*, prefix: str) -> TemporaryDirectory[str]:
+        return TemporaryDirectory(prefix=prefix, dir=tmp_path)
+
+    monkeypatch.setattr(server, "TemporaryDirectory", temporary_directory)
+    store = Store(tmp_path / "data")
+    recording = store.create_recording(WEBM_HEADER)
+    client = TestClient(create_app(Dictum(store, [])), base_url="http://localhost")
+    assert client.get("/api/exports/audio").status_code == 200
+    assert list(tmp_path.glob("dictum-export-*")) == []
+    store.audio_path(recording).unlink()
+    failed = client.get("/api/exports/audio")
+    assert failed.status_code == 500 and "Could not export audio" in failed.text
+    assert "content-disposition" not in failed.headers
+    assert list(tmp_path.glob("dictum-export-*")) == []
+    store.close()
 
 
 def test_capture_needs_the_menu_bar_app_or_hands_over_keys_once(
@@ -181,59 +319,65 @@ def test_capture_needs_the_menu_bar_app_or_hands_over_keys_once(
     assert app_client.get("/api/capture").json() == {"state": "idle", "keys": None}
 
 
-def test_dictionary_round_trip_terms_reach_the_provider_and_replacements_apply(
+CLAUDE_CODE = {"spelling": "Claude Code", "description": "the agent", "heard": ["cloud code"]}
+
+
+def test_dictionary_direct_mappings_are_explicit_and_scope_is_preserved(
     client: TestClient, stub: StubProvider
 ) -> None:
-    empty: dict[str, object] = {"terms": [], "replacements": {}}
-    assert client.get("/api/dictionary").json() == {
-        "pinned": empty,
-        "learned": {},
-    }
-    bad = client.put("/api/dictionary", content='{"pinned": {"terms": "x"}}')
-    assert bad.status_code == 400 and "pinned.terms must be a list" in bad.text
+    assert client.get("/api/dictionary").json() == {"version": 2, "pinned": [], "learned": {}}
+    bad = client.put("/api/dictionary", content='{"pinned":[{"spelling":""}]}')
+    assert bad.status_code == 400 and "spelling must be" in bad.text
     saved = client.put(
         "/api/dictionary",
-        content='{"pinned": {"terms": ["Claude Code"],'
-        ' "replacements": {"cloud code": "Claude Code"}},'
-        ' "learned": {"stub/good": {"terms": ["Soniox"]}, "stub/bad": {"terms": ["Elsewhere"]}}}',
+        json={
+            "version": 2,
+            "pinned": [group("Claude Code", "cloud code", direct=True).as_json()],
+            "learned": {"stub/bad": [group("Hello", "hello", direct=True).as_json()]},
+        },
     )
-    assert saved.status_code == 200
-    assert saved.json()["learned"]["stub/good"] == {"terms": ["Soniox"], "replacements": {}}
-
-    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    assert saved.status_code == 200, saved.text
+    client.put(
+        "/api/settings",
+        json={
+            "keys": {"stub": "k", "typesafe": "ts-key"},
+            "defaultModel": "stub/good",
+            "jev": {"dictionary": True},
+        },
+    )
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     attempt = rec["transcriptions"][0]
-    assert stub.terms == ("Claude Code", "Soniox")  # this model's learned terms, not stub/bad's
     assert attempt["raw_text"] == "hello there, I use cloud code"
     assert attempt["text"] == "hello there, I use Claude Code"
+    assert attempt["correction"]["method"] == "contextual"
+    assert (
+        attempt["correction"]["direct_replacements"] == attempt["correction"]["replacements"] == 1
+    )
+    assert attempt["formatting"]["status"] == "disabled"
 
 
-def test_a_single_learned_list_moves_under_the_default_model_once(
+def test_an_earlier_dictionary_is_backed_up_and_converted_once(
     client: TestClient, tmp_path: Path
 ) -> None:
-    legacy = '{"pinned": {"terms": ["Dictum"]}, "learned": {"terms": ["Soniox"]}}'
-    assert client.put("/api/dictionary", content=legacy).status_code == 400
-    (tmp_path / "dictionary.json").write_text(legacy, encoding="utf-8")
-    unusable = client.get("/api/dictionary")
-    assert unusable.status_code == 500 and "set a default model" in unusable.text
-    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
-    moved = client.get("/api/dictionary").json()
-    assert moved["learned"] == {"stub/good": {"terms": ["Soniox"], "replacements": {}}}
-    assert moved["pinned"]["terms"] == ["Dictum"]
-    assert '"stub/good"' in (tmp_path / "dictionary.json").read_text(encoding="utf-8")
+    legacy = '{"pinned":{"terms":["Dictum"],"replacements":{"cloud code":"Claude Code"}}}'
+    (tmp_path / "dictionary.json").write_text(legacy)
+    converted = client.get("/api/dictionary").json()
+    assert [g["meanings"][0]["spelling"] for g in converted["pinned"]] == ["Dictum", "Claude Code"]
+    assert all(g["needs_review"] for g in converted["pinned"])
+    assert len(list(tmp_path.glob("dictionary.pre-v2-*.json"))) == 1
     imported = client.put("/api/dictionary", content=legacy)
-    assert imported.status_code == 200 and imported.json() == moved
+    assert imported.status_code == 200 and imported.json() == converted
 
 
 def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     settings = client.get("/api/settings").json()
     assert [p["id"] for p in settings["llmProviders"]] == ["anthropic", "openai"]
-    assert settings["llmProviders"][0]["defaultModel"] == "anthropic:claude-fable-5-1"
+    assert settings["llmProviders"][0]["defaultModel"] == "anthropic:claude-sonnet-5"
     assert settings["llmProviders"][0]["models"][0] == {
-        "id": "anthropic:claude-fable-5-1",
-        "name": "Claude Fable 5.1",
+        "id": "anthropic:claude-sonnet-5",
+        "name": "Claude Sonnet 5",
     }
-    assert settings["llmProviders"][1]["models"][0]["id"] == "openai:gpt-6-astra"
+    assert settings["llmProviders"][1]["models"][0]["id"] == "openai:gpt-5.4-mini"
     assert settings["dictionaryModel"] is None
     bad = client.put("/api/settings", json={"dictionaryModel": "gemini:pro"})
     assert bad.status_code == 400 and "provider:model" in bad.text
@@ -241,7 +385,7 @@ def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     assert ok.status_code == 200
     settings = client.get("/api/settings").json()
     # A key is enough: the suggested model of the first provider with one is the default.
-    assert settings["dictionaryModel"] == "anthropic:claude-fable-5-1"
+    assert settings["dictionaryModel"] == "anthropic:claude-sonnet-5"
     assert settings["llmProviders"][0]["keyHint"] == "••••1234"
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
     assert client.get("/api/settings").json()["dictionaryModel"] == "openai:gpt-6-astra"
@@ -255,47 +399,62 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     async def fake(provider: str, api_key: str, model: str, system: str, user: str) -> str:
         calls.append((model, api_key))
         assert "hello there, I use cloud code" in user
-        assert "from another model" not in user  # only the default model's transcripts
-        assert "takes at most 3 terms; 1 are pinned already, so propose at most 2" in user
-        return (
-            '{"terms": ["Claude Code", "Soniox", "Groq", "Deepgram"],'
-            ' "replacements": {"cloud code": "Claude Code"}}'
-        )
+        assert "from another model" not in user
+        if len(calls) == 2:
+            with pytest.raises(ValueError, match="busy learning"):
+                dictum.add_agent_corrections({"entries": [{"spelling": "Jev", "heard": ["Jeff"]}]})
+        return json.dumps(proposed("hello there, I use cloud code"))
 
     dictum = Dictum(Store(tmp_path), [stub], llm_call=fake)
     client = TestClient(create_app(dictum), base_url="http://localhost")
-    res = client.post("/api/dictionary/build")
+    res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 400 and "Add an Anthropic or OpenAI key" in res.text
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
-    res = client.post("/api/dictionary/build")
+    res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 400 and "No API key set for OpenAI" in res.text
     client.put("/api/settings", json={"keys": {"openai": "sk-1", "stub": "k"}})
-    res = client.post("/api/dictionary/build")
+    res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 400 and "Pick a default model first" in res.text
     client.put("/api/settings", json={"defaultModel": "stub/good"})
     rec = client.post(
         "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}, data={"model": "stub/bad"}
     ).json()
     dictum.store.add_transcription(rec["id"], "stub", "other", "ok", "from another model", None)
-    res = client.post("/api/dictionary/build")
-    assert res.status_code == 400 and "no transcripts from Stub / good" in res.text
+    res = client.post("/api/dictionary/build", json={"source": "history"})
+    assert res.status_code == 400 and "No new history to learn from for Stub / good" in res.text
 
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
-    client.put("/api/dictionary", content='{"pinned": {"terms": ["Claude Code"]}}')
-    res = client.post("/api/dictionary/build")
-    assert res.status_code == 200, res.text
-    proposal = res.json()
+    client.put("/api/dictionary", json={"pinned": [CLAUDE_CODE]})
+    res = client.post("/api/dictionary/build", json={"source": "history"})
+    assert res.status_code == 202, res.text
+    first = wait_for_build(client)
+    proposal = first["proposal"]
     assert calls == [("openai:gpt-6-astra", "sk-1")]
     assert proposal["model"] == "stub/good"
-    assert proposal["learned"] == {  # cut to the two terms that fit beside the pinned one
-        "terms": ["Soniox", "Groq"],
-        "replacements": {"cloud code": "Claude Code"},
-    }
-    assert proposal["added"]["terms"] == ["Soniox", "Groq"]
-    assert proposal["budget"] == {"limit": 3, "pinned": 1, "room": 2}
-    assert proposal["dropped_terms"] == 1
+    assert len(proposal["changes"]) == 1
+    assert proposal["changes"][0]["after"]["meanings"][0]["spelling"] == "Claude Code"
+    assert proposal["version"] == client.get("/api/dictionary").headers["etag"]
+    assert proposal["changes"][0]["kind"] == "add" and proposal["changes"][0]["before"] is None
     # Nothing is saved until the page accepts.
     assert client.get("/api/dictionary").json()["learned"] == {}
+    # Separate edits are blocked during generation and review. Out-of-process file
+    # changes still invalidate a snapshot; this is a final guard, not merge UX.
+    assert client.delete(f"/api/dictionary/build/{first['id']}").status_code == 200
+    assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 202
+    pending = wait_for_build(client)
+    current = client.get("/api/dictionary")
+    assert client.put("/api/dictionary", json=current.json()).status_code == 409
+    path = tmp_path / "dictionary.json"
+    path.write_text(path.read_text() + "\n")  # explicitly external edit bypasses API ownership
+    current = client.get("/api/dictionary")
+    stale = client.post(
+        f"/api/dictionary/build/{pending['id']}/accept",
+        headers={"If-Match": current.headers["etag"]},
+    )
+    assert stale.status_code == 409
+    assert client.get("/api/dictionary").json() == current.json()
+    assert client.get("/api/dictionary/build").json()["phase"] == "ready"
+    assert dictum.close()
 
 
 def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvider) -> None:
@@ -303,40 +462,57 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
     assert client.post("/api/dictionary/corrections", json={"source": "x"}).status_code == 400
     bad = client.post("/api/dictionary/corrections", json={"replacements": {"a": 1}})
     assert bad.status_code == 400 and "corrections.replacements" in bad.text
+    bad = client.post("/api/dictionary/corrections", json={"entries": [{"heard": ["x"]}]})
+    assert bad.status_code == 400 and "entries.spelling" in bad.text
 
-    client.put(
-        "/api/dictionary", content='{"pinned": {"replacements": {"cloud code": "Claude Code"}}}'
-    )
+    client.put("/api/dictionary", json={"pinned": [CLAUDE_CODE]})
     res = client.post(
         "/api/dictionary/corrections",
         json={
-            "replacements": {"whisper flow": "Wispr Flow", "cloud code": "Claude Code"},
-            "terms": ["Soniox"],
+            "entries": [
+                {"spelling": "Wispr Flow", "description": "an app", "heard": ["whisper flow"]},
+                {"spelling": "claude code", "heard": ["cloud code", "claud code"]},
+            ],
             "source": "dictum-agent",
         },
     )
     assert res.status_code == 200
     # What the user already pinned is not added again; the rest is pinned.
     assert res.json() == {
-        "added": {"terms": ["Soniox"], "replacements": {"whisper flow": "Wispr Flow"}}
+        "added": [
+            {"spelling": "Wispr Flow", "description": "an app", "heard": ["whisper flow"]},
+            {"spelling": "Claude Code", "description": "", "heard": ["claud code"]},
+        ]
     }
     stored = client.get("/api/dictionary").json()
-    assert stored["pinned"] == {
-        "terms": ["Soniox"],
-        "replacements": {"cloud code": "Claude Code", "whisper flow": "Wispr Flow"},
+    assert [g["meanings"][0]["spelling"] for g in stored["pinned"]] == ["Claude Code", "Wispr Flow"]
+    assert {f["text"] for f in stored["pinned"][0]["recognized_forms"]} == {
+        "Claude Code",
+        "cloud code",
+        "claud code",
     }
-    again = client.post("/api/dictionary/corrections", json={"terms": ["soniox"]})
-    assert again.json() == {"added": {"terms": [], "replacements": {}}}
+    assert all(not f["direct"] for g in stored["pinned"] for f in g["recognized_forms"])
+    # The earlier shape, terms and replacements, is still taken.
+    again = client.post(
+        "/api/dictionary/corrections", json={"terms": ["Soniox"], "replacements": {"a": "b"}}
+    )
+    assert again.json() == {
+        "added": [
+            {"spelling": "Soniox", "description": "", "heard": []},
+            {"spelling": "b", "description": "", "heard": ["a"]},
+        ]
+    }
+    assert client.post("/api/dictionary/corrections", json={"terms": ["soniox"]}).json() == {
+        "added": []
+    }
     # What arrived is kept, newest first, with its source, for the Agents page.
     received = client.get("/api/dictionary/corrections").json()
     assert [(c["heard"], c["meant"], c["source"]) for c in received] == [
+        ("Soniox", None, None),
+        ("a", "b", None),
+        ("claud code", "Claude Code", "dictum-agent"),
         ("whisper flow", "Wispr Flow", "dictum-agent"),
-        ("Soniox", None, "dictum-agent"),
     ]
-
-    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
-    client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
-    assert stub.terms == ("Soniox",)
 
 
 def test_settings_rejects_bad_json_with_400(client: TestClient) -> None:
@@ -351,6 +527,8 @@ def test_settings_rejects_bad_json_with_400(client: TestClient) -> None:
         {"defaultModel": 123},
         {"dictionaryModel": "invalid"},
         {"fastMode": "false"},
+        {"jev": {"dictionary": "yes"}},
+        {"jev": {"dictionary": True}},  # no TypeSafe key saved
         {"shortcuts": {"hold": "cmd+space"}},
     ],
 )
@@ -370,7 +548,7 @@ def test_streamed_requests_cannot_bypass_the_size_limit(
     body = b'{"terms":["' + b"a" * 100 + b'"]}'
     response = client.post("/api/dictionary/corrections", content=iter([body[:50], body[50:]]))
     assert response.status_code == 413
-    assert client.get("/api/dictionary").json()["pinned"]["terms"] == []
+    assert client.get("/api/dictionary").json()["pinned"] == []
     multipart = (
         b'--clip\r\nContent-Disposition: form-data; name="audio"; filename="clip.webm"\r\n'
         b"Content-Type: audio/webm\r\n\r\n" + WEBM_HEADER + b"\r\n--clip--\r\n"
@@ -456,11 +634,21 @@ def test_a_clip_missing_from_disk_becomes_a_stored_error(
 def test_a_broken_dictionary_file_does_not_lose_a_transcript(
     client: TestClient, tmp_path: Path, stub: StubProvider
 ) -> None:
-    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    client.put(
+        "/api/settings",
+        json={
+            "keys": {"stub": "k", "typesafe": "ts-key"},
+            "defaultModel": "stub/good",
+            "jev": {"dictionary": True},
+        },
+    )
     (tmp_path / "dictionary.json").write_text("{broken", encoding="utf-8")
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     attempt = rec["transcriptions"][0]
-    assert attempt["status"] == "error" and "Not valid JSON" in attempt["error"]
+    assert attempt["status"] == "ok" and attempt["error"] is None
+    assert attempt["text"] == attempt["raw_text"] == "hello there, I use cloud code"
+    assert "Not valid JSON" in attempt["correction"]["error"]
+    assert len(stub.calls) == 1
 
 
 def test_status_and_show_window(client: TestClient, tmp_path: Path, stub: StubProvider) -> None:
@@ -504,11 +692,11 @@ def test_metrics_are_computed_from_timed_attempts(client: TestClient) -> None:
 
 
 def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: StubProvider) -> None:
-    from dictum.providers.local import Local
-    from tests.test_local import FakeEngine
+    from dictum.providers.local.whisper import WhisperCpp
+    from tests.test_whisper import FakeEngine
 
     body = b"m" * 10
-    local = Local(
+    local = WhisperCpp(
         tmp_path / "models", client=mock_client(lambda req: httpx.Response(200, content=body))
     )
     app = create_app(Dictum(Store(tmp_path), [stub, local]))
@@ -560,22 +748,26 @@ def test_a_stale_dictionary_save_is_refused_and_a_fresh_one_accepted(client: Tes
     client.post("/api/dictionary/corrections", json={"terms": ["Soniox"], "source": "agent"})
     stale = client.put(
         "/api/dictionary",
-        content='{"pinned": {"terms": ["Dictum"]}}',
+        json={"pinned": [{"spelling": "Dictum"}]},
         headers={"if-match": version},
     )
     assert stale.status_code == 409 and "changed" in stale.text
-    assert "Soniox" in client.get("/api/dictionary").json()["pinned"]["terms"]
+    assert client.get("/api/dictionary").json()["pinned"][0]["meanings"][0]["spelling"] == "Soniox"
     fresh_version = client.get("/api/dictionary").headers["etag"]
     assert fresh_version != version
     ok = client.put(
         "/api/dictionary",
-        content='{"pinned": {"terms": ["Dictum"]}, "agents": {"terms": ["Soniox"]}}',
+        content='{"pinned": [{"spelling": "Dictum"}], "agents": {"terms": ["Soniox"]}}',
         headers={"if-match": fresh_version},
     )  # an agents section, from the earlier form, is folded into pinned
     assert ok.status_code == 200 and ok.headers["etag"] != fresh_version
-    assert ok.json()["pinned"]["terms"] == ["Dictum", "Soniox"] and "agents" not in ok.json()
+    assert {m["spelling"] for g in ok.json()["pinned"] for m in g["meanings"]} == {
+        "Soniox",
+        "Dictum",
+    }
+    assert "agents" not in ok.json()
     # Without a version (curl, or a page repairing a broken file) the write goes through.
-    assert client.put("/api/dictionary", content='{"pinned": {"terms": []}}').status_code == 200
+    assert client.put("/api/dictionary", content='{"pinned": []}').status_code == 200
 
 
 def test_history_pages_and_conditional_refresh_include_new_attempts(
@@ -635,3 +827,79 @@ def test_slow_settings_catalogue_does_not_block_other_requests(
         finally:
             release.set()
         assert waiting.result(timeout=1).status_code == 200
+
+
+def test_pin_endpoint_needs_revision_and_preserves_competing_meanings(client: TestClient) -> None:
+    response = client.put(
+        "/api/dictionary",
+        json={"version": 2, "pinned": [], "learned": {"stub/good": [JEV.as_json()]}},
+    )
+    body = {"model": "stub/good", "group": "g_jev", "meaning": "a_jev"}
+    assert client.post("/api/dictionary/pin", json=body).status_code == 400
+    result = client.post(
+        "/api/dictionary/pin", json=body, headers={"If-Match": response.headers["etag"]}
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["pinned"][0]["meanings"][0]["spelling"] == "Jev"
+    assert {m["spelling"] for m in result.json()["learned"]["stub/good"][0]["meanings"]} == {
+        "Jeff",
+        "GIF",
+    }
+    stale = client.post(
+        "/api/dictionary/pin",
+        json={**body, "meaning": "b_jeff"},
+        headers={"If-Match": response.headers["etag"]},
+    )
+    assert stale.status_code == 409
+
+    shared = client.post(
+        "/api/dictionary/pin",
+        json={"model": "stub/good"},
+        headers={"If-Match": result.headers["etag"]},
+    )
+    assert shared.status_code == 200 and not shared.json()["learned"]
+    assert {m["spelling"] for g in shared.json()["pinned"] for m in g["meanings"]} == {
+        "Jev",
+        "Jeff",
+        "GIF",
+    }
+
+
+def test_safe_recovery_is_derived_and_copies_only_approved_nonambiguous_mappings(
+    client: TestClient, store: Store
+) -> None:
+    from dictum.processing import Processed, Stage
+
+    raw = "Open dictim. Jeff called."
+    rec = store.create_recording(WEBM_HEADER)
+    attempt = store.add_transcription(
+        rec.id,
+        "stub",
+        "good",
+        "ok",
+        raw,
+        None,
+        raw_text=raw,
+        processing=Processed(
+            raw, Stage("failed", "contextual", error="unavailable"), Stage("disabled", "formatting")
+        ),
+    )
+    client.put(
+        "/api/dictionary",
+        json={
+            "version": 2,
+            "pinned": [group("Dictum", "dictim", direct=True).as_json(), JEV.as_json()],
+        },
+    )
+    before = client.get("/api/recordings").json()
+    result = client.post(f"/api/recordings/{rec.id}/transcriptions/{attempt}/safe-copy")
+    assert result.status_code == 200, result.text
+    assert result.json() == {
+        "text": "Open Dictum. Jeff called.",
+        "replacements": 1,
+        "unresolved": 1,
+    }
+    assert client.get("/api/recordings").json() == before
+    assert (
+        client.post(f"/api/recordings/{rec.id}/transcriptions/99999/safe-copy").status_code == 400
+    )

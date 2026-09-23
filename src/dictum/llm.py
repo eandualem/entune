@@ -1,36 +1,38 @@
-"""Building the dictionary with one direct call to the chosen language model.
+"""Build and refine the dictionary in bounded steps with the chosen language model.
 
 The model never touches a transcript on its way to the user. It reads one speech
-model's recent raw transcripts and the current dictionary and proposes the `learned`
-section for that speech model; the user's `pinned` entries are handed to it as approved
-and off limits, and as evidence of who the user is.
+model's recent raw transcripts and proposes confusion groups for that model, with
+explicit form-to-meaning associations and textual provenance. Pinned knowledge is
+shared and protected; it does not take priority over competing meanings.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
+import uuid
 from collections.abc import Callable, Coroutine, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
 from dictum import dictionary as dictionary_file
-from dictum.dictionary import Dictionary, Entries, TermBudget
+from dictum import prompts
+from dictum.dictionary import Dictionary, Groups, key
 
-# Providers we route to, with the model suggested first. The dictionary is built rarely
-# and its mistakes compound, so the strongest model of each provider is the default.
+# Providers we route to, with a reasonably priced model suggested first.
 LLM_PROVIDERS: dict[str, tuple[str, str]] = {
-    "anthropic": ("Anthropic", "anthropic:claude-fable-5-1"),
-    "openai": ("OpenAI", "openai:gpt-6-astra"),
+    "anthropic": ("Anthropic", "anthropic:claude-sonnet-5"),
+    "openai": ("OpenAI", "openai:gpt-5.4-mini"),
 }
-# Older Claude models use a token budget; current models use high reasoning effort.
-THINKING_BUDGET = 32_000
 MAX_OUTPUT_TOKENS = 8192
-MAX_TRANSCRIPT_CHARS = 40_000
 MAX_TRANSCRIPTS = 300
+# A long history goes to the model in several steps, each with this much transcript,
+# so no single request runs for many minutes and the list grows step by step.
+BATCH_CHARS = 24_000
 
 
 @dataclass(frozen=True)
@@ -41,14 +43,18 @@ class ModelChoice:
 
 _MODELS = {
     "anthropic": (
-        ("claude-fable-5-1", "Claude Fable 5.1"),
-        ("claude-opus-5", "Claude Opus 5"),
         ("claude-sonnet-5", "Claude Sonnet 5"),
+        ("claude-fable-5-1", "Claude Fable 5.1"),
+        ("claude-opus-5-5", "Claude Opus 5.5"),
+        ("claude-opus-5", "Claude Opus 5"),
         ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
         ("claude-haiku-4-5", "Claude Haiku 4.5"),
     ),
     "openai": (
+        ("gpt-5.4-mini", "GPT-5.4 mini"),
         ("gpt-6-astra", "GPT-6 Astra"),
+        ("gpt-6-sol", "GPT-6 Sol"),
+        ("gpt-6-luna", "GPT-6 Luna"),
         ("gpt-5.6-sol", "GPT-5.6 Sol"),
         ("gpt-5.6-terra", "GPT-5.6 Terra"),
         ("gpt-5.6-luna", "GPT-5.6 Luna"),
@@ -63,84 +69,266 @@ def catalog(provider: str) -> list[ModelChoice]:
     return [ModelChoice(f"{provider}:{model}", name) for model, name in _MODELS[provider]]
 
 
-SYSTEM_PROMPT = """You maintain a personal dictation dictionary for one person.
+@dataclass(frozen=True)
+class LearningText:
+    id: str
+    text: str
+    records: dict[str, object] = field(default_factory=dict)
 
-You receive recent raw transcripts of their dictation from one speech-to-text model,
-exactly as that model returned them, plus the current dictionary. Produce the `learned`
-section for that speech model:
-- "terms": words the speech model should be told to expect: names of people, products,
-  companies, tools, code identifiers, acronyms, and any specialised vocabulary that appears
-  in the transcripts. Use the spelling that is evidently intended; when the same name is
-  spelled several ways, pick the correct one. The speech model takes a limited number of
-  terms and the user's pinned ones already use part of it; the message says how many
-  more fit. Propose at most that many, the most valuable first, and none when it says the
-  model takes no terms: then only replacements help.
-- "replacements": corrections for phrases this speech model consistently mishears, as
-  {"heard": "meant"}. Only when the evidence is clear from context and the fix is safe as a
-  whole-word, case-insensitive replacement applied to every future transcript. Never map a
-  common English word to something else unless the transcripts make the mistake unmistakable.
-  Prefer multi-word phrases; keep the list short.
 
-The "pinned" section is the user's own, already approved (by hand, or confirmed through
-their assistants), and applies to every speech model. Do not alter, remove or contradict
-it; do not repeat its entries. Do read it as evidence of who this person is, what they
-work on and how they speak: a pinned "cloud" to "Claude" says they talk about the
-assistant, not the sky, and that guides which of this model's mishearings are worth a
-rule. Build on top of it.
-The previous "learned" section for this speech model is included; keep what still holds,
-drop what does not.
+@dataclass(frozen=True)
+class Batch:
+    snippets: tuple[str, ...]
+    completed: tuple[str, ...]
+    records: dict[str, dict[str, object]]
 
-Reply with one JSON object only, no prose, no code fence:
-{"terms": [...], "replacements": {"heard": "meant"}}"""
+
+def learning_batches(inputs: Sequence[LearningText]) -> list[Batch]:
+    """Keep identity through splitting; only a final segment completes its source."""
+    result: list[Batch] = []
+    snippets: list[str] = []
+    completed: list[str] = []
+    records: dict[str, dict[str, object]] = {}
+    used = 0
+    for item in inputs:
+        remaining = item.text.lstrip()
+        offset = len(item.text) - len(remaining)
+        while remaining:
+            end = len(remaining)
+            if end > BATCH_CHARS:
+                end = max(
+                    remaining.rfind(" ", 0, BATCH_CHARS + 1),
+                    remaining.rfind("\n", 0, BATCH_CHARS + 1),
+                )
+                if end <= 0:
+                    end = BATCH_CHARS
+            snippet, tail = remaining[:end], remaining[end:]
+            remaining = tail.lstrip()
+            if snippets and used + len(snippet) > BATCH_CHARS:
+                result.append(Batch(tuple(snippets), tuple(completed), records))
+                snippets, completed, records, used = [], [], {}, 0
+            snippets.append(snippet)
+            used += len(snippet)
+            if item.records:
+                record = records.setdefault(item.id, {**item.records, "source_spans": []})
+                spans = record["source_spans"]
+                assert isinstance(spans, list)
+                spans.append(
+                    {
+                        "source": next(iter(sources([snippet]))),
+                        "start_in_input": offset,
+                        "end_in_input": offset + len(snippet),
+                    }
+                )
+            offset += len(snippet) + len(tail) - len(remaining)
+            if not remaining:
+                completed.append(item.id)
+    if snippets:
+        result.append(Batch(tuple(snippets), tuple(completed), records))
+    return result
+
+
+def batches(transcripts: Sequence[str]) -> list[list[str]]:
+    """Text batching helper; runtime learning retains source identities separately."""
+    return [
+        list(b.snippets)
+        for b in learning_batches(
+            [LearningText(str(i), text) for i, text in enumerate(transcripts)]
+        )
+    ]
 
 
 def build_user_prompt(
-    current: Dictionary, transcripts: Sequence[str], speech_model: str, budget: TermBudget
+    current: Dictionary,
+    transcripts: Sequence[str],
+    speech_model: str,
+    proposed: Groups | None = None,
+    step: tuple[int, int] = (1, 1),
+    records: dict[str, dict[str, object]] | None = None,
 ) -> str:
-    kept: list[str] = []
-    used = 0
-    for text in transcripts[:MAX_TRANSCRIPTS]:
-        snippet = text.strip()
-        if not snippet:
-            continue
-        if used + len(snippet) > MAX_TRANSCRIPT_CHARS:
-            break
-        kept.append(snippet)
-        used += len(snippet)
-    if budget.limit is None:
-        room = f"{speech_model} takes no terms: propose none, only replacements."
-    else:
-        room = (
-            f"{speech_model} takes at most {budget.limit} terms; {budget.pinned} are pinned"
-            f" already, so propose at most {budget.room}, the most valuable first."
-        )
-    return (
-        f"Term budget: {room}\n\n"
-        "Pinned by the user (approved, shared by every speech model, do not change):\n"
-        f"{json.dumps(current.pinned.as_json(), ensure_ascii=False)}\n\n"
-        f"Previously learned for {speech_model} (revise):\n"
-        f"{json.dumps(current.learned_for(speech_model).as_json(), ensure_ascii=False)}\n\n"
-        f"Recent raw transcripts from {speech_model}, newest first ({len(kept)}):\n"
-        + "\n".join(f"- {t}" for t in kept)
+    """One step's evidence and the working dictionary after all earlier edits."""
+    number, count = step
+    return prompts.render_text(
+        "dictionary-user.txt",
+        pinned=json.dumps([e.as_json() for e in current.pinned], ensure_ascii=False),
+        number=str(number),
+        count=str(count),
+        speech_model=speech_model,
+        learned=json.dumps(
+            [
+                e.as_json()
+                for e in (current.effective(speech_model) if proposed is None else proposed)
+            ],
+            ensure_ascii=False,
+        ),
+        transcript_count=str(len(transcripts)),
+        transcripts=json.dumps(sources(transcripts), ensure_ascii=False),
+        records=json.dumps(records or {}, ensure_ascii=False),
     )
 
 
-def parse_reply(content: str) -> Entries:
-    """The model's JSON, tolerating a code fence or prose around it."""
+def sources(transcripts: Sequence[str]) -> dict[str, str]:
+    """Stable snippet references; only hashes/offsets survive normal audio builds."""
+    return {"s_" + hashlib.sha256(text.encode()).hexdigest()[:24]: text for text in transcripts}
+
+
+def parse_reply(
+    content: str, proposed: Groups = (), *, transcripts: Sequence[str] = (), pinned: Groups = ()
+) -> Groups:
+    """Validate provenance and apply explicit group revisions without discarding meanings."""
     text = content.strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.DOTALL)
+    fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.DOTALL)
     if fenced:
         text = fenced.group(1)
-    elif not text.startswith("{"):
-        start, end = text.find("{"), text.rfind("}")
-        if start < 0 or end < 0:
-            raise ValueError(f"The model did not return JSON:\n{content[:500]}")
-        text = text[start : end + 1]
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"The model's JSON did not parse: {exc.msg}\n{content[:500]}") from None
-    return dictionary_file.parse_entries(data, "the model's reply")
+        raise ValueError(f"The model's JSON did not parse: {exc.msg}") from None
+    if not isinstance(data, dict) or set(data) != {"groups", "remove"}:
+        raise ValueError("The model must return groups and remove lists")
+    revised = dictionary_file.parse_groups(data["groups"], "the model's reply")
+    removed = data["remove"]
+    old = {g.id: g for g in pinned}
+    old.update({g.id: g for g in proposed})
+    if not isinstance(removed, list) or not all(isinstance(v, str) and v in old for v in removed):
+        raise ValueError("remove must name existing learned group IDs")
+    if set(removed) & {g.id for g in revised}:
+        raise ValueError("A group cannot be revised and removed together")
+    known_groups = set(old)
+    known_meanings = {m.id: m for g in old.values() for m in g.meanings}
+    known_links: dict[tuple[str, str], list[dictionary_file.Association]] = {}
+    for group in old.values():
+        for form in group.recognized_forms:
+            for association in form.associations:
+                known_links.setdefault((key(form.text), association.meaning_id), []).append(
+                    association
+                )
+    approved = {
+        (g.id, key(f.text)): (f.direct, f.direct_reason)
+        for g in old.values()
+        for f in g.recognized_forms
+        if f.direct
+    }
+    supplied = sources(transcripts)
+    # New temporary IDs are assigned once by code. Revisions keep persisted IDs.
+    ids: dict[str, str] = {}
+    seen_meanings = list(known_meanings.values())
+    for group in revised:
+        if group.id not in known_groups:
+            if not group.id.startswith("new_"):
+                raise ValueError("New group IDs must start with new_")
+            if group.id in ids:
+                raise ValueError("New groups and meanings need distinct temporary IDs")
+            ids[group.id] = "g_" + uuid.uuid4().hex
+        for m in group.meanings:
+            if m.id not in known_meanings:
+                if not m.id.startswith("new_"):
+                    raise ValueError("New meaning IDs must start with new_")
+                if m.id in ids and ids[m.id].startswith("g_"):
+                    raise ValueError("New groups and meanings need distinct temporary IDs")
+                if any(
+                    m.id != old.id
+                    and key(m.spelling) == key(old.spelling)
+                    and m.meaning == old.meaning
+                    and m.personal_context == old.personal_context
+                    and m.casing == old.casing
+                    for old in seen_meanings
+                ):
+                    raise ValueError(
+                        "Reuse the existing ID for the same meaning; "
+                        "case alone is not a new meaning"
+                    )
+                ids.setdefault(m.id, "m_" + uuid.uuid4().hex)
+                seen_meanings.append(m)
+    meanings = {**known_meanings, **{m.id: m for g in revised for m in g.meanings}}
+    preview = (
+        *(g for g in old.values() if g.id not in set(removed) | {r.id for r in revised}),
+        *revised,
+    )
+    forms = [f for g in preview for f in g.recognized_forms]
+    confused_forms = {
+        key(f.text)
+        for f in forms
+        if any(
+            a.meaning_id in meanings and key(f.text) != key(meanings[a.meaning_id].spelling)
+            for a in f.associations
+        )
+    }
+    connected = {
+        a.meaning_id for f in forms if key(f.text) in confused_forms for a in f.associations
+    }
+    for group in revised:
+        for form in group.recognized_forms:
+            approval = (form.direct, form.direct_reason)
+            if form.direct and approved.get((group.id, key(form.text))) != approval:
+                raise ValueError("The generator cannot approve direct replacements")
+            for link in form.associations:
+                meaning = meanings.get(link.meaning_id)
+                previous = known_links.get((key(form.text), link.meaning_id), [])
+                if meaning is None or (not meaning.meaning and link not in previous):
+                    raise ValueError("Every new association needs a defined meaning")
+                if link.basis == "literal":
+                    if key(form.text) != key(meaning.spelling) or link.evidence:
+                        raise ValueError(
+                            "Literal associations preserve spelling and need no inferred evidence"
+                        )
+                    continue
+                if link.basis != "text" and link not in previous:
+                    raise ValueError("New generated associations need textual evidence")
+                for evidence in link.evidence:
+                    if any(evidence in old.evidence for old in previous):
+                        continue
+                    source = supplied.get(evidence.source)
+                    if source is None or evidence.end > len(source):
+                        raise ValueError("Evidence references an unavailable source occurrence")
+                    heard = source[evidence.start : evidence.end]
+                    if (
+                        key(heard) != key(form.text)
+                        or (evidence.start and re.match(r"\w", source[evidence.start - 1]))
+                        or (evidence.end < len(source) and re.match(r"\w", source[evidence.end]))
+                    ):
+                        raise ValueError("Evidence must reference the exact whole recognized form")
+                if link.basis == "text" and not link.evidence:
+                    raise ValueError("Textual associations need a referenced source occurrence")
+        # Relevant literal competitors can live beside a protected pinned group.
+        if any(m.id not in known_meanings and m.id not in connected for m in group.meanings):
+            raise ValueError(
+                "New meanings must belong to an evidenced confusion, not a vocabulary glossary"
+            )
+    raw_groups = [g.as_json() for g in revised]
+    for record in raw_groups:
+        record["id"] = ids.get(record["id"], record["id"])
+        for meaning in record["meanings"]:
+            meaning["id"] = ids.get(meaning["id"], meaning["id"])
+        for form in record["recognized_forms"]:
+            for link in form["associations"]:
+                link["meaning_id"] = ids.get(link["meaning_id"], link["meaning_id"])
+    revised = dictionary_file.parse_groups(raw_groups, "the model's reply")
+    updated = {gid: group for gid, group in old.items() if gid not in removed}
+    updated.update({g.id: g for g in revised})
+    result = tuple(updated.values())
+    for (gid, surface), approval in approved.items():
+        assert approval[0] is not None
+        current = next(
+            (
+                f
+                for g in result
+                if g.id == gid
+                for f in g.recognized_forms
+                if key(f.text) == surface
+            ),
+            None,
+        )
+        if (
+            current is None
+            or (current.direct, current.direct_reason) != approval
+            or (meanings[approval[0]].spelling, meanings[approval[0]].casing)
+            != (known_meanings[approval[0]].spelling, known_meanings[approval[0]].casing)
+        ):
+            raise ValueError("The generator cannot remove or change an approved direct mapping")
+    dictionary_file.protect_pinned(pinned, result)
+    dictionary_file.validate(Dictionary(learned={"working": result}))
+    return result
 
 
 Caller = Callable[[str, str, str, str, str], Coroutine[Any, Any, str]]
@@ -152,8 +340,12 @@ async def call_model(
 ) -> str:
     """One request, explicit key and official endpoint, without environment discovery.
 
-    No retries or fallback. Each call owns its client, so independent builds cannot
-    share credentials or require a process-wide lock.
+    Streamed: a reply at high reasoning effort takes minutes, and a connection that
+    carries nothing for a minute is cut on the way (observed 2026-09-21: every plain
+    request dropped after 61 s, the same request streamed completed in 202 s). The
+    events are read to the end and only the final text is used. No retries or fallback.
+    Each call owns its client, so independent builds cannot share credentials or
+    require a process-wide lock.
     """
     prefix, sep, name = model.partition(":")
     if not sep or prefix != provider or not name.strip():
@@ -167,9 +359,10 @@ async def call_model(
             "system": system_prompt,
             "messages": [{"role": "user", "content": user_prompt}],
             "max_tokens": MAX_OUTPUT_TOKENS,
+            "stream": True,
         }
-        # Keep budget-based thinking for older/custom IDs supported before this
-        # adapter; newer Claude families use adaptive thinking and reject a budget.
+        # Use moderate effort for adaptive models; older models need no explicit
+        # thinking budget for dictionary extraction.
         adaptive = name.startswith(
             (
                 "claude-fable-5",
@@ -183,12 +376,7 @@ async def call_model(
             )
         )
         if adaptive:
-            payload.update(thinking={"type": "adaptive"}, output_config={"effort": "high"})
-        else:
-            payload.update(
-                thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
-                max_tokens=MAX_OUTPUT_TOKENS + THINKING_BUDGET,
-            )
+            payload.update(thinking={"type": "adaptive"}, output_config={"effort": "medium"})
     elif provider == "openai":
         url = "https://api.openai.com/v1/responses"
         headers = {"Authorization": f"Bearer {api_key}"}
@@ -198,55 +386,119 @@ async def call_model(
             "input": user_prompt,
             "max_output_tokens": MAX_OUTPUT_TOKENS,
             "store": False,
+            "stream": True,
         }
         if name.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
-            payload["reasoning"] = {"effort": "high"}
+            payload["reasoning"] = {"effort": "medium"}
     else:
         raise ValueError(f"Unknown dictionary provider: {provider}")
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(1200, connect=5), trust_env=False) as client:
-        response = await client.post(url, headers=headers, json=payload)
-    if not response.is_success:
-        raise ValueError(f"HTTP {response.status_code}: {response.text}")
-    data = response.json()
-    if provider == "anthropic":
-        if data.get("stop_reason") != "end_turn":
-            raise ValueError(f"The model did not finish its reply: {response.text}")
-        blocks = data.get("content", [])
-        text_type = "text"
-    else:
-        if data.get("status") != "completed":
-            raise ValueError(f"The model did not finish its reply: {response.text}")
-        blocks = [
-            block
-            for item in data.get("output", [])
-            if item.get("type") == "message"
-            for block in item.get("content", [])
+    async with (
+        httpx.AsyncClient(timeout=httpx.Timeout(1200, connect=5), trust_env=False) as client,
+        client.stream("POST", url, headers=headers, json=payload) as response,
+    ):
+        if not response.is_success:
+            await response.aread()
+            raise ValueError(f"HTTP {response.status_code}: {response.text}")
+        events = [
+            json.loads(line[5:])
+            async for line in response.aiter_lines()
+            if line.startswith("data:") and line[5:].strip() not in ("", "[DONE]")
         ]
-        text_type = "output_text"
-    text = "\n".join(block["text"] for block in blocks if block.get("type") == text_type)
+    text = _anthropic_text(events) if provider == "anthropic" else _openai_text(events)
     if not text.strip():
-        raise ValueError(f"The model returned no text: {response.text}")
+        raise ValueError(f"The model returned no text: {json.dumps(events[-1:])[:2000]}")
     return text
 
 
-def propose_learned(
+def _anthropic_text(events: list[dict[str, Any]]) -> str:
+    """The text blocks of a streamed message; thinking blocks are skipped."""
+    parts: list[str] = []
+    kinds: dict[int, str] = {}
+    stop_reason = None
+    for event in events:
+        kind = event.get("type")
+        if kind == "error":
+            raise ValueError(f"The model reported an error: {json.dumps(event)}")
+        if kind == "content_block_start":
+            kinds[event["index"]] = event["content_block"].get("type", "")
+        elif kind == "content_block_delta" and event["delta"].get("type") == "text_delta":
+            if kinds.get(event["index"]) == "text":
+                parts.append(event["delta"]["text"])
+        elif kind == "message_delta":
+            stop_reason = event.get("delta", {}).get("stop_reason")
+    if stop_reason != "end_turn":
+        raise ValueError(f"The model did not finish its reply: stop_reason {stop_reason!r}")
+    return "".join(parts)
+
+
+def _openai_text(events: list[dict[str, Any]]) -> str:
+    """The message text of the completed response; the stream's final event has it all."""
+    final = None
+    for event in events:
+        kind = event.get("type")
+        if kind == "error":
+            raise ValueError(f"The model reported an error: {json.dumps(event)}")
+        if kind in ("response.completed", "response.failed", "response.incomplete"):
+            final = event.get("response", {})
+    if final is None or final.get("status") != "completed":
+        raise ValueError(f"The model did not finish its reply: {json.dumps(final)[:2000]}")
+    blocks = [
+        block
+        for item in final.get("output", [])
+        if item.get("type") == "message"
+        for block in item.get("content", [])
+    ]
+    return "\n".join(block["text"] for block in blocks if block.get("type") == "output_text")
+
+
+async def propose_learned(
     provider: str,
     api_key: str,
     model: str,
     current: Dictionary,
     transcripts: Sequence[str],
     speech_model: str,
-    budget: TermBudget,
     call: Caller = call_model,
-) -> Entries:
+    *,
+    progress: Callable[[int, int, int], None] | None = None,
+    inputs: Sequence[LearningText] | None = None,
+    checkpoint: Callable[[Groups, int, int, tuple[str, ...]], None] | None = None,
+    working: Groups | None = None,
+    resume: int = 0,
+) -> Groups:
     """Ask the model for a new `learned` section for `speech_model`, from its transcripts.
 
-    Raises ValueError carrying the provider's or the model's own words when it fails.
+    A long history goes in steps (`batches`), each seeing what the earlier steps
+    changed; each step may add, revise or remove learned entries. Raises ValueError
+    carrying the provider's or the model's own words
+    when a step fails; the checkpoint retains only fully validated completed batches.
     """
-    user_prompt = build_user_prompt(current, transcripts, speech_model, budget)
-    try:
-        reply = asyncio.run(call(provider, api_key, model, SYSTEM_PROMPT, user_prompt))
-    except Exception as exc:
-        raise ValueError(f"{type(exc).__name__}: {exc}") from exc
-    return parse_reply(reply)
+    current = dictionary_file.share(current, set())
+    proposed = current.effective(speech_model) if working is None else working
+    steps = learning_batches(
+        inputs
+        if inputs is not None
+        else [LearningText(str(i), text) for i, text in enumerate(transcripts)]
+    )
+    for number, step in enumerate(steps, 1):
+        if number <= resume:
+            continue
+        await asyncio.sleep(0)  # cancellation between chunks even for immediate test callers
+        user_prompt = build_user_prompt(
+            current, step.snippets, speech_model, proposed, (number, len(steps)), step.records
+        )
+        system_prompt = prompts.text("dictionary-system.txt")
+        if progress:
+            progress(number, len(steps), len(system_prompt) + len(user_prompt))
+        try:
+            async with asyncio.timeout(1200):
+                reply = await call(provider, api_key, model, system_prompt, user_prompt)
+            proposed = parse_reply(
+                reply, proposed, transcripts=step.snippets, pinned=current.pinned
+            )
+            if checkpoint:
+                checkpoint(proposed, number, len(steps), step.completed)
+        except Exception as exc:
+            raise ValueError(f"Step {number} of {len(steps)}: {type(exc).__name__}: {exc}") from exc
+    return proposed

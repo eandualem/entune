@@ -1,0 +1,30 @@
+{
+  "type": "choice",
+  "instructions": {
+    "question": "What role does sentence `sentences.$sentence` have in this dictated note?",
+    "focus": "Read the original transcript and all sentence spans together. Classify from the words; never change their order or wording. The first sentence can itself be a list item. Existing lists and paragraph boundaries are retained by code. Do not infer missing words or punctuation."
+  },
+  "criteria": {
+    "continues": {
+      "what": "Ordinary running prose, including the first sentence of a note, or a continuation of the same thought as the previous sentence.",
+      "not_for": "A sentence that opens a new topic, or that is one entry of an enumeration."
+    },
+    "new_paragraph": {
+      "what": "Starts a clearly different topic, request or step than the previous sentence, where a writer would begin a new paragraph.",
+      "not_for": "The first sentence, an elaboration, examples, or a follow-up of the previous sentence.",
+      "examples": [
+        "Okay, now the second thing I want to talk about is the settings page.",
+        "Another issue is the microphone."
+      ]
+    },
+    "list_item": {
+      "what": "One entry in an enumeration of parallel items, often introduced with words such as first, secondly, thirdly, one, two, three, next, finally.",
+      "not_for": "A sentence that merely mentions a number or an order.",
+      "examples": [
+        "First of all, we don't want to make it very long.",
+        "Secondly, we want to add tags.",
+        "Three, I don't see any formatting."
+      ]
+    }
+  }
+}

@@ -12,6 +12,7 @@ import threading
 import wave
 from collections.abc import Callable
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any
 
 Sink = Callable[[bytes], None]
@@ -21,6 +22,8 @@ SinkFactory = Callable[[int], Sink | None]
 FALLBACK_RATE = 16_000
 CHANNELS = 1
 SAMPLE_WIDTH = 2  # bytes per int16 sample
+QUIET_SECONDS = 10.0
+QUIET_PEAK = 256  # about -42 dBFS; a warning, never a reason to discard audio
 
 
 @dataclass(frozen=True)
@@ -62,10 +65,15 @@ class Recorder:
         self._rate = FALLBACK_RATE
         self._sink: Sink | None = None
         self._lock = threading.Lock()
+        self._last_signal = 0.0
 
     @property
     def recording(self) -> bool:
         return self._stream is not None
+
+    @property
+    def quiet(self) -> bool:
+        return self.recording and monotonic() - self._last_signal >= QUIET_SECONDS
 
     def start(self, sink_for_rate: SinkFactory | None = None) -> None:
         """Begin capturing; `sink_for_rate` may return a sink that gets every chunk as it
@@ -76,38 +84,58 @@ class Recorder:
             if self._stream is not None:
                 return
             self._chunks = []
+            # PortAudio snapshots devices/defaults at initialization. Refresh while
+            # our only stream is closed so connecting AirPods does not leave stale IDs.
+            # sounddevice has no public refresh API. A failed init leaves the count at 0.
+            if sounddevice._initialized:
+                sounddevice._terminate()
+            sounddevice._initialize()
             device = sounddevice.query_devices(kind="input")
             self._rate = int(device["default_samplerate"]) or FALLBACK_RATE
-            self._sink = sink_for_rate(self._rate) if sink_for_rate else None
-            stream = sounddevice.RawInputStream(
-                samplerate=self._rate,
-                channels=CHANNELS,
-                dtype="int16",
-                callback=self._on_audio,
-            )
+            self._last_signal = monotonic()
+            stream = None
             try:
+                stream = sounddevice.RawInputStream(
+                    device=device["index"],
+                    samplerate=self._rate,
+                    channels=CHANNELS,
+                    dtype="int16",
+                    callback=self._on_audio,
+                )
+                self._sink = sink_for_rate(self._rate) if sink_for_rate else None
                 stream.start()
             except Exception:
                 # A device mid-switch (Bluetooth) can refuse; nothing must be left half
                 # open, or the next attempt would think it is already recording.
-                stream.close()
+                if stream is not None:
+                    stream.close()
                 self._sink = None
+                self._chunks = []
                 raise
             self._stream = stream
+            print(f"recording from {device['name']} at {self._rate} Hz", flush=True)
 
-    def stop(self) -> Capture:
-        """Stop capturing and return what was recorded since `start`."""
+    def stop(self, *, discard: bool = False) -> Capture:
+        """Stop capturing and release the buffers; cancellation skips the PCM copy."""
         with self._lock:
             stream, self._stream = self._stream, None
             if stream is None:
                 return Capture(b"", self._rate)
-            stream.stop()
-            stream.close()
-            self._sink = None
-            return Capture(b"".join(self._chunks), self._rate)
+            try:
+                stream.stop()
+            finally:
+                try:
+                    stream.close()
+                finally:
+                    self._sink = None
+                    chunks, self._chunks = self._chunks, []
+            return Capture(b"" if discard else b"".join(chunks), self._rate)
 
     def _on_audio(self, indata: Any, frames: int, time: Any, status: Any) -> None:
         chunk = bytes(indata)
         self._chunks.append(chunk)
+        samples = memoryview(chunk).cast("h")
+        if max(samples, default=0) >= QUIET_PEAK or min(samples, default=0) <= -QUIET_PEAK:
+            self._last_signal = monotonic()
         if self._sink is not None:
             self._sink(chunk)

@@ -8,6 +8,37 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   let recorder = null;
   let tick = null;
   let starting = false;
+  let uploading = false;
+  let operationId = null;
+  let active = null;
+  const cancel = document.createElement("button");
+  cancel.type = "button"; cancel.className = "btn ghost";
+  cancel.textContent = "Cancel dictation"; cancel.hidden = true;
+  button.after(cancel);
+  const labels = {recording: "Recording…", saving: "Saving audio…", transcribing: "Transcribing…", correction: "Contextual correction…", cleanup: "Reducing fillers…", formatting: "Formatting…", delivering: "Delivering…", cancelling: "Canceling — keeping audio…", learning: "Dictum is busy learning.", review: "Finish learning: apply or discard the proposal."};
+  let previous = null;
+  async function poll() {
+    try {
+      active = await api("/api/operations");
+      const key = active ? `${active.id}:${active.stage}` : null;
+      if (key !== previous) {
+        if (active) onStatus(labels[active.stage] ?? active.stage);
+        else if (previous && !uploading) onStatus("Ready");
+        previous = key;
+      }
+      button.disabled = starting || uploading || Boolean(active && active.id !== operationId);
+      cancel.hidden = active?.kind !== "dictation";
+      cancel.disabled = active?.stage === "cancelling";
+      if (recorder && active?.id === operationId && active.stage === "cancelling") recorder.stop();
+    } catch (err) { onStatus(errorText(err)); }
+    finally { setTimeout(poll, document.hidden ? 1500 : 400); }
+  }
+  cancel.addEventListener("click", async () => {
+    if (!active) return;
+    try { await api(`/api/operations/${active.id}/cancel`, {method: "POST"}); }
+    catch (err) { onStatus(errorText(err)); }
+  });
+  poll();
 
   function setRecording(on) {
     button.setAttribute("aria-pressed", String(on));
@@ -26,20 +57,26 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
 
   async function upload(audio) {
     const form = new FormData();
+    uploading = true; button.disabled = true;
     form.append("audio", audio, "clip");
+    form.append("operation", operationId);
     onStatus(`Transcribing with ${getModelLabel()}…`);
     try {
-      await api("/api/recordings", { method: "POST", body: form });
-      onStatus("Ready");
+      const result = await api("/api/recordings", { method: "POST", body: form });
+      onStatus(result.notice ?? "Saved to history.");
     } catch (err) {
       onStatus(errorText(err));
+      // A request refused before the server claimed the audio leaves the capture open.
+      await api(`/api/operations/${operationId}`, {method: "DELETE"}).catch(() => {});
     }
+    uploading = false; operationId = null;
+    button.disabled = false;
     await onUploaded();
   }
 
   button.addEventListener("click", async () => {
     if (recorder) { recorder.stop(); return; }
-    if (starting) return;
+    if (starting || uploading) return;
     starting = true;
     let stream;
     let context;
@@ -53,6 +90,7 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
       context?.close().catch(() => {});
     };
     try {
+      operationId = (await api("/api/operations", {method: "POST"})).id;
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       context = new AudioContext();
       source = context.createMediaStreamSource(stream);
@@ -74,7 +112,11 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
       onStatus("Recording…");
     } catch (err) {
       release();
-      onStatus(`Microphone unavailable: ${errorText(err)}`);
+      if (operationId) {
+        await api(`/api/operations/${operationId}`, {method: "DELETE"}).catch(() => {});
+        operationId = null;
+      }
+      onStatus(errorText(err));
     } finally {
       starting = false;
     }

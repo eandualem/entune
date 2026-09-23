@@ -8,8 +8,8 @@ from typing import Any
 import httpx
 import pytest
 
-from dictum.providers.base import Clip, Failure
-from dictum.providers.parakeet import FILES, MODEL, Parakeet
+from dictum.providers.contracts import Clip, Failure
+from dictum.providers.local.parakeet import FILES, MODEL, Parakeet
 from dictum.recorder import wav_bytes
 from tests.conftest import mock_client
 
@@ -57,8 +57,8 @@ def test_the_helper_answers_over_the_pipe_and_reports_a_missing_engine(tmp_path:
     clip = Clip(wav_bytes(b"\x00\x00" * 48_000, sample_rate=48_000), "audio/wav")
     result = parakeet.transcribe(clip, MODEL, "")
     assert isinstance(result, Failure) and "Could not load" in result.error
-    assert "parakeet_mlx" in result.error
-    with pytest.raises(OSError, match="parakeet_mlx"):
+    assert "mlx" in result.error
+    with pytest.raises(OSError, match="mlx"):
         parakeet.warm(MODEL)
     parakeet.remove(MODEL)  # also stops the helper
 
@@ -110,7 +110,7 @@ def test_stalled_helper_is_stopped_and_reported(
 ) -> None:
     import subprocess
 
-    from dictum.providers import parakeet as module
+    from dictum.providers.local import parakeet as module
 
     helper = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(10)"],
@@ -132,7 +132,7 @@ def test_partial_helper_answer_has_a_deadline_and_releases_the_process(
     import select
     import subprocess
 
-    from dictum.providers import parakeet as module
+    from dictum.providers.local import parakeet as module
 
     helper = subprocess.Popen(
         [sys.executable, "-c", "import sys,time; print('{', end='', flush=True); time.sleep(10)"],

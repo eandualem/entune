@@ -23,14 +23,10 @@ from typing import Any
 import httpx
 
 from dictum.audio import sniff_mime
-from dictum.providers.base import (
-    Clip,
-    Failure,
-    LocalModelStatus,
-    TranscribeResult,
-    Transcript,
-)
-from dictum.providers.local import DOWNLOAD_TIMEOUT, Download, to_wav_with_ffmpeg
+from dictum.providers.contracts import Clip, Failure, TranscribeResult, Transcript
+from dictum.providers.local.audio import to_wav_with_ffmpeg
+from dictum.providers.local.contracts import LocalModelStatus
+from dictum.providers.local.downloads import DOWNLOAD_TIMEOUT, Download
 
 MODEL = "parakeet-tdt-0.6b-v3"
 REPO = "https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3/resolve/main"
@@ -62,7 +58,6 @@ def engine_python() -> Path | None:
 class Parakeet:
     id: str = "parakeet"
     name: str = "Parakeet (local)"
-    term_limit: int | None = None  # the engine takes no vocabulary hint
 
     def __init__(
         self,
@@ -72,6 +67,7 @@ class Parakeet:
         find_engine: Any = engine_python,
     ) -> None:
         self.models_dir = models_dir
+        self._owns_client = client is None
         self._client = client or httpx.Client(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True)
         self._engine = engine
         self._find_engine = find_engine
@@ -116,9 +112,20 @@ class Parakeet:
     def remove(self, name: str) -> None:
         _check(name)
         with self._lock:
+            if self._download is not None and self._download.running:
+                raise ValueError("The model is still downloading; wait before removing it")
             self._stop_helper()
             self._download = None
             shutil.rmtree(self._dir(), ignore_errors=True)
+
+    def close(self) -> None:
+        if self._download is not None:
+            self._download.close()
+        try:
+            self.unload()
+        finally:
+            if self._owns_client:
+                self._client.close()
 
     def unload(self, keep: str | None = None) -> None:
         if keep != MODEL:
@@ -132,9 +139,7 @@ class Parakeet:
             if "error" in answer:
                 raise OSError(str(answer["error"]))
 
-    def transcribe(
-        self, clip: Clip, model: str, api_key: str, terms: tuple[str, ...] = ()
-    ) -> TranscribeResult:
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         if self.engine() is None:
             return Failure(f"Parakeet's engine is not installed. Run: {INSTALL_COMMAND}")
         if not self._ready():
@@ -142,7 +147,9 @@ class Parakeet:
         # The engine resamples properly itself; a WAV goes over as recorded.
         try:
             data = (
-                clip.data if sniff_mime(clip.data) == "audio/wav" else to_wav_with_ffmpeg(clip.data)
+                clip.data
+                if sniff_mime(clip.data) == "audio/wav"
+                else to_wav_with_ffmpeg(clip.data, sample_rate=16_000)
             )
         except Exception as exc:
             return Failure(f"Could not decode the clip: {type(exc).__name__}: {exc}")
