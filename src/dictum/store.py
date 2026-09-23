@@ -19,7 +19,7 @@ from typing import Literal
 
 from dictum.audio import extension_for, identify, webm_duration_seconds
 from dictum.dictionary_legacy import Correction as SubmittedCorrection
-from dictum.llm import LearningText
+from dictum.llm import DictionaryResult, LearningText
 from dictum.processing import Processed, Selection, Stage, interrupted
 from dictum.text_edits import Change
 
@@ -353,25 +353,21 @@ class Store:
         inputs = []
         for row in rows:
             attempt = _transcription(row)
-            records: dict[str, object] = {
-                "source": "raw_speech" if attempt.raw_text is not None else "legacy_final",
-                "attempt_id": attempt.id,
-                "created_at": attempt.created_at,
-                "delivered_text": attempt.text if attempt.processing_state == "complete" else None,
-                "processing_state": attempt.processing_state,
-                "processing": {
-                    name: asdict(stage)
-                    for name in ("correction", "cleanup", "formatting")
-                    if (stage := getattr(attempt, name)) is not None
-                },
-            }
-            inputs.append(
-                LearningText(
-                    str(attempt.id),
-                    attempt.raw_text if attempt.raw_text is not None else attempt.text or "",
-                    records,
-                )
+            if attempt.raw_text is None:
+                inputs.append(LearningText(str(attempt.id), attempt.text or "", "legacy_final"))
+                continue
+            stage = attempt.correction
+            # The dictionary step's own result, only when it ran and recorded its edits.
+            # Later stages (fillers, formatting) and delivered text never stand in for it.
+            ran = stage is not None and (
+                stage.status == "succeeded" or (stage.status == "skipped" and not stage.error)
             )
+            result = (
+                DictionaryResult(stage.changes, stage.selections or None)
+                if ran and stage is not None and stage.changes is not None
+                else None
+            )
+            inputs.append(LearningText(str(attempt.id), attempt.raw_text, "raw_speech", result))
         return inputs
 
     def finish_learning(
@@ -394,6 +390,7 @@ class Store:
             if k
             in {
                 "source",
+                "mode",
                 "scope",
                 "model",
                 "dictionaryModel",

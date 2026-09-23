@@ -142,7 +142,12 @@ def test_browser_capture_owns_operation_before_audio_and_cancel_preserves_it(
     app, _, service = configured(tmp_path)
     with TestClient(create_app(service), base_url="http://localhost") as client:
         op = client.post("/api/operations").json()["id"]
-        assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 409
+        assert (
+            client.post(
+                "/api/dictionary/build", json={"mode": "generate", "source": "history"}
+            ).status_code
+            == 409
+        )
         assert client.post("/api/operations").status_code == 409
         assert client.post(f"/api/operations/{op}/cancel").status_code == 200
         response = client.post(

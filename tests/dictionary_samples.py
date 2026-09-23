@@ -81,4 +81,4 @@ def proposed(text: str = "I use cloud code.") -> dict[str, Any]:
                     {"source": next(iter(sources([text]))), "start": start, "end": start + 10}
                 ],
             )
-    return {"groups": [record], "remove": []}
+    return {"additions": [record]}

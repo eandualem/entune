@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 
 from dictum import cleanup, formatting, prompts
-from dictum.matching import Component, Edit
+from dictum.matching import Component, Edit, Interpretation
 from dictum.text_edits import Change
 
 MODEL = "jev-1.13.0"
@@ -286,23 +286,56 @@ class Decision:
     meaning_ids: tuple[str, ...] = ()
 
 
-def decide(text: str, components: list[Component], call: Call) -> list[Decision]:
-    """Apply the top eligible interpretation, even when scores are close.
+@dataclass(frozen=True)
+class Variant:
+    """How a meaning question is posed; the default is what dictation uses.
 
-    Literal meanings compete normally. Distinct meanings never pool their scores
-    merely because they emit identical text; invalid responses fail the whole stage.
+    The alternatives exist for a controlled comparison: the whole transcript beside
+    the excerpt, and generic contrastive examples in the instructions.
     """
+
+    transcript: bool = False
+    examples: bool = False
+
+
+DEFAULT = Variant()
+
+
+@dataclass(frozen=True)
+class MeaningRequest:
+    decisions: dict[int, Decision]  # settled by code without asking
+    state: dict[str, Any]
+    questions: dict[str, Any]
+    outputs: dict[int, dict[str, str]]  # occurrence -> option -> replacement text
+    support: dict[int, dict[str, tuple[str, ...]]]  # occurrence -> option -> meaning IDs
+
+
+def _option(text: str, interpretation: Interpretation) -> str:
+    parts = []
+    for c in interpretation.choices:
+        meaning = c.meaning.meaning
+        if c.meaning.personal_context:
+            meaning += f" Personal usage: {c.meaning.personal_context}"
+        parts.append(
+            prompts.render_text(
+                "jev-meaning-option.txt",
+                recognized=text[c.match.start : c.match.end],
+                spelling=c.meaning.spelling,
+                meaning=meaning,
+            ).strip()
+        )
+    return " ".join(parts)
+
+
+def meaning_request(
+    text: str, components: list[Component], variant: Variant = DEFAULT
+) -> MeaningRequest:
+    """One focused Choice per occurrence; each option states its own meaning in full."""
     decisions: dict[int, Decision] = {}
     occurrences: dict[str, object] = {}
     questions: dict[str, Any] = {}
     outputs: dict[int, dict[str, str]] = {}
     support: dict[int, dict[str, tuple[str, ...]]] = {}
-    meanings = {
-        c.meaning.id: asdict(c.meaning)
-        for component in components
-        for plan in component.interpretations
-        for c in plan.choices
-    }
     for i, component in enumerate(components):
         raw = text[component.start : component.end]
         direct = component.direct_choice(text)
@@ -326,40 +359,38 @@ def decide(text: str, components: list[Component], call: Call) -> list[Decision]
             decisions[i] = Decision(component, None, "uncertain")
             continue
         name = f"o{i}"
-        interpretations = {}
-        question = prompts.render_json("jev-dictionary.json", occurrence=name)
+        question = prompts.render_json("jev-meaning.json", occurrence=name, recognized=raw)
+        if variant.examples:
+            question["instructions"].update(prompts.render_json("jev-meaning-examples.json"))
         outputs[i], support[i] = {}, {}
         for n, plan in enumerate(eligible):
             option = f"i{n}"
-            interpretations[option] = [
-                {
-                    "meaning_id": c.meaning.id,
-                    "start": c.match.start,
-                    "end": c.match.end,
-                    "recognized": text[c.match.start : c.match.end],
-                }
-                for c in plan.choices
-            ]
-            question["criteria"][option] = prompts.render_text(
-                "jev-interpretation.txt", occurrence=name, interpretation=option
-            )
+            question["criteria"][option] = _option(text, plan)
             outputs[i][option] = component.output(text, plan)
             support[i][option] = tuple(c.meaning.id for c in plan.choices)
-        occurrences[name] = {
-            "recognized": raw,
-            "start": component.start,
-            "end": component.end,
-            "before": text[max(0, component.start - WINDOW) : component.start],
-            "after": text[component.end : component.end + WINDOW],
-            "interpretations": interpretations,
-            "missing_definitions": len(eligible) != len(plans),
-        }
+        before = text[max(0, component.start - WINDOW) : component.start]
+        after = text[component.end : component.end + WINDOW]
+        occurrences[name] = f"{before}\u27e6{raw}\u27e7{after}"
         questions[name] = question
-    if questions:
-        answers = call.ask(
-            {"transcript": text, "meanings": meanings, "occurrences": occurrences}, questions
-        )
-        for i, values in outputs.items():
+    state: dict[str, Any] = {"occurrences": occurrences}
+    if variant.transcript:
+        state["transcript"] = text
+    return MeaningRequest(decisions, state, questions, outputs, support)
+
+
+def decide(
+    text: str, components: list[Component], call: Call, variant: Variant = DEFAULT
+) -> list[Decision]:
+    """Apply the top eligible interpretation, even when scores are close.
+
+    Literal meanings compete normally. Distinct meanings never pool their scores
+    merely because they emit identical text; invalid responses fail the whole stage.
+    """
+    request = meaning_request(text, components, variant)
+    decisions = dict(request.decisions)
+    if request.questions:
+        answers = call.ask(request.state, request.questions)
+        for i, values in request.outputs.items():
             probabilities = answers[f"o{i}"]
             option = max(probabilities, key=lambda name: probabilities[name])
             component = components[i]
@@ -367,7 +398,7 @@ def decide(text: str, components: list[Component], call: Call) -> list[Decision]
                 component,
                 Edit(component.start, component.end, values[option]),
                 "contextual",
-                support[i][option],
+                request.support[i][option],
             )
     return [decisions[i] for i in range(len(components))]
 

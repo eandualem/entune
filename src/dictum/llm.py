@@ -14,21 +14,25 @@ import json
 import re
 import uuid
 from collections.abc import Callable, Coroutine, Sequence
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import Any, Literal
 
 import httpx
 
 from dictum import dictionary as dictionary_file
-from dictum import prompts
-from dictum.dictionary import Dictionary, Groups, key
+from dictum import prompts, text_edits
+from dictum.dictionary import Dictionary, Group, Groups, key
+from dictum.processing import Selection
+from dictum.text_edits import Change
 
 # Providers we route to, with a reasonably priced model suggested first.
 LLM_PROVIDERS: dict[str, tuple[str, str]] = {
     "anthropic": ("Anthropic", "anthropic:claude-sonnet-5"),
     "openai": ("OpenAI", "openai:gpt-5.4-mini"),
 }
-MAX_OUTPUT_TOKENS = 8192
+# Thinking and reasoning tokens count toward this cap on both providers, so it leaves
+# room for a long proposal after the model has reasoned. Billing follows actual use.
+MAX_OUTPUT_TOKENS = 32_000
 MAX_TRANSCRIPTS = 300
 # A long history goes to the model in several steps, each with this much transcript,
 # so no single request runs for many minutes and the list grows step by step.
@@ -69,26 +73,74 @@ def catalog(provider: str) -> list[ModelChoice]:
     return [ModelChoice(f"{provider}:{model}", name) for model, name in _MODELS[provider]]
 
 
+Mode = Literal["generate", "refine"]
+# raw_speech: the recognizer's recorded output. legacy_final: an older attempt whose raw
+# output was not kept, so only its final text exists. temporary_audio: saved audio
+# transcribed again with the selected recognizer for this learning run.
+Kind = Literal["raw_speech", "legacy_final", "temporary_audio"]
+
+
+@dataclass(frozen=True)
+class DictionaryResult:
+    """What the dictionary step recorded for one transcript, in its raw coordinates."""
+
+    changes: tuple[Change, ...]
+    # Every matched span and what was decided; None when older records kept edits only.
+    selections: tuple[Selection, ...] | None = None
+
+
 @dataclass(frozen=True)
 class LearningText:
     id: str
     text: str
-    records: dict[str, object] = field(default_factory=dict)
+    kind: Kind = "raw_speech"
+    # Only when the dictionary step ran on this text and recorded its edits.
+    result: DictionaryResult | None = None
+
+
+@dataclass(frozen=True)
+class Snippet:
+    source: str  # stable evidence ID of this text
+    kind: Kind
+    text: str
+    result: DictionaryResult | None  # in snippet coordinates; None when unavailable
 
 
 @dataclass(frozen=True)
 class Batch:
-    snippets: tuple[str, ...]
+    snippets: tuple[Snippet, ...]
     completed: tuple[str, ...]
-    records: dict[str, dict[str, object]]
+
+
+def source_id(text: str) -> str:
+    """Evidence names a source by its text, so a stored reference stays checkable."""
+    return "s_" + hashlib.sha256(text.encode()).hexdigest()[:24]
+
+
+def _within(result: DictionaryResult, start: int, end: int) -> DictionaryResult | None:
+    """The part of a recorded result inside one snippet, or None when an edit straddles it."""
+    changes = []
+    for c in result.changes:
+        if c.start >= start and c.end <= end:
+            changes.append(replace(c, start=c.start - start, end=c.end - start))
+        elif c.start < end and c.end > start:
+            return None
+    selections = None
+    if result.selections is not None:
+        selections = []
+        for s in result.selections:
+            if s.start >= start and s.end <= end:
+                selections.append(replace(s, start=s.start - start, end=s.end - start))
+            elif s.start < end and s.end > start:
+                return None
+    return DictionaryResult(tuple(changes), None if selections is None else tuple(selections))
 
 
 def learning_batches(inputs: Sequence[LearningText]) -> list[Batch]:
     """Keep identity through splitting; only a final segment completes its source."""
     result: list[Batch] = []
-    snippets: list[str] = []
+    snippets: list[Snippet] = []
     completed: list[str] = []
-    records: dict[str, dict[str, object]] = {}
     used = 0
     for item in inputs:
         remaining = item.text.lstrip()
@@ -102,80 +154,127 @@ def learning_batches(inputs: Sequence[LearningText]) -> list[Batch]:
                 )
                 if end <= 0:
                     end = BATCH_CHARS
-            snippet, tail = remaining[:end], remaining[end:]
+            text, tail = remaining[:end], remaining[end:]
             remaining = tail.lstrip()
-            if snippets and used + len(snippet) > BATCH_CHARS:
-                result.append(Batch(tuple(snippets), tuple(completed), records))
-                snippets, completed, records, used = [], [], {}, 0
-            snippets.append(snippet)
-            used += len(snippet)
-            if item.records:
-                record = records.setdefault(item.id, {**item.records, "source_spans": []})
-                spans = record["source_spans"]
-                assert isinstance(spans, list)
-                spans.append(
-                    {
-                        "source": next(iter(sources([snippet]))),
-                        "start_in_input": offset,
-                        "end_in_input": offset + len(snippet),
-                    }
-                )
-            offset += len(snippet) + len(tail) - len(remaining)
+            if snippets and used + len(text) > BATCH_CHARS:
+                result.append(Batch(tuple(snippets), tuple(completed)))
+                snippets, completed, used = [], [], 0
+            part = item.result and _within(item.result, offset, offset + len(text))
+            snippets.append(Snippet(source_id(text), item.kind, text, part))
+            used += len(text)
+            offset += len(text) + len(tail) - len(remaining)
             if not remaining:
                 completed.append(item.id)
     if snippets:
-        result.append(Batch(tuple(snippets), tuple(completed), records))
+        result.append(Batch(tuple(snippets), tuple(completed)))
     return result
 
 
 def batches(transcripts: Sequence[str]) -> list[list[str]]:
     """Text batching helper; runtime learning retains source identities separately."""
     return [
-        list(b.snippets)
+        [s.text for s in b.snippets]
         for b in learning_batches(
             [LearningText(str(i), text) for i, text in enumerate(transcripts)]
         )
     ]
 
 
+def _dictation(snippet: Snippet, known: set[str]) -> dict[str, object]:
+    """A raw transcript beside the dictionary step's own result, never later stages."""
+    entry: dict[str, object] = {"id": snippet.source, "kind": snippet.kind, "raw": snippet.text}
+    result = snippet.result
+    if result is None:
+        entry["after_dictionary"] = None
+        return entry
+    after = text_edits.apply(snippet.text, result.changes)
+    entry["after_dictionary"] = after
+    if result.selections is None:
+        decisions = [
+            {"start": c.start, "end": c.end, "recognized": c.before, "result": c.after}
+            for c in result.changes
+        ]
+    else:
+        decisions = []
+        for s in result.selections:
+            inside = tuple(
+                replace(c, start=c.start - s.start, end=c.end - s.start)
+                for c in result.changes
+                if c.start >= s.start and c.end <= s.end
+            )
+            decision: dict[str, object] = {
+                "start": s.start,
+                "end": s.end,
+                "recognized": snippet.text[s.start : s.end],
+                "result": text_edits.apply(snippet.text[s.start : s.end], inside),
+                "method": s.method,
+                "meaning_ids": list(s.meaning_ids),
+            }
+            if removed := [m for m in s.meaning_ids if m not in known]:
+                decision["meanings_no_longer_in_dictionary"] = removed
+            decisions.append(decision)
+    entry["decisions"] = decisions
+    return entry
+
+
+def _lines(items: Sequence[object]) -> str:
+    """A JSON array with one item per line: compact, and easy to scan."""
+    if not items:
+        return "[]"
+    return "[\n" + ",\n".join(json.dumps(i, ensure_ascii=False) for i in items) + "\n]"
+
+
+def compact(group: Group) -> dict[str, Any]:
+    """A group without default-valued fields; parsing restores the defaults."""
+    data = group.as_json()
+    if not data["needs_review"]:
+        del data["needs_review"]
+    for form in data["recognized_forms"]:
+        if form["direct"] is None:
+            del form["direct"], form["direct_reason"]
+    return data
+
+
 def build_user_prompt(
+    mode: Mode,
     current: Dictionary,
-    transcripts: Sequence[str],
+    snippets: Sequence[Snippet],
     speech_model: str,
-    proposed: Groups | None = None,
-    step: tuple[int, int] = (1, 1),
-    records: dict[str, dict[str, object]] | None = None,
+    working: Groups | None = None,
 ) -> str:
-    """One step's evidence and the working dictionary after all earlier edits."""
-    number, count = step
+    """The task, the dictionary it builds on, and this step's sources."""
+    groups = current.effective(speech_model) if working is None else working
+    pinned = sorted({m.id for g in current.pinned for m in g.meanings})
+    dictionary = (
+        f"pinned_meaning_ids: {json.dumps(pinned)}\ngroups:\n{_lines([compact(g) for g in groups])}"
+    )
+    if mode == "generate":
+        entries: list[dict[str, object]] = [
+            {"id": s.source, "kind": s.kind, "text": s.text} for s in snippets
+        ]
+    else:
+        known = {m.id for g in groups for m in g.meanings}
+        entries = [_dictation(s, known) for s in snippets]
     return prompts.render_text(
-        "dictionary-user.txt",
-        pinned=json.dumps([e.as_json() for e in current.pinned], ensure_ascii=False),
-        number=str(number),
-        count=str(count),
+        f"dictionary-{mode}-user.txt",
         speech_model=speech_model,
-        learned=json.dumps(
-            [
-                e.as_json()
-                for e in (current.effective(speech_model) if proposed is None else proposed)
-            ],
-            ensure_ascii=False,
-        ),
-        transcript_count=str(len(transcripts)),
-        transcripts=json.dumps(sources(transcripts), ensure_ascii=False),
-        records=json.dumps(records or {}, ensure_ascii=False),
+        dictionary=dictionary,
+        sources=_lines(entries),
+    )
+
+
+def system_prompt(mode: Mode) -> str:
+    return prompts.render_text(
+        f"dictionary-{mode}-system.txt", foundation=prompts.text("dictionary-foundation.txt")
     )
 
 
 def sources(transcripts: Sequence[str]) -> dict[str, str]:
     """Stable snippet references; only hashes/offsets survive normal audio builds."""
-    return {"s_" + hashlib.sha256(text.encode()).hexdigest()[:24]: text for text in transcripts}
+    return {source_id(text): text for text in transcripts}
 
 
-def parse_reply(
-    content: str, proposed: Groups = (), *, transcripts: Sequence[str] = (), pinned: Groups = ()
-) -> Groups:
-    """Validate provenance and apply explicit group revisions without discarding meanings."""
+def _reply(content: str, fields: set[str]) -> dict[str, Any]:
     text = content.strip()
     fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.DOTALL)
     if fenced:
@@ -184,16 +283,67 @@ def parse_reply(
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ValueError(f"The model's JSON did not parse: {exc.msg}") from None
-    if not isinstance(data, dict) or set(data) != {"groups", "remove"}:
-        raise ValueError("The model must return groups and remove lists")
-    revised = dictionary_file.parse_groups(data["groups"], "the model's reply")
-    removed = data["remove"]
+    if not isinstance(data, dict) or set(data) != fields:
+        raise ValueError(f"The reply must contain exactly {', '.join(sorted(fields))}")
+    return data
+
+
+def parse_generation(
+    content: str, proposed: Groups = (), *, transcripts: Sequence[str] = (), pinned: Groups = ()
+) -> Groups:
+    """Generation only adds: new groups, which may link forms to existing meanings."""
+    data = _reply(content, {"additions"})
+    additions = dictionary_file.parse_groups(data["additions"], "additions")
+    existing = {g.id for g in (*pinned, *proposed)}
+    meanings = {m.id for g in (*pinned, *proposed) for m in g.meanings}
+    if any(g.id in existing for g in additions):
+        raise ValueError("Generation adds new groups only; it cannot revise existing ones")
+    if any(m.id in meanings for g in additions for m in g.meanings):
+        raise ValueError(
+            "Generation cannot redefine an existing meaning; link a form to its ID instead"
+        )
+    return _apply(proposed, additions, [], transcripts, pinned)
+
+
+def parse_refinement(
+    content: str, proposed: Groups = (), *, transcripts: Sequence[str] = (), pinned: Groups = ()
+) -> Groups:
+    """Explicit additions, complete revisions of named groups, and learned-group removals."""
+    data = _reply(content, {"additions", "revisions", "removals"})
+    additions = dictionary_file.parse_groups(data["additions"], "additions")
+    revisions = dictionary_file.parse_groups(data["revisions"], "revisions")
+    existing = {g.id for g in (*pinned, *proposed)}
+    if any(g.id in existing for g in additions):
+        raise ValueError("An addition needs a new_ group ID; revise existing groups instead")
+    if unknown := [g.id for g in revisions if g.id not in existing]:
+        raise ValueError(f"Revisions must name existing groups: {', '.join(unknown)}")
+    removals = data["removals"]
+    if not isinstance(removals, list) or not all(isinstance(v, str) for v in removals):
+        raise ValueError("removals must list group IDs")
+    protected = {m.id for g in pinned for m in g.meanings}
+    for identity in removals:
+        group = next((g for g in proposed if g.id == identity), None)
+        if group is None:
+            raise ValueError(f"removals must name existing learned groups: {identity}")
+        if any(m.id in protected for m in group.meanings):
+            raise ValueError("Pinned groups cannot be removed")
+    if len({g.id for g in (*additions, *revisions)} | set(removals)) != len(additions) + len(
+        revisions
+    ) + len(removals):
+        raise ValueError("Name each group once across additions, revisions and removals")
+    return _apply(proposed, (*additions, *revisions), removals, transcripts, pinned)
+
+
+def _apply(
+    proposed: Groups,
+    revised: Groups,
+    removed: list[str],
+    transcripts: Sequence[str],
+    pinned: Groups,
+) -> Groups:
+    """Validate provenance and apply explicit group changes without discarding meanings."""
     old = {g.id: g for g in pinned}
     old.update({g.id: g for g in proposed})
-    if not isinstance(removed, list) or not all(isinstance(v, str) and v in old for v in removed):
-        raise ValueError("remove must name existing learned group IDs")
-    if set(removed) & {g.id for g in revised}:
-        raise ValueError("A group cannot be revised and removed together")
     known_groups = set(old)
     known_meanings = {m.id: m for g in old.values() for m in g.meanings}
     known_links: dict[tuple[str, str], list[dictionary_file.Association]] = {}
@@ -427,6 +577,11 @@ def _anthropic_text(events: list[dict[str, Any]]) -> str:
                 parts.append(event["delta"]["text"])
         elif kind == "message_delta":
             stop_reason = event.get("delta", {}).get("stop_reason")
+    if stop_reason == "max_tokens":
+        raise ValueError(
+            f"The reply reached the {MAX_OUTPUT_TOKENS}-token output limit, which includes"
+            " thinking; nothing from this step was used"
+        )
     if stop_reason != "end_turn":
         raise ValueError(f"The model did not finish its reply: stop_reason {stop_reason!r}")
     return "".join(parts)
@@ -441,6 +596,13 @@ def _openai_text(events: list[dict[str, Any]]) -> str:
             raise ValueError(f"The model reported an error: {json.dumps(event)}")
         if kind in ("response.completed", "response.failed", "response.incomplete"):
             final = event.get("response", {})
+    if final is not None and (final.get("incomplete_details") or {}).get("reason") == (
+        "max_output_tokens"
+    ):
+        raise ValueError(
+            f"The reply reached the {MAX_OUTPUT_TOKENS}-token output limit, which includes"
+            " reasoning; nothing from this step was used"
+        )
     if final is None or final.get("status") != "completed":
         raise ValueError(f"The model did not finish its reply: {json.dumps(final)[:2000]}")
     blocks = [
@@ -461,18 +623,18 @@ async def propose_learned(
     speech_model: str,
     call: Caller = call_model,
     *,
+    mode: Mode,
     progress: Callable[[int, int, int], None] | None = None,
     inputs: Sequence[LearningText] | None = None,
     checkpoint: Callable[[Groups, int, int, tuple[str, ...]], None] | None = None,
     working: Groups | None = None,
     resume: int = 0,
 ) -> Groups:
-    """Ask the model for a new `learned` section for `speech_model`, from its transcripts.
+    """Propose `speech_model`'s dictionary in the chosen mode, one bounded step at a time.
 
-    A long history goes in steps (`batches`), each seeing what the earlier steps
-    changed; each step may add, revise or remove learned entries. Raises ValueError
-    carrying the provider's or the model's own words
-    when a step fails; the checkpoint retains only fully validated completed batches.
+    Each step sees the working dictionary after the earlier steps' changes. Step numbers
+    stay in the app for progress and resume. Raises ValueError carrying the provider's or
+    the model's own words when a step fails; the checkpoint keeps only validated steps.
     """
     current = dictionary_file.share(current, set())
     proposed = current.effective(speech_model) if working is None else working
@@ -481,21 +643,23 @@ async def propose_learned(
         if inputs is not None
         else [LearningText(str(i), text) for i, text in enumerate(transcripts)]
     )
+    parse = parse_generation if mode == "generate" else parse_refinement
     for number, step in enumerate(steps, 1):
         if number <= resume:
             continue
         await asyncio.sleep(0)  # cancellation between chunks even for immediate test callers
-        user_prompt = build_user_prompt(
-            current, step.snippets, speech_model, proposed, (number, len(steps)), step.records
-        )
-        system_prompt = prompts.text("dictionary-system.txt")
+        user_prompt = build_user_prompt(mode, current, step.snippets, speech_model, proposed)
+        system = system_prompt(mode)
         if progress:
-            progress(number, len(steps), len(system_prompt) + len(user_prompt))
+            progress(number, len(steps), len(system) + len(user_prompt))
         try:
             async with asyncio.timeout(1200):
-                reply = await call(provider, api_key, model, system_prompt, user_prompt)
-            proposed = parse_reply(
-                reply, proposed, transcripts=step.snippets, pinned=current.pinned
+                reply = await call(provider, api_key, model, system, user_prompt)
+            proposed = parse(
+                reply,
+                proposed,
+                transcripts=[s.text for s in step.snippets],
+                pinned=current.pinned,
             )
             if checkpoint:
                 checkpoint(proposed, number, len(steps), step.completed)

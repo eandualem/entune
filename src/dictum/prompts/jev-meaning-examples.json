@@ -1,0 +1,8 @@
+{
+  "examples": [
+    {"text": "Ask ⟦cloud⟧ to draft a reply to the customer.", "options": ["cloud means Claude: an AI assistant people ask to write, summarize or code.", "cloud means cloud: computing and storage services reached over the internet."], "answer": "cloud means Claude: an AI assistant people ask to write, summarize or code."},
+    {"text": "The photos sync to the ⟦cloud⟧ every night.", "options": ["cloud means Claude: an AI assistant people ask to write, summarize or code.", "cloud means cloud: computing and storage services reached over the internet."], "answer": "cloud means cloud: computing and storage services reached over the internet."},
+    {"text": "Parse the ⟦jason⟧ that the API returns.", "options": ["jason means JSON: a text format for structured data.", "jason means Jason: a person's given name."], "answer": "jason means JSON: a text format for structured data."},
+    {"text": "⟦Jason⟧ from finance approved the budget.", "options": ["Jason means JSON: a text format for structured data.", "Jason means Jason: a person's given name."], "answer": "Jason means Jason: a person's given name."}
+  ]
+}
