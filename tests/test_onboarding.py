@@ -38,11 +38,11 @@ def test_wispr_snapshot_reads_committed_wal_and_ignores_later_writes(tmp_path: P
     assert source.with_suffix(".sqlite-wal").stat().st_size > 0
     clips = onboarding.wispr_audio(source)
     try:
-        assert next(clips) == ("wispr-0.wav", b"first")
+        assert next(clips) == ("wispr-0.wav", b"first", "1970-01-01T00:00:00.000Z")
         writer.execute("UPDATE History SET audio = 'changed' WHERE transcriptEntityId = '1'")
         writer.execute("INSERT INTO History VALUES ('2', 2, 'later', 'private')")
         writer.commit()
-        assert list(clips) == [("wispr-1.wav", b"second")]
+        assert list(clips) == [("wispr-1.wav", b"second", "1970-01-01T00:00:01.000Z")]
     finally:
         clips.close()
         writer.close()
@@ -79,8 +79,19 @@ def test_import_upload_validates_audio_and_survives_restart(tmp_path: Path) -> N
         assert response.status_code == 400
     audio = wav_bytes(b"\x00\x00" * 16)
     for expected in (True, False):
-        response = client.post("/api/dictionary/audio", files={"audio": ("clip.wav", audio)})
+        response = client.post(
+            "/api/dictionary/audio",
+            files={"audio": ("clip.wav", audio)},
+            data={"modified": "1780300800000"},  # the folder file's modification time
+        )
         assert response.json() == {"added": expected}
+    (item,) = client.get("/api/dictionary/audio").json()["items"]
+    assert item["source"] == "folder" and item["created_at"] == "2026-06-01T08:00:00.000Z"
+    played = client.get(f"/api/dictionary/audio/{item['id']}/file")
+    assert played.status_code == 200 and played.content == audio
+    assert played.headers["content-type"] == "audio/wav"
+    for unknown in ("0" * 64, "recording:1"):
+        assert client.get(f"/api/dictionary/audio/{unknown}/file").status_code == 404
     store.close()
     reopened = Store(tmp_path)
     try:
@@ -216,3 +227,59 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
     assert client.get("/api/dictionary/audio").json()["count"] == 1
     assert client.get("/api/dictionary/audio").json()["seconds"] > 0
     assert store.list_recordings() == []
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("2026-06-01 09:30:00.123 +00:00", "2026-06-01T09:30:00.123Z"),
+        ("2026-06-01T09:30:00Z", "2026-06-01T09:30:00.000Z"),
+        ("2026-06-01 12:30:00", "2026-06-01T12:30:00.000Z"),
+        (1780300800000, "2026-06-01T08:00:00.000Z"),
+        (1780300800, "2026-06-01T08:00:00.000Z"),
+        ("not a date", None),
+        (None, None),
+        (True, None),
+    ],
+)
+def test_source_recording_times_become_utc_or_none(value: object, expected: str | None) -> None:
+    assert onboarding.recorded_at(value) == expected
+
+
+def test_reimporting_saved_audio_adds_a_missing_date_only(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        audio = wav_bytes(b"\x00\x00" * 16)
+        assert store.import_dictionary_audio(audio, "old.wav", "audio/wav") is True
+        assert store.dictionary_audio()[0].created_at is None
+        dated = "2026-06-01T08:00:00.000Z"
+        assert store.import_dictionary_audio(audio, "old.wav", "audio/wav", dated) is False
+        assert store.import_dictionary_audio(audio, "old.wav", "audio/wav", "2027-01-01") is False
+        (saved,) = store.dictionary_audio()
+        assert saved.created_at == dated
+        assert store.dictionary_audio_path(saved).read_bytes() == audio
+    finally:
+        store.close()
+
+
+def test_import_source_is_recorded_not_inferred_from_the_file_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    client = TestClient(create_app(Dictum(store, [])), base_url="http://localhost")
+    root = tmp_path / "wispr"
+    root.mkdir()
+    flow = flow_db(root / "flow.sqlite", [wav_bytes(b"\x02\x00" * 16)])
+    monkeypatch.setattr(onboarding, "wispr_directory", lambda: root)
+    try:
+        folder_file = wav_bytes(b"\x01\x00" * 16)
+        client.post("/api/dictionary/audio", files={"audio": ("wispr-looking.wav", folder_file)})
+        client.post("/api/dictionary/audio/wispr")
+        items = client.get("/api/dictionary/audio").json()["items"]
+        assert {i["name"]: i["source"] for i in items} == {
+            "wispr-looking.wav": "folder",
+            "wispr-0.wav": "wispr",
+        }
+    finally:
+        flow.close()
+        store.close()

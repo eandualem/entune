@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS learning_coverage (
 # Columns added after the first release; applied to databases that predate them.
 MIGRATIONS = [
     ("recordings", "notice", "ALTER TABLE recordings ADD COLUMN notice TEXT"),
+    ("dictionary_audio", "created_at", "ALTER TABLE dictionary_audio ADD COLUMN created_at TEXT"),
+    ("dictionary_audio", "source", "ALTER TABLE dictionary_audio ADD COLUMN source TEXT"),
     ("transcriptions", "raw_text", "ALTER TABLE transcriptions ADD COLUMN raw_text TEXT"),
     ("transcriptions", "audio_seconds", "ALTER TABLE transcriptions ADD COLUMN audio_seconds REAL"),
     (
@@ -159,6 +161,7 @@ class DictionaryAudio:
     mime: str
     seconds: float | None = None
     created_at: str | None = None
+    source: str | None = None  # "wispr" or "folder"; None for imports made before it was kept
 
 
 def _now() -> str:
@@ -247,8 +250,17 @@ class Store:
     def dictionary_audio_path(self, audio: DictionaryAudio) -> Path:
         return self.data_dir / "dictionary-audio" / f"{audio.id}.{extension_for(audio.mime)}"
 
-    def import_dictionary_audio(self, data: bytes, name: str, mime: str) -> bool:
-        """Keep original audio outside history. Return whether it was newly imported."""
+    def import_dictionary_audio(
+        self,
+        data: bytes,
+        name: str,
+        mime: str,
+        created_at: str | None = None,
+        source: str = "folder",
+    ) -> bool:
+        """Keep original audio outside history. Return whether it was newly imported.
+
+        `created_at` is when the audio was recorded, when its source says so."""
         audio = DictionaryAudio(hashlib.sha256(data).hexdigest(), Path(name).name, mime)
         path = self.dictionary_audio_path(audio)
         with self._lock, self._db:
@@ -260,6 +272,12 @@ class Store:
                 and path.is_file()
                 and hashlib.sha256(path.read_bytes()).hexdigest() == audio.id
             ):
+                # Imports made before dates were kept learn them now; audio is untouched.
+                self._db.execute(
+                    "UPDATE dictionary_audio SET created_at = ?"
+                    " WHERE id = ? AND created_at IS NULL",
+                    (created_at, audio.id),
+                )
                 return False
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             temporary = path.with_suffix(".tmp")
@@ -268,8 +286,9 @@ class Store:
                 temporary.chmod(0o600)
                 temporary.replace(path)
                 self._db.execute(
-                    "INSERT OR IGNORE INTO dictionary_audio (id, name, mime) VALUES (?, ?, ?)",
-                    (audio.id, audio.name, audio.mime),
+                    "INSERT OR IGNORE INTO dictionary_audio (id, name, mime, created_at, source)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (audio.id, audio.name, audio.mime, created_at, source),
                 )
             finally:
                 temporary.unlink(missing_ok=True)
@@ -278,9 +297,14 @@ class Store:
     def dictionary_audio(self) -> list[DictionaryAudio]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT id, name, mime FROM dictionary_audio ORDER BY rowid"
+                "SELECT id, name, mime, created_at, source FROM dictionary_audio ORDER BY rowid"
             ).fetchall()
-        return [DictionaryAudio(row["id"], row["name"], row["mime"]) for row in rows]
+        return [
+            DictionaryAudio(
+                row["id"], row["name"], row["mime"], None, row["created_at"], row["source"]
+            )
+            for row in rows
+        ]
 
     def learning_audio(self) -> list[tuple[DictionaryAudio, Path]]:
         """Saved recordings and retained imports; generated learning text is never stored."""

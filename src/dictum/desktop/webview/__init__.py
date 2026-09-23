@@ -34,7 +34,17 @@ INDICATOR: dict[State, str] = {
     "learning": "Learning…",
     "review": "Learning: apply or discard proposal",
 }
-WIDTH, HEIGHT = 880, 640
+# Room for the Dictionary page and its audio dialog; smaller screens get most of their
+# visible area instead.
+WIDTH, HEIGHT = 1120, 800
+
+
+def _window_size() -> tuple[int, int]:
+    try:
+        screen = webview.screens[0]
+        return min(WIDTH, int(screen.width * 0.92)), min(HEIGHT, int(screen.height * 0.88))
+    except Exception:  # no screen information: the defaults still fit common displays
+        return WIDTH, HEIGHT
 
 
 def _on_ui_thread(action: Callable[[], None]) -> None:
@@ -207,11 +217,12 @@ class _Window:
         self._destroying = False
 
     def create(self) -> None:
+        width, height = _window_size()
         self._window = webview.create_window(
             "Dictum",
             self.url,
-            width=WIDTH,
-            height=HEIGHT,
+            width=width,
+            height=height,
             min_size=(560, 400),
             hidden=True,
             frameless=sys.platform == "darwin",
