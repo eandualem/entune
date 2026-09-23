@@ -280,22 +280,24 @@ class Entune:
     def reset_data(self) -> dict[str, list[str]]:
         """Delete everything Entune keeps locally and continue with an empty folder.
 
-        Refused while a dictation, suggestion run or model download is under way. New
-        operations wait until it is done; local models are unloaded before their files go."""
-        with self.operations.idle():
+        Refused while a dictation, suggestion run or model download is under way; a
+        refusal changes nothing. New operations wait until it is done. Locks are taken
+        in the order suggestion runs take them: builds, operations, then the dictionary.
+        Local models are unloaded, not removed through their providers, so a models
+        folder that is a link is unlinked by the store rather than followed."""
+        with self._builds.idle(), self.operations.idle(), self._speech.use(None):
+            if any(status.state == "downloading" for status in self.local_models()):
+                raise ValueError("A model is still downloading; wait for it to finish first.")
             self._builds.forget()
             self._speech.select(None)
-            with self._speech.use(None):
-                if any(status.state == "downloading" for status in self.local_models()):
-                    raise ValueError("A model is still downloading; wait for it to finish first.")
-                for provider in self.providers:
-                    if isinstance(provider, Downloadable):
-                        for status in provider.catalogue():
-                            provider.remove(status.name)
-                        provider.unload()
+            for provider in self.providers:
+                if isinstance(provider, Downloadable):
+                    provider.unload()
+            try:
                 with self._dictionary_lock:
                     deleted, kept = self.store.reset()
-        self._changed()
+            finally:
+                self._changed()
         return {"deleted": deleted, "kept": kept}
 
     def metrics(self) -> list[ModelMetrics]:

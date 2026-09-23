@@ -266,17 +266,20 @@ class Store:
         with self._lock:
             self._db.close()
             ours, others = self.managed()
-            for path in ours:
-                if path.name == LOG and path.is_file() and not path.is_symlink():
-                    with path.open("r+b") as log:
-                        log.truncate(0)
-                elif path.is_dir() and not path.is_symlink():
-                    shutil.rmtree(path)
-                else:
-                    path.unlink(missing_ok=True)
-            self._durations.clear()
-            self._history_epoch = uuid.uuid4().hex
-            self._open()
+            try:
+                for path in ours:
+                    if path.name == LOG and path.is_file() and not path.is_symlink():
+                        with path.open("r+b") as log:
+                            log.truncate(0)
+                    elif path.is_dir() and not path.is_symlink():
+                        shutil.rmtree(path)
+                    else:
+                        path.unlink(missing_ok=True)
+            finally:
+                # Even after a failed deletion the store stays usable, on what is left.
+                self._durations.clear()
+                self._history_epoch = uuid.uuid4().hex
+                self._open()
         return [path.name for path in ours], [path.name for path in others]
 
     # Settings
