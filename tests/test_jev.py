@@ -22,7 +22,7 @@ from entune.processing.pipeline import process_text
 from entune.processing.results import Processed
 from entune.server import create_app
 from entune.service import Entune
-from entune.store import Store
+from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
 from tests.dictionary_samples import JEV, group
 from tests.test_server import StubProvider

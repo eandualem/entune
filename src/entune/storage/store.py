@@ -8,163 +8,28 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import sqlite3
 import threading
 import uuid
 import wave
-from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from dataclasses import asdict
 from pathlib import Path
-from typing import Literal
 
 from entune.audio.formats import extension_for, identify, webm_duration_seconds
 from entune.dictionary.corrections import Correction as SubmittedCorrection
 from entune.learning.inputs import DictionaryResult, LearningText
-from entune.processing.results import Processed, Selection, Stage, interrupted
-from entune.processing.text_edits import Change
-
-Status = Literal["ok", "error"]
-
-# Counters from an earlier processing design, still present in databases made then;
-# they are ignored when rows are read.
-OBSOLETE_COLUMNS = ("jev_seconds", "jev_fixed", "jev_kept", "jev_error")
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS recordings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TEXT NOT NULL,
-    file TEXT NOT NULL,
-    mime TEXT NOT NULL,
-    notice TEXT
-);
-CREATE TABLE IF NOT EXISTS transcriptions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    recording_id INTEGER NOT NULL REFERENCES recordings(id),
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('ok', 'error')),
-    text TEXT,
-    error TEXT,
-    created_at TEXT NOT NULL,
-    raw_text TEXT,
-    audio_seconds REAL,
-    elapsed_seconds REAL,
-    fast INTEGER NOT NULL DEFAULT 0,
-    correction TEXT,
-    formatting TEXT,
-    cleanup TEXT,
-    processing_state TEXT NOT NULL DEFAULT 'complete'
-);
-CREATE INDEX IF NOT EXISTS transcriptions_by_recording ON transcriptions(recording_id);
-CREATE TABLE IF NOT EXISTS corrections (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TEXT NOT NULL,
-    heard TEXT NOT NULL,
-    meant TEXT,
-    source TEXT
-);
-CREATE TABLE IF NOT EXISTS dictionary_audio (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    mime TEXT NOT NULL,
-    created_at TEXT,
-    source TEXT
-);
-CREATE TABLE IF NOT EXISTS learning_runs (
-    id TEXT PRIMARY KEY,
-    model TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    outcome TEXT NOT NULL,
-    details TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS learning_coverage (
-    model TEXT NOT NULL,
-    source TEXT NOT NULL,
-    input_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    PRIMARY KEY (model, source, input_id)
-);
-"""
-
-
-@dataclass(frozen=True)
-class Transcription:
-    id: int
-    recording_id: int
-    provider: str
-    model: str
-    status: Status
-    text: str | None
-    error: str | None
-    created_at: str
-    raw_text: str | None = None  # what the provider returned, before the dictionary
-    audio_seconds: float | None = None  # how long the clip is, when its container says
-    elapsed_seconds: float | None = None  # how long the provider took to answer
-    fast: bool = False  # transcribed from fast mode's stream (issue #20)
-    correction: Stage | None = None
-    formatting: Stage | None = None
-    cleanup: Stage | None = None
-    # Preserve old recorded metrics without treating them as trustworthy stage outcomes.
-    processing_state: str = "complete"
-
-
-@dataclass(frozen=True)
-class Correction:
-    """One entry an agent sent and Entune pinned: a term (no `meant`) or a replacement."""
-
-    id: int
-    created_at: str
-    heard: str
-    meant: str | None
-    source: str | None
-
-
-@dataclass(frozen=True)
-class Recording:
-    id: int
-    created_at: str
-    file: str
-    mime: str
-    transcriptions: list[Transcription] = field(default_factory=list)
-    notice: str | None = None
-
-
-@dataclass(frozen=True)
-class DictionaryAudio:
-    id: str  # SHA-256 of the original bytes; repeated imports share one copy
-    name: str
-    mime: str
-    seconds: float | None = None
-    created_at: str | None = None
-    source: str | None = None  # "wispr" or "folder"; None for imports made before it was kept
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-
-# What a data reset deletes: the database, audio, imported audio, the dictionary and
-# its automatic copies, downloaded models, the backups folder and the log (emptied).
-# A copy of the dictionary from its earlier format may still be there too. Nothing else
-# is touched.
-MANAGED = frozenset(
-    {
-        *(f"entune.db{suffix}" for suffix in ("", "-wal", "-shm", "-journal")),
-        "audio",
-        "dictionary-audio",
-        "dictionary.json",
-        "dictionary.json.tmp",
-        "models",
-        "backups",
-    }
+from entune.processing.results import Processed, Stage, interrupted
+from entune.storage import data_folder
+from entune.storage.records import (
+    Correction,
+    DictionaryAudio,
+    Recording,
+    Status,
+    Transcription,
+    now,
+    transcription_from_row,
 )
-MANAGED_PATTERNS = ("dictionary.pre-v2-*.json",)
-LOG = "entune.log"
+from entune.storage.schema import SCHEMA
 
 
 class Store:
@@ -186,7 +51,7 @@ class Store:
             " OR json_extract(formatting, '$.status') = 'pending'"
         ).fetchall()
         for row in rows:
-            attempt = _transcription(row)
+            attempt = transcription_from_row(row)
             if attempt.correction is not None:
                 initial = Processed(
                     attempt.text or "",
@@ -214,17 +79,7 @@ class Store:
 
     def managed(self) -> tuple[list[Path], list[Path]]:
         """Entune's own items in the data folder, then anything else found there."""
-        ours: list[Path] = []
-        others: list[Path] = []
-        if self.data_dir.is_dir():
-            for path in sorted(self.data_dir.iterdir()):
-                owned = (
-                    path.name in MANAGED
-                    or path.name == LOG
-                    or any(path.match(pattern) for pattern in MANAGED_PATTERNS)
-                )
-                (ours if owned else others).append(path)
-        return ours, others
+        return data_folder.inventory(self.data_dir)
 
     def reset(self) -> tuple[list[str], list[str]]:
         """Delete every Entune item in the data folder and start an empty database.
@@ -236,14 +91,7 @@ class Store:
             ours, others = self.managed()  # before closing: a listing error changes nothing
             self._db.close()
             try:
-                for path in ours:
-                    if path.name == LOG and path.is_file() and not path.is_symlink():
-                        with path.open("r+b") as log:
-                            log.truncate(0)
-                    elif path.is_dir() and not path.is_symlink():
-                        shutil.rmtree(path)
-                    else:
-                        path.unlink(missing_ok=True)
+                data_folder.delete(ours)
             finally:
                 # Even after a failed deletion the store stays usable, on what is left.
                 self._durations.clear()
@@ -278,7 +126,7 @@ class Store:
         """Store a clip. The container is read from the bytes; `label` is only a fallback."""
         mime = identify(data, label)
         file = f"{uuid.uuid4()}.{extension_for(mime)}"
-        created_at = _now()
+        created_at = now()
         # The file and its row are written together, so a reset never splits them.
         with self._lock, self._db:
             (self.audio_dir / file).write_bytes(data)
@@ -417,7 +265,7 @@ class Store:
             rows = self._db.execute(query, params).fetchall()
         inputs = []
         for row in rows:
-            attempt = _transcription(row)
+            attempt = transcription_from_row(row)
             if attempt.raw_text is None:
                 inputs.append(LearningText(str(attempt.id), attempt.text or "", "legacy_final"))
                 continue
@@ -471,7 +319,7 @@ class Store:
         with self._lock, self._db:
             self._db.execute(
                 "INSERT OR REPLACE INTO learning_runs VALUES (?, ?, ?, ?, ?)",
-                (run_id, model, _now(), outcome, json.dumps(details)),
+                (run_id, model, now(), outcome, json.dumps(details)),
             )
             if applied:
                 self._db.executemany(
@@ -514,7 +362,7 @@ class Store:
                     status,
                     text,
                     error,
-                    _now(),
+                    now(),
                     raw_text,
                     audio_seconds,
                     elapsed_seconds,
@@ -570,7 +418,7 @@ class Store:
             rows = self._db.execute(
                 "SELECT * FROM transcriptions WHERE elapsed_seconds IS NOT NULL ORDER BY id"
             ).fetchall()
-        return [_transcription(row) for row in rows]
+        return [transcription_from_row(row) for row in rows]
 
     def processed_transcriptions(self) -> list[Transcription]:
         """Attempts with independent processing outcomes."""
@@ -578,7 +426,7 @@ class Store:
             rows = self._db.execute(
                 "SELECT * FROM transcriptions WHERE correction IS NOT NULL ORDER BY id"
             ).fetchall()
-        return [_transcription(row) for row in rows]
+        return [transcription_from_row(row) for row in rows]
 
     def get_recording(self, recording_id: int) -> Recording | None:
         with self._lock:
@@ -621,7 +469,7 @@ class Store:
             ).fetchall()
         grouped: dict[int, list[Transcription]] = {}
         for attempt in attempts:
-            grouped.setdefault(attempt["recording_id"], []).append(_transcription(attempt))
+            grouped.setdefault(attempt["recording_id"], []).append(transcription_from_row(attempt))
         return [Recording(**dict(row), transcriptions=grouped.get(row["id"], [])) for row in rows]
 
     def recent_transcripts(self, provider: str, model: str, limit: int) -> list[str]:
@@ -647,7 +495,7 @@ class Store:
         with self._lock, self._db:
             self._db.executemany(
                 "INSERT INTO corrections (created_at, heard, meant, source) VALUES (?, ?, ?, ?)",
-                [(_now(), heard, meant, source) for heard, meant in rows],
+                [(now(), heard, meant, source) for heard, meant in rows],
             )
 
     def list_corrections(self, limit: int = 100) -> list[Correction]:
@@ -667,28 +515,5 @@ class Store:
             file=row["file"],
             mime=row["mime"],
             notice=row["notice"],
-            transcriptions=[_transcription(a) for a in attempts],
+            transcriptions=[transcription_from_row(a) for a in attempts],
         )
-
-
-def _transcription(row: sqlite3.Row) -> Transcription:
-    fields = dict(row)
-    fields["fast"] = bool(fields.get("fast", 0))
-    for name in ("correction", "formatting", "cleanup"):
-        value = fields[name]
-        if value:
-            stage = json.loads(value)
-            changes = stage.get("changes")
-            stage["changes"] = (
-                tuple(Change(**change) for change in changes) if changes is not None else None
-            )
-            stage["selections"] = tuple(
-                Selection(**{**selection, "meaning_ids": tuple(selection["meaning_ids"])})
-                for selection in stage.get("selections", ())
-            )
-            fields[name] = Stage(**stage)
-        else:
-            fields[name] = None
-    for name in OBSOLETE_COLUMNS:
-        fields.pop(name, None)
-    return Transcription(**fields)

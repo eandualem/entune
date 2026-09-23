@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from entune import paths
+from entune.storage import paths
 
 
 def test_entune_data_overrides_the_platform_folder(

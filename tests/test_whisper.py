@@ -204,7 +204,7 @@ def test_rapid_selection_changes_coalesce_to_the_latest_model(
     import threading
 
     from entune.service import Entune
-    from entune.store import Store
+    from entune.storage.store import Store
 
     for name in ("base.en", "small.en"):
         (tmp_path / f"ggml-{name}.bin").write_bytes(b"model")

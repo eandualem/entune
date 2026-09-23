@@ -115,7 +115,7 @@ def test_raw_speech_is_saved_before_unload_or_processing_can_fail(
 ) -> None:
     from entune.providers.contracts import Transcript
     from entune.service import Entune
-    from entune.store import Store
+    from entune.storage.store import Store
     from tests.conftest import WEBM_HEADER
 
     local = WhisperCpp(tmp_path)
