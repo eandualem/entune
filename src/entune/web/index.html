@@ -69,49 +69,29 @@
 
       <section class="view" id="view-dictionary" role="tabpanel">
         <div class="dict">
-          <div class="dict-bar">
-            <div class="segmented" role="tablist" aria-label="Show">
-              <button type="button" role="tab" id="filter-all" aria-selected="true">All</button>
-              <button type="button" role="tab" id="filter-pinned" aria-selected="false">Pinned</button>
-              <button type="button" role="tab" id="filter-learned" aria-selected="false">Learned</button>
-            </div>
-            <button type="button" class="btn ghost help-btn" id="help-toggle" aria-haspopup="dialog" aria-controls="help-dialog">
-              <svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.3"/><path d="M6.2 6.3a1.9 1.9 0 0 1 3.7.5c0 1.1-1.9 1.4-1.9 2.6M8 11.6v.1"/></svg>How the dictionary works
-            </button>
-            <div class="spacer"></div>
-            <button type="button" class="btn mono" id="json-toggle" title="Edit dictionary.json" aria-expanded="false" aria-controls="json-editor">{ }</button>
-          </div>
-
-          <div class="json-editor" id="json-editor" hidden>
-            <textarea class="input code" id="dictionary" spellcheck="false" rows="12"></textarea>
-            <div class="row-actions">
-              <button type="button" class="btn accent" id="save-dictionary">Save JSON</button>
-              <span class="caption save-status" id="dictionary-status" role="status"></span>
-              <span class="caption hint">The file is <code>dictionary.json</code> in Entune's data folder. Forms match whole words regardless of case. Context resolves eligible meanings and overlapping phrases.</span>
-            </div>
-          </div>
-
           <section class="learn" aria-labelledby="learn-title">
-            <h2 id="learn-title">Improve your dictionary</h2>
-            <p class="caption learn-intro">Entune can suggest entries for words your speech model keeps getting wrong. You review every suggestion; nothing changes until you apply it.</p>
-            <label class="learn-model">Suggestions are written by <select class="select" id="dictionary-model" aria-describedby="dictionary-model-note"></select></label>
+            <div class="learn-head">
+              <h2 id="learn-title">Improve your dictionary</h2>
+              <span class="spacer"></span>
+              <button type="button" class="btn ghost sm help-btn" id="help-toggle" aria-haspopup="dialog" aria-controls="help-dialog">
+                <svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.3"/><path d="M6.2 6.3a1.9 1.9 0 0 1 3.7.5c0 1.1-1.9 1.4-1.9 2.6M8 11.6v.1"/></svg>How the dictionary works
+              </button>
+            </div>
+            <p class="caption learn-intro" id="learn-source">Suggestions from your recent transcripts. Nothing changes until you review them.</p>
+            <div class="learn-actions">
+              <button type="button" class="btn accent" id="build-dictionary">Suggest new entries</button>
+              <button type="button" class="btn" id="refine-dictionary">Suggest improvements</button>
+              <label class="learn-model">using <select class="select" id="dictionary-model" aria-label="Model that writes suggestions" aria-describedby="dictionary-model-note"></select></label>
+              <button type="button" class="btn ghost sm disclose" id="learn-options-toggle" aria-expanded="false" aria-controls="learn-options">Options</button>
+            </div>
             <p class="caption learn-note" id="dictionary-model-note" hidden></p>
-            <div class="learn-ways">
-              <div class="learn-way">
-                <h3>From your transcripts</h3>
-                <p class="caption" id="learn-source">Uses text your speech model already produced. Quick, and nothing is transcribed again.</p>
-                <select class="select" id="learning-scope" aria-label="Transcripts to use"><option value="new">New transcripts (latest 300)</option><option value="all">All transcripts, including ones already used</option></select>
-                <div class="learn-actions">
-                  <button type="button" class="btn accent" id="build-dictionary">Suggest new entries</button>
-                  <button type="button" class="btn" id="refine-dictionary">Suggest improvements</button>
-                </div>
-                <p class="caption"><b>New entries</b> finds mistakes the dictionary doesn't cover yet. <b>Improvements</b> checks how your entries did in recent dictations and suggests fixes, additions or removals.</p>
-              </div>
-              <div class="learn-way">
-                <h3>From saved audio</h3>
-                <p class="caption">Transcribes recordings again with your current speech model first, then suggests entries. Use it for recordings made with another model, or audio from Wispr Flow or a folder. It takes longer and uses more tokens.</p>
-                <div class="learn-actions"><button type="button" class="btn" id="open-audio-dialog">Choose audio…</button></div>
-              </div>
+            <div class="learn-options" id="learn-options" hidden>
+              <label class="check"><input type="checkbox" id="learning-reuse" /> Include transcripts already used</label>
+              <p class="caption">Each run normally reads up to 300 of this speech model's newest transcripts that no earlier run has read. Turn this on to read used ones again; it costs tokens again and can repeat earlier suggestions.</p>
+            </div>
+            <div class="learn-more">
+              <button type="button" class="btn sm" id="open-audio-dialog" aria-haspopup="dialog">Learn from audio…</button>
+              <span class="caption">Transcribe Entune recordings again, or import audio from Wispr Flow or a folder.</span>
             </div>
             <div class="learn-status" id="learn-status" hidden>
               <p class="learn-progress" id="dictionary-build-status" role="status"></p>
@@ -139,12 +119,26 @@
           <section class="groups" aria-labelledby="groups-title">
             <div class="groups-head">
               <h2 id="groups-title">Your dictionary</h2>
-              <span class="caption" id="groups-count"></span>
-              <span class="spacer"></span>
+              <div class="segmented" role="tablist" aria-label="Show">
+                <button type="button" role="tab" id="filter-all" aria-selected="true" title="Every entry used with this speech model">All</button>
+                <button type="button" role="tab" id="filter-pinned" aria-selected="false" title="Your entries, used with every speech model">Pinned</button>
+                <button type="button" role="tab" id="filter-learned" aria-selected="false" title="Entries learned for this speech model only">Learned</button>
+              </div>
+              <div class="groups-actions">
               <button type="button" class="btn ghost sm" id="pin-all" title="Use every entry learned for this speech model with all speech models" hidden>Pin all learned</button>
+              <button type="button" class="btn ghost sm json-btn" id="json-toggle" title="Edit dictionary.json directly (advanced)" aria-expanded="false" aria-controls="json-editor"><span class="mono" aria-hidden="true">{ }</span> Edit JSON</button>
               <button type="button" class="btn fill" id="add-entry-btn">Add an entry</button>
+              </div>
+              <p class="caption groups-scope" id="groups-count"></p>
             </div>
-            <p class="caption groups-intro">Each entry pairs what the speech model writes with what you might have meant. When it writes <code>cloud</code>, you may have meant <b>Claude</b> or a real <b>cloud</b>; Entune reads the sentence and keeps the one that fits.</p>
+            <div class="json-editor" id="json-editor" hidden>
+              <textarea class="input code" id="dictionary" spellcheck="false" rows="12" aria-label="dictionary.json"></textarea>
+              <div class="row-actions">
+                <button type="button" class="btn accent" id="save-dictionary">Save JSON</button>
+                <span class="caption save-status" id="dictionary-status" role="status"></span>
+                <span class="caption hint">The file is <code>dictionary.json</code> in Entune's data folder. Forms match whole words regardless of case. Context resolves eligible meanings and overlapping phrases.</span>
+              </div>
+            </div>
             <div id="new-group"></div>
             <div id="dict-rows"></div>
           </section>
@@ -168,12 +162,15 @@
                 <ul>
                   <li><b>Suggest new entries</b> reads your recent transcripts and finds mistakes the dictionary doesn't cover yet. Start here.</li>
                   <li><b>Suggest improvements</b> compares what the speech model wrote with what the dictionary changed, and suggests fixes: a missing entry, a clearer description, or removing an entry that does more harm than good.</li>
-                  <li><b>From saved audio</b> transcribes recordings again with your current speech model before suggesting entries. Use it when the recordings were made with another model, or come from Wispr Flow or a folder.</li>
+                  <li><b>Learn from audio</b> transcribes recordings again with your current speech model before suggesting entries. Use it when the recordings were made with another model, or come from Wispr Flow or a folder. It takes longer and uses more tokens.</li>
                 </ul>
                 <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model selected in the toolbar.</p>
-                <h3>Choosing audio</h3>
+                <p>Each run reads up to 300 of that model's newest transcripts that no earlier run has read, so running it again moves on to newer dictations. To read transcripts again, turn on <b>Include transcripts already used</b> under <b>More options</b>; that costs tokens again and can repeat earlier suggestions.</p>
+                <h3 id="guide-audio">Learning from audio</h3>
+                <p>Choose a source: recordings you made in Entune, audio Wispr Flow kept on this Mac (only the audio is copied, never its transcripts), or a folder of audio files. For Entune recordings you can skip the ones this speech model already transcribed.</p>
                 <p>After you pick a source, the timeline shows all its recorded audio, oldest on the left and newest on the right. It measures recorded time, so days without recordings take no space; the dates under the handles show where you are.</p>
-                <p>Everything is selected at first. Drag the left handle right to keep only your most recent audio, or move either handle to choose any stretch. You'll see exactly how much audio and how many recordings are included, and you can list and play them. Transcribing again can take a while and your providers may charge for it.</p>
+                <p>Everything is selected at first. Drag the left handle right to keep only your most recent audio, or move either handle to choose any stretch. You'll see exactly how much audio and how many recordings are included, and you can list and play them. Each edge snaps to whole recordings.</p>
+                <p>Then choose <b>Suggest new entries</b> or <b>Suggest improvements</b>. Entune transcribes the selection with your speech model, then the dictionary model reads the new text. Transcribing again can take a while and your providers may charge for both steps. You can stop at any time; finished transcripts are kept for a retry.</p>
                 <h3>Reviewing suggestions</h3>
                 <p>Suggestions appear above your dictionary, grouped into new entries, changes and removals. You can edit any of them, remove the ones you don't want with ×, and then apply the rest in one step. Nothing is saved until you apply. While suggestions are open, dictation pauses, so apply or discard them when you're done.</p>
                 <h3>Pinned and learned entries</h3>
@@ -189,8 +186,9 @@
               <header class="dialog-head">
                 <div>
                   <h2 id="audio-dialog-title">Learn from audio</h2>
-                  <p class="caption">Transcribe saved audio again with <b id="audio-speech-model"></b>, then propose dictionary changes from the new text. History and your dictionary stay unchanged until you apply a proposal.</p>
+                  <p class="caption">Transcribe audio again, then get suggestions from the new text. Nothing changes until you review them.</p>
                 </div>
+                <button type="button" class="btn ghost sm help-btn" id="audio-help" aria-haspopup="dialog" aria-controls="help-dialog">How it works</button>
                 <button type="submit" class="btn-icon" id="close-audio-dialog" aria-label="Close" value="close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
               </header>
               <div class="dialog-body">
@@ -216,19 +214,19 @@
                     <input type="range" id="audio-range-end" min="0" max="1000" value="1000" step="1" aria-label="Newest included audio" />
                   </div>
                   <div class="range-labels"><span id="audio-start-label"></span><span id="audio-end-label"></span></div>
-                  <p class="caption range-note">The range follows recorded time, oldest to newest, without the gaps between recording days. Drag the left handle to keep the most recent audio; drag either handle for any continuous stretch. Each edge snaps to whole recordings.</p>
+                  <p class="caption hint range-note">Drag the handles to choose a stretch of recorded time, oldest to newest.</p>
                   <details class="audio-detail" id="audio-detail"><summary id="audio-detail-summary">Show included recordings</summary><div class="audio-list" id="learning-audio-list"></div><button type="button" class="btn ghost sm" id="audio-more" hidden>Show more</button></details>
                 </div>
               </div>
               <footer class="dialog-foot">
                 <div class="run-summary">
                   <p id="audio-models"></p>
-                  <p class="caption">Retranscribing and building can use many tokens; cloud providers may charge for both. No cost estimate is available.</p>
+                  <p class="caption">This can take a while, and cloud providers may charge for both steps.</p>
                 </div>
                 <div class="dialog-actions">
                   <button type="submit" class="btn ghost" value="cancel">Cancel</button>
-                  <button type="button" class="btn" id="refine-audio-dictionary" disabled>Refine</button>
-                  <button type="button" class="btn accent" id="build-audio-dictionary" disabled>Generate</button>
+                  <button type="button" class="btn" id="refine-audio-dictionary" disabled>Suggest improvements</button>
+                  <button type="button" class="btn accent" id="build-audio-dictionary" disabled>Suggest new entries</button>
                 </div>
               </footer>
             </form>

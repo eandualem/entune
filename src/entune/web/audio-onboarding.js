@@ -5,8 +5,8 @@ import { api, el, errorText } from "./ui.js";
 const PAGE = 60;
 const NOTES = {
   entune: "Recordings you made in Entune.",
-  wispr: "Audio that Wispr Flow kept on this Mac, including its local backups. Only audio is copied; Wispr's transcripts are never read.",
-  folder: "Audio files from a folder: WAV, MP3, M4A, FLAC, OGG or WebM, up to 199 MB each. A file's modification time dates it.",
+  wispr: "Audio Wispr Flow kept on this Mac, including its backups. Only the audio is copied.",
+  folder: "WAV, MP3, M4A, FLAC, OGG or WebM files, up to 199 MB each, dated by when they were modified.",
 };
 
 export function duration(seconds) {
@@ -87,12 +87,11 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     if (el("audio-detail").open) drawList(chosen);
     const speech = getModel();
     const language = getDictionaryModelName();
-    el("audio-speech-model").textContent = speech?.label ?? "the selected speech model";
     el("audio-models").textContent = !speech
       ? "Choose a speech model in the toolbar first."
       : !language
         ? (el("dictionary-model-note").hidden ? "Add an Anthropic or OpenAI key in Settings › Providers to choose a dictionary model." : el("dictionary-model-note").textContent)
-        : `Transcribe ${duration(seconds(chosen))} with ${speech.label}, then build with ${language}.`;
+        : `Transcribe ${duration(seconds(chosen))} (${chosen.length} recording${chosen.length === 1 ? "" : "s"}) with ${speech.label}, then suggest with ${language}.`;
     const blocked = importing || buildBusy || !chosen.length || !speech || !language;
     el("build-audio-dictionary").disabled = el("refine-audio-dictionary").disabled = blocked;
     for (const control of [start, end, el("import-wispr"), el("choose-audio-folder")]) control.disabled = importing || buildBusy;

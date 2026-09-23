@@ -167,8 +167,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     const head = node("header", "", "group-head");
     const current = getModel();
     const model = current ? modelName(current.id, [current]) : "this speech model";
-    const scopeLabel = node("span", source === "pinned" ? "Pinned · all speech models" : `Learned · only ${model}`, `scope ${source}`);
-    scopeLabel.title = source === "pinned" ? "Used with every speech model; suggestions can't remove it" : "Used only with this speech model";
+    const scopeLabel = node("span", source === "pinned" ? "Pinned" : "Learned", `scope ${source}`);
+    scopeLabel.title = source === "pinned" ? "Used with every speech model; suggestions can't remove it" : `Used only with ${model}`;
     head.append(scopeLabel);
     if (group.needs_review) head.append(node("span", "Imported: check the descriptions and capitals", "badge warn"));
     head.append(node("span", "", "spacer"), button("Edit", () => editGroup(card, source, group)), button("Remove", async () => {
@@ -230,7 +230,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
         head.append(node("h3", "New entry"), node("span", "", "spacer"),
           button("Collapse", () => showNewGroup(false)), button("Discard", discardNewGroup));
         panel.append(head);
-        panel.append(node("p", "Write what you meant, then the spellings the speech model writes for it. For example: you meant Claude, the model writes “cloud”. If the written word is sometimes right, add it as a second meaning (cloud, internet storage) and tick both, so Entune can decide from the sentence.", "caption editor-intro"));
+        panel.append(node("p", "Write what you meant, then each spelling the speech model writes for it.", "caption hint editor-intro"));
         field(panel, "Use with", scope, (v) => { scope = v; }, [["pinned", "All speech models (pinned)"], ...(model ? [["learned", `Only ${modelName(model.id, [model])} (learned)`]] : [])]);
       }
       for (const meaning of draft.meanings) {
@@ -337,18 +337,26 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
       const none = document.createElement("div");
       none.className = "entry-row none";
       none.textContent = filter === "learned"
-        ? "Nothing learned for this speech model yet. Use “Suggest new entries” above to find its common mistakes."
-        : "Your dictionary is empty. A good first step: “Suggest new entries” above reads your recent dictations and proposes fixes for you to review. You can also add an entry yourself.";
+        ? "Nothing learned for this speech model yet. “Suggest new entries” above finds its common mistakes."
+        : filter === "pinned"
+          ? "No pinned entries. Pin a learned entry to use it with every speech model, or add one yourself."
+          : "Your dictionary is empty. Start with “Suggest new entries” above, or add an entry yourself.";
       rows.push(none);
     }
     el("dict-rows").replaceChildren(...rows);
-    el("filter-learned").textContent = model ? `Learned · ${modelName(model.id, [model])}` : "Learned";
     if (!proposalPanel.hidden) proposalTitle();
-    el("pin-all").hidden = learned.length === 0;
+    el("pin-all").hidden = learned.length === 0 || filter === "pinned";
+    // Counts on the filters; the scope line says what the selected filter means, naming
+    // the speech model once.
     const total = dict.pinned.length + learned.length;
-    el("groups-count").textContent = total ? `${total} ${total === 1 ? "entry" : "entries"} · ${dict.pinned.length} pinned, ${learned.length} learned for this speech model` : "";
+    for (const [id, name, count] of [["filter-all", "All", total], ["filter-pinned", "Pinned", dict.pinned.length], ["filter-learned", "Learned", learned.length]]) {
+      el(id).textContent = count ? `${name} ${count}` : name;
+    }
+    const speech = model ? modelName(model.id, [model]) : "the selected speech model";
+    el("groups-count").textContent = { all: total ? `Pinned entries apply to every speech model; learned ones only to ${speech}.` : "",
+      pinned: "Used with every speech model.", learned: `Used only with ${speech}.` }[filter];
     el("learn-source").textContent = model
-      ? "Uses text your speech model already produced. Quick, and nothing is transcribed again."
+      ? "Suggestions from your recent transcripts. Nothing changes until you review them."
       : "Choose a speech model in the toolbar first.";
     fillModels();
     if (jsonText !== undefined) dictionaryBox.value = jsonText;
@@ -383,6 +391,15 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
   });
 
   // JSON editor and help panel
+  el("learn-options-toggle").addEventListener("click", () => {
+    const panel = el("learn-options");
+    panel.hidden = !panel.hidden;
+    el("learn-options-toggle").setAttribute("aria-expanded", String(!panel.hidden));
+  });
+  // A non-default scope stays visible on the toggle while the options are closed.
+  el("learning-reuse").addEventListener("change", () => {
+    el("learn-options-toggle").textContent = el("learning-reuse").checked ? "Options · including used transcripts" : "Options";
+  });
   el("json-toggle").addEventListener("click", () => {
     const editor = el("json-editor");
     editor.hidden = !editor.hidden;
@@ -394,12 +411,16 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     if (await saveDictionary(parsed, true)) flash(el("dictionary-status"), "Saved", "ok");
   });
   // The guide is a modal over the page, so drafts and scroll position stay as they are.
-  function showHelp(open) {
+  function showHelp(open, topic = null) {
     const guide = el("help-dialog");
-    if (open && !guide.open) { guide.showModal(); guide.querySelector(".guide").scrollTop = 0; }
+    if (open && !guide.open) {
+      guide.showModal();
+      guide.querySelector(".guide").scrollTop = topic ? el(topic).offsetTop - guide.querySelector(".guide").offsetTop : 0;
+    }
     else if (!open && guide.open) guide.close();
   }
   el("help-toggle").addEventListener("click", () => showHelp(true));
+  el("audio-help").addEventListener("click", () => showHelp(true, "guide-audio"));
 
   const label = (g) => g ? `${g.meanings.map(m => m.spelling).join(" / ")} ← ${g.recognized_forms.map(f => f.text).join(", ")}` : "";
   const describe = g => g ? [...g.meanings.map(m => `${m.spelling}: ${m.meaning}${m.personal_context ? ` (${m.personal_context})` : ""}`), ...g.recognized_forms.map(f => `Recognized: ${f.text}`)].join("\n") : "";
@@ -506,8 +527,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     el("accept-proposal").textContent = included ? `Apply ${included} change${included === 1 ? "" : "s"}` : "Finish without changes";
     if (!proposalChanges.length) proposalBody.append(node("p", "No changes suggested. Finish to close this review; the same dictations can be used again later."));
   }
-  buildBtn.addEventListener("click", () => builds.start("history", {mode: "generate", scope: el("learning-scope").value}));
-  refineBtn.addEventListener("click", () => builds.start("history", {mode: "refine", scope: el("learning-scope").value}));
+  const scope = () => el("learning-reuse").checked ? "all" : "new";
+  buildBtn.addEventListener("click", () => builds.start("history", {mode: "generate", scope: scope()}));
+  refineBtn.addEventListener("click", () => builds.start("history", {mode: "refine", scope: scope()}));
 
   return { load: loadDictionary, showHelp, refreshAudio: () => onboarding.load(), refreshModels: fillModels };
 }
