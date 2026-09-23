@@ -302,7 +302,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
               ? { meaning_id: a.meaning_id, basis: "user", evidence: [] } : a);
           }
         }
-        if (await saveDictionary(next, false, status) && created) discardNewGroup();
+        // Remove this saved panel only; a newer draft started meanwhile stays as it is.
+        if (await saveDictionary(next, false, status) && created) {
+          panel.remove();
+          showNewGroup(!(newGroupEditor()?.hidden ?? true));
+        }
       }), button(created ? "Discard" : "Cancel", () => created ? discardNewGroup() : panel.remove()), status);
     }
     function clearDirect(mid) {
