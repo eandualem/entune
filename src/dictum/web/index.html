@@ -175,6 +175,7 @@
                   <input type="file" id="audio-folder" webkitdirectory multiple hidden />
                 </div>
                 <p class="caption" id="audio-import-status" role="status"></p>
+                <label class="caption check"><input type="checkbox" id="audio-other-models" /> Skip recordings this speech model already transcribed</label>
                 <p class="audio-empty" id="audio-empty" hidden></p>
                 <div class="audio-pick" id="audio-pick">
                   <div class="audio-total"><span class="audio-hours" id="audio-selected"></span><span class="caption" id="audio-available"></span></div>
@@ -185,7 +186,6 @@
                   </div>
                   <div class="range-labels"><span id="audio-start-label"></span><span id="audio-end-label"></span></div>
                   <p class="caption range-note">The range follows recorded time, oldest to newest, without the gaps between recording days. Drag the left handle to keep the most recent audio; drag either handle for any continuous stretch. Each edge snaps to whole recordings.</p>
-                  <label class="caption check"><input type="checkbox" id="audio-other-models" /> Skip recordings this speech model already transcribed</label>
                   <details class="audio-detail" id="audio-detail"><summary id="audio-detail-summary">Show included recordings</summary><div class="audio-list" id="learning-audio-list"></div><button type="button" class="btn ghost sm" id="audio-more" hidden>Show more</button></details>
                 </div>
               </div>

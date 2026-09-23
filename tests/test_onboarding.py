@@ -260,3 +260,26 @@ def test_reimporting_saved_audio_adds_a_missing_date_only(tmp_path: Path) -> Non
         assert store.dictionary_audio_path(saved).read_bytes() == audio
     finally:
         store.close()
+
+
+def test_import_source_is_recorded_not_inferred_from_the_file_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    client = TestClient(create_app(Dictum(store, [])), base_url="http://localhost")
+    root = tmp_path / "wispr"
+    root.mkdir()
+    flow = flow_db(root / "flow.sqlite", [wav_bytes(b"\x02\x00" * 16)])
+    monkeypatch.setattr(onboarding, "wispr_directory", lambda: root)
+    try:
+        folder_file = wav_bytes(b"\x01\x00" * 16)
+        client.post("/api/dictionary/audio", files={"audio": ("wispr-looking.wav", folder_file)})
+        client.post("/api/dictionary/audio/wispr")
+        items = client.get("/api/dictionary/audio").json()["items"]
+        assert {i["name"]: i["source"] for i in items} == {
+            "wispr-looking.wav": "folder",
+            "wispr-0.wav": "wispr",
+        }
+    finally:
+        flow.close()
+        store.close()

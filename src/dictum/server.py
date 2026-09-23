@@ -427,11 +427,10 @@ def create_app(app: Dictum) -> Starlette:
             {
                 **asdict(item),
                 "models": models.get(item.id, []),
+                # Imports made before the source was kept fall back to the Wispr file name.
                 "source": "dictum"
                 if item.id.startswith("recording:")
-                else "wispr"
-                if item.name.startswith("wispr-")
-                else "folder",
+                else item.source or ("wispr" if item.name.startswith("wispr-") else "folder"),
             }
             for item, _ in app.store.learning_audio()
         ]
