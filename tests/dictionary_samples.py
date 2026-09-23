@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from entune.dictionary import Association, Form, Group, Meaning
+from entune.dictionary.entries import Association, Form, Group, Meaning
 
 
 def group(spelling: str, heard: str, *, literal: str | None = None, direct: bool = False) -> Group:

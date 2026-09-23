@@ -4,18 +4,20 @@ from pathlib import Path
 
 import pytest
 
-from entune import dictionary, matching
-from entune.dictionary import Dictionary
-from entune.dictionary_corrections import Correction, add_corrections
+from entune.dictionary import changes as dictionary_changes
+from entune.dictionary import document as dictionary_document
+from entune.dictionary import matching
+from entune.dictionary.corrections import Correction, add_corrections
+from entune.dictionary.entries import Dictionary
 from tests.dictionary_samples import CLOUD, JEV, group
 
 
 def test_groups_round_trip_keep_distinct_meanings_and_explicit_associations(tmp_path: Path) -> None:
     original = Dictionary((JEV,), {"local/small.en": (CLOUD,)})
-    dictionary.save(tmp_path, original)
-    assert dictionary.load(tmp_path) == original
-    assert dictionary.parse(dictionary.dumps(original)) == original
-    assert dictionary.load(tmp_path / "missing") == Dictionary()
+    dictionary_document.save(tmp_path, original)
+    assert dictionary_document.load(tmp_path) == original
+    assert dictionary_document.parse(dictionary_document.dumps(original)) == original
+    assert dictionary_document.load(tmp_path / "missing") == Dictionary()
     assert len(original.learned["local/small.en"][0].meanings) == 3
     jeff, gif, jif = matching.matches(original.effective("other/model"), "Jeff GIF Jif")
     assert {m.spelling for m in jeff.meanings} == {"Jev", "Jeff"}
@@ -26,7 +28,7 @@ def test_groups_round_trip_keep_distinct_meanings_and_explicit_associations(tmp_
 
 def test_pin_shares_only_chosen_meaning_and_edges_and_context_can_still_compete() -> None:
     doc = Dictionary(learned={"one/model": (JEV,), "two/model": (CLOUD,)})
-    pinned = dictionary.pin(doc, "one/model", "g_jev", "a_jev")
+    pinned = dictionary_changes.pin(doc, "one/model", "g_jev", "a_jev")
     assert pinned.pinned[0].meanings == (JEV.meanings[0],)
     other = matching.matches(pinned.effective("two/model"), "Jeff GIF cloud")
     assert {m.spelling for m in other[0].meanings} == {"Jev"}
@@ -36,7 +38,7 @@ def test_pin_shares_only_chosen_meaning_and_edges_and_context_can_still_compete(
     assert {m.spelling for m in local[0].meanings} == {"Jeff", "Jev"}
     assert {m.spelling for m in local[1].meanings} == {"GIF", "Jev"}
     assert not any(m.direct for m in local)
-    assert dictionary.parse(dictionary.dumps(pinned)) == pinned
+    assert dictionary_document.parse(dictionary_document.dumps(pinned)) == pinned
     competing = group("Other", "Jeff")
     assert (
         len(matching.matches((*pinned.effective("one/model"), competing), "Jeff")[0].meanings) == 3
@@ -49,22 +51,24 @@ def test_ids_survive_spelling_edits_and_pinned_definitions_cannot_conflict() -> 
         meanings=(replace(CLOUD.meanings[0], spelling="Claude AI"), *CLOUD.meanings[1:]),
         recognized_forms=(CLOUD.recognized_forms[0],),
     )
-    proposal = dictionary.propose(Dictionary(learned={"m": (CLOUD,)}), (revised,), "m", "revision")
+    proposal = dictionary_changes.propose(
+        Dictionary(learned={"m": (CLOUD,)}), (revised,), "m", "revision"
+    )
     assert len(proposal.changes) == 1 and proposal.changes[0].kind == "update"
     assert proposal.changes[0].before == CLOUD and proposal.changes[0].after == revised
     assert proposal.working[0].meanings[0].id == CLOUD.meanings[0].id
     assert proposal.as_json()["version"] == "revision"
     with pytest.raises(ValueError, match="conflicting definitions"):
-        dictionary.validate(Dictionary((CLOUD,), {"m": (revised,)}))
+        dictionary_document.validate(Dictionary((CLOUD,), {"m": (revised,)}))
 
 
 def test_pinning_shares_cross_group_and_cross_model_variants_without_competitor_priority() -> None:
-    from entune.dictionary import Association, Form, Group
+    from entune.dictionary.entries import Association, Form, Group
 
     extension = Group("g_extension", (), (Form("Jiff", (Association("a_jev"),)),))
     other = Group("g_other", (JEV.meanings[0],), (Form("Jebb", (Association("a_jev"),)),))
     doc = Dictionary(learned={"one": (JEV, extension), "two": (other,)})
-    pinned = dictionary.pin(doc, "one", "g_jev", "a_jev")
+    pinned = dictionary_changes.pin(doc, "one", "g_jev", "a_jev")
     found = matching.matches(pinned.effective("new/model"), "Jeff Jiff Jebb")
     assert len(found) == 3 and all(m.meanings == (JEV.meanings[0],) for m in found)
     assert {m.id for m in matching.matches(pinned.effective("one"), "Jeff")[0].meanings} == {
@@ -78,7 +82,7 @@ def test_pinning_shares_cross_group_and_cross_model_variants_without_competitor_
 
 
 def test_reviewed_pinned_updates_and_new_variants_keep_existing_links_in_all_models() -> None:
-    from entune.dictionary import Association, Form
+    from entune.dictionary.entries import Association, Form
 
     original = Dictionary((JEV,), {"unrelated": (CLOUD,)})
     revised = replace(
@@ -86,9 +90,9 @@ def test_reviewed_pinned_updates_and_new_variants_keep_existing_links_in_all_mod
         meanings=(replace(JEV.meanings[0], meaning="A context classifier."), *JEV.meanings[1:]),
         recognized_forms=(*JEV.recognized_forms, Form("Jiff", (Association("a_jev"),))),
     )
-    proposal = dictionary.propose(original, (revised,), "one")
+    proposal = dictionary_changes.propose(original, (revised,), "one")
     assert proposal.working[0].meanings[0].meaning == "A context classifier."
-    applied = dictionary.refined(original, (revised,), "one")
+    applied = dictionary_changes.refined(original, (revised,), "one")
     assert applied.learned_for("unrelated") == (CLOUD,)
     assert len(matching.matches(applied.effective("new"), "Jeff Jiff GIF")) == 3
     assert original.pinned == (JEV,)  # review never mutates active knowledge
@@ -97,24 +101,24 @@ def test_reviewed_pinned_updates_and_new_variants_keep_existing_links_in_all_mod
         replace(revised, meanings=revised.meanings[1:]),
     ):
         with pytest.raises(ValueError, match="pinned"):
-            dictionary.propose(original, (incomplete,), "one")
+            dictionary_changes.propose(original, (incomplete,), "one")
 
 
 def test_corrupt_references_and_direct_approval_are_rejected() -> None:
-    data = json.loads(dictionary.dumps(Dictionary((JEV,))))
+    data = json.loads(dictionary_document.dumps(Dictionary((JEV,))))
     data["pinned"][0]["recognized_forms"][0]["associations"][0]["meaning_id"] = "missing"
     with pytest.raises(ValueError, match="unavailable meaning"):
-        dictionary.parse(json.dumps(data))
-    data = json.loads(dictionary.dumps(Dictionary((JEV,))))
+        dictionary_document.parse(json.dumps(data))
+    data = json.loads(dictionary_document.dumps(Dictionary((JEV,))))
     data["pinned"][0]["recognized_forms"][0]["direct"] = "a_jev"
     with pytest.raises(ValueError, match="approval reason"):
-        dictionary.parse(json.dumps(data))
+        dictionary_document.parse(json.dumps(data))
     with pytest.raises(ValueError, match='needs "version"'):
-        dictionary.parse('{"version":3}')
+        dictionary_document.parse('{"version":3}')
     with pytest.raises(ValueError, match="Not valid JSON"):
-        dictionary.parse("{")
+        dictionary_document.parse("{")
     with pytest.raises(ValueError, match="must be a JSON object"):
-        dictionary.parse("[]")
+        dictionary_document.parse("[]")
 
 
 def test_overlaps_keep_phrase_and_word_plans_with_original_offsets() -> None:

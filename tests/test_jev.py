@@ -14,7 +14,10 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from entune import dictionary, jev, matching, text_edits
+from entune import jev, text_edits
+from entune.dictionary import changes as dictionary_changes
+from entune.dictionary import entries as dictionary_entries
+from entune.dictionary import matching
 from entune.processing import Processed, process_text
 from entune.server import create_app
 from entune.service import Entune
@@ -75,9 +78,9 @@ def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> N
     )
     with closing(jev.Client(httpx.MockTransport(handler))) as client:
         context = call(client)
-        document = dictionary.Dictionary(learned={"speech/model": GROUPS})
+        document = dictionary_entries.Dictionary(learned={"speech/model": GROUPS})
         if pinned:
-            document = dictionary.pin(document, "speech/model", "g_jev", "a_jev")
+            document = dictionary_changes.pin(document, "speech/model", "g_jev", "a_jev")
         decisions = jev.decide(text, matches(document.effective("speech/model"), text), context)
         edits = tuple(d.edit for d in decisions if d.edit)
         assert (

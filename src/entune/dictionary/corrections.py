@@ -10,16 +10,8 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, replace
 
-from entune.dictionary import (
-    Association,
-    Dictionary,
-    Form,
-    Group,
-    Meaning,
-    key,
-    merge,
-    validate,
-)
+from entune.dictionary.document import validate
+from entune.dictionary.entries import Association, Dictionary, Form, Group, Meaning, key, merge
 
 
 @dataclass(frozen=True)

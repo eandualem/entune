@@ -9,8 +9,9 @@ from concurrent.futures import CancelledError
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from entune import jev, matching, text_edits
-from entune.dictionary import Groups
+from entune import jev, text_edits
+from entune.dictionary import matching
+from entune.dictionary.entries import Groups
 from entune.text_edits import Change
 
 

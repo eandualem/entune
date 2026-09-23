@@ -14,8 +14,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from entune import dictionary, llm
-from entune.dictionary import Dictionary, Groups, Proposal
+from entune import llm
+from entune.dictionary import changes as dictionary_changes
+from entune.dictionary.changes import Proposal
+from entune.dictionary.entries import Dictionary, Groups
 from entune.operations import Operation, Operations
 from entune.providers.contracts import Clip, Failure
 from entune.providers.registry import ModelRef
@@ -227,7 +229,7 @@ class DictionaryBuilds:
 
         def completed(groups: Groups, number: int, total: int, covered: tuple[str, ...]) -> None:
             # Validate against the full scoped dictionary before advancing coverage.
-            proposal = dictionary.propose(
+            proposal = dictionary_changes.propose(
                 spec.dictionary, groups, spec.speech.id, f'"{spec.revision}"'
             )
             with self._lock:

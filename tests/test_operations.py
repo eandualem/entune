@@ -11,10 +11,12 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from entune import dictionary, jev
+from entune import jev
 from entune.audio.formats import wav_bytes
 from entune.desktop.app import EntuneApp
 from entune.desktop.platform import Delivery
+from entune.dictionary import document as dictionary_document
+from entune.dictionary import entries as dictionary_entries
 from entune.providers.contracts import Clip, Transcript
 from entune.server import create_app
 from entune.service import Entune
@@ -72,7 +74,7 @@ def test_cancel_inflight_jev_closes_request_keeps_raw_and_prevents_later_stages(
     monkeypatch.setattr(
         service.providers[0], "transcribe", lambda *args: Transcript("Use Jeff to classify this.")
     )
-    dictionary.save(service.store.data_dir, dictionary.Dictionary((JEV,)))
+    dictionary_document.save(service.store.data_dir, dictionary_entries.Dictionary((JEV,)))
     service.store.set_setting("jev_dictionary", "1")
     service.store.set_setting("jev_formatting", "1")
     service.set_key("typesafe", "synthetic")

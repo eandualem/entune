@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from entune import llm, prompts
-from entune.dictionary import Dictionary, parse_groups
+from entune.dictionary.document import parse_groups
+from entune.dictionary.entries import Dictionary
 from tests.dictionary_samples import JEV
 
 

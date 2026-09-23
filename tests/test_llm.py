@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from entune import llm, prompts
-from entune.dictionary import Association, Dictionary, Form, Group, Groups, Meaning
+from entune.dictionary.entries import Association, Dictionary, Form, Group, Groups, Meaning
 from tests.dictionary_samples import JEV, group, proposed
 
 TEXT = "I use cloud code."

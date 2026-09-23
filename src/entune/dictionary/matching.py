@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 
-from entune.dictionary import Groups, Meaning, key
+from entune.dictionary.entries import Groups, Meaning, key
 
 # An overlap is classified as complete, compatible interpretations. Large ambiguous
 # components abstain instead of silently truncating competitors or exploding a lattice.
