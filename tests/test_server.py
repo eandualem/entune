@@ -14,7 +14,7 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from entune import server
+from entune.api import data as data_api
 from entune.app.entune import Entune
 from entune.app.metrics import model_metrics
 from entune.audio.formats import wav_bytes
@@ -276,7 +276,7 @@ def test_audio_export_cleans_up_and_reports_missing_source(
     def temporary_directory(*, prefix: str) -> TemporaryDirectory[str]:
         return TemporaryDirectory(prefix=prefix, dir=tmp_path)
 
-    monkeypatch.setattr(server, "TemporaryDirectory", temporary_directory)
+    monkeypatch.setattr(data_api, "TemporaryDirectory", temporary_directory)
     store = Store(tmp_path / "data")
     recording = store.create_recording(WEBM_HEADER)
     client = TestClient(create_app(Entune(store, [])), base_url="http://localhost")

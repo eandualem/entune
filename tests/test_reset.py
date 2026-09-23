@@ -7,12 +7,13 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from entune.api.data import RESET_PHRASE
 from entune.app.entune import Entune
 from entune.audio.formats import wav_bytes
 from entune.learning.inputs import LearningText
 from entune.providers.contracts import Clip, TranscribeResult, Transcript
 from entune.providers.local.contracts import LocalModelStatus
-from entune.server import RESET_PHRASE, create_app
+from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
 
