@@ -259,3 +259,21 @@ def test_confirmed_agent_boundary_is_idempotent_and_does_not_grant_precedence() 
     again, added = add_corrections(doc, (Correction("jev", heard=("JEFF",)),))
     assert not added and again == doc
     assert len(matching.matches(doc.effective("m"), "Jeff")[0].meanings) == 3
+
+
+def test_the_earlier_single_learned_list_moves_under_the_default_model(tmp_path: Path) -> None:
+    old = '{"pinned":{"terms":[]},"learned":{"terms":["Dictum"],"replacements":{}}}'
+    with pytest.raises(ValueError, match="set a default model"):
+        dictionary.parse(old)
+    (tmp_path / dictionary.FILENAME).write_text(old)
+    converted = dictionary.load(tmp_path, "local/small.en")
+    assert [m.spelling for g in converted.learned_for("local/small.en") for m in g.meanings] == [
+        "Dictum"
+    ]
+
+
+def test_index_folds_case_as_widely_as_the_matching_regex() -> None:
+    sigma, final_sigma, micro, capital_mu = "\u03c3", "\u03c2", "\u00b5", "\u039c"
+    groups = (group("Sigma", sigma), group("Micro", micro), group("Street", "stra\u00dfe"))
+    found = matching.matches(groups, f"{final_sigma} {capital_mu} STRASSE")
+    assert [(m.start, m.end) for m in found] == [(0, 1), (2, 3)]

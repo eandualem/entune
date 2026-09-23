@@ -306,10 +306,12 @@ export function createDictionary({ getModel, getSettings }) {
           const editor = node("details", "", "proposal-editor");
           editor.append(node("summary", "After · inspect and edit"));
           editor.open = true;
+          // A shared meaning can be proposed in several groups; its copies stay one definition.
+          const copies = id => proposalChanges.flatMap(c => c.after?.meanings ?? []).filter(m => m.id === id);
           for (const meaning of change.after.meanings) {
             const row = node("div", "", "meaning-editor");
             const spelling = field(row, "Output spelling", meaning.spelling, value => {
-              meaning.spelling = value;
+              for (const copy of copies(meaning.id)) copy.spelling = value;
               for (const form of proposalChanges.flatMap(c => c.after?.recognized_forms ?? [])) {
                 if (form.direct === meaning.id) { form.direct = null; form.direct_reason = ""; }
                 form.associations = form.associations.map(a => a.basis === "literal" && a.meaning_id === meaning.id
@@ -317,8 +319,8 @@ export function createDictionary({ getModel, getSettings }) {
               }
             });
             spelling.readOnly = pinnedIds.has(meaning.id);
-            field(row, "Definition", meaning.meaning, value => { meaning.meaning = value; });
-            field(row, "Personal usage", meaning.personal_context, value => { meaning.personal_context = value || null; });
+            field(row, "Definition", meaning.meaning, value => { for (const copy of copies(meaning.id)) copy.meaning = value; });
+            field(row, "Personal usage", meaning.personal_context, value => { for (const copy of copies(meaning.id)) copy.personal_context = value || null; });
             editor.append(row);
           }
           for (const form of change.after.recognized_forms) {
@@ -336,6 +338,7 @@ export function createDictionary({ getModel, getSettings }) {
               check.addEventListener("change", () => {
                 if (check.checked) form.associations.push({meaning_id: id, basis: "user", evidence: []});
                 else form.associations = form.associations.filter(a => a.meaning_id !== id);
+                form.direct = null; form.direct_reason = "";
               });
               wrap.append(check, `${meaning.spelling} — ${meaning.meaning}`); choices.append(wrap);
             }
