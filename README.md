@@ -206,7 +206,9 @@ meaning and its associations across models, without giving it priority over comp
 Existing dictionaries are backed up before conversion and retained for review. Confirmed
 agent corrections still use the existing local API. The dictionary model is chosen on
 the Dictionary page and serves every learning run; keys are added in Settings.
-Generation suggestions are Sonnet 5 and GPT-5.4 mini. **Add an entry** creates a group by
+The dictionary model can come from Anthropic, OpenAI, Google Gemini, Groq or Mistral;
+Groq uses the same key as Groq speech. Generation suggestions are Sonnet 5 and GPT-5.4
+mini. **Add an entry** creates a group by
 hand: meanings with output spellings and definitions, recognized forms, and which
 meanings each form may stand for.
 
@@ -232,6 +234,12 @@ including while proposals await review. Stop or a later failure retains validate
 completed batches for review, with their actual coverage and cause. A running speech
 call may need to finish; a generation request can be interrupted. Apply, discard, or
 retry the completed portion. No changes are applied automatically.
+
+The dictionary model's reply must match the dictionary's format, which the provider
+enforces where it can. When a reply still breaks one of the dictionary's rules, the
+model is shown the rule and asked for a corrected reply, at most twice per part. The
+progress line says so and names the rule, and **Stop** ends it. Failed requests,
+refused keys and replies cut at the output limit are never retried.
 
 Default history refinement uses up to 300 recent, unprocessed attempts for the selected
 speech model; “All history” deliberately includes older/previously examined data.
@@ -321,7 +329,7 @@ Enabled features determine what is sent out:
 - **Cloud speech:** the selected provider receives the audio clip; AssemblyAI fast
   mode starts uploading during recording. Local Whisper.cpp and Parakeet transcribe
   on this machine, without sending audio to a speech service.
-- **Dictionary builds:** the chosen Anthropic or OpenAI model receives raw source
+- **Dictionary builds:** the chosen dictionary model's provider receives raw source
   transcripts (for refinement, beside the dictionary step's recorded result) and the
   pinned/working confusion groups, including definitions and personal context. Each
   chunk sends the current working dictionary again.
@@ -352,9 +360,11 @@ from imported audio are not saved or included in the transcript export.
 ## Development
 
 The app uses Starlette and SQLite, plain browser JavaScript modules without
-a build step, and httpx for provider calls. Dictionary builds call Anthropic
-or OpenAI directly; the suggested model list is kept in `learning/suggestion_model.py`, with a
-custom model field in Settings.
+a build step, and httpx for speech-provider calls. Dictionary builds use Pydantic AI,
+which gives the reply a declared schema and one interface to each language-model
+provider; `learning/suggestion_model/` holds the provider list and suggested models
+(`catalog.py`), the per-provider clients (`providers.py`) and the call (`call.py`),
+with a custom model field in Settings.
 
 Speech adapters are organized under providers/cloud and providers/local,
 with common contracts separate from HTTP and local lifecycle capabilities.

@@ -31,9 +31,12 @@ export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelec
     // and how long this one has run, never a percentage.
     const clock = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
     const partElapsed = state.stepStartedAt ? clock(Math.max(0, Date.now() / 1000 - state.stepStartedAt)) : null;
-    const building = state.steps > 1
+    // A reply that broke a rule goes back to the model for a fix; say so, never silently.
+    const fixing = state.phase === "building" && state.attempt > 1 && state.brokenRule;
+    const building = (state.steps > 1
       ? `${task} · part ${state.step} of ${state.steps} · ${state.completedBatches ?? 0} done${partElapsed ? ` · this part ${partElapsed}` : ""}`
-      : `${task}${partElapsed ? ` · ${partElapsed}` : ""}`;
+      : `${task}${partElapsed ? ` · ${partElapsed}` : ""}`)
+      + (fixing ? `. The model's reply broke a dictionary rule, so it is asked to fix it: attempt ${state.attempt} of ${state.attempts}. Stop if you'd rather not wait.` : "");
     const messages = {
       idle: "", queued: `Getting ready to read your ${from === "audio" ? "audio" : "transcripts"}…`,
       transcribing: `Transcribing recording ${state.completed} of ${state.total}…`,
@@ -55,7 +58,7 @@ export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelec
     progress.textContent = message;
     el("build-spinner").hidden = !running();
     const failed = state.phase === "failed" || (state.phase === "ready" && state.outcome === "failed");
-    const detail = failed ? state.errorDetail : "";
+    const detail = failed ? state.errorDetail : fixing ? `Rule broken: ${state.brokenRule}` : "";
     el("build-error-text").textContent = detail || "";
     el("build-error-detail").hidden = !detail;
     const actions = ["cancel-dictionary-build", "retry-dictionary-build", "abandon-dictionary-build"];
