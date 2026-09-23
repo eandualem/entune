@@ -422,6 +422,8 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .dialog-head > div { flex: 1; min-width: 0; }
 .dialog-head .caption { margin: var(--sp-4) 0 0; }
 .dialog-body { flex: 1; min-height: 0; overflow: auto; padding: var(--sp-8) var(--sp-20) var(--sp-12); }
+.provider-pick { display: flex; align-items: center; gap: var(--sp-8); margin: var(--sp-12) 0 0; font-size: var(--fs-13); color: var(--text-secondary); }
+.provider-pick .select { max-width: 14rem; }
 .source-note { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8) var(--sp-12); margin: var(--sp-10) 0 var(--sp-4); }
 .source-note .caption { flex: 1 1 18rem; margin: 0; }
 #audio-import-status { margin: var(--sp-4) 0; overflow-wrap: anywhere; }
