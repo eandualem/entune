@@ -315,9 +315,6 @@ files. `--data` overrides `ENTUNE_DATA`; otherwise the directory is
 `~/Library/Application Support/entune` on macOS, `%APPDATA%/entune` on Windows
 (falling back to `~/AppData/Roaming/entune`), and `$XDG_DATA_HOME/entune` or
 `~/.local/share/entune` elsewhere. Defining a data path does not establish platform support.
-Entune was called Dictum: its first start moves an existing `dictum` data folder to
-`entune`, keeping everything, and `DICTUM_DATA` still works. See
-[packaging](docs/packaging.md#from-dictum-to-entune).
 
 Enabled features determine what is sent out:
 
@@ -356,7 +353,7 @@ from imported audio are not saved or included in the transcript export.
 
 The app uses Starlette and SQLite, plain browser JavaScript modules without
 a build step, and httpx for provider calls. Dictionary builds call Anthropic
-or OpenAI directly; the suggested model list is kept in `llm.py`, with a
+or OpenAI directly; the suggested model list is kept in `learning/suggestion_model.py`, with a
 custom model field in Settings.
 
 Speech adapters are organized under providers/cloud and providers/local,

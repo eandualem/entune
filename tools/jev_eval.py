@@ -30,7 +30,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from entune import dictionary, jev, matching
+from entune.dictionary import document as dictionary_document
+from entune.dictionary import entries as dictionary_entries
+from entune.dictionary import matching
+from entune.processing import jev, jev_client
 
 VARIANTS = {
     "previous": None,  # the request format dictation used before the redesign
@@ -126,7 +129,7 @@ class Prepared:
     questions: dict[str, Any]
 
 
-def prepare(case: Case, groups: dictionary.Groups, variant: jev.Variant | None) -> Prepared:
+def prepare(case: Case, groups: dictionary_entries.Groups, variant: jev.Variant | None) -> Prepared:
     found = matching.components(matching.matches(groups, case.text))
     component = next((c for c in found if c.start <= case.start and case.end <= c.end), None)
     if component is None:
@@ -176,12 +179,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--variants", default=",".join(VARIANTS))
     parser.add_argument("--run", action="store_true", help="make paid TypeSafe requests")
     args = parser.parse_args(argv)
-    groups = dictionary.parse(args.dictionary.read_text(encoding="utf-8")).effective(args.model)
+    groups = dictionary_document.parse(args.dictionary.read_text(encoding="utf-8")).effective(
+        args.model
+    )
     cases = load_cases(args.cases)
     key = os.environ.get("TYPESAFE_API_KEY", "")
     if args.run and not key:
         parser.error("--run needs TYPESAFE_API_KEY")
-    client = jev.Client() if args.run else None
+    client = jev_client.Client() if args.run else None
     report: dict[str, Any] = {}
     try:
         for name in args.variants.split(","):
@@ -195,8 +200,8 @@ def main(argv: list[str] | None = None) -> int:
                 counts: dict[str, int] = {}
                 seconds = []
                 for p in prepared:
-                    policy = jev.Policy(total_seconds=30, attempt_seconds=30, max_attempts=1)
-                    call = jev.Call(client, key, policy, time.monotonic() + 30)
+                    policy = jev_client.Policy(total_seconds=30, attempt_seconds=30, max_attempts=1)
+                    call = jev_client.Call(client, key, policy, time.monotonic() + 30)
                     started = time.monotonic()
                     answer = call.ask(p.state, p.questions)["o0"]  # one occurrence per case
                     seconds.append(time.monotonic() - started)

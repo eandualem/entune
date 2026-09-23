@@ -6,48 +6,58 @@ API and the page; on macOS a menu-bar app runs on the main thread beside it.
 ```
 src/entune/
   cli.py          the `entune` command: data directory, port check, server thread, menu-bar app
-  service.py      what the app does: settings, models, transcription, dictionary, capture
-  processing.py   text-processing workflow; service passes explicit settings/key,
-                  retains persistence and delivery coordination
-  store.py        SQLite (settings, recordings, every transcription attempt) + audio files
-  audio.py        container sniffing, WAV and WebM duration
+  server.py       the page, static files and middleware: refuses requests not addressed to
+                  localhost and state changes from other origins; assembles api/
+  api/            the HTTP routes, one module per resource (settings, models, recordings,
+                  dictionary, learning, data, desktop); common.py: errors and JSON shapes
+  app/            what the app does, whoever asks; entune.py builds and wires the parts:
+                  settings.py (keys, fast mode, Jev switches, suggestion model, shortcuts),
+                  models.py (providers, local models, the default model), metrics.py,
+                  dictation.py (record, transcribe, process), dictionary_file.py (read,
+                  versioned save, pin, agent corrections), learning.py and
+                  suggestion_runs.py (suggestion runs: input, job, apply), audio_import.py,
+                  capture.py, desktop_bridge.py, local_data.py (inventory, delete all),
+                  operations.py (one user operation at a time), shortcuts.py
+  audio/          formats.py: container sniffing, durations, WAV; recorder.py: microphone ->
+                  WAV at the device's rate, each chunk to a sink (fast mode streams it);
+                  convert.py: FFmpeg conversion for local engines
   providers/      contracts.py: audio/result types and the Provider protocol
                   registry.py: adapters and stable provider/model identifiers
+                  resources.py: speech leases, local foreground priority, warming, cleanup
                   cloud/: adapters, HTTP response helpers and upload capability
                   local/: Whisper.cpp and Parakeet, lifecycle capability, shared
-                  downloads and conversion; Parakeet's helper runs in its external engine
-  dictionary.py   versioned confusion groups, meanings/associations, scope, pinning, proposals
-  matching.py     derived many-to-many lookup, overlap interpretations and exact edits
-  dictionary_legacy.py  old-file conversion and the confirmed-correction API boundary
-  jev.py          bounded classification requests for dictionary meanings, fillers and formatting
-  formatting.py   conservative sentence spans and whitespace/bullet edits
-  cleanup.py      bounded repeated-filler candidates; no arbitrary deletion discovery
-  text_edits.py   source-validated stage edits and shared quote/code exclusions
-  builds.py       shared history/audio job: frozen snapshot, progress, cancellation, proposal
-  resources.py    speech leases, local foreground priority, warming and owned cleanup
-  llm.py          sequential dictionary refinement, model choices and provider calls
+                  downloads; Parakeet's helper runs in its external engine
+  processing/     after speech: pipeline.py runs the stages, results.py records them;
+                  jev_client.py calls Jev, jev.py asks the meaning, filler and paragraph
+                  questions; formatting.py, cleanup.py, text_edits.py
+  dictionary/     entries.py: meanings, forms, groups; document.py: dictionary.json;
+                  changes.py: pinning, proposals and review; matching.py: eligible meanings
+                  and exact edits; corrections.py: confirmed corrections from other apps
+  learning/       dictionary suggestions: suggestion_model.py (providers, one call),
+                  inputs.py, batches.py (requests), replies.py (parse and apply), generate.py
+  storage/        store.py: SQLite rows + audio files; records.py, schema.py;
+                  data_folder.py: what Entune owns in its folder; paths.py: where it is
   prompts/        packaged generation text and structured Jev questions/criteria/examples;
                   a small resource loader substitutes literal values
-  shortcuts.py    shortcut strings: hold key, hands-free chord
-  recorder.py     microphone -> WAV at the device's rate (sounddevice); a sink gets
-                  each chunk as it is recorded, which fast mode streams to the provider
-  server.py       routes, JSON shapes, static files; refuses requests not addressed to
-                  localhost and state changes from other origins
   web/            app.js wires navigation and models; dictionary-view.js and settings-view.js
                   own their view state; recording.js owns microphone capture and WAV encoding;
                   history.js pages and refreshes history, history-card.js renders each card;
                   ui.js shares DOM helpers; tokens.css defines colours and sizes
-  paths.py        the data directory per platform
   desktop/        app.py: the orchestration, written against platform.py's protocols
                   (tray, window, hotkeys, actions, permissions, UI-thread scheduling);
                   engine.py: press/release -> start/stop, pure;
-                  webview/: the shell, window (pywebview) and tray (pystray), one
+                  webview/shell.py: the window (pywebview) and tray (pystray), one
                   implementation currently wired for macOS;
                   macos/: what is macOS-specific underneath: pynput listener with
                   the fn key (injected keystrokes ignored), pbcopy/osascript, Quartz
                   permissions, the recording pill (indicator.py), the .app bundle;
                   webview.py owns Cocoa delegate hooks and native title-bar layout
 ```
+
+Packages depend one way: audio and dictionary; then processing, learning and storage
+(storage uses only their value types); then app; then api and desktop; then server
+and cli. Every package `__init__.py` is empty or holds only a docstring, the version,
+or the prompt loader.
 
 Data flow for a dictation: the hotkey listener's thread feeds the engine;
 the engine starts and stops the recorder; on stop, a persist worker writes

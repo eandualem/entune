@@ -10,13 +10,13 @@ from pathlib import Path
 
 import pytest
 
+from entune.app.entune import Entune
+from entune.audio.recorder import Capture, SinkFactory
 from entune.desktop.app import EntuneApp
 from entune.desktop.engine import ShortcutEngine
 from entune.desktop.platform import Delivery, State
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
-from entune.recorder import Capture, SinkFactory
-from entune.service import Entune
-from entune.store import Store
+from entune.storage.store import Store
 
 
 class FakeTray:
@@ -229,7 +229,9 @@ def test_no_shortcut_means_no_listener_and_a_hint(tmp_path: Path) -> None:
 
 def test_shortcut_without_permission_asks_for_it_then_listens_once_granted(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path, listen=False)
-    entune.set_shortcuts("alt_r", None)  # on_change -> apply_shortcut on the fake UI thread
+    entune.settings.set_shortcuts(
+        "alt_r", None
+    )  # on_change -> apply_shortcut on the fake UI thread
     assert not platform.hotkeys.running
     assert platform.permissions.requested == ["listen"]
     assert "Input Monitoring" in platform.tray.status
@@ -237,13 +239,13 @@ def test_shortcut_without_permission_asks_for_it_then_listens_once_granted(tmp_p
     app._recheck_permission()  # what the periodic timer does
     assert platform.hotkeys.running and platform.hotkeys.engine is app.engine
     assert platform.tray.status == "Dictate: hold alt_r"
-    status = entune.desktop_status()
+    status = entune.desktop.desktop_status()
     assert status["desktop"] is True and status["listening"] is True and status["canListen"]
 
 
 def test_a_shortcut_with_fn_also_needs_accessibility(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path, post=False)
-    entune.set_shortcuts("fn", None)
+    entune.settings.set_shortcuts("fn", None)
     assert not platform.hotkeys.running
     assert platform.permissions.requested == ["post"]
     assert "Accessibility" in platform.tray.status
@@ -256,9 +258,9 @@ def test_a_shortcut_with_fn_also_needs_accessibility(tmp_path: Path) -> None:
 
 def test_a_dictation_is_transcribed_copied_and_pasted(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
-    entune.set_key("stub", "k")
-    entune.set_default_model("stub/good")
-    entune.set_shortcuts("alt_r", None)
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_shortcuts("alt_r", None)
     app.engine.press("alt_r")  # type: ignore[union-attr]
     assert platform.tray.states[-1] == "recording"
     app.engine.release("alt_r")  # type: ignore[union-attr]
@@ -270,11 +272,11 @@ def test_a_dictation_is_transcribed_copied_and_pasted(tmp_path: Path) -> None:
 
 def test_quiet_microphone_warns_once_and_still_saves_the_recording(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
-    entune.set_key("stub", "k")
-    entune.set_default_model("stub/good")
-    entune.report_status(lastError="microphone unavailable")
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.desktop.report_status(lastError="microphone unavailable")
     app.start_recording()
-    assert entune.desktop_status()["lastError"] is None
+    assert entune.desktop.desktop_status()["lastError"] is None
     assert isinstance(app.recorder, FakeRecorder)
     app.recorder.quiet = True
     app._recheck_permission()
@@ -302,16 +304,16 @@ def test_fast_mode_streams_the_recording_and_hands_the_upload_to_the_provider(
     app, platform, entune = make(tmp_path)
     stub = entune.providers[0]
     assert isinstance(stub, StubProvider)
-    entune.set_key("stub", "k")
-    entune.set_default_model("stub/good")
-    entune.set_shortcuts("alt_r", None)
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_shortcuts("alt_r", None)
     app.start_recording()
     assert stub.uploads == []  # off by default: nothing streamed
     app.stop_recording()
     wait_for(lambda: platform.tray.states[-1] == "idle")
     assert stub.clips[-1].upload_url is None
 
-    entune.set_fast_mode(True)
+    entune.settings.set_fast_mode(True)
     app.start_recording()
     (upload,) = stub.uploads
     assert upload.fed == [app.recorder.capture.pcm]  # type: ignore[attr-defined]
@@ -323,9 +325,9 @@ def test_fast_mode_streams_the_recording_and_hands_the_upload_to_the_provider(
 
 def test_without_accessibility_the_transcript_is_copied_and_explained(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path, post=False)
-    entune.set_key("stub", "k")
-    entune.set_default_model("stub/good")
-    entune.set_shortcuts("alt_r", None, "ctrl+esc")  # no Fn: listening needs no active tap
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_shortcuts("alt_r", None, "ctrl+esc")  # no Fn: listening needs no active tap
     app.engine.press("alt_r")  # type: ignore[union-attr]
     app.engine.release("alt_r")  # type: ignore[union-attr]
     wait_for(lambda: bool(platform.actions.notices))
@@ -336,9 +338,9 @@ def test_without_accessibility_the_transcript_is_copied_and_explained(tmp_path: 
 
 def test_a_failed_transcription_is_a_notification_and_the_icon_recovers(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
-    entune.set_key("stub", "k")
-    entune.set_default_model("stub/bad")
-    entune.set_shortcuts("alt_r", None)
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/bad")
+    entune.settings.set_shortcuts("alt_r", None)
     app.engine.press("alt_r")  # type: ignore[union-attr]
     app.engine.release("alt_r")  # type: ignore[union-attr]
     wait_for(lambda: bool(platform.actions.notices))
@@ -349,7 +351,7 @@ def test_a_failed_transcription_is_a_notification_and_the_icon_recovers(tmp_path
 
 def test_no_default_model_is_told_not_hidden(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
-    entune.set_shortcuts("alt_r", None)
+    entune.settings.set_shortcuts("alt_r", None)
     app.engine.press("alt_r")  # type: ignore[union-attr]
     app.engine.release("alt_r")  # type: ignore[union-attr]
     wait_for(lambda: bool(platform.actions.notices))
@@ -358,13 +360,13 @@ def test_no_default_model_is_told_not_hidden(tmp_path: Path) -> None:
 
 def test_capture_needs_permission_then_uses_the_listener(tmp_path: Path) -> None:
     _app, platform, entune = make(tmp_path, listen=False)
-    entune.start_capture()
-    assert platform.hotkeys.capturing is None and entune.capture_status().state == "idle"
+    entune.capture.start_capture()
+    assert platform.hotkeys.capturing is None and entune.capture.capture_status().state == "idle"
     platform.permissions.listen = True
-    entune.start_capture()
+    entune.capture.start_capture()
     assert platform.hotkeys.running and platform.hotkeys.capturing is not None
     platform.hotkeys.capturing(("cmd", "fn"))
-    assert entune.capture_status().keys == "cmd+fn"
+    assert entune.capture.capture_status().keys == "cmd+fn"
 
 
 def test_menu_actions_and_first_run_window(tmp_path: Path) -> None:
@@ -375,7 +377,7 @@ def test_menu_actions_and_first_run_window(tmp_path: Path) -> None:
     platform.tray.quit()
     assert platform.quit_called and not platform.hotkeys.running
     entune_ = _app.entune
-    entune_.show_window()  # a second launch asks for the window
+    entune_.desktop.show_window()  # a second launch asks for the window
     assert platform.window.shown[-1] == ""
 
 
@@ -385,7 +387,7 @@ def test_the_window_opens_on_settings_only_until_a_shortcut_exists(
 ) -> None:
     entune = Entune(Store(tmp_path), [StubProvider()])
     if configured:
-        entune.set_shortcuts("alt_r", None)
+        entune.settings.set_shortcuts("alt_r", None)
     platform = FakePlatform()
     app = EntuneApp(
         entune,
@@ -404,19 +406,19 @@ def test_the_window_opens_on_settings_only_until_a_shortcut_exists(
 def test_missing_permissions_reopen_setup_and_recover_without_recording(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path, listen=False, post=False)
     platform.permissions.microphone = "not_requested"
-    entune.set_shortcuts("fn", "cmd+fn")
+    entune.settings.set_shortcuts("fn", "cmd+fn")
     app._server_answers = lambda: True
     app._show_window_when_served(time.monotonic())
     assert platform.window.shown == ["#settings"]
-    assert entune.request_permission("microphone", False)
+    assert entune.desktop.request_permission("microphone", False)
     assert platform.permissions.requested == ["listen", "microphone"]
     platform.permissions.microphone = "denied"
-    entune.request_permission("microphone", False)
+    entune.desktop.request_permission("microphone", False)
     assert platform.permissions.requested[-1] == "settings:microphone"
     platform.permissions.microphone = "granted"
     platform.permissions.listen = platform.permissions.post = True
     app._recheck_permission()
-    assert entune.desktop_status()["permissions"] == {
+    assert entune.desktop.desktop_status()["permissions"] == {
         "microphone": "granted",
         "inputMonitoring": "granted",
         "accessibility": "granted",
@@ -429,22 +431,22 @@ def test_missing_permissions_reopen_setup_and_recover_without_recording(tmp_path
 
 def test_an_unrelated_change_keeps_the_engine_mid_recording(tmp_path: Path) -> None:
     app, _platform, entune = make(tmp_path)
-    entune.set_shortcuts("alt_r", None)
+    entune.settings.set_shortcuts("alt_r", None)
     engine = app.engine
     assert engine is not None
     engine.press("alt_r")  # recording, key held
     assert engine.recording
-    entune.set_fast_mode(True)  # any settings change used to rebuild the engine
+    entune.settings.set_fast_mode(True)  # any settings change used to rebuild the engine
     assert app.engine is engine and engine.recording
-    entune.set_shortcuts("alt_r", "cmd+alt_r")  # a real shortcut change still replaces it
+    entune.settings.set_shortcuts("alt_r", "cmd+alt_r")  # a real shortcut change still replaces it
     assert app.engine is not engine
 
 
 def test_cancelling_a_capture_reaches_the_listener(tmp_path: Path) -> None:
     _app, platform, entune = make(tmp_path)
-    entune.start_capture()
+    entune.capture.start_capture()
     assert platform.hotkeys.capturing is not None
-    entune.cancel_capture()
+    entune.capture.cancel_capture()
     assert platform.hotkeys.capturing is None
 
 
@@ -452,8 +454,8 @@ def test_new_recording_is_blocked_until_processing_and_delivery_finish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app, platform, entune = make(tmp_path)
-    entune.set_key("stub", "k")
-    entune.set_default_model("stub/good")
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
     entered, release = threading.Event(), threading.Event()
 
     def speech(clip: Clip, model: str, key: str) -> Transcript:
@@ -476,22 +478,24 @@ def test_new_recording_is_blocked_until_processing_and_delivery_finish(
 
 def test_clearing_the_shortcuts_mid_recording_finishes_the_clip(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
-    entune.set_key("stub", "k")
-    entune.set_default_model("stub/good")
-    entune.set_shortcuts(None, "cmd+alt_r")
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_shortcuts(None, "cmd+alt_r")
     engine = app.engine
     assert engine is not None
     engine.press("cmd")
     engine.press("alt_r")  # hands-free recording
     assert app.recorder.recording  # type: ignore[attr-defined]
-    entune.set_shortcuts(None, None)  # the engine goes: the clip is finished, not abandoned
+    entune.settings.set_shortcuts(
+        None, None
+    )  # the engine goes: the clip is finished, not abandoned
     assert not app.recorder.recording  # type: ignore[attr-defined]
     wait_for(lambda: platform.actions.pasted == 1)
 
 
 def test_a_stopped_clip_is_in_history_before_its_transcription_runs(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
-    entune.set_shortcuts("alt_r", None)  # no model set: transcription cannot even start
+    entune.settings.set_shortcuts("alt_r", None)  # no model set: transcription cannot even start
     app.start_recording()
     app.stop_recording()
     wait_for(lambda: len(entune.store.list_recordings()) == 1)
@@ -502,7 +506,7 @@ def test_a_stopped_clip_is_in_history_before_its_transcription_runs(tmp_path: Pa
 
 def test_quitting_right_after_a_recording_still_saves_it(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
-    entune.set_shortcuts("alt_r", None)
+    entune.settings.set_shortcuts("alt_r", None)
     app.start_recording()
     app.stop_recording()
     app.quit()
@@ -514,10 +518,10 @@ def test_cancelling_retains_capture_aborts_upload_and_prevents_transcription_or_
     tmp_path: Path,
 ) -> None:
     app, platform, entune = make(tmp_path)
-    entune.set_key("stub", "k")
-    entune.set_default_model("stub/good")
-    entune.set_fast_mode(True)
-    entune.set_shortcuts("fn", "cmd+fn")
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_fast_mode(True)
+    entune.settings.set_shortcuts("fn", "cmd+fn")
     engine = app.engine
     assert engine is not None
     engine.press("cmd")
@@ -557,11 +561,11 @@ def test_persisted_audio_is_released_while_waiting_for_the_next_recording(tmp_pa
 
 def test_correction_failure_delivers_raw_with_a_noninterrupting_notice(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
-    entune.set_key("stub", "k")
-    entune.set_default_model("stub/good")
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
     entune.store.set_setting("jev_dictionary", "1")
     (tmp_path / "dictionary.json").write_text("{broken")
-    recording = entune.store_recording(b"audio", "audio/wav")
+    recording = entune.dictation.store_recording(b"audio", "audio/wav")
     operation = entune.operations.begin("dictation", "transcribing")
     app._transcribe_and_deliver(recording, 1.0, None, operation)
     assert platform.actions.clipboard == "hello from the fake"
@@ -576,10 +580,10 @@ def test_quit_discards_pending_delivery_and_does_not_restart_shortcuts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app, platform, entune = make(tmp_path)
-    entune.set_shortcuts("alt_r", None)
+    entune.settings.set_shortcuts("alt_r", None)
     callbacks: list[Callable[[], None]] = []
     monkeypatch.setattr(platform, "run_on_ui_thread", callbacks.append)
-    recording = entune.store_recording(b"audio", "audio/wav")
+    recording = entune.dictation.store_recording(b"audio", "audio/wav")
     operation = entune.operations.begin("dictation", "delivering")
     app._later(lambda: app._deliver("late result", None, operation, recording))
     app.quit()
@@ -607,7 +611,7 @@ def test_quit_reports_capture_save_failure_and_still_closes_resources(
     def fail_save(*args: object) -> None:
         raise OSError("test disk is full")
 
-    monkeypatch.setattr(entune, "store_recording", fail_save)
+    monkeypatch.setattr(entune.dictation, "store_recording", fail_save)
     monkeypatch.setattr(entune, "close", cleanup)
     app.start_recording()
     app.quit()
@@ -626,15 +630,15 @@ def test_capture_flush_wait_is_bounded_and_timeout_visible(
 
     app, platform, entune = make(tmp_path)
     release = threading.Event()
-    save = entune.store_recording
+    save = entune.dictation.store_recording
 
     def slow_save(data: bytes, mime: str) -> Recording:
         assert release.wait(2)
         return save(data, mime)
 
-    from entune.store import Recording
+    from entune.storage.records import Recording
 
-    monkeypatch.setattr(entune, "store_recording", slow_save)
+    monkeypatch.setattr(entune.dictation, "store_recording", slow_save)
     monkeypatch.setattr(desktop, "QUIT_FLUSH_SECONDS", 0.04)
     try:
         app.start_recording()

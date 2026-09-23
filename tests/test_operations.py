@@ -11,21 +11,23 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from entune import dictionary, jev
+from entune.app.entune import Entune
+from entune.audio.formats import wav_bytes
 from entune.desktop.app import EntuneApp
 from entune.desktop.platform import Delivery
+from entune.dictionary import document as dictionary_document
+from entune.dictionary import entries as dictionary_entries
+from entune.processing import jev_client
 from entune.providers.contracts import Clip, Transcript
-from entune.recorder import wav_bytes
 from entune.server import create_app
-from entune.service import Entune
 from tests.dictionary_samples import JEV
 from tests.test_app import FakeActions, FakePlatform, make, wait_for
 
 
 def configured(tmp_path: Path) -> tuple[EntuneApp, FakePlatform, Entune]:
     app, platform, service = make(tmp_path)
-    service.set_key("stub", "synthetic")
-    service.set_default_model("stub/good")
+    service.settings.set_key("stub", "synthetic")
+    service.models.set_default_model("stub/good")
     return app, platform, service
 
 
@@ -68,14 +70,14 @@ def test_cancel_inflight_jev_closes_request_keeps_raw_and_prevents_later_stages(
             raise
         raise AssertionError("request should have been cancelled")
 
-    monkeypatch.setattr(service, "_jev_client", jev.Client(httpx.MockTransport(response)))
+    monkeypatch.setattr(service.dictation, "_jev", jev_client.Client(httpx.MockTransport(response)))
     monkeypatch.setattr(
         service.providers[0], "transcribe", lambda *args: Transcript("Use Jeff to classify this.")
     )
-    dictionary.save(service.store.data_dir, dictionary.Dictionary((JEV,)))
+    dictionary_document.save(service.store.data_dir, dictionary_entries.Dictionary((JEV,)))
     service.store.set_setting("jev_dictionary", "1")
     service.store.set_setting("jev_formatting", "1")
-    service.set_key("typesafe", "synthetic")
+    service.settings.set_key("typesafe", "synthetic")
     app.start_recording()
     app.stop_recording()
     assert entered.wait(2)
@@ -180,27 +182,16 @@ def test_model_selected_at_speech_start_and_later_change_does_not_redirect(
 
     def speech(clip: Clip, model: str, key: str) -> Transcript:
         calls.append(model)
-        service.set_default_model("stub/good")
+        service.models.set_default_model("stub/good")
         return Transcript("chosen model result")
 
     monkeypatch.setattr(service.providers[0], "transcribe", speech)
-    service.set_fast_mode(True)
+    service.settings.set_fast_mode(True)
     app.start_recording()
-    service.set_default_model("stub/bad")
+    service.models.set_default_model("stub/bad")
     app.stop_recording()
     wait_for(lambda: service.operations.status() is None)
     assert calls == ["bad"]
     assert service.store.list_recordings()[0].transcriptions[0].model == "bad"
     assert platform.actions.pasted == 1
-    app.close()
-
-
-def test_existing_fn_escape_setting_uses_safe_default_without_rewriting_settings(
-    tmp_path: Path,
-) -> None:
-    app, _, service = configured(tmp_path)
-    service.store.set_setting("shortcut_hold", "fn")
-    service.store.set_setting("shortcut_cancel", "esc+fn")
-    assert service.shortcuts().cancel == ("fn", "ctrl")
-    assert service.store.get_setting("shortcut_cancel") == "esc+fn"
     app.close()

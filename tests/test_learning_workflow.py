@@ -13,23 +13,26 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from entune import dictionary, llm
-from entune.dictionary import Dictionary
+from entune.app.entune import Entune
+from entune.audio.formats import wav_bytes
+from entune.dictionary import changes as dictionary_changes
+from entune.dictionary import entries as dictionary_entries
+from entune.dictionary.entries import Dictionary
+from entune.learning import batches, suggestion_model
+from entune.learning import inputs as learning_inputs
 from entune.providers.contracts import Clip, Failure, Transcript
-from entune.recorder import wav_bytes
 from entune.server import create_app
-from entune.service import Entune
-from entune.store import Store
+from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, wait_for_build
 from tests.dictionary_samples import JEV, group, proposed
 from tests.test_server import StubProvider
 
 
-def setup(store: Store, caller: llm.Caller) -> tuple[Entune, TestClient]:
+def setup(store: Store, caller: suggestion_model.Caller) -> tuple[Entune, TestClient]:
     app = Entune(store, [StubProvider()], llm_call=caller)
-    app.set_key("stub", "speech-key")
-    app.set_key("openai", "generation-key")
-    app.set_default_model("stub/good")
+    app.settings.set_key("stub", "speech-key")
+    app.settings.set_key("openai", "generation-key")
+    app.models.set_default_model("stub/good")
     return app, TestClient(create_app(app), base_url="http://localhost")
 
 
@@ -46,11 +49,11 @@ def test_review_edits_and_dismissal_apply_once_without_deleting_dismissed_entrie
     )
     current = Dictionary(learned={"model": (before, removed)})
     after = replace(before, meanings=(replace(before.meanings[0], meaning="An assistant."),))
-    proposal = dictionary.propose(current, (after, added), "model")
+    proposal = dictionary_changes.propose(current, (after, added), "model")
     assert {c.kind for c in proposal.changes} == {"add", "update", "remove"}
     edited = after.as_json()
     edited["meanings"][0]["meaning"] = "A reviewed assistant definition."
-    result = dictionary.review(
+    result = dictionary_changes.review(
         current,
         proposal,
         [
@@ -62,7 +65,7 @@ def test_review_edits_and_dismissal_apply_once_without_deleting_dismissed_entrie
     assert groups[removed.id] == removed  # dismissing the removal keeps active knowledge
     assert groups[before.id].meanings[0].meaning == "A reviewed assistant definition."
     assert groups[added.id] == added
-    assert dictionary.review(current, proposal, []) is current
+    assert dictionary_changes.review(current, proposal, []) is current
 
 
 def test_review_validation_rejects_pinned_removal_even_in_edited_whole_group() -> None:
@@ -70,12 +73,12 @@ def test_review_validation_rejects_pinned_removal_even_in_edited_whole_group() -
     changed = replace(
         JEV, meanings=(replace(JEV.meanings[0], meaning="A classifier."), *JEV.meanings[1:])
     )
-    proposal = dictionary.propose(current, (changed,), "model")
+    proposal = dictionary_changes.propose(current, (changed,), "model")
     record = changed.as_json()
     record["recognized_forms"] = record["recognized_forms"][1:]
     with pytest.raises(ValueError, match="pinned variant"):
-        dictionary.review(current, proposal, [{"id": JEV.id, "after": record}])
-    approved = dictionary.review(current, proposal)
+        dictionary_changes.review(current, proposal, [{"id": JEV.id, "after": record}])
+    approved = dictionary_changes.review(current, proposal)
     assert approved.pinned[0].meanings[0].meaning == "A classifier."
 
 
@@ -145,7 +148,7 @@ def test_partial_generation_keeps_validated_proposal_and_only_fully_covered_inpu
     monkeypatch: pytest.MonkeyPatch,
     stop: bool,
 ) -> None:
-    monkeypatch.setattr(llm, "BATCH_CHARS", 10)
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
     later = threading.Event()
     calls = 0
 
@@ -224,7 +227,7 @@ def test_retry_audio_reuses_successes_and_generation_checkpoint_without_persisti
         ready = wait_for_build(client)
         assert ready["phase"] == "ready" and len(speech_calls) == 3
         assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200
-        assert not app._builds._texts and store.list_recordings() == []
+        assert not app.builds._texts and store.list_recordings() == []
         app.close()
     assert not any(
         b"temporary private cloud code words" in path.read_bytes()
@@ -282,7 +285,7 @@ def test_learning_is_rejected_while_speech_is_running(
         app, client = setup(store, call)
         monkeypatch.setattr(app.providers[0], "transcribe", speech)
         with ThreadPoolExecutor(1) as pool:
-            future = pool.submit(app.record_and_transcribe, WEBM_HEADER, None, None)
+            future = pool.submit(app.dictation.record_and_transcribe, WEBM_HEADER, None, None)
             try:
                 assert entered.wait(1)
                 result = client.post(
@@ -298,7 +301,7 @@ def test_learning_is_rejected_while_speech_is_running(
 def test_retry_resumes_completed_generation_batches_with_accumulated_groups(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(llm, "BATCH_CHARS", 10)
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
     prompts: list[str] = []
 
     async def call(provider: str, key: str, model: str, system: str, user: str) -> str:
@@ -364,24 +367,26 @@ def test_stop_during_audio_keeps_its_success_for_retry_and_discard_clears_it(
         assert wait_for_build(client)["phase"] == "ready"
         assert speech_calls == 2
         client.delete(f"/api/dictionary/build/{job['id']}")
-        assert not app._builds._texts and store.list_recordings() == []
+        assert not app.builds._texts and store.list_recordings() == []
         app.close()
 
 
 def test_split_sources_carry_only_their_own_part_of_the_dictionary_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from entune.processing import Selection
-    from entune.text_edits import Change, apply
+    from entune.processing.results import Selection
+    from entune.processing.text_edits import Change, apply
 
-    monkeypatch.setattr(llm, "BATCH_CHARS", 12)
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 12)
     raw = "  use cloud here and cloud there"
     starts = [i for i in range(len(raw)) if raw.startswith("cloud", i)]
-    result = llm.DictionaryResult(
+    result = learning_inputs.DictionaryResult(
         tuple(Change(i, i + 5, "cloud", "Claude") for i in starts),
         tuple(Selection(i, i + 5, ("m_claude",), "contextual") for i in starts),
     )
-    steps = llm.learning_batches([llm.LearningText("attempt-42", raw, "raw_speech", result)])
+    steps = batches.learning_batches(
+        [learning_inputs.LearningText("attempt-42", raw, "raw_speech", result)]
+    )
     snippets = [s for step in steps for s in step.snippets]
     assert all(s.result is not None for s in snippets)
     after = " ".join(apply(s.text, s.result.changes) for s in snippets if s.result)
@@ -390,8 +395,8 @@ def test_split_sources_carry_only_their_own_part_of_the_dictionary_result(
     assert [step.completed for step in steps][-1] == ("attempt-42",)
     assert all(not step.completed for step in steps[:-1])
     # An edit that crosses a split cannot be shown faithfully on either side.
-    whole = llm.DictionaryResult((Change(2, len(raw), raw[2:], "x"),))
-    split = llm.learning_batches([llm.LearningText("a", raw, "raw_speech", whole)])
+    whole = learning_inputs.DictionaryResult((Change(2, len(raw), raw[2:], "x"),))
+    split = batches.learning_batches([learning_inputs.LearningText("a", raw, "raw_speech", whole)])
     assert all(s.result is None for step in split for s in step.snippets)
 
 
@@ -430,7 +435,7 @@ def test_audio_from_other_models_creates_then_refines_the_selected_models_dictio
         assert (
             '"kind": "temporary_audio"' in prompts[1] and '"after_dictionary": null' in prompts[1]
         )
-        learned = app.dictionary().learned
+        learned = app.dictionary.dictionary().learned
         assert list(learned) == ["stub/good"] and len(learned["stub/good"]) == 1
         attempts = store.get_recording(other.id).transcriptions  # type: ignore[union-attr]
         assert [(a.model, a.text) for a in attempts] == [("x", "original words")]
@@ -438,8 +443,8 @@ def test_audio_from_other_models_creates_then_refines_the_selected_models_dictio
 
 
 def test_refinement_pairs_raw_text_with_the_dictionary_step_result_only(tmp_path: Path) -> None:
-    from entune.processing import Processed, Selection, Stage
-    from entune.text_edits import Change
+    from entune.processing.results import Processed, Selection, Stage
+    from entune.processing.text_edits import Change
 
     raw = "Ask cloud about the cloud backups um um today."
     corrected = "Ask Claude about the cloud backups um um today."
@@ -499,15 +504,17 @@ def test_refinement_pairs_raw_text_with_the_dictionary_step_result_only(tmp_path
         inputs = {i.id: i for i in store.learning_inputs("stub", "good")}
         assert inputs[str(legacy)].kind == "legacy_final" and inputs[str(legacy)].result is None
         assert inputs[str(failed)].result is None
-        assert inputs[str(nothing)].result == llm.DictionaryResult((), None)
+        assert inputs[str(nothing)].result == learning_inputs.DictionaryResult((), None)
         paired = inputs[str(attempts["paired"])]
         assert paired.text == raw and paired.result is not None
 
-        claude = dictionary.Meaning("m_claude", "Claude", "An AI assistant.")
-        form = dictionary.Form("cloud", (dictionary.Association("m_claude"),))
-        current = Dictionary(learned={"stub/good": (dictionary.Group("g", (claude,), (form,)),)})
-        (step,) = llm.learning_batches(list(inputs.values()))
-        prompt = llm.build_user_prompt("refine", current, step.snippets, "stub/good")
+        claude = dictionary_entries.Meaning("m_claude", "Claude", "An AI assistant.")
+        form = dictionary_entries.Form("cloud", (dictionary_entries.Association("m_claude"),))
+        current = Dictionary(
+            learned={"stub/good": (dictionary_entries.Group("g", (claude,), (form,)),)}
+        )
+        (step,) = batches.learning_batches(list(inputs.values()))
+        prompt = batches.build_user_prompt("refine", current, step.snippets, "stub/good")
         entries = json.loads(prompt.split("(JSON).")[1].split("\n", 1)[1])
         by_raw = {e["raw"]: e for e in entries}
         pair = by_raw[raw]

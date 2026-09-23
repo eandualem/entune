@@ -38,8 +38,8 @@ Two optional capabilities, without an adapter inheritance hierarchy:
   lists only the downloaded ones.
 
 Shared cloud response helpers live in cloud/http.py. Local engines share
-resumable downloads in local/downloads.py and FFmpeg conversion in
-local/audio.py; the caller explicitly supplies the conversion sample rate.
+resumable downloads in local/downloads.py; FFmpeg conversion is in
+entune/audio/convert.py; the caller explicitly supplies the conversion sample rate.
 Parakeet's WAV decoder and resampling remain in its external helper.
 
 Whisper's saved provider ID remains "local", even though its display name

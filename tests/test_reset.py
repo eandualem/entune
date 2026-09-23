@@ -7,13 +7,14 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from entune.llm import LearningText
+from entune.api.data import RESET_PHRASE
+from entune.app.entune import Entune
+from entune.audio.formats import wav_bytes
+from entune.learning.inputs import LearningText
 from entune.providers.contracts import Clip, TranscribeResult, Transcript
 from entune.providers.local.contracts import LocalModelStatus
-from entune.recorder import wav_bytes
-from entune.server import RESET_PHRASE, create_app
-from entune.service import Entune
-from entune.store import Store
+from entune.server import create_app
+from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
 
 
@@ -59,7 +60,7 @@ def fill(client: TestClient, data: Path, local: LocalStub) -> None:
     client.put("/api/settings", json={"keys": {"stub": "secret-key"}, "defaultModel": "stub/good"})
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     assert client.get(f"/api/recordings/{rec['id']}/audio").status_code == 200
-    client.put("/api/dictionary", json={"pinned": []})
+    client.put("/api/dictionary", json={"version": 2, "pinned": [], "learned": {}})
     client.post(
         "/api/dictionary/corrections",
         json={"entries": [{"spelling": "Entune", "heard": ["in tune"]}], "source": "test"},
@@ -133,7 +134,10 @@ def test_reset_deletes_every_entune_item_and_nothing_else(
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     assert rec["transcriptions"][0]["text"] == "hello there"
     assert client.get(f"/api/recordings/{rec['id']}/audio").status_code == 200
-    assert client.put("/api/dictionary", json={"pinned": []}).status_code == 200
+    assert (
+        client.put("/api/dictionary", json={"version": 2, "pinned": [], "learned": {}}).status_code
+        == 200
+    )
 
 
 def test_reset_waits_for_nothing_it_would_break(
@@ -178,7 +182,7 @@ def test_a_refused_reset_keeps_a_stopped_run_for_retry(
     setup: tuple[TestClient, Entune, Path, LocalStub],
 ) -> None:
     client, app, _, local = setup
-    builds = app._builds
+    builds = app.builds
     builds._state = {"id": "job", "phase": "failed"}
     builds._texts["1"] = LearningText("1", "kept for retry", "temporary_audio")
     local.downloading = True
@@ -215,15 +219,15 @@ def test_imports_exports_and_a_reset_never_overlap(
     client, app, _, _ = setup
     confirm = {"confirm": RESET_PHRASE}
     for what in ("audio import", "export"):
-        with app.using_data(what):
+        with app.data.using_data(what):
             res = client.post("/api/data/reset", json=confirm)
             assert res.status_code == 409 and what in res.text
-    app._resetting = True  # as while a reset runs
+    app.data._resetting = True  # as while a reset runs
     audio = wav_bytes(b"\0\1" * 1600, 1600)
     res = client.post("/api/dictionary/audio", files={"audio": ("a.wav", audio, "audio/wav")})
     assert res.status_code == 400 and "deleting all data" in res.text
     assert client.get("/api/exports/audio").status_code == 409
-    app._resetting = False
+    app.data._resetting = False
     assert client.get("/api/dictionary/audio").json()["items"] == []
     assert client.post("/api/data/reset", json=confirm).status_code == 200
 

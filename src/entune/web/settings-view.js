@@ -130,7 +130,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const lines = [];
     if (s.transcriptions) {
       lines.push(`${s.transcriptions} processed transcripts · median +${s.median_seconds?.toFixed(1) ?? "–"} s`);
-      for (const [method, label] of [["contextual", "Contextual dictionary"], ["deterministic", "Approved direct mappings"], ["unconditional", "Historical unconditional mappings"], ["cleanup", "Filler reduction"], ["formatting", "Formatting"]]) {
+      for (const [method, label] of [["contextual", "Contextual dictionary"], ["deterministic", "Approved direct mappings"], ["cleanup", "Filler reduction"], ["formatting", "Formatting"]]) {
         const stage = s.stages[method];
         if (!stage.succeeded && !stage.failed && !stage.replacements && !stage.decisions) continue;
         if (["cleanup", "formatting"].includes(method)) {
@@ -139,7 +139,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
         }
         lines.push(`${label}: ${stage.succeeded} succeeded, ${stage.failed} failed, ${stage.skipped} skipped; retries: ${stage.retries}; decisions: ${stage.decisions}; replacements: ${stage.replacements} (${stage.direct_replacements ?? 0} direct); preserved: ${stage.preserved}; unresolved: ${stage.abstained}`);
       }
-      lines.push("Counts describe processing, not accuracy. Span counts cover recorded edits only; legacy counters are excluded.");
+      lines.push("Counts describe processing, not accuracy. Span counts cover recorded edits only.");
     }
     el("jev-summary").textContent = lines.join("\n") || (j.key_hint ? "" : "Add a TypeSafe key to enable processing.");
   }

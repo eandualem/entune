@@ -22,9 +22,9 @@ from typing import Any
 
 import httpx
 
-from entune.audio import sniff_mime
+from entune.audio.convert import to_wav_with_ffmpeg
+from entune.audio.formats import sniff_mime
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
-from entune.providers.local.audio import to_wav_with_ffmpeg
 from entune.providers.local.contracts import LocalModelStatus
 from entune.providers.local.downloads import DOWNLOAD_TIMEOUT, Download
 

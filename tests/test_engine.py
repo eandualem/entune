@@ -1,6 +1,6 @@
 import pytest
 
-from entune import shortcuts
+from entune.app import shortcuts
 from entune.desktop.engine import ShortcutEngine
 
 

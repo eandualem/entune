@@ -7,13 +7,14 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from entune import cleanup, formatting, jev, text_edits
-from entune.processing import notice, process_text
+from entune.app.entune import Entune
+from entune.processing import cleanup, formatting, jev, jev_client, text_edits
+from entune.processing.pipeline import process_text
+from entune.processing.results import notice
+from entune.processing.text_edits import Change
 from entune.providers.contracts import Transcript
 from entune.server import create_app
-from entune.service import Entune
-from entune.store import Store
-from entune.text_edits import Change
+from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
 from tests.dictionary_samples import JEV
 from tests.test_jev import answering, call
@@ -23,7 +24,7 @@ from tests.test_server import StubProvider
 def test_first_list_item_including_unicode_offsets_keeps_all_source_words() -> None:
     raw = "  😀 First, tea. Second, coffee."
     requests, handler = answering(lambda *_: {"list_item": 1.0})
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = jev.format_edits(raw, call(client))
     assert text_edits.apply(raw, result.changes) == "  - 😀 First, tea.\n- Second, coffee."
     assert set(requests[0]["questions"]) == {"S00", "S01"}
@@ -45,7 +46,7 @@ def test_first_list_item_including_unicode_offsets_keeps_all_source_words() -> N
 )
 def test_existing_lists_code_and_unpunctuated_text_need_no_request(raw: str) -> None:
     requests, handler = answering(lambda *_: {"list_item": 1.0})
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         assert not jev.format_edits(raw, call(client)).changes
     assert not requests
 
@@ -70,14 +71,14 @@ def test_explicit_segmentation_examples(raw: str, expected: list[str]) -> None:
 def test_existing_paragraph_gaps_and_line_endings_are_preserved() -> None:
     raw = "First topic.\r\n\r\n  Next topic.\n\nThird topic.  "
     _, handler = answering(lambda *_: {"new_paragraph": 1.0})
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         assert text_edits.apply(raw, jev.format_edits(raw, call(client)).changes) == raw
 
 
 def test_cleanup_changes_only_duplicate_spans_and_keeps_first_occurrence() -> None:
     raw = "😀 Um, um, um, open this. It is like like slow."
     requests, handler = answering(lambda *_: {"hesitation": 1.0})
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             raw,
             (),
@@ -86,7 +87,7 @@ def test_cleanup_changes_only_duplicate_spans_and_keeps_first_occurrence() -> No
             cleanup=True,
             key="ts-key",
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
     assert result.text == "😀 Um, open this. It is like slow."
     assert len(requests) == 1 and requests[0]["state"]["transcript"] == raw
@@ -130,7 +131,7 @@ def test_meaningful_and_uncertain_repetition_survives() -> None:
             {"meaningful": 1.0} if name == "F00" else {"hesitation": 0.8, "meaningful": 0.2}
         )
     )
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             raw,
             (),
@@ -139,7 +140,7 @@ def test_meaningful_and_uncertain_repetition_survives() -> None:
             cleanup=True,
             key="ts-key",
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
     assert result.text == raw and not result.cleanup.changes
     assert result.cleanup.preserved == 1 and result.cleanup.abstained == 1
@@ -153,7 +154,7 @@ def test_cleanup_is_opt_in_and_invalid_answers_preserve_stage_input() -> None:
         requests.append(request)
         return httpx.Response(200, json={"answers": {"F00": {"delete": "everything"}}})
 
-    with closing(jev.Client(httpx.MockTransport(malformed))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(malformed))) as client:
         off = process_text(
             raw,
             (),
@@ -161,7 +162,7 @@ def test_cleanup_is_opt_in_and_invalid_answers_preserve_stage_input() -> None:
             formatting=False,
             key="ts-key",
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
         assert off.text == raw and off.cleanup.status == "disabled" and not requests
         result = process_text(
@@ -172,7 +173,7 @@ def test_cleanup_is_opt_in_and_invalid_answers_preserve_stage_input() -> None:
             cleanup=True,
             key="ts-key",
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
     assert result.text == raw and result.cleanup.status == "failed"
     assert result.cleanup.changes == () and result.cleanup.removed_words == 0
@@ -199,7 +200,7 @@ def test_final_failure_stops_remaining_stages(failure: str) -> None:
             )
         )[1](request)
 
-    with closing(jev.Client(httpx.MockTransport(respond))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
             "Um um first item. Second item.",
             (),
@@ -208,7 +209,7 @@ def test_final_failure_stops_remaining_stages(failure: str) -> None:
             cleanup=True,
             key="ts-key",
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
     if failure == "fillers":
         assert result.text == "Um um first item. Second item."
@@ -255,7 +256,7 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
             assert attempt.cleanup.status == "succeeded"
         return handler(request)
 
-    with closing(jev.Client(httpx.MockTransport(respond))) as network:
+    with closing(jev_client.Client(httpx.MockTransport(respond))) as network:
         service = Entune(store, [provider], jev_client=network)
         with TestClient(create_app(service), base_url="http://localhost") as client:
             assert not client.get("/api/settings").json()["jev"]["cleanup"]

@@ -10,7 +10,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from entune.providers.contracts import Clip
-from entune.store import Store
+from entune.storage.store import Store
 
 WEBM_HEADER = b"\x1a\x45\xdf\xa3" + b"\x00" * 12
 
