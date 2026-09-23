@@ -6,6 +6,7 @@ export function createAudioOnboarding({ getModel, getSettings, onBuild, onBusy }
   const choose = el("choose-audio-folder");
   const wispr = el("import-wispr");
   const build = el("build-audio-dictionary");
+  const refine = el("refine-audio-dictionary");
   const status = el("audio-import-status");
   let items = [];
   const selected = new Set();
@@ -26,7 +27,7 @@ export function createAudioOnboarding({ getModel, getSettings, onBuild, onBusy }
       ? `Transcribe with ${speech.label}; build the dictionary with ${language}. Cloud provider charges may apply; no cost estimate is available. Review before accepting.`
       : "Choose a speech model in the toolbar and a dictionary model in Settings → Providers.";
     choose.disabled = wispr.disabled = importing || buildBusy;
-    build.disabled = importing || buildBusy || !selected.size || !speech || !language;
+    build.disabled = refine.disabled = importing || buildBusy || !selected.size || !speech || !language;
     for (const field of el("learning-audio-list").querySelectorAll("input")) field.disabled = importing || buildBusy;
     onBusy(importing);
   }
@@ -107,7 +108,8 @@ export function createAudioOnboarding({ getModel, getSettings, onBuild, onBusy }
       await refreshCount();
     }
   });
-  build.addEventListener("click", () => onBuild({audio_ids: [...selected]}));
+  build.addEventListener("click", () => onBuild({mode: "generate", audio_ids: [...selected]}));
+  refine.addEventListener("click", () => onBuild({mode: "refine", audio_ids: [...selected]}));
 
   return {
     load: refreshCount,

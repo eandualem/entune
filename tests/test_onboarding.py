@@ -114,7 +114,7 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
         return (
             json.dumps(proposed("I use cloud code for work."))
             if len(prompts) == 1
-            else '{"groups": [], "remove": []}'
+            else '{"additions": []}'
         )
 
     monkeypatch.setattr(stub, "transcribe", transcribe)
@@ -122,11 +122,19 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
     store = Store(tmp_path)
     dictum = Dictum(store, [stub], llm_call=fake)
     client = TestClient(create_app(dictum), base_url="http://localhost")
-    assert client.post("/api/dictionary/build", json={"source": "audio"}).status_code == 400
+    assert (
+        client.post(
+            "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
+        ).status_code
+        == 400
+    )
     client.put(
         "/api/settings", json={"keys": {"stub": "k", "openai": "k"}, "defaultModel": "stub/good"}
     )
-    assert "import audio" in client.post("/api/dictionary/build", json={"source": "audio"}).text
+    assert (
+        "import audio"
+        in client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"}).text
+    )
     pinned = {"spelling": "PinnedName", "description": "person", "heard": ["pin name"]}
     original = {"pinned": [pinned], "learned": {"stub/other": [{"spelling": "OtherOnly"}]}}
     client.put("/api/dictionary", json=original)
@@ -136,10 +144,15 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
             "/api/dictionary/audio", files={"audio": (f"{i}.wav", wav_bytes(bytes([i, 0]) * 16))}
         )
     try:
-        started = client.post("/api/dictionary/build", json={"source": "audio"})
+        started = client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
         assert started.status_code == 202
         assert entered.wait(5)
-        assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 409
+        assert (
+            client.post(
+                "/api/dictionary/build", json={"mode": "generate", "source": "history"}
+            ).status_code
+            == 409
+        )
         assert client.delete(f"/api/dictionary/build/{started.json()['id']}").status_code == 409
         client.put(
             "/api/settings",
@@ -179,7 +192,7 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
 
     async def fake(provider: str, key: str, model: str, system: str, user: str) -> str:
         prompts.append(user)
-        return '{"groups": [], "remove": []}'
+        return '{"additions": []}'
 
     store = Store(tmp_path)
     client = TestClient(
@@ -189,7 +202,7 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
     client.post("/api/dictionary/audio", files={"audio": ("clip.wav", wav_bytes(b"\0\0" * 16))})
     for model in ("good", "other", "bad"):
         client.put("/api/settings", json={"defaultModel": f"stub/{model}"})
-        started = client.post("/api/dictionary/build", json={"source": "audio"})
+        started = client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
         assert started.status_code == 202
         result = wait_for_build(client)
         if model == "bad":

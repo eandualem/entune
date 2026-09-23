@@ -86,13 +86,19 @@ def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> N
         )
         assert context.attempts == 1 and context.decisions == 3
         assert jev.decide(text, [], call(client)) == []
+    # Only the local text is state; each option states its own meaning, without ID hops.
     state = requests[0]["state"]
-    assert state["transcript"] == text and set(state["meanings"]) == {"a_jev", "b_jeff", "c_gif"}
-    assert state["meanings"]["b_jeff"]["personal_context"] is None
-    assert state["occurrences"]["o1"]["before"] == "My colleague Jeff called. Use "
-    question = requests[0]["questions"]["o0"]
-    assert set(question["criteria"]) == {"i0", "i1"}
-    assert question["instructions"] and "interpretations.i0" in question["criteria"]["i0"]
+    assert set(state) == {"occurrences"}
+    assert state["occurrences"]["o1"] == (
+        "My colleague Jeff called. Use \u27e6Jeff\u27e7 to classify. Send the animated GIF."
+    )
+    question = requests[0]["questions"]["o1"]
+    assert "Jeff" in question["instructions"]["question"]
+    assert question["criteria"] == {
+        "i0": "Jeff means Jev: TypeSafe's contextual decision model."
+        " Personal usage: Used in Dictum.",
+        "i1": "Jeff means Jeff: A person's given name.",
+    }
 
 
 @pytest.mark.parametrize(
@@ -629,9 +635,14 @@ def test_shorter_interpretation_can_win_over_phrase_and_edits_do_not_cascade() -
             policy=jev.Policy(),
         )
     assert result.text == "😀 Restart agent backbone."
-    assert requests[0]["state"]["transcript"] == raw
-    spans = requests[0]["state"]["occurrences"]["o0"]["interpretations"]
-    assert {(v[0]["start"], v[0]["end"]) for v in spans.values()} == {(10, 25), (16, 25)}
+    assert requests[0]["state"] == {
+        "occurrences": {"o0": "😀 Restart \u27e6agent back bone\u27e7."}
+    }
+    options = requests[0]["questions"]["o0"]["criteria"]
+    assert sorted(option.split('"')[1] for option in options.values()) == [
+        "Agent Backbone",
+        "agent backbone",
+    ]
     assert result.correction.decisions == 1  # classify the overlap as one coherent choice
 
 
@@ -702,3 +713,28 @@ def test_disabled_dictionary_does_not_read_broken_file_or_run_approved_mappings(
         assert attempt.text == attempt.raw_text
         assert attempt.correction is not None and attempt.correction.status == "disabled"
         service.close()
+
+
+def test_meaning_request_variants_add_only_the_compared_context() -> None:
+    text = "Parse the jif. " + "Unrelated words. " * 20 + "Done."
+    found = matches((JEV,), text)
+    focused = jev.meaning_request(text, found)
+    assert set(focused.state) == {"occurrences"}
+    assert focused.state["occurrences"]["o0"].startswith("Parse the ⟦jif⟧.")
+    assert "examples" not in focused.questions["o0"]["instructions"]
+    wide = jev.meaning_request(text, found, jev.Variant(transcript=True))
+    assert wide.state["transcript"] == text
+    examples = jev.meaning_request(text, found, jev.Variant(examples=True))
+    assert len(examples.questions["o0"]["instructions"]["examples"]) == 4
+    assert examples.questions["o0"]["criteria"] == focused.questions["o0"]["criteria"]
+
+
+def test_overlapping_options_say_which_words_they_change() -> None:
+    text = "Use go go go."
+    found = matches((group("GoGo", "go go"),), text)
+    request = jev.meaning_request(text, found)
+    options = list(request.questions["o0"]["criteria"].values())
+    assert len(set(options)) == len(options) == 2
+    assert {o.split('"')[1] for o in options} == {"GoGo go", "go GoGo"}
+    single = jev.meaning_request("Use jif.", matches((JEV,), "Use jif."))
+    assert all("marked words read" not in o for o in single.questions["o0"]["criteria"].values())
