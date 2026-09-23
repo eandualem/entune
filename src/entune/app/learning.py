@@ -37,7 +37,10 @@ class Learning:
     def _dictionary_builder(self) -> tuple[str, str, str]:
         model = self._settings.dictionary_model()
         if model is None:
-            raise ValueError("Add an Anthropic or OpenAI key under Settings first.")
+            raise ValueError(
+                "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral"
+                " under Settings first."
+            )
         provider = model.partition(":")[0]
         api_key = self._settings.key(provider)
         if api_key is None:

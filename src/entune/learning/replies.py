@@ -7,13 +7,79 @@ import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any
+from typing import Annotated, Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
 from entune.dictionary import entries as dictionary_entries
 from entune.dictionary.entries import Dictionary, Groups, key
 from entune.learning.batches import sources
+
+# The reply's shape, which the provider enforces where it can. Every field is required
+# and the associations form a plain union, so OpenAI accepts the schema as strict.
+# The rules a schema cannot express stay in the parsers below.
+
+
+class _Shape(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class _Evidence(_Shape):
+    source: str
+    start: int
+    end: int
+
+
+class TextLink(_Shape):
+    meaning_id: str
+    basis: Literal["text"]
+    evidence: list[_Evidence]
+
+
+class LiteralLink(_Shape):
+    meaning_id: str
+    basis: Literal["literal"]
+    evidence: Annotated[list[_Evidence], Field(max_length=0)]  # the spelling is the form
+
+
+class UserLink(_Shape):
+    meaning_id: str
+    basis: Literal["user"]
+    evidence: list[_Evidence]
+
+
+class _Form(_Shape):
+    text: str
+    associations: list[TextLink | LiteralLink | UserLink]
+    direct: str | None
+    direct_reason: str
+
+
+class _Meaning(_Shape):
+    id: str
+    spelling: str
+    meaning: str
+    personal_context: str | None
+    casing: Literal["fixed", "ordinary"]
+
+
+class _Group(_Shape):
+    id: str
+    meanings: list[_Meaning]
+    recognized_forms: list[_Form]
+    needs_review: bool
+
+
+class GenerationReply(_Shape):
+    additions: list[_Group]
+
+
+class RefinementReply(_Shape):
+    additions: list[_Group]
+    revisions: list[_Group]
+    removals: list[str]
 
 
 def _reply(content: str, fields: set[str]) -> dict[str, Any]:
