@@ -141,3 +141,23 @@ def test_data_open_elsewhere_is_never_moved_whatever_the_port(
     finally:
         holder.close()
     assert paths.migrate_legacy_data(home / "entune") == old
+
+
+def test_a_custom_folder_open_in_dictum_is_not_renamed_under_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = legacy_folder(tmp_path)
+    holder = sqlite3.connect(old / "dictum.db")
+    holder.execute("SELECT count(*) FROM settings").fetchone()
+    monkeypatch.setattr(cli, "port_is_free", lambda port: True)
+    try:
+        with pytest.raises(paths.LegacyDataInUse):
+            Store(old)
+        with pytest.raises(SystemExit, match="Quit Dictum"):
+            cli.main(["--no-menu", "--port", "4188", "--data", str(old)])
+        assert (old / "dictum.db").exists() and not (old / "entune.db").exists()
+    finally:
+        holder.close()
+    store = Store(old)
+    assert store.get_setting("key:openai") == "secret"
+    store.close()

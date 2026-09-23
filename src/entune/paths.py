@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import sqlite3
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 LEGACY_NAME = "dictum"  # the app's former name, for data made before the rename
@@ -17,6 +19,30 @@ LEGACY_NAME = "dictum"  # the app's former name, for data made before the rename
 
 class LegacyDataInUse(Exception):
     """Dictum (or another program) still has the old data open; moving it would strand it."""
+
+
+@contextmanager
+def _sole_owner(database: Path, folder: Path) -> Iterator[sqlite3.Connection | None]:
+    """Hold an exclusive lock on `database` while its files move; refuse if it is open.
+
+    In exclusive locking mode the lock outlives the probing transaction, so it covers
+    the whole move. It fails at once while another process has the database open.
+    """
+    if not database.exists():
+        yield None
+        return
+    probe = sqlite3.connect(database, timeout=0, isolation_level=None)
+    try:
+        try:
+            probe.execute("PRAGMA locking_mode = EXCLUSIVE")
+            probe.execute("BEGIN EXCLUSIVE")
+            probe.execute("SELECT count(*) FROM sqlite_master").fetchone()
+            probe.execute("COMMIT")
+        except sqlite3.OperationalError as exc:
+            raise LegacyDataInUse(folder) from exc
+        yield probe
+    finally:
+        probe.close()
 
 
 def _default_location(name: str) -> Path:
@@ -54,20 +80,8 @@ def migrate_legacy_data(target: Path) -> Path | None:
         return None
     if legacy.parent != target.parent:
         return None  # not the default layout; leave custom locations to the person
-    database = legacy / f"{LEGACY_NAME}.db"
-    probe = sqlite3.connect(database, timeout=0) if database.exists() else None
-    try:
-        if probe is not None:
-            try:
-                probe.execute("PRAGMA locking_mode = EXCLUSIVE")
-                probe.execute("BEGIN EXCLUSIVE")
-                probe.execute("SELECT count(*) FROM sqlite_master").fetchone()
-            except sqlite3.OperationalError as exc:
-                raise LegacyDataInUse(legacy) from exc
+    with _sole_owner(legacy / f"{LEGACY_NAME}.db", legacy):
         legacy.rename(target)
-    finally:
-        if probe is not None:
-            probe.close()
     adopt_legacy_files(target)
     return legacy
 
@@ -75,20 +89,21 @@ def migrate_legacy_data(target: Path) -> Path | None:
 def adopt_legacy_files(data_dir: Path) -> None:
     """Give Dictum's database and log their Entune names, once, inside `data_dir`.
 
-    Also completes a move that stopped between renaming the folder and its files.
-    The database's write-ahead log is folded in first, so no committed change is lost.
+    Also completes a move that stopped between renaming the folder and its files, and
+    works for any folder, including one given with --data or DICTUM_DATA. Raises
+    LegacyDataInUse while another process has that database open. The write-ahead log
+    is folded in under the lock, and side files move too, so nothing committed is lost.
     """
     old, new = data_dir / f"{LEGACY_NAME}.db", data_dir / "entune.db"
     if old.exists() and not new.exists():
-        with sqlite3.connect(old) as db:
+        with _sole_owner(old, data_dir) as db:
+            assert db is not None
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        db.close()
-        # Side files move with the database, so even an incomplete checkpoint loses nothing.
-        for suffix in ("-wal", "-shm"):
-            side = data_dir / f"{LEGACY_NAME}.db{suffix}"
-            if side.exists():
-                side.rename(data_dir / f"entune.db{suffix}")
-        old.rename(new)
+            for suffix in ("-wal", "-shm"):
+                side = data_dir / f"{LEGACY_NAME}.db{suffix}"
+                if side.exists():
+                    side.rename(data_dir / f"entune.db{suffix}")
+            old.rename(new)
     log = data_dir / f"{LEGACY_NAME}.log"
     if log.exists() and not (data_dir / "entune.log").exists():
         log.rename(data_dir / "entune.log")
