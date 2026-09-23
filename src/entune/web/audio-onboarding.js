@@ -93,7 +93,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
         ? (el("dictionary-model-note").hidden ? "Add an Anthropic or OpenAI key in Settings › Providers to choose a dictionary model." : el("dictionary-model-note").textContent)
         : `Transcribe ${duration(seconds(chosen))} (${chosen.length} recording${chosen.length === 1 ? "" : "s"}) with ${speech.label}, then suggest with ${language}.`;
     const blocked = importing || buildBusy || !chosen.length || !speech || !language;
-    el("build-audio-dictionary").disabled = el("refine-audio-dictionary").disabled = blocked;
+    el("build-audio-dictionary").disabled = blocked;
     for (const control of [start, end, el("import-wispr"), el("choose-audio-folder")]) control.disabled = importing || buildBusy;
     onBusy(importing);
   }
@@ -208,13 +208,11 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
       await refresh();
     }
   });
-  for (const [id, mode] of [["build-audio-dictionary", "generate"], ["refine-audio-dictionary", "refine"]]) {
-    el(id).addEventListener("click", async () => {
-      const ids = list.slice(from, to).map((item) => item.id);
-      dialog.close();
-      await onBuild({ mode, audio_ids: ids });
-    });
-  }
+  el("build-audio-dictionary").addEventListener("click", async () => {
+    const ids = list.slice(from, to).map((item) => item.id);
+    dialog.close();
+    await onBuild({ audio_ids: ids });
+  });
 
   return {
     load: refresh,
