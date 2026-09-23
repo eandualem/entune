@@ -276,3 +276,18 @@ def test_native_quit_saves_capture_and_closes_processing_before_termination(
     app.run()
     app.close()  # CLI finally does not spend the shutdown budget twice.
     assert calls == ["processing closed", "tray stopped"]
+
+
+def test_window_fits_the_dictionary_page_and_smaller_screens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import webview
+
+    from dictum.desktop import webview as window
+
+    monkeypatch.setattr(webview, "screens", [SimpleNamespace(width=1512, height=982)])
+    assert window._window_size() == (1120, 800)
+    monkeypatch.setattr(webview, "screens", [SimpleNamespace(width=1024, height=640)])
+    assert window._window_size() == (942, 563)
+    monkeypatch.setattr(webview, "screens", [])
+    assert window._window_size() == (window.WIDTH, window.HEIGHT)
