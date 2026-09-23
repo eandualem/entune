@@ -7,8 +7,9 @@ import hashlib
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import CancelledError
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -184,6 +185,20 @@ class DictionaryBuilds:
             self._clear()
             self._release()
             self._state.update(phase="accepted", applied=applied)
+
+    @contextmanager
+    def idle(self) -> Iterator[None]:
+        """Hold off new jobs while the caller works; refuse while one runs or awaits review."""
+        with self._lock:
+            if self._state["phase"] in RUNNING or self._operation is not None:
+                raise JobConflict("Stop or finish the dictionary suggestions first")
+            yield
+
+    def forget(self) -> None:
+        """Drop a finished, failed or stopped job with its temporary transcripts."""
+        with self.idle():
+            self._clear()
+            self._state = {"phase": "idle"}
 
     def _clear(self) -> None:
         self._proposal = self._spec = self._working = None

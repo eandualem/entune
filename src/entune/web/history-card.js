@@ -65,6 +65,57 @@ function describe(name, stage) {
   if (name === "Filler reduction") return stage.removed_words ? `Removed ${plural(stage.removed_words, "filler word")}` : "No filler words removed";
   return changes === null ? "Formatting applied (changes not recorded)" : changes ? `Formatting: ${plural(changes, "change")}` : "Formatting: no changes";
 }
+// Processing details open in one popover beside their button, so the list never reflows.
+// It follows the button while the view scrolls and closes on Escape, an outside click,
+// focus moving elsewhere, or its card being redrawn.
+let openDetails = null;
+function closeDetails(restoreFocus = false) {
+  if (!openDetails) return;
+  const { toggle, box } = openDetails;
+  openDetails = null;
+  box.remove();
+  toggle.setAttribute("aria-expanded", "false");
+  if (restoreFocus && toggle.isConnected) toggle.focus();
+}
+export function placeDetails() {
+  if (!openDetails) return;
+  const { toggle, box } = openDetails;
+  const anchor = toggle.getBoundingClientRect();
+  const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+  if (!toggle.isConnected || anchor.bottom < 0 || anchor.top > height) { closeDetails(); return; }
+  const margin = 8, gap = 6;
+  const left = Math.max(margin, Math.min(anchor.left, width - box.offsetWidth - margin));
+  // Below the button when it fits, otherwise above it, always inside the window.
+  let top = anchor.bottom + gap;
+  if (top + box.offsetHeight > height - margin && anchor.top - gap - box.offsetHeight >= margin) top = anchor.top - gap - box.offsetHeight;
+  box.style.left = `${left}px`;
+  box.style.top = `${Math.max(margin, Math.min(top, height - box.offsetHeight - margin))}px`;
+}
+function showDetails(toggle, content) {
+  const same = openDetails?.toggle === toggle;
+  closeDetails();
+  if (same) return;
+  const box = document.createElement("div");
+  box.className = "details-popover processing";
+  box.id = "processing-details";
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-label", "Processing details");
+  box.tabIndex = -1;
+  box.append(Object.assign(document.createElement("div"), { className: "details-title", textContent: "Processing" }), ...content.cloneNode(true).childNodes);
+  document.body.append(box);
+  openDetails = { toggle, box };
+  toggle.setAttribute("aria-expanded", "true");
+  toggle.setAttribute("aria-controls", box.id);
+  placeDetails();
+  box.focus({ preventScroll: true });
+}
+const outside = (target) => openDetails && !openDetails.box.contains(target) && !openDetails.toggle.contains(target);
+document.addEventListener("pointerdown", (e) => { if (outside(e.target)) closeDetails(); });
+document.addEventListener("focusin", (e) => { if (outside(e.target)) closeDetails(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && openDetails) { e.preventDefault(); closeDetails(true); } });
+window.addEventListener("resize", placeDetails);
+document.addEventListener("scroll", placeDetails, true); // the views scroll inside themselves
+
 // Line breaks and edge spaces are drawn, so paragraph and list edits can be seen.
 const visible = (text) => text === "" ? "(nothing)" : text.replace(/\n/g, "↵").replace(/^ +| +$/g, (spaces) => "␣".repeat(spaces.length));
 function processing(t) {
@@ -72,8 +123,6 @@ function processing(t) {
   const failed = stages.filter(([, stage]) => stage.status === "failed");
   const changed = stages.reduce((sum, [, stage]) => sum + (stage.status === "succeeded" ? stage.changes?.length ?? 0 : 0), 0);
   const panel = document.createElement("div");
-  panel.className = "processing";
-  panel.hidden = true;
   for (const [name, stage] of stages) {
     const line = document.createElement("div");
     line.className = stage.status === "failed" ? "step err" : "step";
@@ -99,7 +148,7 @@ function processing(t) {
   for (const [name] of failed) alerts.push(`${name} failed. ${name === "Dictionary" ? "The original transcription was kept." : "The text before this step was kept."}`);
   const alert = alerts.length ? Object.assign(document.createElement("div"), { className: "processing-alert", textContent: alerts.join(" ") }) : null;
   alert?.setAttribute("role", "status");
-  if (!stages.length && !t.legacy_processing) return { alert, toggle: null, panel: null };
+  if (!stages.length && !t.legacy_processing) return { alert, toggle: null };
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = failed.length ? "btn ghost processing-toggle err" : "btn ghost processing-toggle";
@@ -109,12 +158,10 @@ function processing(t) {
   if (summary) toggle.append(summary);
   toggle.title = `Processing details${summary ? "" : ": no changes"} (dictionary, filler reduction, formatting)`;
   toggle.setAttribute("aria-label", toggle.title);
+  toggle.setAttribute("aria-haspopup", "dialog");
   toggle.setAttribute("aria-expanded", "false");
-  toggle.addEventListener("click", () => {
-    panel.hidden = !panel.hidden;
-    toggle.setAttribute("aria-expanded", String(!panel.hidden));
-  });
-  return { alert, toggle, panel };
+  toggle.addEventListener("click", () => showDetails(toggle, panel));
+  return { alert, toggle };
 }
 
 export function renderCard(r, models) {
@@ -178,7 +225,6 @@ export function renderCard(r, models) {
   }
   const steps = latest && latest.status === "ok" && !["processing", "cancelled"].includes(latest.processing_state) ? processing(latest) : null;
   if (steps?.alert) card.append(steps.alert);
-  if (steps?.panel) card.append(steps.panel);
 
   const row = document.createElement("div");
   row.className = "card-row";
@@ -238,7 +284,7 @@ export function renderCard(r, models) {
       const pending = ["processing", "cancelled"].includes(t.processing_state);
       text.textContent = pending ? (t.processing_state === "cancelled" ? "Canceled — audio saved. No text delivered." : "Processing…") : t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
       const detail = pending || t.status !== "ok" ? null : processing(t);
-      attempt.append(meta, text, ...[detail?.alert, detail?.toggle, detail?.panel].filter(Boolean));
+      attempt.append(meta, text, ...[detail?.alert, detail?.toggle].filter(Boolean));
       attempts.append(attempt);
     }
     toggle.addEventListener("click", () => {

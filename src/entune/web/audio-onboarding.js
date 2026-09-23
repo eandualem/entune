@@ -96,6 +96,8 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     el("build-audio-dictionary").disabled = blocked;
     for (const control of [start, end, el("import-wispr"), el("choose-audio-folder")]) control.disabled = importing || buildBusy;
     onBusy(importing);
+    // A folder import is one request per file; deleting all data waits for the last one.
+    document.documentElement.toggleAttribute("data-importing", importing);
   }
 
   function drawList(chosen) {

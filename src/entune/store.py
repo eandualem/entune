@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sqlite3
 import threading
 import uuid
@@ -169,27 +170,41 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+# What a data reset deletes: the database, audio, imported audio, the dictionary and
+# its automatic copies, downloaded models, the backups folder and the log (emptied).
+# Files from Dictum, Entune's former name, are included; nothing else is touched.
+MANAGED = frozenset(
+    {
+        *(
+            f"{name}.db{suffix}"
+            for name in ("entune", "dictum")
+            for suffix in ("", "-wal", "-shm", "-journal")
+        ),
+        "audio",
+        "dictionary-audio",
+        "dictionary.json",
+        "dictionary.json.tmp",
+        "models",
+        "backups",
+        "dictum.log",
+    }
+)
+MANAGED_PATTERNS = ("dictionary.pre-v2-*.json",)
+LOG = "entune.log"
+
+
 class Store:
     """One SQLite database plus an audio directory. Safe to share across threads."""
 
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir
         self.audio_dir = data_dir / "audio"
-        self.audio_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._history_epoch = uuid.uuid4().hex
         self._durations: dict[tuple[str, int, int], float | None] = {}
         adopt_legacy_files(data_dir)  # a data folder from before the rename to Entune
-        self._db = sqlite3.connect(data_dir / "entune.db", check_same_thread=False)
-        self._db.row_factory = sqlite3.Row
         with self._lock:
-            self._db.execute("PRAGMA journal_mode = WAL")
-            self._db.executescript(SCHEMA)
-            for table, column, statement in MIGRATIONS:
-                columns = {row["name"] for row in self._db.execute(f"PRAGMA table_info({table})")}
-                if column not in columns:
-                    self._db.execute(statement)
-            self._db.commit()
+            self._open()
         # A previous process may have stopped after saving speech but before processing.
         rows = self._db.execute(
             "SELECT * FROM transcriptions WHERE processing_state = 'processing'"
@@ -210,8 +225,62 @@ class Store:
                     attempt.id, interrupted(initial, "Processing interrupted before completion")
                 )
 
+    def _open(self) -> None:
+        """Create the audio folder and database if needed; the caller holds the lock."""
+        self.audio_dir.mkdir(parents=True, exist_ok=True)
+        self._db = sqlite3.connect(self.data_dir / "entune.db", check_same_thread=False)
+        self._db.row_factory = sqlite3.Row
+        self._db.execute("PRAGMA journal_mode = WAL")
+        self._db.executescript(SCHEMA)
+        for table, column, statement in MIGRATIONS:
+            columns = {row["name"] for row in self._db.execute(f"PRAGMA table_info({table})")}
+            if column not in columns:
+                self._db.execute(statement)
+        self._db.commit()
+
     def close(self) -> None:
         self._db.close()
+
+    # Everything Entune keeps in its data folder, and deleting it
+
+    def managed(self) -> tuple[list[Path], list[Path]]:
+        """Entune's own items in the data folder, then anything else found there."""
+        ours: list[Path] = []
+        others: list[Path] = []
+        if self.data_dir.is_dir():
+            for path in sorted(self.data_dir.iterdir()):
+                owned = (
+                    path.name in MANAGED
+                    or path.name == LOG
+                    or any(path.match(pattern) for pattern in MANAGED_PATTERNS)
+                )
+                (ours if owned else others).append(path)
+        return ours, others
+
+    def reset(self) -> tuple[list[str], list[str]]:
+        """Delete every Entune item in the data folder and start an empty database.
+
+        Holding the lock the whole time means no row or audio file is written while
+        the folder is cleared. The log is emptied in place, because this process may
+        still be writing to it. Anything else in the folder is left untouched."""
+        with self._lock:
+            ours, others = self.managed()  # before closing: a listing error changes nothing
+            self._db.close()
+            try:
+                for path in ours:
+                    if path.name == LOG and path.is_file() and not path.is_symlink():
+                        with path.open("r+b") as log:
+                            log.truncate(0)
+                    elif path.is_dir() and not path.is_symlink():
+                        shutil.rmtree(path)
+                    else:
+                        path.unlink(missing_ok=True)
+            finally:
+                # Even after a failed deletion the store stays usable, on what is left.
+                self._durations.clear()
+                self._history_epoch = uuid.uuid4().hex
+                self._open()
+        return [path.name for path in ours], [path.name for path in others]
 
     # Settings
 
@@ -240,9 +309,10 @@ class Store:
         """Store a clip. The container is read from the bytes; `label` is only a fallback."""
         mime = identify(data, label)
         file = f"{uuid.uuid4()}.{extension_for(mime)}"
-        (self.audio_dir / file).write_bytes(data)
         created_at = _now()
+        # The file and its row are written together, so a reset never splits them.
         with self._lock, self._db:
+            (self.audio_dir / file).write_bytes(data)
             cursor = self._db.execute(
                 "INSERT INTO recordings (created_at, file, mime) VALUES (?, ?, ?)",
                 (created_at, file, mime),

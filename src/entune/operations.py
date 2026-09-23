@@ -109,6 +109,14 @@ class Operations:
             self.finish(op)
 
     @contextmanager
+    def idle(self) -> Iterator[None]:
+        """Hold off every new operation while the caller works; refuse while one runs."""
+        with self._lock:
+            if self.active:
+                raise Busy(self.message())
+            yield
+
+    @contextmanager
     def dictionary_edit(self) -> Iterator[None]:
         # Keep the check and write atomic with learning's acquisition/snapshot.
         with self._lock:

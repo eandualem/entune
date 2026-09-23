@@ -237,7 +237,21 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .section { display: none; }
 .section[data-active] { display: block; }
 .sec-label { font-size: var(--fs-11); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); margin: 0 0 var(--sp-12); font-weight: 500; }
-.section-intro { margin: 0 0 var(--sp-16); max-width: 46rem; }
+.section-head { display: flex; align-items: flex-start; gap: var(--sp-12); margin: 0 0 var(--sp-16); }
+.section-head .caption { flex: 1; margin: 0; max-width: 46rem; }
+.section-head .help-btn { flex: none; }
+.btn.danger { color: var(--error); border-color: var(--error-wash); }
+.btn.danger:hover:not(:disabled) { background: var(--error-wash); }
+.btn.danger:disabled { opacity: 0.45; }
+/* Deleting all data: the scope, a way to export, then the typed confirmation. */
+.reset-dialog { width: min(34rem, calc(100vw - 2rem)); }
+.reset-dialog .dialog-body p { margin: var(--sp-6) 0; font-size: var(--fs-13); }
+.reset-dialog code { font-size: var(--fs-12); overflow-wrap: anywhere; }
+.reset-list { margin: var(--sp-4) 0 var(--sp-10); padding-left: var(--sp-20); font-size: var(--fs-13); line-height: 1.6; }
+.reset-export { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); margin: var(--sp-12) 0; padding: var(--sp-10) var(--sp-12); border-radius: var(--r-8); background: var(--well); }
+.reset-confirm { display: grid; gap: var(--sp-6); margin-top: var(--sp-12); font-size: var(--fs-13); }
+.err-text { color: var(--error); overflow-wrap: anywhere; }
+.err-text:empty { display: none; }
 /* Collapsed settings cards: advanced numbers and activity stay one click away. */
 details.advanced > summary { padding: var(--sp-12) var(--sp-16); font-size: var(--fs-13); color: var(--text-muted); cursor: default; }
 details.advanced[open] > summary { border-bottom: 1px solid var(--line-faint); }
@@ -444,6 +458,11 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .processing-toggle { height: var(--h-26); gap: var(--sp-4); padding: 0 var(--sp-6); font-size: var(--fs-12); }
 .processing-toggle.err { color: var(--error); }
 .processing-toggle[aria-expanded="true"] { background: var(--control-hover); color: var(--text); }
+/* The details popover floats over the list: it never moves the cards around it. */
+.processing.details-popover { position: fixed; z-index: 30; margin: 0; width: min(24rem, calc(100vw - 16px)); max-height: min(22rem, calc(100vh - 16px)); overflow: auto; background: var(--surface-raised); box-shadow: var(--shadow-popover); border-radius: var(--r-10); padding: var(--sp-10) var(--sp-14); overflow-wrap: anywhere; }
+.details-popover:focus { outline: none; }
+.details-popover:focus-visible { box-shadow: var(--shadow-popover), var(--focus); }
+.details-title { margin-bottom: var(--sp-4); font-size: var(--fs-11); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-faint); }
 .processing { margin: var(--sp-8) 0 0; padding: var(--sp-8) var(--sp-12); border-radius: var(--r-8); background: var(--well); font-size: var(--fs-12-5); color: var(--text-muted); }
 .processing .step { display: flex; flex-wrap: wrap; gap: var(--sp-4) var(--sp-10); padding: var(--sp-2) 0; }
 .processing .step.err { color: var(--error); }
@@ -473,6 +492,8 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 
 /* The guide: a readable, scrollable document over the page. */
 .help-dialog { width: min(40rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); padding: 0; border: 0; border-radius: var(--r-14); background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-popover); }
+/* In the Mac window the traffic lights sit over the page's top edge; keep dialogs below them. */
+:root.native-mac :is(.help-dialog, .audio-dialog, .help-inner, .audio-dialog-inner) { max-height: calc(100vh - 5rem); }
 .help-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 .help-inner { display: flex; flex-direction: column; max-height: calc(100vh - 2rem); margin: 0; }
 .help-dialog .dialog-head { border-bottom: 1px solid var(--line-faint); padding-bottom: var(--sp-12); }

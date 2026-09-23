@@ -5,13 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import statistics
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import CancelledError
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass, replace
+from pathlib import Path
 
 from entune import dictionary as dictionary_file
 from entune import jev, llm, processing, shortcuts
@@ -19,7 +21,7 @@ from entune.audio import sniff_mime
 from entune.builds import BuildInput, DictionaryBuilds, Source
 from entune.dictionary import Dictionary, Groups, Proposal
 from entune.dictionary_legacy import Correction, add_corrections, read_entries
-from entune.operations import Operation, Operations
+from entune.operations import Busy, Operation, Operations
 from entune.processing import Processed, Stage, process_text
 from entune.providers.cloud.contracts import Streams, Upload
 from entune.providers.contracts import Clip, Failure, Provider, Transcript
@@ -169,6 +171,9 @@ class Entune:
         self._permission_listeners: list[Callable[[str, bool], None]] = []
         self._desktop_status: dict[str, object] = {"desktop": False}
         self._capture_lock = threading.Lock()
+        self._import_lock = threading.Lock()
+        self._using: list[str] = []  # imports and exports in progress; a reset waits for none
+        self._resetting = False
         self._capture = CaptureStatus("idle", None)
         self._speech = SpeechResources(
             providers, lambda message: self.report_status(lastError=message)
@@ -253,6 +258,75 @@ class Entune:
             ):
                 return provider
         raise ValueError(f"Unknown local model: {name}")
+
+    # Deleting all local data
+
+    def data_inventory(self) -> dict[str, object]:
+        """What a reset would delete, with sizes, and what it would leave in the folder."""
+
+        def size(path: Path) -> int:
+            if path.is_symlink() or not path.is_dir():
+                return path.lstat().st_size
+            return sum(
+                (Path(root) / name).lstat().st_size
+                for root, _, files in os.walk(path)  # symlinked folders are not followed
+                for name in files
+            )
+
+        ours, others = self.store.managed()
+        return {
+            "folder": str(self.store.data_dir),
+            "items": [{"name": p.name, "bytes": size(p)} for p in ours],
+            "other": [p.name for p in others],
+        }
+
+    @contextmanager
+    def using_data(self, what: str) -> Iterator[None]:
+        """Mark an import or export in progress; none may start while data is deleted."""
+        with self._import_lock:
+            if self._resetting:
+                raise Busy(f"Entune is deleting all data; try the {what} again afterwards.")
+            self._using.append(what)
+        try:
+            yield
+        finally:
+            with self._import_lock:
+                self._using.remove(what)
+
+    def reset_data(self) -> dict[str, list[str]]:
+        """Delete everything Entune keeps locally and continue with an empty folder.
+
+        Refused while a dictation, suggestion run or model download is under way; a
+        refusal changes nothing. New operations wait until it is done. Locks are taken
+        in the order suggestion runs take them: builds, operations, then the dictionary.
+        Local models are unloaded, not removed through their providers, so a models
+        folder that is a link is unlinked by the store rather than followed."""
+        with self._builds.idle(), self.operations.idle(), self._speech.use(None):
+            if any(status.state == "downloading" for status in self.local_models()):
+                raise ValueError("A model is still downloading; wait for it to finish first.")
+            with self._import_lock:
+                if self._using:
+                    raise Busy(f"Wait for the {self._using[0]} to finish first.")
+                self._resetting = True
+            try:
+                return self._reset_now()
+            finally:
+                with self._import_lock:
+                    self._resetting = False
+
+    def _reset_now(self) -> dict[str, list[str]]:
+        """The deletion itself; the caller holds every lock and has checked for work."""
+        self._builds.forget()
+        self._speech.select(None)
+        for provider in self.providers:
+            if isinstance(provider, Downloadable):
+                provider.unload()
+        try:
+            with self._dictionary_lock:
+                deleted, kept = self.store.reset()
+        finally:
+            self._changed()
+        return {"deleted": deleted, "kept": kept}
 
     def metrics(self) -> list[ModelMetrics]:
         """How each model has performed in real use, fast mode apart.

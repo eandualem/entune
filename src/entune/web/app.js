@@ -3,7 +3,7 @@
 // the design of 2026-09-18; every colour and size lives in tokens.css.
 
 import { createHistory } from "./history.js";
-import { renderCard } from "./history-card.js";
+import { placeDetails, renderCard } from "./history-card.js";
 import { createDictionary } from "./dictionary-view.js";
 import { createSettings } from "./settings-view.js";
 import { createPermissions } from "./permissions-view.js";
@@ -99,6 +99,16 @@ function showSection(name) {
   if (name === "integrations") settingsView.refreshCorrections();
   permissionsView.setActive(name === "general" && views.settings.hasAttribute("data-active"));
 }
+// Help opens as a modal guide over the page; Escape or the close button dismisses it
+// and focus goes back to the button that opened it.
+for (const button of document.querySelectorAll("[data-help]")) {
+  button.addEventListener("click", () => {
+    const guide = el(button.dataset.help);
+    guide.showModal();
+    guide.querySelector(".guide").scrollTop = 0;
+  });
+}
+
 function openSettings(section) { show("settings"); selectSection(section); showSection(section); }
 
 // ---- Models: one default, picked in the toolbar; it applies at once ----
@@ -228,6 +238,7 @@ const HISTORY_POLL_MS = 3000;
 const history = createHistory({
   list: historyList, newer: el("history-newer"), older: el("history-older"), renderCard: (recording) => renderCard(recording, models),
   onChange(recordings) {
+    placeDetails(); // closes the details popover if its card was redrawn
     loadMetrics().catch(() => {});
     recordingsCount = recordings.length;
     emptyState.hidden = recordings.length > 0;
@@ -324,6 +335,9 @@ initRecording({
   async onUploaded() { show("history"); await history.latest(); },
 });
 await settingsView.load();
+try {
+  if (sessionStorage.getItem("entune-reset")) { sessionStorage.removeItem("entune-reset"); status.textContent = "All Entune data was deleted."; }
+} catch (e) {}
 if (location.hash === "#settings") show("settings");
 else if (location.hash === "#models") show("models");
 else if (location.hash === "#dictionary") show("dictionary");
