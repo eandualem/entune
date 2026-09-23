@@ -427,7 +427,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     ).json()
     entune.store.add_transcription(rec["id"], "stub", "other", "ok", "from another model", None)
     res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
-    assert res.status_code == 400 and "No new history to learn from for Stub / good" in res.text
+    assert res.status_code == 400 and "No new transcripts to learn from for Stub / good" in res.text
 
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
     client.put("/api/dictionary", json={"pinned": [CLAUDE_CODE]})
