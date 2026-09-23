@@ -8,8 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from entune.providers.cloud.assemblyai import AssemblyAI
+from entune.providers.cloud.elevenlabs import ElevenLabs
 from entune.providers.cloud.groq import Groq
 from entune.providers.cloud.soniox import Soniox
+from entune.providers.cloud.xai import XAI
 from entune.providers.contracts import Provider
 from entune.providers.local.parakeet import Parakeet
 from entune.providers.local.whisper import WhisperCpp
@@ -31,7 +33,14 @@ class ModelRef:
 
 def default_providers(models_dir: Path) -> list[Provider]:
     """The cloud providers, then the local ones whose models live in `models_dir`."""
-    providers: list[Provider] = [AssemblyAI(), Groq(), Soniox(), WhisperCpp(models_dir)]
+    providers: list[Provider] = [
+        AssemblyAI(),
+        Groq(),
+        Soniox(),
+        ElevenLabs(),
+        XAI(),
+        WhisperCpp(models_dir),
+    ]
     if sys.platform == "darwin" and platform.machine() == "arm64":
         providers.append(Parakeet(models_dir))
     return providers
