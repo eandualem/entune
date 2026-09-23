@@ -90,7 +90,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     el("audio-models").textContent = !speech
       ? "Choose a speech model in the toolbar first."
       : !language
-        ? (el("dictionary-model-note").hidden ? "Add an Anthropic or OpenAI key in Settings › Providers to choose a dictionary model." : el("dictionary-model-note").textContent)
+        ? (el("dictionary-model-note").hidden ? "Add an Anthropic or OpenAI key in Settings › Dictionary setup to choose a suggestion model." : el("dictionary-model-note").textContent)
         : `Transcribe ${duration(seconds(chosen))} (${chosen.length} recording${chosen.length === 1 ? "" : "s"}) with ${speech.label}, then suggest with ${language}.`;
     const blocked = importing || buildBusy || !chosen.length || !speech || !language;
     el("build-audio-dictionary").disabled = blocked;
