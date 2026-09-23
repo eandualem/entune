@@ -353,7 +353,7 @@ from imported audio are not saved or included in the transcript export.
 
 The app uses Starlette and SQLite, plain browser JavaScript modules without
 a build step, and httpx for provider calls. Dictionary builds call Anthropic
-or OpenAI directly; the suggested model list is kept in `llm.py`, with a
+or OpenAI directly; the suggested model list is kept in `learning/suggestion_model.py`, with a
 custom model field in Settings.
 
 Speech adapters are organized under providers/cloud and providers/local,
