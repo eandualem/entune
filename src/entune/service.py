@@ -762,8 +762,10 @@ class Entune:
             )
             if not inputs:
                 raise ValueError(
-                    f"No {scope} history to learn from for {ref.label}. "
-                    "Choose all history to deliberately reprocess older inputs."
+                    f"No new transcripts to learn from for {ref.label}. To read used ones "
+                    "again, turn on Include transcripts already used under Options."
+                    if scope == "new"
+                    else f"No transcripts to learn from for {ref.label} yet."
                 )
             return BuildInput(
                 source, ref, "", builder, current, version, tuple(inputs), scope=scope
