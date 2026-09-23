@@ -135,6 +135,9 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .popover-head { display: flex; align-items: baseline; gap: var(--sp-8); padding: var(--sp-8) var(--sp-14) var(--sp-6); font-size: var(--fs-13); font-weight: 600; }
 .perf-grid { display: grid; grid-template-columns: minmax(10rem, 1fr) 6.5rem 7.5rem 10rem; gap: var(--sp-10); align-items: baseline; padding: var(--sp-8) var(--sp-14); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line-faint); white-space: nowrap; }
 .perf-grid > span { overflow: hidden; text-overflow: ellipsis; }
+/* Narrow windows scroll the table sideways; heading and rows move together. */
+.perf-table { overflow-x: auto; }
+.perf-table .perf-grid { min-width: 37rem; }
 .perf-model .tag { margin-left: var(--sp-6); padding: 0 var(--sp-6); border-radius: var(--r-6); background: var(--accent-wash); color: var(--accent-text); font-size: var(--fs-11); }
 .perf-failed { color: var(--error); }
 .perf-head { font-size: var(--fs-11-5); color: var(--text-dim); border-bottom-color: var(--line); padding-top: var(--sp-4); padding-bottom: var(--sp-4); }

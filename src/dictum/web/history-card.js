@@ -65,6 +65,8 @@ function describe(name, stage) {
   if (name === "Filler reduction") return stage.removed_words ? `Removed ${plural(stage.removed_words, "filler word")}` : "No filler words removed";
   return changes === null ? "Formatting applied (changes not recorded)" : changes ? `Formatting: ${plural(changes, "change")}` : "Formatting: no changes";
 }
+// Line breaks and edge spaces are drawn, so paragraph and list edits can be seen.
+const visible = (text) => text === "" ? "(nothing)" : text.replace(/\n/g, "↵").replace(/^ +| +$/g, (spaces) => "␣".repeat(spaces.length));
 function processing(t) {
   const stages = [["Dictionary", t.correction], ["Filler reduction", t.cleanup], ["Formatting", t.formatting]].filter(([, stage]) => stage && stage.status !== "disabled");
   const failed = stages.filter(([, stage]) => stage.status === "failed");
@@ -84,8 +86,8 @@ function processing(t) {
       list.className = "changes";
       for (const change of stage.changes) {
         const item = document.createElement("li");
-        item.append(Object.assign(document.createElement("del"), { textContent: change.before || "␣" }), " → ",
-          Object.assign(document.createElement("ins"), { textContent: change.after || "(removed)" }));
+        item.append(Object.assign(document.createElement("del"), { textContent: visible(change.before) }), " → ",
+          Object.assign(document.createElement("ins"), { textContent: visible(change.after) }));
         list.append(item);
       }
       panel.append(list);

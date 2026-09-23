@@ -343,6 +343,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     }
     el("dict-rows").replaceChildren(...rows);
     el("filter-learned").textContent = model ? `Learned · ${modelName(model.id, [model])}` : "Learned";
+    if (!proposalPanel.hidden) proposalTitle();
     el("pin-all").hidden = learned.length === 0;
     const total = dict.pinned.length + learned.length;
     el("groups-count").textContent = total ? `${total} ${total === 1 ? "entry" : "entries"} · ${dict.pinned.length} pinned, ${learned.length} learned for this speech model` : "";
@@ -402,11 +403,20 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
 
   const label = (g) => g ? `${g.meanings.map(m => m.spelling).join(" / ")} ← ${g.recognized_forms.map(f => f.text).join(", ")}` : "";
   const describe = g => g ? [...g.meanings.map(m => `${m.spelling}: ${m.meaning}${m.personal_context ? ` (${m.personal_context})` : ""}`), ...g.recognized_forms.map(f => `Recognized: ${f.text}`)].join("\n") : "";
+  // Suggestions belong to the speech model they were made for; say so when the toolbar
+  // shows another one, since applying still updates that model's dictionary.
+  function proposalTitle() {
+    if (!proposalModel) return;
+    const model = getModel();
+    if (model?.id === proposalModel) proposalLabel = modelName(model.id, [model]);
+    el("proposal-title").textContent = model?.id === proposalModel ? "Review suggestions" : `Review suggestions for ${proposalLabel}`;
+  }
+  let proposalLabel = "";
   function renderProposal(p) {
+    proposalLabel = modelName(p.model, []);
     proposalModel = p.model;
     proposalChanges = p.changes.map(c => ({...structuredClone(c), included: true}));
-    const model = getModel();
-    el("proposal-title").textContent = model && model.id === p.model ? "Review suggestions" : `Review suggestions for ${p.model}`;
+    proposalTitle();
     drawProposal();
     proposalPanel.hidden = false;
   }
