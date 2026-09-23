@@ -113,8 +113,8 @@ def test_cleanup_finishes_before_background_can_return_and_failure_releases_slot
 def test_raw_speech_is_saved_before_unload_or_processing_can_fail(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from entune.app.entune import Entune
     from entune.providers.contracts import Transcript
-    from entune.service import Entune
     from entune.storage.store import Store
     from tests.conftest import WEBM_HEADER
 
@@ -133,9 +133,9 @@ def test_raw_speech_is_saved_before_unload_or_processing_can_fail(
             raise OSError("cleanup failure")
 
     monkeypatch.setattr(local, "unload", unload)
-    result = app.transcribe(recording, ModelRef(local, "base.en"))
+    result = app.dictation.transcribe(recording, ModelRef(local, "base.en"))
     assert result.transcriptions[0].status == "ok" and cleaned == [True]
-    assert "cleanup failure" in str(app.desktop_status()["lastError"])
+    assert "cleanup failure" in str(app.desktop.desktop_status()["lastError"])
     monkeypatch.setattr(local, "unload", lambda keep=None: None)
     assert app.close()
     store.close()

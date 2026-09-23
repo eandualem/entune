@@ -14,6 +14,7 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
+from entune.app.entune import Entune
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import entries as dictionary_entries
 from entune.dictionary import matching
@@ -21,7 +22,6 @@ from entune.processing import jev, jev_client, text_edits
 from entune.processing.pipeline import process_text
 from entune.processing.results import Processed
 from entune.server import create_app
-from entune.service import Entune
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
 from tests.dictionary_samples import JEV, group
@@ -462,14 +462,14 @@ def test_postprocessing_exceptions_cannot_erase_speech_or_skip_release(
         closed: list[bool] = []
         monkeypatch.setattr(provider, "close", lambda: closed.append(True), raising=False)
         service = Entune(store, [provider])
-        service.set_key("stub", "k")
-        service.set_default_model("stub/good")
+        service.settings.set_key("stub", "k")
+        service.models.set_default_model("stub/good")
 
         def broken(*args: object) -> None:
             raise KeyError("unexpected processing failure")
 
-        monkeypatch.setattr(service, "correct", broken)
-        result = service.record_and_transcribe(WEBM_HEADER, None, None)
+        monkeypatch.setattr(service.dictation, "correct", broken)
+        result = service.dictation.record_and_transcribe(WEBM_HEADER, None, None)
         attempt = result.transcriptions[0]
         assert attempt.status == "ok" and attempt.raw_text == attempt.text
         assert attempt.correction is not None and attempt.correction.status == "failed"
@@ -477,7 +477,7 @@ def test_postprocessing_exceptions_cannot_erase_speech_or_skip_release(
         assert store.audio_path(result).read_bytes() == WEBM_HEADER
 
         monkeypatch.setattr(store, "finish_processing", broken)
-        result = service.record_and_transcribe(WEBM_HEADER, None, None)
+        result = service.dictation.record_and_transcribe(WEBM_HEADER, None, None)
         attempt = result.transcriptions[0]
         assert attempt.status == "ok" and attempt.text == attempt.raw_text
         assert "Could not save final processing state" in (attempt.error or "")
@@ -709,10 +709,10 @@ def test_disabled_dictionary_does_not_read_broken_file_or_run_approved_mappings(
 ) -> None:
     with closing(Store(tmp_path)) as store:
         service = Entune(store, [StubProvider()])
-        service.set_key("stub", "k")
-        service.set_default_model("stub/good")
+        service.settings.set_key("stub", "k")
+        service.models.set_default_model("stub/good")
         (tmp_path / "dictionary.json").write_text("{broken")
-        result = service.record_and_transcribe(WEBM_HEADER, None, None)
+        result = service.dictation.record_and_transcribe(WEBM_HEADER, None, None)
         attempt = result.transcriptions[0]
         assert attempt.text == attempt.raw_text
         assert attempt.correction is not None and attempt.correction.status == "disabled"

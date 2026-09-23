@@ -15,10 +15,11 @@ import pytest
 from starlette.testclient import TestClient
 
 from entune import server
+from entune.app.entune import Entune
+from entune.app.metrics import model_metrics
 from entune.audio.formats import wav_bytes
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from entune.server import create_app
-from entune.service import Entune
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, mock_client, wait_for_build
 from tests.dictionary_samples import JEV, document, group, proposed
@@ -176,7 +177,7 @@ def test_permissions_require_a_desktop_and_validate_before_dispatch(
     assert client.post("/api/permissions/microphone", json={}).status_code == 409
     entune = Entune(Store(tmp_path / "desktop"), [stub])
     requested: list[tuple[str, bool]] = []
-    entune.on_permission_request(lambda name, settings: requested.append((name, settings)))
+    entune.desktop.on_permission_request(lambda name, settings: requested.append((name, settings)))
     desktop = TestClient(create_app(entune), base_url="http://localhost")
     assert desktop.post("/api/permissions/microphone", json={}).status_code == 202
     assert (
@@ -199,7 +200,7 @@ def test_audio_download_has_a_filename(client: TestClient) -> None:
 def test_data_exports_include_all_retained_audio_and_attempts(tmp_path: Path) -> None:
     store = Store(tmp_path)
     app = Entune(store, [])
-    app.set_key("openai", "secret-key-not-for-export")
+    app.settings.set_key("openai", "secret-key-not-for-export")
     (tmp_path / "unrelated.txt").write_text("private unrelated data")
     # Exceed a history page; a decades-old recording must remain exportable too.
     recordings = [store.create_recording(WEBM_HEADER) for _ in range(51)]
@@ -297,12 +298,12 @@ def test_capture_needs_the_menu_bar_app_or_hands_over_keys_once(
 
     entune = Entune(Store(tmp_path / "with-app"), [stub])
     asked: list[bool] = []
-    entune.on_capture(lambda: asked.append(True))
+    entune.capture.on_capture(lambda: asked.append(True))
     app_client = TestClient(create_app(entune), base_url="http://localhost")
     assert app_client.post("/api/capture").status_code == 202
     assert asked == [True]
     assert app_client.get("/api/capture").json() == {"state": "listening", "keys": None}
-    entune.finish_capture(("cmd", "fn"))
+    entune.capture.finish_capture(("cmd", "fn"))
     assert app_client.get("/api/capture").json() == {"state": "done", "keys": "cmd+fn"}
     assert app_client.get("/api/capture").json() == {"state": "idle", "keys": None}
 
@@ -383,7 +384,9 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
         assert "from another model" not in user
         if len(calls) == 2:
             with pytest.raises(ValueError, match="preparing dictionary suggestions"):
-                entune.add_agent_corrections({"entries": [{"spelling": "Jev", "heard": ["Jeff"]}]})
+                entune.dictionary.add_agent_corrections(
+                    {"entries": [{"spelling": "Jev", "heard": ["Jeff"]}]}
+                )
         return json.dumps(proposed("hello there, I use cloud code"))
 
     entune = Entune(Store(tmp_path), [stub], llm_call=fake)
@@ -644,8 +647,8 @@ def test_status_and_show_window(client: TestClient, tmp_path: Path, stub: StubPr
 
     entune = Entune(Store(tmp_path / "desktop"), [stub])
     shown: list[bool] = []
-    entune.on_show_window(lambda: shown.append(True))
-    entune.report_status(desktop=True, listening=True, canListen=True)
+    entune.desktop.on_show_window(lambda: shown.append(True))
+    entune.desktop.report_status(desktop=True, listening=True, canListen=True)
     desktop = TestClient(create_app(entune), base_url="http://localhost")
     assert desktop.get("/api/status").json()["listening"] is True
     assert desktop.post("/api/window").status_code == 200 and shown == [True]
@@ -792,7 +795,7 @@ def test_slow_settings_catalogue_does_not_block_other_requests(
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
-    from entune.service import ProviderStatus
+    from entune.app.models import ProviderStatus
 
     app = Entune(Store(tmp_path), [])
     entered, release = threading.Event(), threading.Event()
@@ -802,7 +805,7 @@ def test_slow_settings_catalogue_does_not_block_other_requests(
         assert release.wait(3)
         return []
 
-    monkeypatch.setattr(app, "llm_provider_statuses", slow_catalogue)
+    monkeypatch.setattr(app.settings, "suggestion_providers", slow_catalogue)
     with (
         TestClient(create_app(app), base_url="http://localhost") as client,
         ThreadPoolExecutor(2) as pool,
@@ -924,7 +927,7 @@ def test_speed_and_corrections_use_only_measured_evidence(tmp_path: Path) -> Non
     attempt("Dictionary failed here", 30, 1.5, Stage("failed", "contextual", error="x"))
     attempt("Older record without edits", 30, 0.5, Stage("succeeded", "contextual", changes=None))
     attempt(None, 30, 4.0, None)  # a failed transcription
-    (row,) = app.metrics()
+    (row,) = model_metrics(app.store, app.providers)
     assert (row.runs, row.ok, row.timed_runs) == (6, 5, 4)
     # (1 + 2 + 1.5 + 0.5) s over (60 + 120 + 30 + 30) s of audio, per minute.
     assert row.seconds_per_minute == pytest.approx(60 * 5.0 / 240)

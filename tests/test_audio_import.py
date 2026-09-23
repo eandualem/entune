@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from entune.app.entune import Entune
 from entune.audio.formats import wav_bytes
 from entune.learning import audio_import
 from entune.providers.contracts import Clip, Transcript
 from entune.server import create_app
-from entune.service import Entune
 from entune.storage.store import Store
 from tests.conftest import wait_for_build
 from tests.dictionary_samples import document, group, proposed

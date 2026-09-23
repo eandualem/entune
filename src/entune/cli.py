@@ -15,10 +15,10 @@ from pathlib import Path
 import uvicorn
 
 from entune import __version__
+from entune.app.entune import Entune
 from entune.desktop.platform import create_platform
 from entune.providers.registry import default_providers
 from entune.server import create_app
-from entune.service import Entune
 from entune.storage.paths import default_data_dir
 from entune.storage.store import Store
 
@@ -150,7 +150,7 @@ def main(argv: list[str] | None = None) -> None:
     if not sys.stderr.isatty():
         _log_to_file(data_dir)
     entune = Entune(Store(data_dir), default_providers(data_dir / "models"))
-    entune.warm_default_model()
+    entune.models.warm_default_model()
     server = uvicorn.Server(
         uvicorn.Config(create_app(entune), host="127.0.0.1", port=args.port, log_level="warning")
     )

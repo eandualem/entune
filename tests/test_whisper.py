@@ -203,7 +203,7 @@ def test_rapid_selection_changes_coalesce_to_the_latest_model(
 ) -> None:
     import threading
 
-    from entune.service import Entune
+    from entune.app.entune import Entune
     from entune.storage.store import Store
 
     for name in ("base.en", "small.en"):
@@ -221,13 +221,13 @@ def test_rapid_selection_changes_coalesce_to_the_latest_model(
 
     monkeypatch.setattr(local, "warm", warm)
     try:
-        app.set_default_model("local/base.en")
+        app.models.set_default_model("local/base.en")
         assert entered.wait(1)
         for _ in range(10):
-            app.set_default_model("local/small.en")
+            app.models.set_default_model("local/small.en")
     finally:
         release.set()
-    wait_until(lambda: not app._speech.warming)
+    wait_until(lambda: not app.speech.warming)
     assert warmed == ["base.en", "small.en"]
     assert app.close()
 

@@ -14,12 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from entune.app.operations import Operation, Operations
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary.changes import Proposal
 from entune.dictionary.entries import Dictionary, Groups
 from entune.learning import generate, suggestion_model
 from entune.learning import inputs as learning_inputs
-from entune.operations import Operation, Operations
 from entune.providers.contracts import Clip, Failure
 from entune.providers.registry import ModelRef
 from entune.providers.resources import SpeechResources
