@@ -407,7 +407,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
         assert "hello there, I use cloud code" in user
         assert "from another model" not in user
         if len(calls) == 2:
-            with pytest.raises(ValueError, match="busy learning"):
+            with pytest.raises(ValueError, match="preparing dictionary suggestions"):
                 dictum.add_agent_corrections({"entries": [{"spelling": "Jev", "heard": ["Jeff"]}]})
         return json.dumps(proposed("hello there, I use cloud code"))
 
@@ -697,7 +697,8 @@ def test_metrics_are_computed_from_timed_attempts(client: TestClient) -> None:
         2,
         2,
     )
-    assert row["audio_seconds"] == 8.0 and row["median_wait"] >= 0 and row["speed"] > 0
+    assert row["audio_seconds"] == 8.0 and row["provider_name"] == "Stub"
+    assert "median_wait" not in row and "speed" not in row
     providers = client.get("/api/settings").json()["providers"]
     assert [p["streams"] for p in providers] == [False]
 
@@ -914,3 +915,44 @@ def test_safe_recovery_is_derived_and_copies_only_approved_nonambiguous_mappings
     assert (
         client.post(f"/api/recordings/{rec.id}/transcriptions/99999/safe-copy").status_code == 400
     )
+
+
+def test_speed_and_corrections_use_only_measured_evidence(tmp_path: Path) -> None:
+    from dictum.processing import Processed, Stage
+    from dictum.text_edits import Change
+
+    store = Store(tmp_path)
+    app = Dictum(store, [StubProvider()])
+    r = store.create_recording(WEBM_HEADER)
+
+    def attempt(text: str | None, seconds: float | None, wait: float, stage: Stage | None) -> None:
+        attempt_id = store.add_transcription(
+            r.id,
+            "stub",
+            "good",
+            "ok" if text else "error",
+            text,
+            None if text else "boom",
+            raw_text=text,
+            audio_seconds=seconds,
+            elapsed_seconds=wait,
+        )
+        if text and stage:
+            store.finish_processing(
+                attempt_id, Processed(text, stage, Stage("disabled", "formatting"))
+            )
+
+    replaced = Stage("succeeded", "contextual", changes=(Change(4, 9, "cloud", "Claude"),))
+    attempt("Ask cloud to help today", 60, 1.0, replaced)  # 5 words, 1 change
+    attempt("Nothing matched in these words", 120, 2.0, Stage("skipped", "contextual", changes=()))
+    attempt("Length unknown here", None, 9.0, None)  # no length: not in the speed basis
+    attempt("Dictionary failed here", 30, 1.5, Stage("failed", "contextual", error="x"))
+    attempt("Older record without edits", 30, 0.5, Stage("succeeded", "contextual", changes=None))
+    attempt(None, 30, 4.0, None)  # a failed transcription
+    (row,) = app.metrics()
+    assert (row.runs, row.ok, row.timed_runs) == (6, 5, 4)
+    # (1 + 2 + 1.5 + 0.5) s over (60 + 120 + 30 + 30) s of audio, per minute.
+    assert row.seconds_per_minute == pytest.approx(60 * 5.0 / 240)
+    # Only the replaced and the no-match dictations are evidence: 1 change in 10 words.
+    assert (row.replacements, row.words, row.corrected, row.checked) == (1, 10, 1, 2)
+    store.close()
