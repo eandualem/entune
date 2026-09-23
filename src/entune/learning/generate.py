@@ -18,6 +18,32 @@ from entune.learning.replies import parse_generation, parse_refinement
 from entune.learning.suggestion_model import Caller, call_model
 
 
+class StepFailed(ValueError):
+    """A run could not go on: a plain message for the person, and the technical detail."""
+
+    def __init__(self, message: str, detail: str) -> None:
+        super().__init__(message)
+        self.detail = detail
+
+
+def _service_problem(detail: str) -> str:
+    """What the person can do about a failed request, from the service's own words."""
+    words = detail.lower()
+    if any(sign in words for sign in ("401", "403", "authentication", "api key", "api_key")):
+        return (
+            "the suggestion model's service refused the key;"
+            " check it in Settings, Dictionary setup."
+        )
+    if any(sign in words for sign in ("429", "quota", "rate limit", "insufficient", "credit")):
+        return (
+            "the suggestion model's service reports a limit or quota;"
+            " try again later or check the account."
+        )
+    if any(sign in words for sign in ("500", "502", "503", "529", "overloaded", "unavailable")):
+        return "the suggestion model's service is busy or down; try again in a little while."
+    return "the suggestion model's service returned an error."
+
+
 async def propose_learned(
     provider: str,
     api_key: str,
@@ -49,6 +75,7 @@ async def propose_learned(
     )
     parse = parse_generation if mode == "generate" else parse_refinement
     for number, step in enumerate(steps, 1):
+        part = f"Part {number} of {len(steps)}"
         if number <= resume:
             continue
         await asyncio.sleep(0)  # cancellation between chunks even for immediate test callers
@@ -59,6 +86,14 @@ async def propose_learned(
         try:
             async with asyncio.timeout(1200):
                 reply = await call(provider, api_key, model, system, user_prompt)
+        except TimeoutError as exc:
+            raise StepFailed(
+                f"{part}: the suggestion model did not answer within 20 minutes.", "TimeoutError"
+            ) from exc
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            raise StepFailed(f"{part}: {_service_problem(detail)}", detail) from exc
+        try:
             proposed = parse(
                 reply,
                 proposed,
@@ -68,5 +103,9 @@ async def propose_learned(
             if checkpoint:
                 checkpoint(proposed, number, len(steps), step.completed)
         except Exception as exc:
-            raise ValueError(f"Step {number} of {len(steps)}: {type(exc).__name__}: {exc}") from exc
+            raise StepFailed(
+                f"{part}: the suggestion model's reply did not follow the dictionary's rules,"
+                " so nothing from it was kept.",
+                f"{type(exc).__name__}: {exc}",
+            ) from exc
     return proposed

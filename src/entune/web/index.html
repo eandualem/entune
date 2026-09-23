@@ -87,20 +87,24 @@
               <p class="caption section-intro">How each speech model has done on your own dictations.</p>
               <div class="scard perf-card">
                 <div class="perf-table" id="metrics-table">
-                  <div class="perf-grid perf-head"><span>Model</span><span>Speed</span><span>Corrections</span><span>Used</span></div>
+                  <div class="perf-grid perf-head"><span>Model</span><span class="num">Wait per audio minute</span><span class="num">Dictionary corrections</span><span class="num">Runs</span><span class="num">Audio</span></div>
                   <div id="metrics-rows"></div>
                 </div>
                 <p class="caption perf-empty" id="metrics-empty" hidden>Nothing to compare yet. Each model you dictate with appears here.</p>
-                <div class="srow foot"><span class="caption"><b>Speed</b>: the wait per minute of audio; fast mode uploads while you record. <b>Corrections</b>: dictionary fixes per 100 words. Neither is an accuracy score.</span></div>
+                <div class="srow foot"><span class="caption"><b>Wait</b>: how long transcription took after you stopped, per minute of audio; fast mode uploads while you record, and processing is timed separately. <b>Corrections</b>: dictionary replacements per 100 words, in dictations where the dictionary ran. Neither is an accuracy score.</span></div>
               </div>
               <h2 class="sec-label">Corrections &amp; formatting</h2>
               <p class="caption section-intro">What Jev did after speech recognition, across all dictations and every speech model. It counts work done, not accuracy.</p>
               <div class="scard activity-card" id="processing-activity">
                 <p class="caption activity-total" id="activity-total"></p>
                 <div class="perf-table" id="activity-table" hidden>
-                  <div class="activity-grid perf-head"><span>Step</span><span>Succeeded</span><span>Failed</span><span>Skipped</span><span>Retries</span><span>Median time</span></div>
+                  <div class="activity-grid perf-head"><span>Step</span><span class="num">Dictations</span><span class="num">Changes made</span><span class="num">Unresolved</span><span class="num">Added time</span></div>
                   <div id="activity-rows"></div>
                 </div>
+                <details class="activity-details" id="activity-details" hidden>
+                  <summary>Details: decisions, kept as written, retries</summary>
+                  <div id="activity-diagnostics"></div>
+                </details>
               </div>
             </div>
           </div>
@@ -130,10 +134,14 @@
             </div>
             <div class="learn-more">
               <button type="button" class="btn sm" id="open-audio-dialog" aria-haspopup="dialog">Learn from audio…</button>
-              <span class="caption">Transcribe Entune recordings again, or import audio from Wispr Flow or a folder.</span>
+              <span class="caption">Transcribe Entune recordings again, or import audio from another transcription app or a folder.</span>
             </div>
             <div class="learn-status" id="learn-status" hidden>
-              <p class="learn-progress" id="dictionary-build-status" role="status"></p>
+              <span class="spinner" id="build-spinner" aria-hidden="true" hidden></span>
+              <div class="learn-progress-box">
+                <p class="learn-progress" id="dictionary-build-status" role="status"></p>
+                <details class="build-error-detail" id="build-error-detail" hidden><summary>Technical details</summary><pre id="build-error-text"></pre></details>
+              </div>
               <div class="learn-status-actions">
                 <button type="button" class="btn ghost" id="cancel-dictionary-build" hidden>Stop</button>
                 <button type="button" class="btn" id="retry-dictionary-build" hidden>Retry the rest</button>
@@ -202,12 +210,12 @@
                 <ul>
                   <li>With no entries yet for this speech model, it reads your recent transcripts and suggests first entries for the mistakes it finds.</li>
                   <li>Once you have entries, pinned or learned, it also compares what the speech model wrote with what the dictionary changed. It suggests missing entries and fixes: a clearer description, a wider or narrower entry, or removing a learned entry that does more harm than good.</li>
-                  <li><b>Learn from audio</b> transcribes recordings again with your current speech model before suggesting entries. Use it when the recordings were made with another model, or come from Wispr Flow or a folder. It takes longer and uses more tokens.</li>
+                  <li><b>Learn from audio</b> transcribes recordings again with your current speech model before suggesting entries. Use it when the recordings were made with another model, or come from another transcription app or a folder. It takes longer and uses more tokens.</li>
                 </ul>
                 <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model selected in the toolbar.</p>
                 <p>Each run reads up to 300 of that model's newest transcripts that no earlier run has read, so running it again moves on to newer dictations. To read transcripts again, turn on <b>Include transcripts already used</b> under <b>Options</b>; that costs tokens again and can repeat earlier suggestions.</p>
                 <h3 id="guide-audio">Learning from audio</h3>
-                <p>Choose a source: recordings you made in Entune, audio Wispr Flow kept on this Mac (only the audio is copied, never its transcripts), or a folder of audio files. For Entune recordings you can skip the ones this speech model already transcribed.</p>
+                <p>Choose a source: recordings you made in Entune, recordings another transcription app kept on this Mac (under Other providers, pick the app; only the audio is copied, never its transcripts), or a folder of audio files. For Entune recordings you can skip the ones this speech model already transcribed.</p>
                 <p>After you pick a source, the timeline shows all its recorded audio, oldest on the left and newest on the right. It measures recorded time, so days without recordings take no space; the dates under the handles show where you are.</p>
                 <p>Everything is selected at first. Drag the left handle right to keep only your most recent audio, or move either handle to choose any stretch. You'll see exactly how much audio and how many recordings are included, and you can list and play them. Each edge snaps to whole recordings.</p>
                 <p>Then choose <b>Get suggestions</b>. Entune transcribes the selection with your speech model, then the dictionary model reads the new text. Transcribing again can take a while and your providers may charge for both steps. You can stop at any time; finished transcripts are kept for a retry.</p>
@@ -234,9 +242,12 @@
               <div class="dialog-body">
                 <div class="segmented audio-sources" role="tablist" aria-label="Audio source">
                   <button type="button" role="tab" data-source="entune" aria-selected="true">Entune recordings</button>
-                  <button type="button" role="tab" data-source="wispr" aria-selected="false">Wispr Flow</button>
+                  <button type="button" role="tab" data-source="provider" aria-selected="false">Other providers</button>
                   <button type="button" role="tab" data-source="folder" aria-selected="false">Audio folder</button>
                 </div>
+                <label class="caption provider-pick" id="audio-provider-pick" hidden>Provider
+                  <select class="select" id="audio-provider"><option value="wispr">Wispr Flow</option></select>
+                </label>
                 <div class="source-note">
                   <p class="caption" id="audio-source-note"></p>
                   <button type="button" class="btn sm" id="import-wispr" hidden>Import from Wispr Flow</button>
@@ -499,7 +510,7 @@
                 <article class="guide">
                   <h3>On this Mac</h3>
                   <p>Entune keeps its data in one folder on this Mac: your recordings, every transcript (the speech model's original and each processed version), your dictionary, settings, and the API keys you enter. Keys are stored in Entune's database, not in the macOS keychain. Entune has no accounts and sends no usage data.</p>
-                  <p>Audio you import from Wispr Flow or a folder is copied into that folder; your original files are not changed or moved.</p>
+                  <p>Audio you import from another transcription app or a folder is copied into that folder; your original files are not changed or moved.</p>
                   <h3>Speech recognition</h3>
                   <p>With a cloud speech model, such as AssemblyAI, Groq or Soniox, each recording's audio is sent to that service to be transcribed. With fast mode, audio goes to AssemblyAI while you are still speaking. Transcribing again with another model sends the audio to that model's service.</p>
                   <p>With a model on this Mac, such as Whisper or Parakeet, audio stays here. Downloading one fetches the model from Hugging Face.</p>
@@ -525,7 +536,7 @@
                   <ul class="reset-list">
                     <li>Recordings and their audio</li>
                     <li>Transcripts: originals, processed versions and every attempt</li>
-                    <li>Audio copied in from Wispr Flow or folders</li>
+                    <li>Audio copied in from other transcription apps or folders</li>
                     <li>Your dictionary, its automatic copies and suggestion progress</li>
                     <li>Corrections received from other apps</li>
                     <li>Settings, shortcuts and saved API keys</li>
