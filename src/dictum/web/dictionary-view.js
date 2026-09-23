@@ -28,7 +28,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
   });
 
   const builds = createDictionaryBuild({
-    names: { speech: (id) => getModel()?.id === id ? getModel().label : id, language: (ref) => languageName(ref) ?? ref },
+    names: { speech: (id) => { const model = getModel(); return model && model.id === id ? model.label : id; }, language: (ref) => languageName(ref) ?? ref },
     onBusy(value) { building = value; gate(); onboarding.setBuildBusy(value); lockEditors(); },
     onProposal(value) { if (value) renderProposal(value); else proposalPanel.hidden = true; },
     onAccepted: () => loadDictionary(false),
@@ -366,7 +366,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
   function renderProposal(p) {
     proposalModel = p.model;
     proposalChanges = p.changes.map(c => ({...structuredClone(c), included: true}));
-    el("proposal-title").textContent = `Proposed for ${getModel()?.id === p.model ? getModel().label : p.model}`;
+    const model = getModel();
+    el("proposal-title").textContent = `Proposed for ${model && model.id === p.model ? model.label : p.model}`;
     drawProposal();
     proposalPanel.hidden = false;
   }
