@@ -145,6 +145,8 @@ reach other apps as a modifier. Pick another key if you need fn elsewhere.
 | AssemblyAI | universal-3-5-pro | sync endpoint; clips over two minutes use the long-form endpoint |
 | Groq | whisper-large-v3-turbo | OpenAI-style transcriptions endpoint |
 | Soniox | stt-async-v5 | upload, poll, fetch; the upload is deleted afterwards |
+| ElevenLabs | scribe_v2 | synchronous speech-to-text endpoint |
+| xAI Grok | grok-voice-transcribe-2.0 | synchronous speech-to-text endpoint |
 | Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
 | Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
 
