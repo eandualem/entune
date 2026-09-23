@@ -1,11 +1,16 @@
-# Dictum
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/entune-logo-dark.svg" />
+    <img src="docs/brand/entune-logo-light.svg" alt="Entune" height="64" />
+  </picture>
+</h1>
 
 **Dictate with the speech-to-text engine you choose, on your own API keys.**
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
 
-Dictum is a small, local dictation app. Hold a key or press a shortcut,
+Entune is a small, local dictation app. Hold a key or press a shortcut,
 speak, and the transcript is pasted where you were typing. You bring your
 own API key for a speech-to-text provider, AssemblyAI, Groq or Soniox, or
 download a model that runs on your own Mac, so you pick the engine that
@@ -30,16 +35,16 @@ control over the engine, the cost and where their words go.
 Requires Python 3.12 or newer. With [uv](https://docs.astral.sh/uv/):
 
 ```sh
-uvx dictum
+uvx entune
 ```
 
 or, from a checkout:
 
 ```sh
-uv run dictum
+uv run entune
 ```
 
-On macOS this opens Dictum's window (history, dictionary, settings) and
+On macOS this opens Entune's window (history, dictionary, settings) and
 puts a microphone icon in the menu bar; closing the window leaves it running
 there. Elsewhere, or with `--no-menu`, it is the page alone, opened in your
 browser at `http://localhost:4187`. The page provides recording, history, retry
@@ -48,33 +53,33 @@ shortcuts, paste, the recording indicator and permission setup are implemented
 for macOS only. Windows and Linux browser-mode installation and audio/provider
 availability are not verified end to end; portable dependencies are not a
 promise of native parity.
-`dictum --help` lists `--port`, `--data DIR`, `--no-open` and `--no-menu`.
+`entune --help` lists `--port`, `--data DIR`, `--no-open` and `--no-menu`.
 
 ## Permissions (macOS)
 
 On first opening the installed app, Settings guides you through the three
-permissions Dictum needs. Click **Allow…** beside each; macOS may send you
-to **System Settings › Privacy & Security** to enable Dictum:
+permissions Entune needs. Click **Allow…** beside each; macOS may send you
+to **System Settings › Privacy & Security** to enable Entune:
 
-| Permission | Why Dictum needs it |
+| Permission | Why Entune needs it |
 |---|---|
 | Microphone | to record the clip |
 | Input Monitoring | to see the shortcut while another app has focus |
 | Accessibility | to paste the transcript into that app |
 
-With `uvx dictum` they are granted to whatever runs it, your terminal or
-Python, and asked again if that changes. Building `Dictum.app` (below) gives
+With `uvx entune` they are granted to whatever runs it, your terminal or
+Python, and asked again if that changes. Building `Entune.app` (below) gives
 macOS a stable app to attach them to.
 
 Microphone access can be requested from setup without making a recording.
 Each row updates when its permission is granted. If access was denied,
 **Open Settings…** takes you to the relevant pane. If macOS asks you to quit,
-reopen Dictum to continue; missing permissions bring setup back on launch.
+reopen Entune to continue; missing permissions bring setup back on launch.
 The Fn key needs Accessibility as well as Input Monitoring.
 
 ## Dictating
 
-Set a shortcut once in Settings; Dictum opens there on first run. Click
+Set a shortcut once in Settings; Entune opens there on first run. Click
 "Set…", press the key or combination, let go. Two recording shortcuts, and both
 can be set:
 
@@ -96,7 +101,7 @@ contextual correction, filler reduction, formatting, or delivery. Disabled stage
 skipped. One dictation owns the app until delivery completes; a new one must wait.
 Learning owns the same guard through proposal review. The final text is copied once
 and pasted into the **current editable input**, including in a different app from where
-recording began. With no editable target, Dictum reports “Copied to clipboard — no
+recording began. With no editable target, Entune reports “Copied to clipboard — no
 active text field.” If a paste cannot be verified through Accessibility, completion
 says so. Completion also appears in the pill, so it does not depend on notification
 permissions. History retains audio and all attempts for retry.
@@ -120,12 +125,16 @@ are unchanged.
 
 **Performance.** Every transcription records how long the clip was, how long
 the provider took, and whether fast mode was used. The chart button next
-to the model picker opens the table by model: runs, minutes of audio,
-median wait, and speed as seconds of audio per second waited. Measured on 2026-09-18 with a 172-second dictation over
+to the model picker opens the table by model and mode. **Speed** is the transcription
+wait for one minute of audio, from successful runs whose length and wait were both
+measured (it covers the speech step, not later processing). **Corrections** counts
+dictionary replacements per 100 words in dictations where the dictionary step ran; it
+reflects the confusions the dictionary knows, not overall accuracy. **Used** combines the
+number of runs, failures and total audio. Measured on 2026-09-18 with a 172-second dictation over
 AssemblyAI Universal-3.5 Pro: 7.0 s with fast mode, 14.8 s without, of which
 the upload alone was 6 to 7 s. Your own table is the one to trust.
 
-When `fn` is one of your shortcuts, Dictum owns that key while it runs: a
+When `fn` is one of your shortcuts, Entune owns that key while it runs: a
 tap no longer opens Emoji & Symbols or Apple's dictation, and fn does not
 reach other apps as a modifier. Pick another key if you need fn elsewhere.
 
@@ -168,7 +177,7 @@ not want it. Install the engine once, from a terminal:
 uv tool install parakeet-mlx
 ```
 
-Dictum finds it on its own, and Parakeet appears under Local models with
+Entune finds it on its own, and Parakeet appears under Local models with
 the same Download and Remove buttons; the weights are 2.5 GB. The model
 runs in a helper process inside that installation, loaded once.
 
@@ -184,28 +193,37 @@ provider's response verbatim.
 Speech models mishear names, products and everyday words. The Dictionary tab groups
 recognized forms with their possible meanings, definitions and exact output spellings.
 Explicit associations decide which meanings can compete for a form; context decides
-which one applies. Edit groups directly, or ask the configured language model to build
-or refine them from this speech model's raw history. Additions, before/after updates,
-and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
+which one applies. Edit entries directly, or ask the configured language model to
+suggest them: **Suggest new entries** (generation) reads this speech model's raw
+history and only adds; **Suggest improvements** (refinement) compares each raw
+transcript with what the dictionary step made of it and can add, revise or remove
+learned entries. **How the dictionary works** opens a short guide.
+Additions, before/after updates, and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
 then apply the remainder once. Dismissing a proposal does not delete active knowledge.
 
 Learned associations stay specific to the speech model. Pinning shares and protects a
 meaning and its associations across models, without giving it priority over competitors.
 Existing dictionaries are backed up before conversion and retained for review. Confirmed
-agent corrections still use the existing local API. Generation suggestions are Sonnet 5
-and GPT-5.4 mini; the model selected in Settings is honored.
+agent corrections still use the existing local API. The dictionary model is chosen on
+the Dictionary page and serves every learning run; keys are added in Settings.
+Generation suggestions are Sonnet 5 and GPT-5.4 mini. **Add an entry** creates a group by
+hand: meanings with output spellings and definitions, recognized forms, and which
+meanings each form may stand for.
 
-**Learn from audio**, in the Dictionary tab, selects saved recordings directly or imports audio from
-Wispr Flow on this Mac (including its local backups) or an audio folder. Other
-applications' transcripts are ignored. Dictum keeps a local copy of each distinct
+**Learn from audio**, in the Dictionary tab, opens a dialog. Choose Entune recordings,
+or import audio from Wispr Flow on this Mac (including its local backups) or from an
+audio folder; imports keep their recording date where the source has one. Other
+applications' transcripts are ignored. Entune keeps a local copy of each distinct
 audio file in `dictionary-audio/`, separate from recording history, and can reuse
 it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
 up to 199 MB can be uploaded; the chosen provider must support the audio format
 and length. A build uses the speech and dictionary models selected when it starts.
-Select individual recordings or a date range; available and selected duration is shown
-where known. Fresh transcripts stay in memory within the workflow and never become
+A two-handle range over recorded time, oldest to newest without the gaps between days,
+selects a continuous stretch of whole recordings: all audio by default, the most recent
+by dragging the left handle. The exact duration, count and edge dates are shown, and
+the included recordings can be listed and played. Fresh transcripts stay in memory within the workflow and never become
 history attempts. Retry reuses successful transcriptions, including after a later
-generation failure. Finishing, discarding, replacing the workflow, or closing Dictum
+generation failure. Finishing, discarding, replacing the workflow, or closing Entune
 clears that temporary text. Source audio is kept.
 
 History and audio share one exclusive, user-initiated learning workflow. Finish an
@@ -217,8 +235,10 @@ retry the completed portion. No changes are applied automatically.
 
 Default history refinement uses up to 300 recent, unprocessed attempts for the selected
 speech model; “All history” deliberately includes older/previously examined data.
-Original speech and its processing records are supplied as distinct evidence, not
-confirmed intended wording. Applying at least one actual change marks only fully
+Refinement pairs each raw transcript with the dictionary step's recorded result and
+decisions, which show what the system did, not confirmed intended wording. Filler
+reduction, formatting and the delivered text are never sent. Older attempts without a
+recorded result, and freshly transcribed audio, are sent as raw text only. Applying at least one actual change marks only fully
 covered input IDs learned for that model. Applying none leaves them eligible. A
 partially processed transcript remains eligible. New dictations after selection and
 other models' boundaries are unaffected. Pinned definitions can be reviewed and updated;
@@ -228,8 +248,8 @@ the agent cannot delete pinned meanings or remove any existing pinned variant.
 ### Jev decides each match in context
 
 With a [TypeSafe](https://typesafe.ai) key and contextual correction enabled, **Jev**
-classifies eligible meanings using the original transcript. Jev generates no replacement
-text: Dictum applies the selected stored spelling. A literal Jeff or GIF is a meaning in
+classifies eligible meanings from the words around each occurrence. Jev generates no replacement
+text: Entune applies the selected stored spelling. A literal Jeff or GIF is a meaning in
 its own right. Every valid response selects the highest-scoring eligible meaning, even
 when scores are close. Exact ties use Jev's declared tied winner. Invalid responses
 fail the stage; scores are never invented or pooled by output spelling.
@@ -251,7 +271,7 @@ deletions and timing separately from dictionary replacements. This initial polic
 offline/mocked coverage; its live classification quality has not been evaluated.
 
 Successful speech and its original text are saved before correction. If
-contextual correction fails, Dictum delivers the untouched original and
+contextual correction fails, Entune delivers the untouched original and
 shows a noninterrupting notice, skipping cleanup and formatting. Those later stages run
 in that order; final failure stops all remaining stages, retains the last completed
 text and explains which stage failed and which later stages were skipped. Every completed
@@ -270,31 +290,31 @@ approved direct mappings; ambiguous spans remain untouched.
 Details: [the dictionary file](docs/dictionary.md) and
 [the agents' API](docs/agents-api.md).
 
-## Dictum.app
+## Entune.app
 
-A plain `dictum` process shows up as "python3" in the menu bar, the Dock
-and the permission prompts. To have it be Dictum, with its icon, build the
+A plain `entune` process shows up as "python3" in the menu bar, the Dock
+and the permission prompts. To have it be Entune, with its icon, build the
 standalone app once and install it (macOS only):
 
 ```sh
 uv sync --group build
-uv run --group build python packaging/build_app.py     # writes dist/Dictum.app
-uv run dictum install-app --from dist/Dictum.app        # copies it to /Applications
+uv run --group build python packaging/build_app.py     # writes dist/Entune.app
+uv run entune install-app --from dist/Entune.app        # copies it to /Applications
 ```
 
 Open it from Applications and grant the three permissions once to
-"Dictum". It shares the data and settings of `dictum`. There is also a
-lighter `dictum install-app` without `--from`, a launcher bundle that runs
+"Entune". It shares the data and settings of `entune`. There is also a
+lighter `entune install-app` without `--from`, a launcher bundle that runs
 this installation; macOS may refuse to list it in the permission panels,
 so prefer the standalone one. See [packaging](docs/packaging.md).
 
 ## Data and privacy
 
 Recordings, transcripts, settings and keys live in a local SQLite database and
-files. `--data` overrides `DICTUM_DATA`; otherwise the directory is
-`~/Library/Application Support/dictum` on macOS, `%APPDATA%/dictum` on Windows
-(falling back to `~/AppData/Roaming/dictum`), and `$XDG_DATA_HOME/dictum` or
-`~/.local/share/dictum` elsewhere. Defining a data path does not establish platform support.
+files. `--data` overrides `ENTUNE_DATA`; otherwise the directory is
+`~/Library/Application Support/entune` on macOS, `%APPDATA%/entune` on Windows
+(falling back to `~/AppData/Roaming/entune`), and `$XDG_DATA_HOME/entune` or
+`~/.local/share/entune` elsewhere. Defining a data path does not establish platform support.
 
 Enabled features determine what is sent out:
 
@@ -302,10 +322,12 @@ Enabled features determine what is sent out:
   mode starts uploading during recording. Local Whisper.cpp and Parakeet transcribe
   on this machine, without sending audio to a speech service.
 - **Dictionary builds:** the chosen Anthropic or OpenAI model receives raw source
-  transcripts, relevant processing records, and the pinned/working confusion groups, including definitions and
-  personal context. Refinement sends the current dictionary again with each chunk.
-- **Jev correction:** TypeSafe receives the original transcript, matched occurrences
-  and their eligible meanings, spellings, definitions and personal context.
+  transcripts (for refinement, beside the dictionary step's recorded result) and the
+  pinned/working confusion groups, including definitions and personal context. Each
+  chunk sends the current working dictionary again.
+- **Jev correction:** TypeSafe receives up to 160 characters of the original transcript
+  either side of each matched occurrence, and each eligible meaning's spelling,
+  definition and personal context.
   **Jev filler reduction** sends its input text and code-proposed deletion spans;
   **Jev formatting** sends the text being formatted and its sentence spans.
   Turning on any of these features sends text even when speech recognition is local.
@@ -314,7 +336,7 @@ Enabled features determine what is sent out:
   package downloads. Export files are generated locally and saved through the
   browser or native Save panel.
 
-There is no Dictum account, telemetry or hosted history storage. Local speech alone
+There is no Entune account, telemetry or hosted history storage. Local speech alone
 does not make every enabled feature offline. Temporary onboarding transcripts are
 kept in memory for workflow retries, never stored as normal attempts, and cleared on
 finish, discard, replacement or closure; this does not establish the remote providers' retention
@@ -331,13 +353,13 @@ from imported audio are not saved or included in the transcript export.
 
 The app uses Starlette and SQLite, plain browser JavaScript modules without
 a build step, and httpx for provider calls. Dictionary builds call Anthropic
-or OpenAI directly; the suggested model list is kept in `llm.py`, with a
+or OpenAI directly; the suggested model list is kept in `learning/suggestion_model.py`, with a
 custom model field in Settings.
 
 Speech adapters are organized under providers/cloud and providers/local,
 with common contracts separate from HTTP and local lifecycle capabilities.
 Dictionary-generation and Jev instructions, criteria and examples live in
-the packaged src/dictum/prompts/ resources; thresholds and algorithms stay
+the packaged src/entune/prompts/ resources; thresholds and algorithms stay
 in Python.
 
 ```sh

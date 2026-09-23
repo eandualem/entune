@@ -9,8 +9,8 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from dictum.providers.contracts import Clip
-from dictum.store import Store
+from entune.providers.contracts import Clip
+from entune.storage.store import Store
 
 WEBM_HEADER = b"\x1a\x45\xdf\xa3" + b"\x00" * 12
 

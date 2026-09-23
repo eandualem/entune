@@ -13,23 +13,26 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from dictum import dictionary, llm
-from dictum.dictionary import Dictionary
-from dictum.providers.contracts import Clip, Failure, Transcript
-from dictum.recorder import wav_bytes
-from dictum.server import create_app
-from dictum.service import Dictum
-from dictum.store import Store
+from entune.app.entune import Entune
+from entune.audio.formats import wav_bytes
+from entune.dictionary import changes as dictionary_changes
+from entune.dictionary import entries as dictionary_entries
+from entune.dictionary.entries import Dictionary
+from entune.learning import batches, suggestion_model
+from entune.learning import inputs as learning_inputs
+from entune.providers.contracts import Clip, Failure, Transcript
+from entune.server import create_app
+from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, wait_for_build
 from tests.dictionary_samples import JEV, group, proposed
 from tests.test_server import StubProvider
 
 
-def setup(store: Store, caller: llm.Caller) -> tuple[Dictum, TestClient]:
-    app = Dictum(store, [StubProvider()], llm_call=caller)
-    app.set_key("stub", "speech-key")
-    app.set_key("openai", "generation-key")
-    app.set_default_model("stub/good")
+def setup(store: Store, caller: suggestion_model.Caller) -> tuple[Entune, TestClient]:
+    app = Entune(store, [StubProvider()], llm_call=caller)
+    app.settings.set_key("stub", "speech-key")
+    app.settings.set_key("openai", "generation-key")
+    app.models.set_default_model("stub/good")
     return app, TestClient(create_app(app), base_url="http://localhost")
 
 
@@ -46,11 +49,11 @@ def test_review_edits_and_dismissal_apply_once_without_deleting_dismissed_entrie
     )
     current = Dictionary(learned={"model": (before, removed)})
     after = replace(before, meanings=(replace(before.meanings[0], meaning="An assistant."),))
-    proposal = dictionary.propose(current, (after, added), "model")
+    proposal = dictionary_changes.propose(current, (after, added), "model")
     assert {c.kind for c in proposal.changes} == {"add", "update", "remove"}
     edited = after.as_json()
     edited["meanings"][0]["meaning"] = "A reviewed assistant definition."
-    result = dictionary.review(
+    result = dictionary_changes.review(
         current,
         proposal,
         [
@@ -62,7 +65,7 @@ def test_review_edits_and_dismissal_apply_once_without_deleting_dismissed_entrie
     assert groups[removed.id] == removed  # dismissing the removal keeps active knowledge
     assert groups[before.id].meanings[0].meaning == "A reviewed assistant definition."
     assert groups[added.id] == added
-    assert dictionary.review(current, proposal, []) is current
+    assert dictionary_changes.review(current, proposal, []) is current
 
 
 def test_review_validation_rejects_pinned_removal_even_in_edited_whole_group() -> None:
@@ -70,12 +73,12 @@ def test_review_validation_rejects_pinned_removal_even_in_edited_whole_group() -
     changed = replace(
         JEV, meanings=(replace(JEV.meanings[0], meaning="A classifier."), *JEV.meanings[1:])
     )
-    proposal = dictionary.propose(current, (changed,), "model")
+    proposal = dictionary_changes.propose(current, (changed,), "model")
     record = changed.as_json()
     record["recognized_forms"] = record["recognized_forms"][1:]
     with pytest.raises(ValueError, match="pinned variant"):
-        dictionary.review(current, proposal, [{"id": JEV.id, "after": record}])
-    approved = dictionary.review(current, proposal)
+        dictionary_changes.review(current, proposal, [{"id": JEV.id, "after": record}])
+    approved = dictionary_changes.review(current, proposal)
     assert approved.pinned[0].meanings[0].meaning == "A classifier."
 
 
@@ -89,7 +92,12 @@ def test_apply_consumes_only_examined_model_inputs_and_new_review_data_stays_eli
         first = source(store, "cloud code")
         other = source(store, "other engine", "bad")
         app, client = setup(store, call)
-        assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 202
+        assert (
+            client.post(
+                "/api/dictionary/build", json={"mode": "generate", "source": "history"}
+            ).status_code
+            == 202
+        )
         job = wait_for_build(client)
         newer = source(store, "made during review")
         current = client.get("/api/dictionary").json()
@@ -124,7 +132,7 @@ def test_dismissing_every_proposal_leaves_file_and_input_boundary_unchanged(tmp_
         first = source(store, "cloud code")
         app, client = setup(store, call)
         old = client.get("/api/dictionary")
-        client.post("/api/dictionary/build", json={"source": "history"})
+        client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
         job = wait_for_build(client)
         response = client.post(f"/api/dictionary/build/{job['id']}/accept", json={"selected": []})
         assert response.status_code == 200 and response.json()["applied"] is False
@@ -140,7 +148,7 @@ def test_partial_generation_keeps_validated_proposal_and_only_fully_covered_inpu
     monkeypatch: pytest.MonkeyPatch,
     stop: bool,
 ) -> None:
-    monkeypatch.setattr(llm, "BATCH_CHARS", 10)
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
     later = threading.Event()
     calls = 0
 
@@ -150,18 +158,20 @@ def test_partial_generation_keeps_validated_proposal_and_only_fully_covered_inpu
         if calls == 1:
             return json.dumps(proposed("cloud code"))
         if calls == 2:
-            return '{"groups": [], "remove": []}'
+            return '{"additions": []}'
         if stop:
             later.set()
             await asyncio.sleep(30)
-        return '{"groups": ["malformed"]}'
+        return '{"additions": ["malformed"]}'
 
     with closing(Store(tmp_path)) as store:
         # Newest-first selection is deliberately not a timestamp prefix.
         split = source(store, "long input spans several batches")
         full = source(store, "cloud code")
         app, client = setup(store, call)
-        initial = client.post("/api/dictionary/build", json={"source": "history"}).json()
+        initial = client.post(
+            "/api/dictionary/build", json={"mode": "generate", "source": "history"}
+        ).json()
         if stop:
             assert later.wait(2)
             client.post(f"/api/dictionary/build/{initial['id']}/cancel")
@@ -205,7 +215,9 @@ def test_retry_audio_reuses_successes_and_generation_checkpoint_without_persisti
                 "/api/dictionary/audio",
                 files={"audio": (f"{i}.wav", wav_bytes(bytes([i, 0]) * 16))},
             )
-        job = client.post("/api/dictionary/build", json={"source": "audio"}).json()
+        job = client.post(
+            "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
+        ).json()
         assert wait_for_build(client)["phase"] == "failed"
         assert client.post(f"/api/dictionary/build/{job['id']}/retry").status_code == 200
         failed = wait_for_build(client)
@@ -215,7 +227,7 @@ def test_retry_audio_reuses_successes_and_generation_checkpoint_without_persisti
         ready = wait_for_build(client)
         assert ready["phase"] == "ready" and len(speech_calls) == 3
         assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200
-        assert not app._builds._texts and store.list_recordings() == []
+        assert not app.builds._texts and store.list_recordings() == []
         app.close()
     assert not any(
         b"temporary private cloud code words" in path.read_bytes()
@@ -228,7 +240,7 @@ def test_old_saved_recordings_are_selectable_with_duration_and_never_gain_learni
     tmp_path: Path,
 ) -> None:
     async def call(*args: str) -> str:
-        return '{"groups": [], "remove": []}'
+        return '{"additions": []}'
 
     with closing(Store(tmp_path)) as store:
         r = store.create_recording(wav_bytes(b"\0\0" * 16000))
@@ -243,7 +255,8 @@ def test_old_saved_recordings_are_selectable_with_duration_and_never_gain_learni
         assert item["created_at"].startswith("2020")
         assert (
             client.post(
-                "/api/dictionary/build", json={"source": "audio", "audio_ids": [item["id"]]}
+                "/api/dictionary/build",
+                json={"mode": "generate", "source": "audio", "audio_ids": [item["id"]]},
             ).status_code
             == 202
         )
@@ -272,10 +285,12 @@ def test_learning_is_rejected_while_speech_is_running(
         app, client = setup(store, call)
         monkeypatch.setattr(app.providers[0], "transcribe", speech)
         with ThreadPoolExecutor(1) as pool:
-            future = pool.submit(app.record_and_transcribe, WEBM_HEADER, None, None)
+            future = pool.submit(app.dictation.record_and_transcribe, WEBM_HEADER, None, None)
             try:
                 assert entered.wait(1)
-                result = client.post("/api/dictionary/build", json={"source": "history"})
+                result = client.post(
+                    "/api/dictionary/build", json={"mode": "generate", "source": "history"}
+                )
                 assert result.status_code == 409 and "current dictation" in result.text
             finally:
                 release.set()
@@ -286,7 +301,7 @@ def test_learning_is_rejected_while_speech_is_running(
 def test_retry_resumes_completed_generation_batches_with_accumulated_groups(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(llm, "BATCH_CHARS", 10)
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
     prompts: list[str] = []
 
     async def call(provider: str, key: str, model: str, system: str, user: str) -> str:
@@ -296,13 +311,13 @@ def test_retry_resumes_completed_generation_batches_with_accumulated_groups(
         if len(prompts) == 2:
             raise ValueError("temporary generation interruption")
         assert "Claude Code" in user  # batch one's validated working dictionary survives
-        return '{"groups": [], "remove": []}'
+        return '{"additions": []}'
 
     with closing(Store(tmp_path)) as store:
         source(store, "older data")
         source(store, "cloud code")
         app, client = setup(store, call)
-        client.post("/api/dictionary/build", json={"source": "history"})
+        client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
         partial = wait_for_build(client)
         assert partial["completedBatches"] == 1 and partial["coveredInputs"] == 1
         assert client.post(f"/api/dictionary/build/{partial['id']}/retry").status_code == 200
@@ -340,7 +355,9 @@ def test_stop_during_audio_keeps_its_success_for_retry_and_discard_clears_it(
                 "/api/dictionary/audio",
                 files={"audio": (f"{i}.wav", wav_bytes(bytes([i, 0]) * 16))},
             )
-        job = client.post("/api/dictionary/build", json={"source": "audio"}).json()
+        job = client.post(
+            "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
+        ).json()
         assert entered.wait(1)
         client.post(f"/api/dictionary/build/{job['id']}/cancel")
         release.set()
@@ -350,28 +367,37 @@ def test_stop_during_audio_keeps_its_success_for_retry_and_discard_clears_it(
         assert wait_for_build(client)["phase"] == "ready"
         assert speech_calls == 2
         client.delete(f"/api/dictionary/build/{job['id']}")
-        assert not app._builds._texts and store.list_recordings() == []
+        assert not app.builds._texts and store.list_recordings() == []
         app.close()
 
 
-def test_processing_records_identify_source_snippets_and_original_offsets(
+def test_split_sources_carry_only_their_own_part_of_the_dictionary_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(llm, "BATCH_CHARS", 10)
-    original = "  first part and second part"
-    steps = llm.learning_batches(
-        [llm.LearningText("attempt-42", original, {"source": "legacy_final"})]
+    from entune.processing.results import Selection
+    from entune.processing.text_edits import Change, apply
+
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 12)
+    raw = "  use cloud here and cloud there"
+    starts = [i for i in range(len(raw)) if raw.startswith("cloud", i)]
+    result = learning_inputs.DictionaryResult(
+        tuple(Change(i, i + 5, "cloud", "Claude") for i in starts),
+        tuple(Selection(i, i + 5, ("m_claude",), "contextual") for i in starts),
     )
-    for step in steps:
-        record = step.records["attempt-42"]
-        assert record["source"] == "legacy_final"
-        spans = record["source_spans"]
-        assert isinstance(spans, list)
-        for span in spans:
-            snippet = original[span["start_in_input"] : span["end_in_input"]]
-            assert span["source"] in llm.sources(step.snippets)
-            assert llm.sources(step.snippets)[span["source"]] == snippet
-    assert steps[-1].completed == ("attempt-42",)
+    steps = batches.learning_batches(
+        [learning_inputs.LearningText("attempt-42", raw, "raw_speech", result)]
+    )
+    snippets = [s for step in steps for s in step.snippets]
+    assert all(s.result is not None for s in snippets)
+    after = " ".join(apply(s.text, s.result.changes) for s in snippets if s.result)
+    assert after == "use Claude here and Claude there"
+    assert sum(len(s.result.selections or ()) for s in snippets if s.result) == 2
+    assert [step.completed for step in steps][-1] == ("attempt-42",)
+    assert all(not step.completed for step in steps[:-1])
+    # An edit that crosses a split cannot be shown faithfully on either side.
+    whole = learning_inputs.DictionaryResult((Change(2, len(raw), raw[2:], "x"),))
+    split = batches.learning_batches([learning_inputs.LearningText("a", raw, "raw_speech", whole)])
+    assert all(s.result is None for step in split for s in step.snippets)
 
 
 def test_audio_from_other_models_creates_then_refines_the_selected_models_dictionary(
@@ -382,7 +408,11 @@ def test_audio_from_other_models_creates_then_refines_the_selected_models_dictio
 
     async def call(provider: str, key: str, model: str, system: str, user: str) -> str:
         prompts.append(user)
-        return json.dumps(proposed(heard) if len(prompts) == 1 else {"groups": [], "remove": []})
+        return json.dumps(
+            proposed(heard)
+            if len(prompts) == 1
+            else {"additions": [], "revisions": [], "removals": []}
+        )
 
     with closing(Store(tmp_path)) as store:
         other = store.create_recording(WEBM_HEADER)
@@ -390,19 +420,120 @@ def test_audio_from_other_models_creates_then_refines_the_selected_models_dictio
         app, client = setup(store, call)
         items = client.get("/api/dictionary/audio").json()["items"]
         assert [item["models"] for item in items] == [["other/x"]]
-        for applied in (True, False):
+        for applied, mode in ((True, "generate"), (False, "refine")):
             job = client.post(
                 "/api/dictionary/build",
-                json={"source": "audio", "audio_ids": [f"recording:{other.id}"]},
+                json={"mode": mode, "source": "audio", "audio_ids": [f"recording:{other.id}"]},
             ).json()
             assert wait_for_build(client)["phase"] == "ready"
             accepted = client.post(f"/api/dictionary/build/{job['id']}/accept").json()
             assert accepted["applied"] is applied
         # The generator received the selected model's text; refinement also saw what it learned.
-        assert heard in prompts[0] and "Claude Code" not in prompts[0].split("Source")[0]
-        assert "Claude Code" in prompts[1].split("Source")[0]
-        learned = app.dictionary().learned
+        # Audio text is labelled as this model's fresh transcription, with no dictionary result.
+        assert heard in prompts[0] and "Claude Code" not in prompts[0].split("Transcripts")[0]
+        assert "Claude Code" in prompts[1].split("Dictations")[0]
+        assert (
+            '"kind": "temporary_audio"' in prompts[1] and '"after_dictionary": null' in prompts[1]
+        )
+        learned = app.dictionary.dictionary().learned
         assert list(learned) == ["stub/good"] and len(learned["stub/good"]) == 1
         attempts = store.get_recording(other.id).transcriptions  # type: ignore[union-attr]
         assert [(a.model, a.text) for a in attempts] == [("x", "original words")]
         app.close()
+
+
+def test_refinement_pairs_raw_text_with_the_dictionary_step_result_only(tmp_path: Path) -> None:
+    from entune.processing.results import Processed, Selection, Stage
+    from entune.processing.text_edits import Change
+
+    raw = "Ask cloud about the cloud backups um um today."
+    corrected = "Ask Claude about the cloud backups um um today."
+    later = "Ask Claude about the cloud backups um today."  # after filler reduction
+    with closing(Store(tmp_path)) as store:
+        attempts = {}
+        r = store.create_recording(WEBM_HEADER)
+        attempts["paired"] = store.add_transcription(
+            r.id, "stub", "good", "ok", raw, None, raw_text=raw
+        )
+        store.finish_processing(
+            attempts["paired"],
+            Processed(
+                later,
+                Stage(
+                    "succeeded",
+                    "contextual",
+                    output=corrected,
+                    changes=(Change(4, 9, "cloud", "Claude"),),
+                    selections=(
+                        Selection(4, 9, ("m_claude",), "contextual"),
+                        Selection(20, 25, ("m_gone",), "contextual"),
+                    ),
+                ),
+                Stage("disabled", "formatting"),
+                Stage("succeeded", "cleanup", output=later),
+            ),
+        )
+        failed = source(store, "Failed stage keeps raw only.")
+        store.finish_processing(
+            failed,
+            Processed(
+                "Failed stage keeps raw only.",
+                Stage("failed", "contextual", error="HTTP 500"),
+                Stage("disabled", "formatting"),
+            ),
+        )
+        nothing = source(store, "Nothing matched here.")
+        store.finish_processing(
+            nothing,
+            Processed(
+                "Nothing matched here.",
+                Stage("skipped", "contextual", output="Nothing matched here."),
+                Stage("disabled", "formatting"),
+            ),
+        )
+        older = source(store, "Old cloud record.")
+        store.finish_processing(
+            older,
+            Processed(
+                "Old Claude record.",
+                Stage("succeeded", "contextual", changes=(Change(4, 9, "cloud", "Claude"),)),
+                Stage("disabled", "formatting"),
+            ),
+        )
+        legacy = store.add_transcription(r.id, "stub", "good", "ok", "Final text only.", None)
+        inputs = {i.id: i for i in store.learning_inputs("stub", "good")}
+        assert inputs[str(legacy)].kind == "legacy_final" and inputs[str(legacy)].result is None
+        assert inputs[str(failed)].result is None
+        assert inputs[str(nothing)].result == learning_inputs.DictionaryResult((), None)
+        paired = inputs[str(attempts["paired"])]
+        assert paired.text == raw and paired.result is not None
+
+        claude = dictionary_entries.Meaning("m_claude", "Claude", "An AI assistant.")
+        form = dictionary_entries.Form("cloud", (dictionary_entries.Association("m_claude"),))
+        current = Dictionary(
+            learned={"stub/good": (dictionary_entries.Group("g", (claude,), (form,)),)}
+        )
+        (step,) = batches.learning_batches(list(inputs.values()))
+        prompt = batches.build_user_prompt("refine", current, step.snippets, "stub/good")
+        entries = json.loads(prompt.split("(JSON).")[1].split("\n", 1)[1])
+        by_raw = {e["raw"]: e for e in entries}
+        pair = by_raw[raw]
+        assert pair["after_dictionary"] == corrected
+        assert pair["decisions"][0] == {
+            "start": 4,
+            "end": 9,
+            "recognized": "cloud",
+            "result": "Claude",
+            "method": "contextual",
+            "meaning_ids": ["m_claude"],
+        }
+        assert pair["decisions"][1]["meanings_no_longer_in_dictionary"] == ["m_gone"]
+        assert by_raw["Nothing matched here."]["after_dictionary"] == "Nothing matched here."
+        assert by_raw["Failed stage keeps raw only."]["after_dictionary"] is None
+        assert by_raw["Final text only."]["kind"] == "legacy_final"
+        # Older records kept replacements without per-span decisions.
+        assert by_raw["Old cloud record."]["after_dictionary"] == "Old Claude record."
+        assert by_raw["Old cloud record."]["decisions"] == [
+            {"start": 4, "end": 9, "recognized": "cloud", "result": "Claude"}
+        ]
+        assert later not in prompt  # filler reduction and delivered text never stand in

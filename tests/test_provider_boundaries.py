@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dictum.providers.local import audio
+from entune.audio import convert
 
 
 def test_contracts_and_parakeet_do_not_load_unrelated_engines() -> None:
@@ -17,13 +17,13 @@ def test_contracts_and_parakeet_do_not_load_unrelated_engines() -> None:
             "-c",
             """
 import sys
-import dictum.providers.contracts
-import dictum.providers.cloud.contracts
-import dictum.providers.local.contracts
+import entune.providers.contracts
+import entune.providers.cloud.contracts
+import entune.providers.local.contracts
 assert 'httpx' not in sys.modules
-import dictum.providers.local.parakeet
-assert 'dictum.providers.local.whisper' not in sys.modules
-import dictum.providers.registry
+import entune.providers.local.parakeet
+assert 'entune.providers.local.whisper' not in sys.modules
+import entune.providers.registry
 assert not {'numpy', 'pywhispercpp', 'parakeet_mlx', 'mlx'} & sys.modules.keys()
 """,
         ],
@@ -37,9 +37,9 @@ def test_shared_conversion_uses_explicit_rate_and_cleans_up_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths: list[Path] = []
-    monkeypatch.setattr("dictum.providers.local.audio.shutil.which", lambda _: "/test/ffmpeg")
+    monkeypatch.setattr("entune.audio.convert.shutil.which", lambda _: "/test/ffmpeg")
 
-    def convert(
+    def run(
         command: list[str], *, capture_output: bool, check: bool, timeout: float
     ) -> subprocess.CompletedProcess[bytes]:
         source = Path(command[command.index("-i") + 1])
@@ -50,7 +50,7 @@ def test_shared_conversion_uses_explicit_rate_and_cleans_up_failure(
         assert timeout == 300
         raise subprocess.CalledProcessError(1, command)
 
-    monkeypatch.setattr("dictum.providers.local.audio.subprocess.run", convert)
+    monkeypatch.setattr("entune.audio.convert.subprocess.run", run)
     with pytest.raises(subprocess.CalledProcessError):
-        audio.to_wav_with_ffmpeg(b"encoded audio", sample_rate=16_000)
+        convert.to_wav_with_ffmpeg(b"encoded audio", sample_rate=16_000)
     assert len(paths) == 1 and not paths[0].exists()

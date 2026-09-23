@@ -1,20 +1,21 @@
-# Packaging Dictum.app
+# Packaging Entune.app
 
 Two ways. The standalone bundle is the sure one; the launcher bundle is
 lighter but macOS's permission panels may refuse to list it.
 
-## `dictum install-app`
+## `entune install-app`
 
-Writes `/Applications/Dictum.app` when that folder is writable, else
-`~/Applications/Dictum.app` (or `--into DIR`): an Info.plist with
-Dictum's name, bundle id `dev.elias.dictum`, `LSUIElement`, the microphone
+Writes `/Applications/Entune.app` when that folder is writable, else
+`~/Applications/Entune.app` (or `--into DIR`): an Info.plist with
+Entune's name, bundle id `dev.elias.dictum` (macOS ties the granted permissions to
+it; see below), `LSUIElement`, the microphone
 usage string and an icns built from the shipped PNG with `sips` and
 `iconutil`; and an executable that is a two-line shell script running the
-current Python with `-m dictum`. Nothing is copied, so the app follows the
-installation it was created from: upgrade `dictum` and the app is upgraded.
+current Python with `-m entune`. Nothing is copied, so the app follows the
+installation it was created from: upgrade `entune` and the app is upgraded.
 Observed on macOS 26: the unsigned first version was not accepted by the
 Input Monitoring and Accessibility panels; if that happens, use the
-standalone bundle below and `dictum install-app --from dist/Dictum.app` to
+standalone bundle below and `entune install-app --from dist/Entune.app` to
 put it in place.
 
 ## Signing, and keeping the permissions
@@ -27,22 +28,23 @@ Accessibility and asks again (seen 2026-09-18, issue #51).
 To keep them across rebuilds, create a certificate once. Three steps in
 Keychain Access, as it took on macOS 26 (2026-09-18):
 
-1. Certificate Assistant › Create a Certificate…: name **Dictum Developer**
-   exactly, identity type Self Signed Root, certificate type **Code
+1. Certificate Assistant › Create a Certificate…: name **Entune Developer**
+   exactly (one named **Dictum Developer** is also used when there is no Entune
+   one), identity type Self Signed Root, certificate type **Code
    Signing** (the popup defaults to S/MIME; that one cannot sign code).
 2. My Certificates › double-click it › Trust › Code Signing: **Always
    Trust**. Without this `security find-identity -v -p codesigning` lists
    no valid identity.
-3. Keys › the private key "Dictum Developer" › double-click › Access
+3. Keys › the private key "Entune Developer" › double-click › Access
    Control › **Allow all applications to access this item** › Save.
    Without this `codesign` fails with `errSecInternalComponent`, and its
    password dialog rejects the correct password.
 4. Trust it system-wide, from a terminal (asks for your password):
 
    ```sh
-   security find-certificate -c "Dictum Developer" -p > /tmp/dictum-developer.cer
+   security find-certificate -c "Entune Developer" -p > /tmp/entune-developer.cer
    sudo security add-trusted-cert -d -r trustRoot -p codeSign \
-     -k /Library/Keychains/System.keychain /tmp/dictum-developer.cer
+     -k /Library/Keychains/System.keychain /tmp/entune-developer.cer
    ```
 
    Step 2 trusts the certificate only in your login keychain. Input
@@ -52,7 +54,7 @@ Keychain Access, as it took on macOS 26 (2026-09-18):
    per user and works. Seen 2026-09-18 on macOS 26.
 
 When that certificate exists, `install-app` signs with it instead, every
-build has the same identity (`codesign -d -r- Dictum.app` shows
+build has the same identity (`codesign -d -r- Entune.app` shows
 `certificate leaf = H"…"` rather than `cdhash`), and the grants stay.
 Nothing else changes; this is not Developer ID and does not help other
 Macs.
@@ -64,27 +66,27 @@ error and signs ad hoc instead, rather than leave a half-signed bundle.
 
 macOS attaches the Microphone, Input Monitoring and Accessibility
 permissions to an application. Run as a plain Python process, that
-application is whichever Python binary launched `dictum`, so the permissions
+application is whichever Python binary launched `entune`, so the permissions
 show up as "python3" and are asked again whenever the interpreter changes.
-`Dictum.app` gives macOS a stable identity, with Dictum's icon.
+`Entune.app` gives macOS a stable identity, with Entune's icon.
 
 ```sh
 uv sync --group build
 uv run --group build python packaging/build_app.py
 ```
 
-`packaging/Dictum.spec` is the PyInstaller spec: a menu-bar-only bundle
+`packaging/Entune.spec` is the PyInstaller spec: a menu-bar-only bundle
 (`LSUIElement`), bundle id `dev.elias.dictum`, version from the package, the
 microphone usage string, the web page and assets, the Parakeet helper
 script, and the whisper.cpp libraries (collected with the bindings) inside,
-`Dictum.icns` as the icon. The bundle is about 110 MB. The Parakeet engine
+`Entune.icns` as the icon. The bundle is about 110 MB. The Parakeet engine
 itself (MLX, about 480 MB) is deliberately not bundled; it is installed
 with `uv tool install parakeet-mlx` and found at run time. The build writes
-`dist/Dictum.app`; `dictum install-app --from dist/Dictum.app` copies and
+`dist/Entune.app`; `entune install-app --from dist/Entune.app` copies and
 signs it.
 
-It is the same program as `dictum`: same entry point, same data directory.
-If another Dictum is already running on the port, the new one says so and
+It is the same program as `entune`: same entry point, same data directory.
+If another Entune is already running on the port, the new one says so and
 quits rather than answering the shortcut twice.
 
 Not done: Developer ID signing and notarisation, which are needed only to
@@ -92,7 +94,7 @@ hand the app to other Macs without Gatekeeper warnings.
 
 ## Cocoa compatibility checks
 
-`desktop/macos/webview.py` owns Dictum's pywebview adaptations. It installs
+`desktop/macos/webview.py` owns Entune's pywebview adaptations. It installs
 Objective-C methods once per process and binds them to the active window only
 while the shell runs. After teardown, capture is denied and file selection
 completes with no selection. Tested dependency versions are pywebview 6.2.1 and
@@ -125,7 +127,7 @@ Upgrade checks must cover these specific dependencies:
   reports an error; full-screen positioning remains AppKit's responsibility.
 - `ALLOW_DOWNLOADS` delegates to pywebview's Cocoa download handling and native
   Save panel. Verify audio ZIP, transcript JSON and individual audio downloads,
-  including cancel. No custom download delegate is installed by Dictum.
+  including cancel. No custom download delegate is installed by Entune.
 
 Run the normal gates and `tests/test_webview.py` for selector registration,
 origin/type gating, picker callback completion, title-bar failure handling,
@@ -138,7 +140,7 @@ Automated callback checks do not establish real permission-dialog or Save-panel
 interaction; record which native interactions were actually exercised.
 
 Check that the installed bundle contains the web assets, all prompt resources,
-and `dictum/providers/local/parakeet_helper.py`. Verify the helper path resolves
+and `entune/providers/local/parakeet_helper.py`. Verify the helper path resolves
 inside the bundle while `engine_python()` resolves outside it to the separately
 installed engine. Test its protocol without downloading weights or transcribing
 private audio; run real engine/inference tests only with an explicit test corpus.
@@ -146,3 +148,11 @@ private audio; run real engine/inference tests only with an explicit test corpus
 Windows has no native shortcut/paste/indicator/permission/lifecycle implementation
 or supported desktop package yet. Its data-directory branch and portable WebView
 libraries do not change that; Windows native work is tracked separately in #36.
+
+## Bundle identity
+
+The bundle id is `dev.elias.dictum` and the app is signed with an existing
+**Dictum Developer** certificate when there is no **Entune Developer** one.
+macOS ties Microphone, Input Monitoring and Accessibility to that identity, so
+keeping it keeps the granted permissions; a new identity means granting all
+three again.

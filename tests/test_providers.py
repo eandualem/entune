@@ -5,12 +5,12 @@ from pathlib import Path
 
 import httpx
 
-from dictum.providers.cloud.assemblyai import AssemblyAI
-from dictum.providers.cloud.groq import Groq
-from dictum.providers.cloud.soniox import Soniox
-from dictum.providers.contracts import Clip, Failure, Transcript
-from dictum.providers.registry import default_providers, resolve_model
-from dictum.recorder import wav_bytes
+from entune.audio.formats import wav_bytes
+from entune.providers.cloud.assemblyai import AssemblyAI
+from entune.providers.cloud.groq import Groq
+from entune.providers.cloud.soniox import Soniox
+from entune.providers.contracts import Clip, Failure, Transcript
+from entune.providers.registry import default_providers, resolve_model
 from tests.conftest import mock_client
 
 
@@ -208,7 +208,7 @@ def test_no_vocabulary_hint_goes_to_any_provider(clip: Clip) -> None:
 
 
 def test_assemblyai_streaming_upload_is_used_only_past_the_sync_limit() -> None:
-    from dictum.providers.cloud.assemblyai import StreamingUpload
+    from entune.providers.cloud.assemblyai import StreamingUpload
 
     uploads: list[bytes] = []
     seen: list[str] = []
@@ -250,7 +250,7 @@ def test_assemblyai_streaming_upload_is_used_only_past_the_sync_limit() -> None:
 
 
 def test_failed_streaming_upload_stops_collecting_recorded_audio() -> None:
-    from dictum.providers.cloud.assemblyai import StreamingUpload
+    from entune.providers.cloud.assemblyai import StreamingUpload
 
     class Offline(httpx.BaseTransport):
         def handle_request(self, request: httpx.Request) -> httpx.Response:
@@ -267,7 +267,7 @@ def test_failed_streaming_upload_stops_collecting_recorded_audio() -> None:
 def test_aborting_an_upload_discards_audio_waiting_for_a_slow_connection() -> None:
     import threading
 
-    from dictum.providers.cloud.assemblyai import StreamingUpload
+    from entune.providers.cloud.assemblyai import StreamingUpload
 
     proceed = threading.Event()
     sent: list[bytes] = []
@@ -293,11 +293,11 @@ def test_aborting_an_upload_discards_audio_waiting_for_a_slow_connection() -> No
 def test_adapters_close_owned_clients_but_leave_injected_clients_to_the_caller(
     tmp_path: Path,
 ) -> None:
-    from dictum.providers.cloud.assemblyai import AssemblyAI
-    from dictum.providers.cloud.groq import Groq
-    from dictum.providers.cloud.soniox import Soniox
-    from dictum.providers.local.parakeet import Parakeet
-    from dictum.providers.local.whisper import WhisperCpp
+    from entune.providers.cloud.assemblyai import AssemblyAI
+    from entune.providers.cloud.groq import Groq
+    from entune.providers.cloud.soniox import Soniox
+    from entune.providers.local.parakeet import Parakeet
+    from entune.providers.local.whisper import WhisperCpp
 
     owned: list[AssemblyAI | Groq | Soniox | WhisperCpp | Parakeet] = [
         AssemblyAI(),
@@ -323,7 +323,7 @@ def test_adapters_close_owned_clients_but_leave_injected_clients_to_the_caller(
 
 
 def test_provider_close_aborts_owned_streaming_upload() -> None:
-    from dictum.providers.cloud.assemblyai import AssemblyAI, StreamingUpload
+    from entune.providers.cloud.assemblyai import AssemblyAI, StreamingUpload
 
     with mock_client(lambda req: httpx.Response(200, json={"upload_url": "test"})) as client:
         provider = AssemblyAI(client)

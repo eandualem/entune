@@ -1,0 +1,134 @@
+import { api, el, errorText, flash } from "./ui.js";
+
+// Both sources use the same server-owned job. Poll small status records; fetch a
+// potentially large proposal once per job, and name that job on every action.
+export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelected }) {
+  const progress = el("dictionary-build-status");
+  const cancel = el("cancel-dictionary-build");
+  let state = { phase: "idle" };
+  let proposalId = null;
+  let acceptedId = null;
+  let version = 0;
+  let timer, reading;
+  const running = () => ["queued", "transcribing", "building", "cancelling", "cleaning"].includes(state.phase);
+  function clearFeedback() {
+    clearTimeout(el("build-status")._timer);
+    el("build-status").textContent = "";
+    el("build-status").classList.remove("show");
+  }
+
+  async function render() {
+    onBusy(running() || state.phase === "ready");
+    cancel.hidden = !running();
+    el("retry-dictionary-build").hidden = running() || !["failed", "stopped"].includes(state.outcome) || ["accepted", "discarded"].includes(state.phase);
+    el("abandon-dictionary-build").hidden = running() || !["failed", "cancelled"].includes(state.phase);
+    cancel.disabled = state.phase === "cancelling";
+    progress.classList.toggle("err", state.phase === "failed");
+    const kept = (n = 0) => `${n} temporary transcript${n === 1 ? "" : "s"}`;
+    const task = state.mode === "refine" ? "Checking your entries" : "Looking for new entries";
+    const from = state.source === "audio" ? "audio" : "history";
+    // A part takes as long as the model takes; say which part runs, how many are done
+    // and how long this one has run, never a percentage.
+    const clock = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+    const partElapsed = state.stepStartedAt ? clock(Math.max(0, Date.now() / 1000 - state.stepStartedAt)) : null;
+    const building = state.steps > 1
+      ? `${task} · part ${state.step} of ${state.steps} · ${state.completedBatches ?? 0} done${partElapsed ? ` · this part ${partElapsed}` : ""}`
+      : `${task}${partElapsed ? ` · ${partElapsed}` : ""}`;
+    const messages = {
+      idle: "", queued: `Getting ready to read your ${from === "audio" ? "audio" : "transcripts"}…`,
+      transcribing: `Transcribing recording ${state.completed} of ${state.total}…`,
+      building,
+      cancelling: "Stopping… a transcription already under way may need to finish.",
+      cleaning: "Finishing…", ready: "Suggestions are ready below.",
+      cancelled: `Stopped after ${state.completedBatches ?? 0} of ${state.steps ?? 0} parts. Retry to continue, or discard.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept for Retry.` : ""}`,
+      failed: `Something went wrong: ${state.error} Your dictionary is unchanged.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept for Retry; your audio is kept.` : ""}`,
+      accepted: state.applied ? "Applied. Your dictionary is updated." : "Closed without changes.",
+      discarded: from === "audio" ? "Proposal discarded. Original audio is kept." : "Proposal discarded.",
+    };
+    let message = messages[state.phase] ?? state.phase;
+    if (state.phase === "ready") {
+      const coverage = `${state.coveredInputs} of ${state.total} ${from === "audio" ? "recordings" : "dictations"} read`;
+      message = state.outcome === "stopped" ? `Stopped with ${coverage}. Review what's ready, retry the rest, or discard.`
+        : state.outcome === "failed" ? `${state.error} ${coverage}. Review what's ready, retry the rest, or discard.`
+        : `Suggestions are ready below (${coverage}). Review them, then apply or discard to resume dictation.`;
+    }
+    progress.textContent = message;
+    el("build-spinner").hidden = !running();
+    const failed = state.phase === "failed" || (state.phase === "ready" && state.outcome === "failed");
+    const detail = failed ? state.errorDetail : "";
+    el("build-error-text").textContent = detail || "";
+    el("build-error-detail").hidden = !detail;
+    const actions = ["cancel-dictionary-build", "retry-dictionary-build", "abandon-dictionary-build"];
+    el("learn-status").hidden = !message && actions.every((id) => el(id).hidden);
+    if (state.phase === "accepted" && acceptedId !== state.id) {
+      acceptedId = state.id;
+      await onAccepted();
+    }
+    if (state.phase === "ready" && proposalId !== state.id) {
+      const detail = await api(`/api/dictionary/build/${state.id}`);
+      if (detail.phase === "ready" && state.phase === "ready" && detail.id === state.id) {
+        proposalId = detail.id;
+        onProposal(detail.proposal);
+      }
+    } else if (state.phase !== "ready") {
+      proposalId = null;
+      onProposal(null);
+    }
+  }
+  function poll() {
+    if (reading) return reading;
+    clearTimeout(timer);
+    reading = (async () => {
+      const started = version;
+      try {
+        const result = await api("/api/dictionary/build");
+        if (version === started) { state = result; await render(); }
+      } catch (err) {
+        progress.textContent = `Could not read build progress: ${errorText(err)}`;
+        progress.classList.add("err");
+        el("learn-status").hidden = false;
+      } finally {
+        reading = null;
+        timer = setTimeout(poll, document.hidden ? 10000 : running() ? 1000 : 3000);
+      }
+    })();
+    return reading;
+  }
+  async function action(name) {
+    const id = state.id;
+    version++;
+    clearFeedback();
+    try {
+      state = await api(`/api/dictionary/build/${id}${name === "discard" ? "" : `/${name}`}`, {
+        method: name === "discard" ? "DELETE" : "POST",
+        ...(name === "accept" ? {headers: {"content-type": "application/json"}, body: JSON.stringify({selected: getSelected()})} : {}),
+      });
+      await render();
+    } catch (err) {
+      flash(el("build-status"), errorText(err), "err");
+    }
+    await poll();
+  }
+  el("retry-dictionary-build").addEventListener("click", () => action("retry"));
+  el("abandon-dictionary-build").addEventListener("click", () => action("discard"));
+  cancel.addEventListener("click", () => action("cancel"));
+  el("accept-proposal").addEventListener("click", () => action("accept"));
+  el("discard-proposal").addEventListener("click", () => action("discard"));
+  return {
+    load: poll,
+    async start(source, selection = {}) {
+      version++;
+      clearFeedback();
+      onBusy(true);
+      try {
+        state = await api("/api/dictionary/build", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source, ...selection }),
+        });
+        await render();
+      } catch (err) {
+        flash(el("build-status"), errorText(err), "err");
+      }
+      await poll();
+    },
+  };
+}

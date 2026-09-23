@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from dictum.dictionary import Association, Form, Group, Meaning
+from entune.dictionary.entries import Association, Form, Group, Meaning
 
 
 def group(spelling: str, heard: str, *, literal: str | None = None, direct: bool = False) -> Group:
@@ -32,7 +32,7 @@ def group(spelling: str, heard: str, *, literal: str | None = None, direct: bool
 JEV = Group(
     "g_jev",
     (
-        Meaning("a_jev", "Jev", "TypeSafe's contextual decision model.", "Used in Dictum."),
+        Meaning("a_jev", "Jev", "TypeSafe's contextual decision model.", "Used in Entune."),
         Meaning("b_jeff", "Jeff", "A person's given name."),
         Meaning("c_gif", "GIF", "An image format for still or animated images."),
     ),
@@ -65,7 +65,7 @@ CLOUD = Group(
 
 
 def proposed(text: str = "I use cloud code.") -> dict[str, Any]:
-    from dictum.llm import sources
+    from entune.learning.batches import sources
 
     record = group("Claude Code", "cloud code").as_json()
     record["id"] = "new_group"
@@ -81,4 +81,15 @@ def proposed(text: str = "I use cloud code.") -> dict[str, Any]:
                     {"source": next(iter(sources([text]))), "start": start, "end": start + 10}
                 ],
             )
-    return {"groups": [record], "remove": []}
+    return {"additions": [record]}
+
+
+def document(*pinned: Group, learned: dict[str, tuple[Group, ...]] | None = None) -> dict[str, Any]:
+    """A dictionary.json body in the current format."""
+    return {
+        "version": 2,
+        "pinned": [g.as_json() for g in pinned],
+        "learned": {
+            model: [g.as_json() for g in groups] for model, groups in (learned or {}).items()
+        },
+    }

@@ -1,0 +1,315 @@
+// History card rendering keeps each player and retry picker attached to its card.
+
+import { ICON, errorText, fillModels, modelName, whenLabel } from "./ui.js";
+
+// The model that actually produced an attempt, kept as recorded at the time.
+const attemptLabel = (t, models) => (t.provider === "none" ? "no model set" : modelName(`${t.provider}/${t.model}`, models));
+const clock = (s) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "–:––");
+
+function player(url, label, seconds) {
+  const box = document.createElement("div");
+  box.className = "player";
+  const audio = document.createElement("audio");
+  audio.preload = "none";
+  audio.setAttribute("aria-label", label);
+  const play = document.createElement("button");
+  play.type = "button";
+  play.className = "btn-icon";
+  play.title = "Play";
+  play.innerHTML = ICON.play;
+  const now = document.createElement("span");
+  now.textContent = "0:00";
+  const track = document.createElement("div");
+  track.className = "track";
+  track.innerHTML = "<span></span>";
+  const total = document.createElement("span");
+  total.textContent = clock(seconds);
+  for (const event of ["loadedmetadata", "durationchange"]) audio.addEventListener(event, () => { total.textContent = clock(audio.duration); });
+  audio.addEventListener("timeupdate", () => {
+    now.textContent = clock(audio.currentTime);
+    track.firstChild.style.width = audio.duration ? `${(audio.currentTime / audio.duration) * 100}%` : "0";
+  });
+  audio.addEventListener("play", () => { play.innerHTML = ICON.pause; play.title = "Pause"; });
+  audio.addEventListener("pause", () => { play.innerHTML = ICON.play; play.title = "Play"; });
+  audio.addEventListener("ended", () => { audio.currentTime = 0; });
+  play.addEventListener("click", async () => {
+    if (!audio.src) audio.src = url;
+    try { audio.paused ? await audio.play() : audio.pause(); }
+    catch (err) { play.title = `Playback failed: ${errorText(err)}`; }
+  });
+  track.addEventListener("click", (e) => {
+    const rect = track.getBoundingClientRect();
+    if (audio.duration) audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
+  });
+  box.append(audio, play, now, track, total);
+  return box;
+}
+
+// What happened after speech recognition, told plainly and kept out of the way:
+// a compact Details control, a readable breakdown on demand, and failures in view.
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const took = (stage) => [stage.attempts > 1 ? `after ${plural(stage.attempts - 1, "retry", "retries")}` : "", stage.seconds ? `${stage.seconds.toFixed(1)} s` : ""].filter(Boolean).join(" · ");
+function describe(name, stage) {
+  if (stage.status === "failed") {
+    return `${name} failed${name === "Dictionary" ? "; the original transcription was kept" : "; the text before this step was kept"}: ${stage.error}`;
+  }
+  if (stage.status === "skipped") return stage.error ? `${name} skipped: ${stage.error}` : name === "Dictionary" ? "Dictionary: no known confusions in this dictation" : `${name}: nothing to change`;
+  if (stage.status === "pending") return `${name}: not finished`;
+  const changes = stage.changes?.length ?? null;
+  if (name === "Dictionary") {
+    const parts = [`Dictionary: ${stage.replacements ? plural(stage.replacements, "correction") : "no corrections needed"}`];
+    if (stage.abstained) parts.push(`${plural(stage.abstained, "word")} left as heard (unclear meaning)`);
+    return parts.join(" · ");
+  }
+  if (name === "Filler reduction") return stage.removed_words ? `Removed ${plural(stage.removed_words, "filler word")}` : "No filler words removed";
+  return changes === null ? "Formatting applied (changes not recorded)" : changes ? `Formatting: ${plural(changes, "change")}` : "Formatting: no changes";
+}
+// Processing details open in one popover beside their button, so the list never reflows.
+// It follows the button while the view scrolls and closes on Escape, an outside click,
+// focus moving elsewhere, or its card being redrawn.
+let openDetails = null;
+function closeDetails(restoreFocus = false) {
+  if (!openDetails) return;
+  const { toggle, box } = openDetails;
+  openDetails = null;
+  box.remove();
+  toggle.setAttribute("aria-expanded", "false");
+  if (restoreFocus && toggle.isConnected) toggle.focus();
+}
+export function placeDetails() {
+  if (!openDetails) return;
+  const { toggle, box } = openDetails;
+  const anchor = toggle.getBoundingClientRect();
+  const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+  if (!toggle.isConnected || anchor.bottom < 0 || anchor.top > height) { closeDetails(); return; }
+  const margin = 8, gap = 6;
+  const left = Math.max(margin, Math.min(anchor.left, width - box.offsetWidth - margin));
+  // Below the button when it fits, otherwise above it, always inside the window.
+  let top = anchor.bottom + gap;
+  if (top + box.offsetHeight > height - margin && anchor.top - gap - box.offsetHeight >= margin) top = anchor.top - gap - box.offsetHeight;
+  box.style.left = `${left}px`;
+  box.style.top = `${Math.max(margin, Math.min(top, height - box.offsetHeight - margin))}px`;
+}
+function showDetails(toggle, content) {
+  const same = openDetails?.toggle === toggle;
+  closeDetails();
+  if (same) return;
+  const box = document.createElement("div");
+  box.className = "details-popover processing";
+  box.id = "processing-details";
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-label", "Processing details");
+  box.tabIndex = -1;
+  box.append(Object.assign(document.createElement("div"), { className: "details-title", textContent: "Processing" }), ...content.cloneNode(true).childNodes);
+  document.body.append(box);
+  openDetails = { toggle, box };
+  toggle.setAttribute("aria-expanded", "true");
+  toggle.setAttribute("aria-controls", box.id);
+  placeDetails();
+  box.focus({ preventScroll: true });
+}
+const outside = (target) => openDetails && !openDetails.box.contains(target) && !openDetails.toggle.contains(target);
+document.addEventListener("pointerdown", (e) => { if (outside(e.target)) closeDetails(); });
+document.addEventListener("focusin", (e) => { if (outside(e.target)) closeDetails(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && openDetails) { e.preventDefault(); closeDetails(true); } });
+window.addEventListener("resize", placeDetails);
+document.addEventListener("scroll", placeDetails, true); // the views scroll inside themselves
+
+// Line breaks and edge spaces are drawn, so paragraph and list edits can be seen.
+const visible = (text) => text === "" ? "(nothing)" : text.replace(/\n/g, "↵").replace(/^ +| +$/g, (spaces) => "␣".repeat(spaces.length));
+function processing(t) {
+  const stages = [["Dictionary", t.correction], ["Filler reduction", t.cleanup], ["Formatting", t.formatting]].filter(([, stage]) => stage && stage.status !== "disabled");
+  const failed = stages.filter(([, stage]) => stage.status === "failed");
+  const changed = stages.reduce((sum, [, stage]) => sum + (stage.status === "succeeded" ? stage.changes?.length ?? 0 : 0), 0);
+  const panel = document.createElement("div");
+  for (const [name, stage] of stages) {
+    const line = document.createElement("div");
+    line.className = stage.status === "failed" ? "step err" : "step";
+    line.append(describe(name, stage));
+    const time = took(stage);
+    if (time) line.append(Object.assign(document.createElement("span"), { className: "took", textContent: time }));
+    panel.append(line);
+    if (stage.changes?.length) {
+      const list = document.createElement("ul");
+      list.className = "changes";
+      for (const change of stage.changes) {
+        const item = document.createElement("li");
+        item.append(Object.assign(document.createElement("del"), { textContent: visible(change.before) }), " → ",
+          Object.assign(document.createElement("ins"), { textContent: visible(change.after) }));
+        list.append(item);
+      }
+      panel.append(list);
+    }
+  }
+  const alerts = [];
+  if (t.status === "ok" && t.error) alerts.push(t.error);
+  for (const [name] of failed) alerts.push(`${name} failed. ${name === "Dictionary" ? "The original transcription was kept." : "The text before this step was kept."}`);
+  const alert = alerts.length ? Object.assign(document.createElement("div"), { className: "processing-alert", textContent: alerts.join(" ") }) : null;
+  alert?.setAttribute("role", "status");
+  if (!stages.length) return { alert, toggle: null };
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = failed.length ? "btn ghost processing-toggle err" : "btn ghost processing-toggle";
+  // An icon alone when nothing changed; a short note when there is something to see.
+  const summary = failed.length ? "Needs attention" : changed ? plural(changed, "change") : "";
+  toggle.innerHTML = ICON.details;
+  if (summary) toggle.append(summary);
+  toggle.title = `Processing details${summary ? "" : ": no changes"} (dictionary, filler reduction, formatting)`;
+  toggle.setAttribute("aria-label", toggle.title);
+  toggle.setAttribute("aria-haspopup", "dialog");
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.addEventListener("click", () => showDetails(toggle, panel));
+  return { alert, toggle };
+}
+
+export function renderCard(r, models) {
+  const card = document.createElement("article");
+  card.className = "card";
+  card.dataset.id = r.id;
+  const [latest, ...earlier] = r.transcriptions;
+
+  const head = document.createElement("div");
+  head.className = "card-head";
+  const when = document.createElement("time");
+  when.className = "when";
+  when.dateTime = r.created_at;
+  when.textContent = whenLabel(r.created_at);
+  when.title = new Date(r.created_at).toLocaleString();
+  const model = document.createElement("span");
+  model.className = "model";
+  model.textContent = latest ? `Transcribed with ${attemptLabel(latest, models)}` : "";
+  model.title = latest ? `${latest.provider}/${latest.model}${latest.fast ? " · Fast mode" : ""} · the model used for this recording` : "";
+  const spacer = document.createElement("span");
+  spacer.className = "spacer";
+  const copied = document.createElement("span");
+  copied.className = "copied-tag";
+  copied.textContent = "Copied";
+  head.append(when, model, spacer, copied);
+  card.append(head);
+
+  if (r.notice) {
+    const message = document.createElement("div");
+    message.className = "status"; message.textContent = r.notice;
+    card.append(message);
+  }
+  if (latest?.processing_state === "cancelled") {
+    const canceled = document.createElement("div");
+    canceled.className = "status"; canceled.textContent = "Canceled — audio saved. No text delivered.";
+    card.append(canceled);
+  } else if (latest?.processing_state === "processing") {
+    const pending = document.createElement("div");
+    pending.className = "status";
+    pending.setAttribute("role", "status");
+    pending.textContent = "Processing… Final text will appear when complete.";
+    card.append(pending);
+  } else if (latest && latest.status !== "ok") {
+    const failed = document.createElement("div");
+    failed.className = "failed";
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = "FAILED";
+    const pre = document.createElement("pre");
+    pre.textContent = latest.error ?? "";
+    failed.append(label, pre);
+    card.append(failed);
+    card.dataset.copy = latest.error ?? "";
+  } else if (latest) {
+    const block = document.createElement("div");
+    block.className = latest.text ? "transcript" : "transcript empty";
+    block.textContent = latest.text || "(no speech detected)";
+    block.title = latest.text ? "Click to copy" : "";
+    card.append(block);
+    card.dataset.copy = latest.text ?? "";
+  }
+  const steps = latest && latest.status === "ok" && !["processing", "cancelled"].includes(latest.processing_state) ? processing(latest) : null;
+  if (steps?.alert) card.append(steps.alert);
+
+  const row = document.createElement("div");
+  row.className = "card-row";
+  row.append(player(`/api/recordings/${r.id}/audio`, `Recording ${when.title}`, latest?.audio_seconds));
+  const download = document.createElement("a");
+  download.className = "btn-icon";
+  download.href = `/api/recordings/${r.id}/audio`;
+  download.download = "";
+  download.title = "Download audio";
+  download.setAttribute("aria-label", "Download audio");
+  download.innerHTML = ICON.download;
+  const rowStatus = document.createElement("span");
+  rowStatus.className = "status";
+  const rowSpacer = document.createElement("span");
+  rowSpacer.className = "spacer";
+  row.append(download);
+  if (steps?.toggle) row.append(steps.toggle);
+  row.append(rowStatus, rowSpacer);
+  if (!(["processing", "cancelled"].includes(latest?.processing_state)) && latest?.raw_text !== null && latest?.raw_text !== undefined) {
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "btn ghost copy-raw";
+    copy.textContent = "Copy original";
+    copy.title = "Copy the untouched speech-provider result";
+    card.dataset.raw = latest.raw_text;
+    row.append(copy);
+    if (latest.correction?.status === "failed") {
+      const recover = document.createElement("button"); recover.type = "button";
+      recover.className = "btn ghost safe-copy"; recover.textContent = "Apply safe mappings and copy";
+      recover.dataset.attempt = latest.id;
+      recover.title = "Use only explicitly approved direct mappings. Ambiguous words stay original; history and already-pasted text are unchanged.";
+      row.append(recover);
+    }
+
+  }
+  let attempts = null;
+  if (earlier.length > 0) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "btn ghost attempts-toggle";
+    toggle.title = earlier.length === 1 ? `1 earlier attempt · ${attemptLabel(earlier[0], models)}` : `${earlier.length} earlier attempts`;
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.innerHTML = `${ICON.attempts}${earlier.length}`;
+    attempts = document.createElement("div");
+    attempts.hidden = true;
+    for (const t of earlier) {
+      const attempt = document.createElement("div");
+      attempt.className = "attempt";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const time = document.createElement("time");
+      time.dateTime = t.created_at;
+      time.textContent = whenLabel(t.created_at);
+      meta.append(`${attemptLabel(t, models)} · `, time);
+      const text = document.createElement("div");
+      text.className = t.status === "ok" ? "text" : "text err";
+      const pending = ["processing", "cancelled"].includes(t.processing_state);
+      text.textContent = pending ? (t.processing_state === "cancelled" ? "Canceled — audio saved. No text delivered." : "Processing…") : t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
+      const detail = pending || t.status !== "ok" ? null : processing(t);
+      attempt.append(meta, text, ...[detail?.alert, detail?.toggle].filter(Boolean));
+      attempts.append(attempt);
+    }
+    toggle.addEventListener("click", () => {
+      attempts.hidden = !attempts.hidden;
+      toggle.setAttribute("aria-expanded", String(!attempts.hidden));
+    });
+    row.append(toggle);
+  }
+  // A new attempt uses the chosen model; it starts at today's default, like a new dictation.
+  const again = document.createElement("label");
+  again.className = "retry-label";
+  again.textContent = "Transcribe again with";
+  const select = document.createElement("select");
+  select.className = "select quiet retry-model";
+  select.title = "Model for a new attempt on this recording; earlier attempts keep their own model";
+  select.setAttribute("aria-label", "Transcribe again with");
+  fillModels(models, select, models.find((m) => m.default)?.id ?? models[0]?.id ?? null, "No models");
+  again.append(select);
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "btn-icon retry";
+  retry.title = latest?.status === "error" ? "Try again" : "Transcribe again";
+  retry.setAttribute("aria-label", retry.title);
+  retry.innerHTML = ICON.retry;
+  retry.disabled = select.disabled;
+  row.append(again, retry);
+  card.append(row);
+  if (attempts) card.append(attempts);
+  return card;
+}

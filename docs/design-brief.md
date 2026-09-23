@@ -1,4 +1,4 @@
-# Design brief: a lighter, calmer Dictum
+# Design brief: a lighter, calmer Entune
 
 A prompt for a design-focused model. Elias, 2026-09-18: "it doesn't feel like
 a polished application". Loose on how, exact on what the system is and does.
@@ -6,7 +6,7 @@ Hand it over with a screenshot of the current window.
 
 ---
 
-You are redesigning the window of **Dictum**, a personal dictation
+You are redesigning the window of **Entune**, a personal dictation
 workbench for macOS. One person opens it all day. They press a key, speak,
 release, and the transcript is typed into whatever app they were in and
 copied to the clipboard. The window is where they see what was recorded,
@@ -56,8 +56,8 @@ attached image; treat it as the inventory, not the direction.
 window, for testing a model). The default model picker: one list of every
 model the person has a key for or has downloaded; picking one applies at
 once and is what the shortcut uses. Beside it, a chart button that opens a
-small table of performance by model (runs, minutes of audio, median wait,
-speed as seconds of audio per second waited, plain versus fast mode). A
+small table of performance by model and mode (speed as the wait for a minute
+of audio, dictionary corrections per 100 words, and runs with total audio). A
 status line for what is happening now. Three views: History, Dictionary,
 Settings.
 

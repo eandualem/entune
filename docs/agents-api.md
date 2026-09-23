@@ -1,9 +1,9 @@
 # The agents' API
 
-Dictum serves a local HTTP API on `http://localhost:4187` (change with
+Entune serves a local HTTP API on `http://localhost:4187` (change with
 `--port`). Anything on the machine can call it; nothing outside can. A
 request must be addressed to `localhost` (or `127.0.0.1`), and a state
-change carrying a browser `Origin` other than Dictum's own is refused, so a
+change carrying a browser `Origin` other than Entune's own is refused, so a
 web page in a browser cannot use it.
 
 ## Corrections
@@ -33,7 +33,7 @@ A suggested instruction for the agents' shared prompt: when a word looks
 mistranscribed, ask one short question to confirm what was meant; once
 confirmed, post it here; send only what the user confirmed, whole words or
 phrases, never guesses; time the request out after two seconds and drop it
-silently if Dictum is not running.
+silently if Entune is not running.
 
 ## The rest
 
@@ -41,7 +41,7 @@ silently if Dictum is not running.
 |---|---|
 | `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode, `jev` (key hint, `dictionary`, `cleanup` and `formatting` on or off, shared retry policy and separate stage summaries); each provider says whether it `streams` (fast mode) or is `local` |
 | `GET /api/models` | the models of every provider that has a key, plus the downloaded local ones |
-| `GET /api/metrics` | the performance table: per model and mode, runs, audio seconds, median wait, speed |
+| `GET /api/metrics` | the performance table: per model and mode, runs and successes, audio seconds, seconds of wait per minute of audio (with the number of timed runs), and dictionary replacements, words, corrected and checked dictations |
 | `GET /api/local/models` | the local models with size, state (absent, downloading with progress, ready, error, unavailable when the engine is not installed) |
 | `POST /api/local/models/{name}/download`, `DELETE /api/local/models/{name}` | fetch or remove one |
 | `GET /api/status` | version, shortcuts, default model, whether the desktop app runs and listens |
@@ -52,7 +52,7 @@ silently if Dictum is not running.
 | `GET /api/dictionary`, `PUT /api/dictionary` | the whole version-2 confusion-group dictionary as JSON; the `ETag` names its version, and a `PUT` with `If-Match` set to a stale one gets 409 instead of overwriting what was added meanwhile |
 | `POST /api/dictionary/pin` | `{"model", "group", "meaning"}` IDs plus `If-Match`: share one meaning and its associations; `{"model"}` explicitly pins all learned knowledge for that model |
 | `POST /api/recordings/{id}/transcriptions/{attempt}/safe-copy` | derive text from original using only approved direct mappings for the original speech model; returns text, replacements and unresolved count, without saving or pasting |
-| `GET /api/dictionary/corrections` | what agents sent and Dictum pinned, newest first, with the `source` each gave |
+| `GET /api/dictionary/corrections` | what agents sent and Entune pinned, newest first, with the `source` each gave |
 | `POST /api/dictionary/build` | `{"source": "history", "scope": "new" or "all"}` or `{"source": "audio", "audio_ids": [IDs from audio listing]}`: start one exclusive frozen-model/revision workflow; 202 returns its `id` and status; 409 if a job or unreviewed proposal is already active |
 | `GET /api/dictionary/build` | lightweight current job progress (no transcript or proposal contents) |
 | `GET /api/dictionary/build/{id}` | named job status, including its proposal when ready; 409 if no longer current |
