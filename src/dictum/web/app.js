@@ -88,6 +88,8 @@ function showView(name) {
   for (const key in views) views[key].toggleAttribute("data-active", key === name);
   views[name].scrollTop = 0;
   if (name === "history") loadHistory().catch((err) => { status.textContent = errorText(err); });
+  if (name === "dictionary") dictionary.refreshAudio().catch((err) => { status.textContent = errorText(err); });
+  if (name === "settings") settingsView.refreshJev().catch((err) => { status.textContent = errorText(err); });
   if (name === "settings" && sections.agents.hasAttribute("data-active")) settingsView.refreshCorrections();
   permissionsView.setActive(name === "settings" && sections.general.hasAttribute("data-active"));
 }
@@ -251,8 +253,10 @@ historyList.addEventListener("click", async (e) => {
     const card = recovery.closest(".card"), message = card.querySelector(".card-row .status");
     recovery.disabled = true;
     try {
-      const result = await api(`/api/recordings/${card.dataset.id}/transcriptions/${recovery.dataset.attempt}/safe-copy`, { method: "POST" });
-      await navigator.clipboard.writeText(result.text);
+      // WebKit only allows a clipboard write that starts in the click, so hand it the pending text.
+      const request = api(`/api/recordings/${card.dataset.id}/transcriptions/${recovery.dataset.attempt}/safe-copy`, { method: "POST" });
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": request.then((r) => new Blob([r.text], { type: "text/plain" })) })]);
+      const result = await request;
       message.textContent = `Copied · ${result.replacements} direct mappings · ${result.unresolved} unresolved`;
     } catch (err) { message.textContent = errorText(err); }
     finally { recovery.disabled = false; }

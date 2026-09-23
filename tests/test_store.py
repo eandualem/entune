@@ -223,3 +223,27 @@ def test_restart_retains_completed_enhancement_and_fails_only_unfinished_stage(
         assert attempt.correction.output == attempt.text
         assert attempt.cleanup is not None and attempt.cleanup.status == "failed"
         assert attempt.formatting is not None and attempt.formatting.status == "skipped"
+
+
+def test_restart_leaves_a_cancelled_attempt_whose_text_says_pending(tmp_path: Path) -> None:
+    from contextlib import closing
+
+    from dictum.processing import Processed, Stage
+
+    text = "The pending task."
+    with closing(Store(tmp_path)) as store:
+        recording = store.create_recording(WEBM_HEADER)
+        done = Processed(
+            text,
+            Stage("succeeded", "contextual", output=text),
+            Stage("disabled", "formatting"),
+            Stage("disabled", "cleanup"),
+        )
+        attempt_id = store.add_transcription(
+            recording.id, "p", "m", "ok", text, None, raw_text=text, processing=done
+        )
+        store.finish_processing(attempt_id, done)
+        store.cancel_recording(recording.id, attempt_id)
+    with closing(Store(tmp_path)) as reopened:
+        attempt = reopened.list_recordings()[0].transcriptions[0]
+        assert attempt.processing_state == "cancelled"
