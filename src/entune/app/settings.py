@@ -6,8 +6,8 @@ import json
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 
-from entune.desktop import shortcuts
-from entune.desktop.shortcuts import Shortcuts
+from entune.app import shortcuts
+from entune.app.shortcuts import Shortcuts
 from entune.learning import suggestion_model
 from entune.processing.jev_client import Policy
 from entune.providers.contracts import Provider

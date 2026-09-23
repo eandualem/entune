@@ -10,11 +10,11 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from entune.api.common import bad, optional_text, shortcuts_json
+from entune.app import shortcuts
 from entune.app.entune import Entune
 from entune.app.metrics import processing_summary
 from entune.app.models import UnknownModel
 from entune.app.settings import JEV_PROVIDER
-from entune.desktop import shortcuts
 from entune.learning import suggestion_model
 from entune.processing import jev_client
 

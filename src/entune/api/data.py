@@ -18,7 +18,7 @@ from starlette.routing import Route
 from entune.api.common import bad, recording_json
 from entune.app.entune import Entune
 from entune.app.operations import Busy
-from entune.learning.builds import JobConflict
+from entune.app.suggestion_runs import JobConflict
 
 RESET_PHRASE = "delete everything"
 

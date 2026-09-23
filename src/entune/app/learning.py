@@ -12,11 +12,11 @@ from dataclasses import replace
 from entune.app.dictionary_file import DictionaryChanged, DictionaryFile
 from entune.app.models import NoDefaultModel, SpeechModels, UnknownModel
 from entune.app.settings import Settings
+from entune.app.suggestion_runs import BuildInput, DictionaryBuilds, Source
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
 from entune.dictionary.changes import Proposal
 from entune.learning import batches, suggestion_model
-from entune.learning.builds import BuildInput, DictionaryBuilds, Source
 from entune.providers.local.contracts import Downloadable
 from entune.storage.store import Store
 

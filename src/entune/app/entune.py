@@ -20,8 +20,8 @@ from entune.app.local_data import LocalData
 from entune.app.models import SpeechModels
 from entune.app.operations import Operations
 from entune.app.settings import Settings
+from entune.app.suggestion_runs import DictionaryBuilds
 from entune.learning import suggestion_model
-from entune.learning.builds import DictionaryBuilds
 from entune.processing.jev_client import Client as JevClient
 from entune.providers.contracts import Provider
 from entune.providers.resources import SpeechResources

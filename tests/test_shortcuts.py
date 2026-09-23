@@ -1,6 +1,6 @@
 import pytest
 
-from entune.desktop import shortcuts
+from entune.app import shortcuts
 
 
 def test_parse_hold_and_toggle_together() -> None:

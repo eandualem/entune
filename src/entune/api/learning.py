@@ -12,12 +12,12 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from entune.api.common import bad
+from entune.app import audio_import
 from entune.app.dictionary_file import DictionaryChanged
 from entune.app.entune import Entune
 from entune.app.operations import Busy
+from entune.app.suggestion_runs import JobConflict
 from entune.audio.formats import extension_for, safe_mime
-from entune.learning import audio_import
-from entune.learning.builds import JobConflict
 
 
 def routes(app: Entune) -> list[Route]:
