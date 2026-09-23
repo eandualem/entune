@@ -1,4 +1,4 @@
-import { ICON, api, el, errorText, flash, whenLabel } from "./ui.js";
+import { ICON, api, el, errorText, figure, flash, whenLabel } from "./ui.js";
 
 // Settings owns its forms, local-model polling and shortcut capture. Callbacks
 // refresh the model and dictionary views after a successful configuration change.
@@ -131,26 +131,38 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const s = j.summary;
     const seconds = (value) => (value === null || value === undefined ? "–" : `+${value.toFixed(1)} s`);
     el("activity-total").textContent = s.transcriptions
-      ? `${s.transcriptions} processed transcript${s.transcriptions === 1 ? "" : "s"} · median ${seconds(s.median_seconds)} added per dictation. Span counts cover recorded edits only.`
+      ? `${s.transcriptions} processed dictation${s.transcriptions === 1 ? "" : "s"} · median ${seconds(s.median_seconds)} added per dictation.`
       : j.key_hint ? "No processed dictations yet." : "Add a TypeSafe key in Settings › Corrections & formatting to enable processing.";
     const steps = [["contextual", "Dictionary, read in context"], ["deterministic", "Dictionary, always-apply entries"], ["cleanup", "Repeated fillers"], ["formatting", "Paragraphs and bullets"]];
+    const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
     const rows = [];
+    const details = [];
     for (const [method, label] of steps) {
       const stage = s.stages[method];
-      if (!s.transcriptions || (!stage.succeeded && !stage.failed && !stage.replacements && !stage.decisions)) continue;
-      const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-      const result = method === "cleanup" ? `${plural(stage.removed_words, "word")} removed · ${plural(stage.changes, "span change")}`
-        : method === "formatting" ? plural(stage.changes, "span change")
-        : `${plural(stage.replacements, "replacement")} (${stage.direct_replacements ?? 0} always-apply) · ${stage.preserved} kept · ${stage.abstained} unresolved`;
+      const ran = stage.succeeded + stage.failed + stage.skipped;
+      if (!s.transcriptions || !ran) continue;
+      // Changes the step made, in its own unit; runs that did not record their edits are
+      // counted apart, because their changes are unknown rather than none.
+      const made = method === "cleanup" ? plural(stage.removed_words, "word") + " removed"
+        : method === "formatting" ? plural(stage.changes, "layout change")
+        : plural(stage.replacements, "replacement");
+      const notes = [];
+      if (method === "contextual" && stage.direct_replacements) notes.push(`${stage.direct_replacements} always-apply`);
+      if (stage.unrecorded) notes.push(`${plural(stage.unrecorded, "run")} not recorded`);
       const row = document.createElement("div");
       row.className = "activity-grid";
-      for (const text of [label, stage.succeeded, stage.failed, stage.skipped, stage.retries, seconds(stage.median_seconds)]) {
-        row.append(Object.assign(document.createElement("span"), { textContent: String(text) }));
-      }
-      // The step's outcome in words, under its numbers.
-      row.append(Object.assign(document.createElement("span"), { className: "activity-detail caption", textContent: `${plural(stage.decisions, "decision")} · ${result}` }));
+      row.append(
+        Object.assign(document.createElement("span"), { textContent: label }),
+        figure(String(ran), stage.failed ? `${stage.failed} failed` : "", stage.failed ? "perf-failed" : ""),
+        figure(made, notes.join(" · ")),
+        figure(String(stage.abstained), stage.abstained ? "left as heard" : ""),
+        figure(seconds(stage.median_seconds), stage.median_seconds === null ? "not timed" : "median"),
+      );
       rows.push(row);
+      details.push(`${label}: ${plural(stage.decisions, "decision")} · ${stage.preserved} kept as written · ${stage.retries} ${stage.retries === 1 ? "retry" : "retries"} · ${stage.skipped} with nothing to decide`);
     }
+    el("activity-diagnostics").replaceChildren(...details.map((text) => Object.assign(document.createElement("p"), { className: "caption", textContent: text })));
+    el("activity-details").hidden = details.length === 0;
     el("activity-rows").replaceChildren(...rows);
     el("activity-table").hidden = rows.length === 0;
   }

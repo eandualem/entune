@@ -87,20 +87,24 @@
               <p class="caption section-intro">How each speech model has done on your own dictations.</p>
               <div class="scard perf-card">
                 <div class="perf-table" id="metrics-table">
-                  <div class="perf-grid perf-head"><span>Model</span><span>Speed</span><span>Corrections</span><span>Used</span></div>
+                  <div class="perf-grid perf-head"><span>Model</span><span class="num">Wait per audio minute</span><span class="num">Dictionary corrections</span><span class="num">Runs</span><span class="num">Audio</span></div>
                   <div id="metrics-rows"></div>
                 </div>
                 <p class="caption perf-empty" id="metrics-empty" hidden>Nothing to compare yet. Each model you dictate with appears here.</p>
-                <div class="srow foot"><span class="caption"><b>Speed</b>: the wait per minute of audio; fast mode uploads while you record. <b>Corrections</b>: dictionary fixes per 100 words. Neither is an accuracy score.</span></div>
+                <div class="srow foot"><span class="caption"><b>Wait</b>: how long transcription took after you stopped, per minute of audio; fast mode uploads while you record, and processing is timed separately. <b>Corrections</b>: dictionary replacements per 100 words, in dictations where the dictionary ran. Neither is an accuracy score.</span></div>
               </div>
               <h2 class="sec-label">Corrections &amp; formatting</h2>
               <p class="caption section-intro">What Jev did after speech recognition, across all dictations and every speech model. It counts work done, not accuracy.</p>
               <div class="scard activity-card" id="processing-activity">
                 <p class="caption activity-total" id="activity-total"></p>
                 <div class="perf-table" id="activity-table" hidden>
-                  <div class="activity-grid perf-head"><span>Step</span><span>Succeeded</span><span>Failed</span><span>Skipped</span><span>Retries</span><span>Median time</span></div>
+                  <div class="activity-grid perf-head"><span>Step</span><span class="num">Dictations</span><span class="num">Changes made</span><span class="num">Unresolved</span><span class="num">Added time</span></div>
                   <div id="activity-rows"></div>
                 </div>
+                <details class="activity-details" id="activity-details" hidden>
+                  <summary>Details: decisions, kept as written, retries</summary>
+                  <div id="activity-diagnostics"></div>
+                </details>
               </div>
             </div>
           </div>

@@ -8,7 +8,7 @@ import { createDictionary } from "./dictionary-view.js";
 import { createSettings } from "./settings-view.js";
 import { createPermissions } from "./permissions-view.js";
 import { initRecording } from "./recording.js";
-import { ICON, api, el, errorText, fillModels, segmentedGroup, shortModel } from "./ui.js";
+import { ICON, api, el, errorText, figure, fillModels, segmentedGroup } from "./ui.js";
 
 const status = el("status");
 const modelSelect = el("model");
@@ -175,27 +175,27 @@ async function loadMetrics() {
   el("metrics-empty").hidden = rows.length > 0;
   // Setup comes first until there is something to compare; then the page opens on Performance.
   if (!modelSectionChosen) { const start = rows.length ? "performance" : "cloud"; pickModelSection(start); showModelSection(start); }
-  const cell = (text, title = "") => Object.assign(document.createElement("span"), { textContent: text, title });
   metricsRows.replaceChildren(
     ...rows.map((m) => {
       const row = document.createElement("div");
       row.className = "perf-grid";
-      const name = cell(shortModel(m.provider_name, m.provider, m.model), `${m.provider}/${m.model}${m.fast ? " · Fast mode" : ""}`);
+      const name = document.createElement("span");
       name.className = "perf-model";
-      if (m.fast) name.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "Fast" }));
+      name.title = `${m.provider}/${m.model}${m.fast ? " · Fast mode" : ""}`;
+      name.append(Object.assign(document.createElement("span"), { className: "cell-main", textContent: m.provider_name }));
+      if (m.fast) name.firstChild.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "Fast" }));
+      name.append(Object.assign(document.createElement("span"), { className: "cell-sub", textContent: m.model }));
+      const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
       const speed = m.seconds_per_minute === null
-        ? cell("–", "No successful run with a known length yet")
-        : cell(`1 min → ${m.seconds_per_minute < 10 ? m.seconds_per_minute.toFixed(1) : Math.round(m.seconds_per_minute)} s`,
-          `Transcription wait per minute of audio, from ${m.timed_runs} run${m.timed_runs === 1 ? "" : "s"} with a known length. Longer and shorter clips vary.`);
+        ? figure("–", "no timed run yet")
+        : figure(`${m.seconds_per_minute < 10 ? m.seconds_per_minute.toFixed(1) : Math.round(m.seconds_per_minute)} s`, `from ${plural(m.timed_runs, "timed run")}`);
       const corrections = m.checked === 0 || m.words === 0
-        ? cell("–", "No dictation with the dictionary on yet")
-        : cell(`${m.replacements ? (100 * m.replacements / m.words).toFixed(1) : "0"} / 100 words`,
-          `${m.replacements} replacement${m.replacements === 1 ? "" : "s"} in ${m.corrected} of ${m.checked} dictations checked by the dictionary`);
+        ? figure("–", "dictionary never ran")
+        : figure(`${m.replacements ? (100 * m.replacements / m.words).toFixed(1) : "0"} per 100 words`, `${m.corrected} of ${plural(m.checked, "dictation")} changed`);
       const failed = m.runs - m.ok;
-      const used = cell(`${m.runs} run${m.runs === 1 ? "" : "s"} · ${m.audio_seconds ? audioLength(m.audio_seconds) : "length unknown"}`,
-        failed ? `${failed} of ${m.runs} failed` : "");
-      if (failed) used.append(Object.assign(document.createElement("span"), { className: "perf-failed", textContent: `${failed} failed` }));
-      row.append(name, speed, corrections, used);
+      const used = figure(String(m.runs), failed ? `${failed} failed` : "", failed ? "perf-failed" : "");
+      const audio = figure(m.audio_seconds ? audioLength(m.audio_seconds) : "–", m.audio_seconds ? "" : "length unknown");
+      row.append(name, speed, corrections, used, audio);
       return row;
     }),
   );
