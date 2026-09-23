@@ -32,8 +32,10 @@
       <div class="perf">
         <div class="popover" id="metrics" hidden>
           <div class="popover-head">How your speech models are doing <span class="caption">measured on your own dictations</span></div>
-          <div class="perf-grid perf-head"><span>Model</span><span>Speed</span><span>Corrections</span><span>Used</span></div>
-          <div id="metrics-rows"></div>
+          <div class="perf-table">
+            <div class="perf-grid perf-head"><span>Model</span><span>Speed</span><span>Corrections</span><span>Used</span></div>
+            <div id="metrics-rows"></div>
+          </div>
           <div class="popover-foot hint"><b>Speed</b>: how long a minute of audio takes to transcribe; Fast mode uploads while you record, so less is left once you stop. <b>Corrections</b>: how often your dictionary fixed a known mistake, per 100 words, where it was on. It counts only confusions the dictionary knows, so it is not an accuracy score.</div>
         </div>
         <button type="button" class="btn-icon" id="metrics-toggle" title="Performance by model" aria-label="Performance by model" aria-expanded="false" aria-controls="metrics" hidden>
