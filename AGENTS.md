@@ -1,6 +1,6 @@
-# Dictum — contributor notes
+# Entune — contributor notes
 
-Dictum is a personal dictation workbench: record, transcribe with the
+Entune is a personal dictation workbench: record, transcribe with the
 speech-to-text provider you choose, keep the history, retry with another
 model when one fails. It exists because the owner dictates nearly all of
 his text and wants to pick the engine himself instead of taking whatever a
@@ -66,7 +66,7 @@ A failure is data the user reads and acts on; that is the retry feature.
 - Explicit data paths: if a component needs the default model, it reads it
   from settings, it does not infer one. Missing required configuration is
   a visible error, not a default.
-- Python (3.12+), packaged so that `uvx dictum` is the whole install and
+- Python (3.12+), packaged so that `uvx entune` is the whole install and
   run story. Owner's decision on 2026-09-17 (issue #4): the app is going
   to be open source and Python is where his audience is. Version 1 was
   built in TypeScript on Bun and rewritten the same day while small.
@@ -96,7 +96,7 @@ never touches a transcript on its way to the user; that stays out.
 
 In scope since 2026-09-21, the owner's decision after a measured trial:
 Jev, TypeSafe's decision model, on every transcript, as the feature that
-sets Dictum apart. Since 2026-09-22 (issue #114), the dictionary uses confusion
+sets Entune apart. Since 2026-09-22 (issue #114), the dictionary uses confusion
 groups with stable meanings and explicit recognized-form associations. Jev
 selects eligible meanings in context; pinned knowledge is shared and protected
 without semantic priority. A second switch places paragraph breaks and bullets.

@@ -8,9 +8,9 @@ from typing import Any
 import httpx
 import pytest
 
-from dictum.providers.contracts import Clip, Failure
-from dictum.providers.local.parakeet import FILES, MODEL, Parakeet
-from dictum.recorder import wav_bytes
+from entune.providers.contracts import Clip, Failure
+from entune.providers.local.parakeet import FILES, MODEL, Parakeet
+from entune.recorder import wav_bytes
 from tests.conftest import mock_client
 
 
@@ -110,7 +110,7 @@ def test_stalled_helper_is_stopped_and_reported(
 ) -> None:
     import subprocess
 
-    from dictum.providers.local import parakeet as module
+    from entune.providers.local import parakeet as module
 
     helper = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(10)"],
@@ -132,7 +132,7 @@ def test_partial_helper_answer_has_a_deadline_and_releases_the_process(
     import select
     import subprocess
 
-    from dictum.providers.local import parakeet as module
+    from entune.providers.local import parakeet as module
 
     helper = subprocess.Popen(
         [sys.executable, "-c", "import sys,time; print('{', end='', flush=True); time.sleep(10)"],

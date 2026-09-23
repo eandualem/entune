@@ -10,7 +10,7 @@ from types import ModuleType
 
 import pytest
 
-from dictum import dictionary, jev
+from entune import dictionary, jev
 from tests.dictionary_samples import JEV, group
 
 

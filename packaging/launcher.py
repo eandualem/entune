@@ -1,5 +1,5 @@
-"""Entry point for the Dictum.app bundle. Same as running `dictum`."""
+"""Entry point for the Entune.app bundle. Same as running `entune`."""
 
-from dictum.cli import main
+from entune.cli import main
 
 main()

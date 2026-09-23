@@ -14,11 +14,11 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from dictum import dictionary, jev, matching, text_edits
-from dictum.processing import Processed, process_text
-from dictum.server import create_app
-from dictum.service import Dictum
-from dictum.store import Store
+from entune import dictionary, jev, matching, text_edits
+from entune.processing import Processed, process_text
+from entune.server import create_app
+from entune.service import Entune
+from entune.store import Store
 from tests.conftest import WEBM_HEADER
 from tests.dictionary_samples import JEV, group
 from tests.test_server import StubProvider
@@ -26,7 +26,7 @@ from tests.test_server import StubProvider
 GROUPS = (
     JEV,
     group("Claude Code", "cloud code", literal="Program code for cloud infrastructure."),
-    group("Dictum", "victim"),
+    group("Entune", "victim"),
 )
 
 
@@ -96,7 +96,7 @@ def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> N
     assert "Jeff" in question["instructions"]["question"]
     assert question["criteria"] == {
         "i0": "Jeff means Jev: TypeSafe's contextual decision model."
-        " Personal usage: Used in Dictum.",
+        " Personal usage: Used in Entune.",
         "i1": "Jeff means Jeff: A person's given name.",
     }
 
@@ -313,7 +313,7 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
         return handler(request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as network:
-        service = Dictum(store, [StubProvider()], jev_client=network)
+        service = Entune(store, [StubProvider()], jev_client=network)
         with TestClient(create_app(service), base_url="http://localhost") as client:
             settings = client.get("/api/settings").json()["jev"]
             assert settings["policy"] == {
@@ -457,7 +457,7 @@ def test_postprocessing_exceptions_cannot_erase_speech_or_skip_release(
         provider = StubProvider()
         closed: list[bool] = []
         monkeypatch.setattr(provider, "close", lambda: closed.append(True), raising=False)
-        service = Dictum(store, [provider])
+        service = Entune(store, [provider])
         service.set_key("stub", "k")
         service.set_default_model("stub/good")
 
@@ -497,7 +497,7 @@ def test_final_write_failure_preserves_completed_stage_evidence(
         with closing(
             jev.Client(httpx.MockTransport(answering(lambda *_: {"i0": 1.0})[1]))
         ) as network:
-            service = Dictum(store, [StubProvider()], jev_client=network)
+            service = Entune(store, [StubProvider()], jev_client=network)
             with TestClient(create_app(service), base_url="http://localhost") as client:
                 assert (
                     client.put(
@@ -647,7 +647,7 @@ def test_shorter_interpretation_can_win_over_phrase_and_edits_do_not_cascade() -
 
 
 def test_direct_only_needs_no_request_but_failure_in_mixed_text_still_returns_all_raw() -> None:
-    direct = group("Dictum", "dictim", direct=True)
+    direct = group("Entune", "dictim", direct=True)
 
     def failure(_: httpx.Request) -> httpx.Response:
         return httpx.Response(401, text="unavailable")
@@ -662,7 +662,7 @@ def test_direct_only_needs_no_request_but_failure_in_mixed_text_still_returns_al
             client=client,
             policy=jev.Policy(),
         )
-        assert result.text == "Open Dictum." and result.correction.attempts == 0
+        assert result.text == "Open Entune." and result.correction.attempts == 0
         assert result.correction.direct_replacements == 1 and result.correction.decisions == 0
         raw = "Open dictim. Use Jeff to classify."
         result = process_text(
@@ -704,7 +704,7 @@ def test_disabled_dictionary_does_not_read_broken_file_or_run_approved_mappings(
     tmp_path: Path,
 ) -> None:
     with closing(Store(tmp_path)) as store:
-        service = Dictum(store, [StubProvider()])
+        service = Entune(store, [StubProvider()])
         service.set_key("stub", "k")
         service.set_default_model("stub/good")
         (tmp_path / "dictionary.json").write_text("{broken")

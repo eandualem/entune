@@ -1,6 +1,6 @@
 # Contributing
 
-Dictum is deliberately small, and staying small is a feature. Before adding
+Entune is deliberately small, and staying small is a feature. Before adding
 something, check that it earns its place in a tool one person opens all day.
 
 ## Setup and checks
@@ -24,11 +24,11 @@ from `main` after each release.
 
 ## Where things are
 
-- `src/dictum/providers/`: one module per speech-to-text provider behind one
+- `src/entune/providers/`: one module per speech-to-text provider behind one
   contract. See [adding a provider](docs/providers.md).
-- `src/dictum/service.py`: what the app does, independent of HTTP or UI.
-- `src/dictum/server.py`: the local HTTP API and the page under `web/`.
-- `src/dictum/desktop/`: the desktop app; `app.py` is the behaviour, `platform.py` the
+- `src/entune/service.py`: what the app does, independent of HTTP or UI.
+- `src/entune/server.py`: the local HTTP API and the page under `web/`.
+- `src/entune/desktop/`: the desktop app; `app.py` is the behaviour, `platform.py` the
   protocols it needs, `macos/` the macOS implementation.
 - `docs/`: [architecture](docs/architecture.md), [dictionary](docs/dictionary.md),
   [agents' API](docs/agents-api.md) and [packaging](docs/packaging.md).

@@ -10,8 +10,8 @@ from typing import Any
 import httpx
 import pytest
 
-from dictum import llm, prompts
-from dictum.dictionary import Association, Dictionary, Form, Group, Groups, Meaning
+from entune import llm, prompts
+from entune.dictionary import Association, Dictionary, Form, Group, Groups, Meaning
 from tests.dictionary_samples import JEV, group, proposed
 
 TEXT = "I use cloud code."
@@ -156,7 +156,7 @@ def test_case_only_duplicates_and_changes_to_approved_outputs_are_rejected() -> 
     with pytest.raises(ValueError, match="case alone"):
         llm.parse_generation(json.dumps(payload), transcripts=[TEXT])
 
-    approved = group("Dictum", "dictim", direct=True)
+    approved = group("Entune", "dictim", direct=True)
     changed = replace(
         approved,
         meanings=(replace(approved.meanings[0], spelling="Different"),),

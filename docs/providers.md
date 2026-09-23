@@ -1,7 +1,7 @@
 # Adding a speech-to-text provider
 
 A provider implements the Provider protocol in
-src/dictum/providers/contracts.py, plus one entry in default_providers()
+src/entune/providers/contracts.py, plus one entry in default_providers()
 in providers/registry.py. Cloud adapters live in providers/cloud/;
 local engines live in providers/local/. Common audio/result contracts do
 not import HTTP clients or neural engines.
