@@ -373,8 +373,8 @@ def test_stop_during_audio_keeps_its_success_for_retry_and_discard_clears_it(
 def test_split_sources_carry_only_their_own_part_of_the_dictionary_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from entune.processing import Selection
-    from entune.text_edits import Change, apply
+    from entune.processing.results import Selection
+    from entune.processing.text_edits import Change, apply
 
     monkeypatch.setattr(llm, "BATCH_CHARS", 12)
     raw = "  use cloud here and cloud there"
@@ -440,8 +440,8 @@ def test_audio_from_other_models_creates_then_refines_the_selected_models_dictio
 
 
 def test_refinement_pairs_raw_text_with_the_dictionary_step_result_only(tmp_path: Path) -> None:
-    from entune.processing import Processed, Selection, Stage
-    from entune.text_edits import Change
+    from entune.processing.results import Processed, Selection, Stage
+    from entune.processing.text_edits import Change
 
     raw = "Ask cloud about the cloud backups um um today."
     corrected = "Ask Claude about the cloud backups um um today."

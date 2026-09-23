@@ -30,10 +30,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from entune import jev
 from entune.dictionary import document as dictionary_document
 from entune.dictionary import entries as dictionary_entries
 from entune.dictionary import matching
+from entune.processing import jev, jev_client
 
 VARIANTS = {
     "previous": None,  # the request format dictation used before the redesign
@@ -186,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     key = os.environ.get("TYPESAFE_API_KEY", "")
     if args.run and not key:
         parser.error("--run needs TYPESAFE_API_KEY")
-    client = jev.Client() if args.run else None
+    client = jev_client.Client() if args.run else None
     report: dict[str, Any] = {}
     try:
         for name in args.variants.split(","):
@@ -200,8 +200,8 @@ def main(argv: list[str] | None = None) -> int:
                 counts: dict[str, int] = {}
                 seconds = []
                 for p in prepared:
-                    policy = jev.Policy(total_seconds=30, attempt_seconds=30, max_attempts=1)
-                    call = jev.Call(client, key, policy, time.monotonic() + 30)
+                    policy = jev_client.Policy(total_seconds=30, attempt_seconds=30, max_attempts=1)
+                    call = jev_client.Call(client, key, policy, time.monotonic() + 30)
                     started = time.monotonic()
                     answer = call.ask(p.state, p.questions)["o0"]  # one occurrence per case
                     seconds.append(time.monotonic() - started)

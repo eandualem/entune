@@ -19,13 +19,14 @@ from typing import Any, Literal
 
 import httpx
 
-from entune import prompts, text_edits
+from entune import prompts
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
 from entune.dictionary import entries as dictionary_entries
 from entune.dictionary.entries import Dictionary, Group, Groups, key
-from entune.processing import Selection
-from entune.text_edits import Change
+from entune.processing import text_edits
+from entune.processing.results import Selection
+from entune.processing.text_edits import Change
 
 # Providers we route to, with a reasonably priced model suggested first.
 LLM_PROVIDERS: dict[str, tuple[str, str]] = {

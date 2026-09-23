@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from entune.text_edits import Change, overlaps, protected
+from entune.processing.text_edits import Change, overlaps, protected
 
 _LIST = re.compile(r"(?:[-*+•‣◦]|\d+[.)]|[A-Za-z]\))[ \t]+")
 _BOUNDARY = re.compile(r"""[.!?]+["”\u2019')\]]*(?=\s|$)|[።。\uff01\uff1f]+["”\u2019')\]]*""")

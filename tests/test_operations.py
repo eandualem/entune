@@ -11,12 +11,12 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from entune import jev
 from entune.audio.formats import wav_bytes
 from entune.desktop.app import EntuneApp
 from entune.desktop.platform import Delivery
 from entune.dictionary import document as dictionary_document
 from entune.dictionary import entries as dictionary_entries
+from entune.processing import jev_client
 from entune.providers.contracts import Clip, Transcript
 from entune.server import create_app
 from entune.service import Entune
@@ -70,7 +70,7 @@ def test_cancel_inflight_jev_closes_request_keeps_raw_and_prevents_later_stages(
             raise
         raise AssertionError("request should have been cancelled")
 
-    monkeypatch.setattr(service, "_jev_client", jev.Client(httpx.MockTransport(response)))
+    monkeypatch.setattr(service, "_jev_client", jev_client.Client(httpx.MockTransport(response)))
     monkeypatch.setattr(
         service.providers[0], "transcribe", lambda *args: Transcript("Use Jeff to classify this.")
     )

@@ -21,8 +21,8 @@ from typing import Literal
 from entune.audio.formats import extension_for, identify, webm_duration_seconds
 from entune.dictionary.corrections import Correction as SubmittedCorrection
 from entune.llm import DictionaryResult, LearningText
-from entune.processing import Processed, Selection, Stage, interrupted
-from entune.text_edits import Change
+from entune.processing.results import Processed, Selection, Stage, interrupted
+from entune.processing.text_edits import Change
 
 Status = Literal["ok", "error"]
 

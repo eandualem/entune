@@ -23,11 +23,12 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from entune import __version__, jev, llm, onboarding
+from entune import __version__, llm, onboarding
 from entune.audio.formats import extension_for, safe_mime
 from entune.builds import JobConflict
 from entune.desktop import shortcuts
 from entune.operations import Busy
+from entune.processing import jev_client
 from entune.service import (
     JEV_PROVIDER,
     DictionaryChanged,
@@ -232,7 +233,7 @@ def create_app(app: Entune) -> Starlette:
                     raise ValueError(
                         "jev.policy needs total_seconds, attempt_seconds and max_attempts"
                     )
-                policy = jev.Policy(**value)
+                policy = jev_client.Policy(**value)
             if (
                 (
                     jev_settings.get("dictionary")

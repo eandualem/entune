@@ -855,7 +855,7 @@ def test_pin_endpoint_needs_revision_and_preserves_competing_meanings(client: Te
 def test_safe_recovery_is_derived_and_copies_only_approved_nonambiguous_mappings(
     client: TestClient, store: Store
 ) -> None:
-    from entune.processing import Processed, Stage
+    from entune.processing.results import Processed, Stage
 
     raw = "Open dictim. Jeff called."
     rec = store.create_recording(WEBM_HEADER)
@@ -893,8 +893,8 @@ def test_safe_recovery_is_derived_and_copies_only_approved_nonambiguous_mappings
 
 
 def test_speed_and_corrections_use_only_measured_evidence(tmp_path: Path) -> None:
-    from entune.processing import Processed, Stage
-    from entune.text_edits import Change
+    from entune.processing.results import Processed, Stage
+    from entune.processing.text_edits import Change
 
     store = Store(tmp_path)
     app = Entune(store, [StubProvider()])

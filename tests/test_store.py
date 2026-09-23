@@ -105,7 +105,7 @@ def test_obsolete_counter_columns_are_ignored(tmp_path: Path) -> None:
 def test_interrupted_processing_reopens_as_raw_success_with_a_failure(tmp_path: Path) -> None:
     from contextlib import closing
 
-    from entune.processing import pending
+    from entune.processing.results import pending
 
     raw = "  Jeff.\n"
     with closing(Store(tmp_path)) as store:
@@ -157,8 +157,8 @@ def test_restart_retains_completed_enhancement_and_fails_only_unfinished_stage(
     from contextlib import closing
     from dataclasses import replace
 
-    from entune.processing import Stage, pending
-    from entune.text_edits import Change
+    from entune.processing.results import Stage, pending
+    from entune.processing.text_edits import Change
 
     raw = "Jeff works. Next."
     with closing(Store(tmp_path)) as store:
@@ -192,7 +192,7 @@ def test_restart_retains_completed_enhancement_and_fails_only_unfinished_stage(
 def test_restart_leaves_a_cancelled_attempt_whose_text_says_pending(tmp_path: Path) -> None:
     from contextlib import closing
 
-    from entune.processing import Processed, Stage
+    from entune.processing.results import Processed, Stage
 
     text = "The pending task."
     with closing(Store(tmp_path)) as store:
