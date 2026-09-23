@@ -410,7 +410,18 @@ def create_app(app: Dictum) -> Starlette:
         return JSONResponse(app.dictionary_build_status())
 
     def dictionary_audio(_: Request) -> Response:
-        items = [asdict(item) for item, _ in app.store.learning_audio()]
+        # Which speech models already transcribed each recording, so the page can offer
+        # recordings the selected model has not heard. Imported audio has none.
+        models = {
+            f"recording:{r.id}": sorted(
+                {f"{t.provider}/{t.model}" for t in r.transcriptions if t.status == "ok"}
+            )
+            for r in app.store.list_recordings()
+        }
+        items = [
+            {**asdict(item), "models": models.get(item.id, [])}
+            for item, _ in app.store.learning_audio()
+        ]
         return JSONResponse(
             {
                 "count": len(items),
