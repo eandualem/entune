@@ -220,7 +220,8 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   return {
     load: refresh,
     async open() { dialog.showModal(); await refresh(); },
-    setBuildBusy(value) { buildBusy = value; draw(); },
+    // Status polls repeat the same value; redraw only on a change, keeping focus in the list.
+    setBuildBusy(value) { if (value !== buildBusy) { buildBusy = value; draw(); } },
     redraw: draw,
   };
 }

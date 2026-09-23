@@ -76,6 +76,7 @@ export function createDictionaryBuild({ names, onBusy, onProposal, onAccepted, g
       } catch (err) {
         progress.textContent = `Could not read build progress: ${errorText(err)}`;
         progress.classList.add("err");
+        el("learn-status").hidden = false;
       } finally {
         reading = null;
         timer = setTimeout(poll, document.hidden ? 10000 : running() ? 1000 : 3000);
