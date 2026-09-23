@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from entune.llm import LearningText
 from entune.providers.contracts import Clip, TranscribeResult, Transcript
 from entune.providers.local.contracts import LocalModelStatus
 from entune.recorder import wav_bytes
@@ -156,3 +157,53 @@ def test_reset_waits_for_nothing_it_would_break(
     assert len(client.get("/api/recordings").json()) == 1
     assert local.file.exists() and (data / "backups").exists()
     assert client.post("/api/data/reset", json=confirm).status_code == 200
+
+
+def test_a_linked_models_folder_is_unlinked_not_emptied(
+    tmp_path: Path, setup: tuple[TestClient, Entune, Path, LocalStub]
+) -> None:
+    client, _, data, local = setup
+    shared = tmp_path / "shared-models"
+    shared.mkdir()
+    (shared / "tiny.bin").write_bytes(b"someone else's model")
+    (data / "models").symlink_to(shared)
+    assert local.catalogue()[0].state == "ready"
+
+    assert client.post("/api/data/reset", json={"confirm": RESET_PHRASE}).status_code == 200
+    assert not (data / "models").exists() and local.unloaded
+    assert (shared / "tiny.bin").read_bytes() == b"someone else's model"
+
+
+def test_a_refused_reset_keeps_a_stopped_run_for_retry(
+    setup: tuple[TestClient, Entune, Path, LocalStub],
+) -> None:
+    client, app, _, local = setup
+    builds = app._builds
+    builds._state = {"id": "job", "phase": "failed"}
+    builds._texts["1"] = LearningText("1", "kept for retry", "temporary_audio")
+    local.downloading = True
+    assert client.post("/api/data/reset", json={"confirm": RESET_PHRASE}).status_code == 409
+    assert builds._texts and builds._state["phase"] == "failed"
+
+    local.downloading = False
+    assert client.post("/api/data/reset", json={"confirm": RESET_PHRASE}).status_code == 200
+    assert not builds._texts and builds._state == {"phase": "idle"}
+
+
+def test_a_failed_deletion_leaves_the_app_usable(
+    setup: tuple[TestClient, Entune, Path, LocalStub],
+) -> None:
+    client, _, data, local = setup
+    fill(client, data, local)
+    locked = data / "backups" / "old"
+    locked.chmod(0o500)  # its file cannot be removed
+    try:
+        res = client.post("/api/data/reset", json={"confirm": RESET_PHRASE})
+        assert res.status_code == 500 and "Could not delete everything" in res.text
+        assert client.get("/api/settings").status_code == 200
+        rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
+        assert rec.status_code == 200
+    finally:
+        locked.chmod(0o700)
+    assert client.post("/api/data/reset", json={"confirm": RESET_PHRASE}).status_code == 200
+    assert not (data / "backups").exists()

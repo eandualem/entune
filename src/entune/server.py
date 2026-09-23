@@ -372,6 +372,12 @@ def create_app(app: Entune) -> Starlette:
             return _bad(str(exc), 409)
         except ValueError as exc:
             return _bad(str(exc), 409)
+        except OSError as exc:
+            return _bad(
+                f"Could not delete everything: {exc}. What was already deleted is gone;"
+                " the rest is still there.",
+                500,
+            )
         return JSONResponse(result)
 
     def build_status(request: Request) -> Response:
