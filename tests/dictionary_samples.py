@@ -65,7 +65,7 @@ CLOUD = Group(
 
 
 def proposed(text: str = "I use cloud code.") -> dict[str, Any]:
-    from entune.llm import sources
+    from entune.learning.batches import sources
 
     record = group("Claude Code", "cloud code").as_json()
     record["id"] = "new_group"

@@ -15,9 +15,7 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
-from entune import llm
 from entune.audio.formats import sniff_mime
-from entune.builds import BuildInput, DictionaryBuilds, Source
 from entune.desktop import shortcuts
 from entune.desktop.shortcuts import Shortcuts
 from entune.dictionary import changes as dictionary_changes
@@ -25,6 +23,8 @@ from entune.dictionary import document as dictionary_document
 from entune.dictionary.changes import Proposal
 from entune.dictionary.corrections import Correction, add_corrections, read_entries
 from entune.dictionary.entries import Dictionary, Groups
+from entune.learning import batches, suggestion_model
+from entune.learning.builds import BuildInput, DictionaryBuilds, Source
 from entune.operations import Busy, Operation, Operations
 from entune.processing import results
 from entune.processing.jev_client import Client as JevClient
@@ -129,7 +129,7 @@ class ProviderStatus:
     name: str
     key_hint: str | None
     default_model: str | None = None  # language-model providers only
-    models: tuple[llm.ModelChoice, ...] = ()  # language-model providers only
+    models: tuple[suggestion_model.ModelChoice, ...] = ()  # language-model providers only
     streams: bool = False  # can take the audio while it is recorded (fast mode)
     local: bool = False  # models are downloaded here instead of a key entered
 
@@ -161,7 +161,7 @@ class Entune:
         self,
         store: Store,
         providers: list[Provider],
-        llm_call: llm.Caller = llm.call_model,
+        llm_call: suggestion_model.Caller = suggestion_model.call_model,
         *,
         jev_client: JevClient | None = None,
     ) -> None:
@@ -515,12 +515,16 @@ class Entune:
 
     def llm_provider_statuses(self) -> list[ProviderStatus]:
         statuses = []
-        for provider_id, (name, default_model) in llm.LLM_PROVIDERS.items():
+        for provider_id, (name, default_model) in suggestion_model.LLM_PROVIDERS.items():
             key = self.store.get_setting(key_setting(provider_id))
             hint = None if key is None else mask_key(key)
             statuses.append(
                 ProviderStatus(
-                    provider_id, name, hint, default_model, tuple(llm.catalog(provider_id))
+                    provider_id,
+                    name,
+                    hint,
+                    default_model,
+                    tuple(suggestion_model.catalog(provider_id)),
                 )
             )
         return statuses
@@ -531,7 +535,7 @@ class Entune:
         saved = self.store.get_setting(DICTIONARY_MODEL_KEY)
         if saved is not None:
             return saved
-        for provider_id, (_, default_model) in llm.LLM_PROVIDERS.items():
+        for provider_id, (_, default_model) in suggestion_model.LLM_PROVIDERS.items():
             if self.store.get_setting(key_setting(provider_id)) is not None:
                 return default_model
         return None
@@ -540,8 +544,8 @@ class Entune:
         """`provider:model` for a language-model provider we can route to, or None."""
         if ref is not None:
             provider, sep, model = ref.partition(":")
-            if not sep or provider not in llm.LLM_PROVIDERS or not model.strip():
-                known = ", ".join(llm.LLM_PROVIDERS)
+            if not sep or provider not in suggestion_model.LLM_PROVIDERS or not model.strip():
+                known = ", ".join(suggestion_model.LLM_PROVIDERS)
                 raise ValueError(f"The dictionary model must be provider:model with one of {known}")
         self.store.set_setting(DICTIONARY_MODEL_KEY, ref)
         self._changed()
@@ -549,7 +553,7 @@ class Entune:
     def set_key(self, provider_id: str, key: str) -> None:
         known = (
             any(p.id == provider_id for p in self.providers)
-            or provider_id in llm.LLM_PROVIDERS
+            or provider_id in suggestion_model.LLM_PROVIDERS
             or provider_id == JEV_PROVIDER
         )
         if not known:
@@ -695,7 +699,7 @@ class Entune:
         provider = model.partition(":")[0]
         api_key = self.store.get_setting(key_setting(provider))
         if api_key is None:
-            raise ValueError(f"No API key set for {llm.LLM_PROVIDERS[provider][0]}.")
+            raise ValueError(f"No API key set for {suggestion_model.LLM_PROVIDERS[provider][0]}.")
         return provider, api_key, model
 
     def start_dictionary_build(
@@ -820,7 +824,7 @@ class Entune:
             version = self.dictionary_version()
         if source == "history":
             inputs = self.store.learning_inputs(
-                ref.provider.id, ref.model, scope=scope, limit=llm.MAX_TRANSCRIPTS
+                ref.provider.id, ref.model, scope=scope, limit=batches.MAX_TRANSCRIPTS
             )
             if not inputs:
                 raise ValueError(

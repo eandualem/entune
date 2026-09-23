@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from entune import llm, onboarding
 from entune.audio.formats import wav_bytes
+from entune.learning import audio_import, batches
 from entune.providers.contracts import Clip, Transcript
 from entune.server import create_app
 from entune.service import Entune
@@ -29,7 +29,7 @@ def app(store: Store) -> Iterator[Entune]:
     recording = store.create_recording(WEBM_HEADER)
     store.add_transcription(recording.id, "stub", "good", "ok", "history text", None)
     for i in range(2):
-        onboarding.import_audio(store, wav_bytes(bytes([i, 0]) * 16), f"{i}.wav")
+        audio_import.import_audio(store, wav_bytes(bytes([i, 0]) * 16), f"{i}.wav")
     yield app
     assert app.close()
     store.close()
@@ -164,12 +164,12 @@ def test_cancel_between_chunks_stops_refinement_and_reports_full_input_size(
     app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[int] = []
-    monkeypatch.setattr(llm, "BATCH_CHARS", 30)
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 30)
 
     async def fake(provider: str, key: str, model: str, system: str, user: str) -> str:
         state = app.dictionary_build_status()
         calls.append(len(system) + len(user))
-        assert state["inputCharacters"] == calls[0] > llm.BATCH_CHARS
+        assert state["inputCharacters"] == calls[0] > batches.BATCH_CHARS
         assert state["steps"] == 2
         app.cancel_dictionary_build(str(state["id"]))
         return '{"additions": []}'
@@ -239,7 +239,7 @@ def test_shutdown_is_bounded_and_drains_a_blocked_speech_owner(
 def test_shutdown_deadline_also_bounds_waiting_for_a_source_snapshot(
     app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from entune.builds import BuildInput, JobConflict, Source
+    from entune.learning.builds import BuildInput, JobConflict, Source
 
     entered, release = threading.Event(), threading.Event()
     prepare = app._build_input

@@ -13,11 +13,12 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from entune import llm
 from entune.audio.formats import wav_bytes
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import entries as dictionary_entries
 from entune.dictionary.entries import Dictionary
+from entune.learning import batches, suggestion_model
+from entune.learning import inputs as learning_inputs
 from entune.providers.contracts import Clip, Failure, Transcript
 from entune.server import create_app
 from entune.service import Entune
@@ -27,7 +28,7 @@ from tests.dictionary_samples import JEV, group, proposed
 from tests.test_server import StubProvider
 
 
-def setup(store: Store, caller: llm.Caller) -> tuple[Entune, TestClient]:
+def setup(store: Store, caller: suggestion_model.Caller) -> tuple[Entune, TestClient]:
     app = Entune(store, [StubProvider()], llm_call=caller)
     app.set_key("stub", "speech-key")
     app.set_key("openai", "generation-key")
@@ -147,7 +148,7 @@ def test_partial_generation_keeps_validated_proposal_and_only_fully_covered_inpu
     monkeypatch: pytest.MonkeyPatch,
     stop: bool,
 ) -> None:
-    monkeypatch.setattr(llm, "BATCH_CHARS", 10)
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
     later = threading.Event()
     calls = 0
 
@@ -300,7 +301,7 @@ def test_learning_is_rejected_while_speech_is_running(
 def test_retry_resumes_completed_generation_batches_with_accumulated_groups(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(llm, "BATCH_CHARS", 10)
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
     prompts: list[str] = []
 
     async def call(provider: str, key: str, model: str, system: str, user: str) -> str:
@@ -376,14 +377,16 @@ def test_split_sources_carry_only_their_own_part_of_the_dictionary_result(
     from entune.processing.results import Selection
     from entune.processing.text_edits import Change, apply
 
-    monkeypatch.setattr(llm, "BATCH_CHARS", 12)
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 12)
     raw = "  use cloud here and cloud there"
     starts = [i for i in range(len(raw)) if raw.startswith("cloud", i)]
-    result = llm.DictionaryResult(
+    result = learning_inputs.DictionaryResult(
         tuple(Change(i, i + 5, "cloud", "Claude") for i in starts),
         tuple(Selection(i, i + 5, ("m_claude",), "contextual") for i in starts),
     )
-    steps = llm.learning_batches([llm.LearningText("attempt-42", raw, "raw_speech", result)])
+    steps = batches.learning_batches(
+        [learning_inputs.LearningText("attempt-42", raw, "raw_speech", result)]
+    )
     snippets = [s for step in steps for s in step.snippets]
     assert all(s.result is not None for s in snippets)
     after = " ".join(apply(s.text, s.result.changes) for s in snippets if s.result)
@@ -392,8 +395,8 @@ def test_split_sources_carry_only_their_own_part_of_the_dictionary_result(
     assert [step.completed for step in steps][-1] == ("attempt-42",)
     assert all(not step.completed for step in steps[:-1])
     # An edit that crosses a split cannot be shown faithfully on either side.
-    whole = llm.DictionaryResult((Change(2, len(raw), raw[2:], "x"),))
-    split = llm.learning_batches([llm.LearningText("a", raw, "raw_speech", whole)])
+    whole = learning_inputs.DictionaryResult((Change(2, len(raw), raw[2:], "x"),))
+    split = batches.learning_batches([learning_inputs.LearningText("a", raw, "raw_speech", whole)])
     assert all(s.result is None for step in split for s in step.snippets)
 
 
@@ -501,7 +504,7 @@ def test_refinement_pairs_raw_text_with_the_dictionary_step_result_only(tmp_path
         inputs = {i.id: i for i in store.learning_inputs("stub", "good")}
         assert inputs[str(legacy)].kind == "legacy_final" and inputs[str(legacy)].result is None
         assert inputs[str(failed)].result is None
-        assert inputs[str(nothing)].result == llm.DictionaryResult((), None)
+        assert inputs[str(nothing)].result == learning_inputs.DictionaryResult((), None)
         paired = inputs[str(attempts["paired"])]
         assert paired.text == raw and paired.result is not None
 
@@ -510,8 +513,8 @@ def test_refinement_pairs_raw_text_with_the_dictionary_step_result_only(tmp_path
         current = Dictionary(
             learned={"stub/good": (dictionary_entries.Group("g", (claude,), (form,)),)}
         )
-        (step,) = llm.learning_batches(list(inputs.values()))
-        prompt = llm.build_user_prompt("refine", current, step.snippets, "stub/good")
+        (step,) = batches.learning_batches(list(inputs.values()))
+        prompt = batches.build_user_prompt("refine", current, step.snippets, "stub/good")
         entries = json.loads(prompt.split("(JSON).")[1].split("\n", 1)[1])
         by_raw = {e["raw"]: e for e in entries}
         pair = by_raw[raw]
