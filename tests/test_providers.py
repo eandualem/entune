@@ -5,12 +5,12 @@ from pathlib import Path
 
 import httpx
 
+from entune.audio.formats import wav_bytes
 from entune.providers.cloud.assemblyai import AssemblyAI
 from entune.providers.cloud.groq import Groq
 from entune.providers.cloud.soniox import Soniox
 from entune.providers.contracts import Clip, Failure, Transcript
 from entune.providers.registry import default_providers, resolve_model
-from entune.recorder import wav_bytes
 from tests.conftest import mock_client
 
 

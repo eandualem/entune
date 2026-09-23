@@ -1,8 +1,15 @@
-"""Identify audio containers from their bytes.
+"""Audio containers: identify them from their bytes, measure them, write WAV.
 
 The label a browser attaches to a recorded clip is not reliable, so the
 container is read from the first bytes and the label is only a fallback.
 """
+
+import io
+import wave
+
+FALLBACK_RATE = 16_000
+CHANNELS = 1
+SAMPLE_WIDTH = 2  # bytes per int16 sample
 
 _EXTENSIONS = {
     "audio/webm": "webm",
@@ -149,3 +156,14 @@ def webm_duration_seconds(data: bytes) -> float | None:
     if last is None:
         return None
     return last * scale / 1_000_000_000
+
+
+def wav_bytes(pcm: bytes, sample_rate: int = FALLBACK_RATE) -> bytes:
+    """Wrap raw int16 mono PCM in a WAV container."""
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(CHANNELS)
+        wav.setsampwidth(SAMPLE_WIDTH)
+        wav.setframerate(sample_rate)
+        wav.writeframes(pcm)
+    return buffer.getvalue()

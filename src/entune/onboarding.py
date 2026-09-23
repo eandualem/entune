@@ -8,7 +8,7 @@ from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
-from entune.audio import sniff_mime, wav_duration_seconds
+from entune.audio.formats import sniff_mime, wav_duration_seconds
 from entune.store import Store
 
 

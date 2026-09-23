@@ -11,8 +11,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Literal, Protocol
 
+from entune.audio.recorder import Capture, SinkFactory
 from entune.desktop.engine import ShortcutEngine
-from entune.recorder import Capture, SinkFactory
 
 State = str  # operation stage, plus idle/quiet
 Delivery = Literal["inserted", "no_target", "unverified", "focus_moving"]

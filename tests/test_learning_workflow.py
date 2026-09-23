@@ -14,9 +14,9 @@ import pytest
 from starlette.testclient import TestClient
 
 from entune import dictionary, llm
+from entune.audio.formats import wav_bytes
 from entune.dictionary import Dictionary
 from entune.providers.contracts import Clip, Failure, Transcript
-from entune.recorder import wav_bytes
 from entune.server import create_app
 from entune.service import Entune
 from entune.store import Store

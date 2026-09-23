@@ -7,21 +7,18 @@ Providers accept any common rate, so the device's is used as is.
 
 from __future__ import annotations
 
-import io
 import threading
-import wave
 from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any
 
+from entune.audio.formats import CHANNELS, FALLBACK_RATE, SAMPLE_WIDTH, wav_bytes
+
 Sink = Callable[[bytes], None]
 SinkFactory = Callable[[int], Sink | None]
 """Given the sample rate once it is known, a function to hand every PCM chunk to, or None."""
 
-FALLBACK_RATE = 16_000
-CHANNELS = 1
-SAMPLE_WIDTH = 2  # bytes per int16 sample
 QUIET_SECONDS = 10.0
 QUIET_PEAK = 256  # about -42 dBFS; a warning, never a reason to discard audio
 
@@ -39,17 +36,6 @@ class Capture:
 
     def wav(self) -> bytes:
         return wav_bytes(self.pcm, self.sample_rate)
-
-
-def wav_bytes(pcm: bytes, sample_rate: int = FALLBACK_RATE) -> bytes:
-    """Wrap raw int16 mono PCM in a WAV container."""
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as wav:
-        wav.setnchannels(CHANNELS)
-        wav.setsampwidth(SAMPLE_WIDTH)
-        wav.setframerate(sample_rate)
-        wav.writeframes(pcm)
-    return buffer.getvalue()
 
 
 def duration_seconds(pcm: bytes, sample_rate: int = FALLBACK_RATE) -> float:

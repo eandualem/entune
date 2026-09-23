@@ -10,11 +10,11 @@ from pathlib import Path
 
 import pytest
 
+from entune.audio.recorder import Capture, SinkFactory
 from entune.desktop.app import EntuneApp
 from entune.desktop.engine import ShortcutEngine
 from entune.desktop.platform import Delivery, State
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
-from entune.recorder import Capture, SinkFactory
 from entune.service import Entune
 from entune.store import Store
 

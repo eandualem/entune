@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from entune.audio import extension_for, identify, webm_duration_seconds
+from entune.audio.formats import extension_for, identify, webm_duration_seconds
 from entune.dictionary_corrections import Correction as SubmittedCorrection
 from entune.llm import DictionaryResult, LearningText
 from entune.processing import Processed, Selection, Stage, interrupted
