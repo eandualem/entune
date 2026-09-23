@@ -126,18 +126,16 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .record .timer { color: var(--text-dim); }
 
 /* Models page: speech models to compare, connect and download. */
-.models { padding: var(--sp-24) var(--sp-32) var(--sp-32); max-width: var(--content-max); }
-.page-head { margin-bottom: var(--sp-24); }
-.page-head h2 { margin: 0; font-size: var(--fs-16); font-weight: 600; }
-.page-head .caption { margin: var(--sp-4) 0 0; max-width: 46rem; }
 .perf-card .perf-grid:last-child { border-bottom: 0; }
-.perf-grid { display: grid; grid-template-columns: minmax(10rem, 1fr) 6.5rem 7.5rem 10rem; gap: var(--sp-10); align-items: baseline; padding: var(--sp-8) var(--sp-14); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line-faint); white-space: nowrap; }
-.perf-grid > span { overflow: hidden; text-overflow: ellipsis; }
+/* Nothing is cut off: long model names and the Used details wrap within their cells. */
+.perf-grid { display: grid; grid-template-columns: minmax(11rem, 1.5fr) minmax(6rem, auto) minmax(7.5rem, auto) minmax(8.5rem, 1fr); gap: var(--sp-10); align-items: baseline; padding: var(--sp-8) var(--sp-14); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line-faint); }
+.perf-grid > span { min-width: 0; overflow-wrap: anywhere; }
+.perf-empty { margin: 0; padding: var(--sp-14) var(--sp-16); border-bottom: 1px solid var(--line-faint); }
 /* Narrow windows scroll the table sideways; heading and rows move together. */
 .perf-table { overflow-x: auto; }
-.perf-table .perf-grid { min-width: 37rem; }
+.perf-table .perf-grid { min-width: 34rem; }
 .perf-model .tag { margin-left: var(--sp-6); padding: 0 var(--sp-6); border-radius: var(--r-6); background: var(--accent-wash); color: var(--accent-text); font-size: var(--fs-11); }
-.perf-failed { color: var(--error); }
+.perf-failed { display: block; color: var(--error); }
 .perf-head { font-size: var(--fs-11-5); color: var(--text-dim); border-bottom-color: var(--line); padding-top: var(--sp-4); padding-bottom: var(--sp-4); }
 
 /* Content */
@@ -332,7 +330,6 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
   .entry-row .source { display: none; }
   .toolbar { height: auto; flex-wrap: wrap; padding: var(--sp-8) var(--sp-12); }
   .history, .dict { padding-left: var(--sp-12); padding-right: var(--sp-12); }
-  .models { padding: var(--sp-16) var(--sp-12); }
 }
 
 /* Confusion groups keep meanings and their explicit recognized-form links together. */
