@@ -16,7 +16,7 @@ action shares the model's entire learned section.
     "parakeet/parakeet-tdt-0.6b-v3": [{
       "id": "g_jev",
       "meanings": [
-        {"id": "m_jev", "spelling": "Jev", "meaning": "TypeSafe's contextual decision model.", "personal_context": "Used in Dictum.", "casing": "fixed"},
+        {"id": "m_jev", "spelling": "Jev", "meaning": "TypeSafe's contextual decision model.", "personal_context": "Used in Entune.", "casing": "fixed"},
         {"id": "m_jeff", "spelling": "Jeff", "meaning": "A person's given name.", "personal_context": null, "casing": "fixed"}
       ],
       "recognized_forms": [

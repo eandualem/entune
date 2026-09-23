@@ -1,4 +1,4 @@
-# Design brief: a lighter, calmer Dictum
+# Design brief: a lighter, calmer Entune
 
 A prompt for a design-focused model. Elias, 2026-09-18: "it doesn't feel like
 a polished application". Loose on how, exact on what the system is and does.
@@ -6,7 +6,7 @@ Hand it over with a screenshot of the current window.
 
 ---
 
-You are redesigning the window of **Dictum**, a personal dictation
+You are redesigning the window of **Entune**, a personal dictation
 workbench for macOS. One person opens it all day. They press a key, speak,
 release, and the transcript is typed into whatever app they were in and
 copied to the clipboard. The window is where they see what was recorded,

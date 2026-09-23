@@ -1,7 +1,7 @@
 import pytest
 
-from dictum import shortcuts
-from dictum.desktop.engine import ShortcutEngine
+from entune import shortcuts
+from entune.desktop.engine import ShortcutEngine
 
 
 def make(
@@ -108,7 +108,7 @@ def test_chord_completed_while_holding_becomes_hands_free() -> None:
 def test_only_fn_flag_events_are_swallowed_and_only_when_owned() -> None:
     Quartz = pytest.importorskip("Quartz", reason="macOS only")
 
-    from dictum.desktop.macos.hotkeys import FN_VK, GLOBE_VK, swallow_fn
+    from entune.desktop.macos.hotkeys import FN_VK, GLOBE_VK, swallow_fn
 
     flags, key_down = int(Quartz.kCGEventFlagsChanged), int(Quartz.kCGEventKeyDown)
     key_up = int(Quartz.kCGEventKeyUp)
@@ -161,14 +161,14 @@ def test_injected_keys_such_as_our_own_paste_never_reach_the_engine() -> None:
     pytest.importorskip("Quartz", reason="macOS only")
     from pynput.keyboard import Key
 
-    from dictum.desktop.macos.hotkeys import HotkeyListener
+    from entune.desktop.macos.hotkeys import HotkeyListener
 
     listener = HotkeyListener()
     engine, events = make("alt_r", "cmd+alt_r")
     listener._engine = engine
     listener._on_press(Key.alt_r)  # the user: hold to talk
     assert events == ["start"] and engine.recording
-    listener._on_press(Key.cmd, injected=True)  # Dictum pasting the previous transcript
+    listener._on_press(Key.cmd, injected=True)  # Entune pasting the previous transcript
     listener._on_release(Key.cmd, injected=True)
     assert events == ["start"] and engine.recording  # not turned hands-free
     listener._on_release(Key.alt_r)
@@ -258,7 +258,7 @@ def test_cancel_calls_back_during_processing_without_a_new_recording(
 
 def test_native_control_fn_filter_swallows_combo_without_forwarding_escape() -> None:
     Quartz = pytest.importorskip("Quartz")
-    from dictum.desktop.macos.hotkeys import FN_FLAG, FnAwareListener
+    from entune.desktop.macos.hotkeys import FN_FLAG, FnAwareListener
 
     listener = FnAwareListener(owns_fn=True, cancel_control=True)
 
@@ -283,6 +283,6 @@ def test_native_control_fn_filter_swallows_combo_without_forwarding_escape() -> 
     assert listener._intercept(flags_changed, release) is release
     assert Quartz.CGEventGetFlags(release) == 0
     assert listener._intercept(flags_changed, event(63, 0)) is None
-    # Real Escape is untouched; it is not Dictum's cancellation shortcut.
+    # Real Escape is untouched; it is not Entune's cancellation shortcut.
     escape = Quartz.CGEventCreateKeyboardEvent(None, 53, True)
     assert listener._intercept(Quartz.kCGEventKeyDown, escape) is escape

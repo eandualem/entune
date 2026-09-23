@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from dictum import dictionary, matching
-from dictum.dictionary import Dictionary
-from dictum.dictionary_legacy import Correction, add_corrections
+from entune import dictionary, matching
+from entune.dictionary import Dictionary
+from entune.dictionary_legacy import Correction, add_corrections
 from tests.dictionary_samples import CLOUD, JEV, group
 
 
@@ -50,7 +50,7 @@ def test_migration_keeps_every_record_with_backup_and_no_invented_meanings(tmp_p
     saved = path.read_bytes()
     assert dictionary.load(tmp_path) == converted and path.read_bytes() == saved
     assert json.loads(saved)["version"] == 2
-    ancient = dictionary.parse('{"terms":["Dictum"],"replacements":{"dictam":"Dictum"}}')
+    ancient = dictionary.parse('{"terms":["Entune"],"replacements":{"dictam":"Entune"}}')
     assert len(ancient.pinned) == 2  # retain both source records, no normalized-spelling collapse
     agents = dictionary.parse('{"agents":{"replacements":{"Jeff":"Jev"}},"pinned":[]}')
     assert agents.pinned[0].meanings[0].spelling == "Jev"
@@ -91,7 +91,7 @@ def test_ids_survive_spelling_edits_and_pinned_definitions_cannot_conflict() -> 
 
 
 def test_pinning_shares_cross_group_and_cross_model_variants_without_competitor_priority() -> None:
-    from dictum.dictionary import Association, Form, Group
+    from entune.dictionary import Association, Form, Group
 
     extension = Group("g_extension", (), (Form("Jiff", (Association("a_jev"),)),))
     other = Group("g_other", (JEV.meanings[0],), (Form("Jebb", (Association("a_jev"),)),))
@@ -110,7 +110,7 @@ def test_pinning_shares_cross_group_and_cross_model_variants_without_competitor_
 
 
 def test_reviewed_pinned_updates_and_new_variants_keep_existing_links_in_all_models() -> None:
-    from dictum.dictionary import Association, Form
+    from entune.dictionary import Association, Form
 
     original = Dictionary((JEV,), {"unrelated": (CLOUD,)})
     revised = replace(
@@ -153,7 +153,7 @@ def test_corrupt_references_and_direct_approval_are_rejected() -> None:
     "text",
     [
         '{"words": []}',
-        '{"pinned": "Dictum"}',
+        '{"pinned": "Entune"}',
         '{"pinned": [{"spelling": ""}]}',
         '{"pinned": [{"spelling": "x", "heard": "y"}]}',
         '{"pinned": [{"spelling": "x", "extra": 1}]}',
@@ -219,8 +219,8 @@ def test_rendering_preserves_literal_casing_number_punctuation_and_unicode() -> 
 
 
 def test_direct_policy_is_never_inferred_and_competitors_or_overlaps_disable_it() -> None:
-    unapproved = group("Dictum", "dictim")
-    approved = group("Dictum", "dictim", direct=True)
+    unapproved = group("Entune", "dictim")
+    approved = group("Entune", "dictim", direct=True)
     for groups in [(unapproved,), (approved, group("Other", "dictim"))]:
         (component,) = matching.components(matching.matches(groups, "dictim"))
         assert component.direct_choice("dictim") is None
@@ -262,13 +262,13 @@ def test_confirmed_agent_boundary_is_idempotent_and_does_not_grant_precedence() 
 
 
 def test_the_earlier_single_learned_list_moves_under_the_default_model(tmp_path: Path) -> None:
-    old = '{"pinned":{"terms":[]},"learned":{"terms":["Dictum"],"replacements":{}}}'
+    old = '{"pinned":{"terms":[]},"learned":{"terms":["Entune"],"replacements":{}}}'
     with pytest.raises(ValueError, match="set a default model"):
         dictionary.parse(old)
     (tmp_path / dictionary.FILENAME).write_text(old)
     converted = dictionary.load(tmp_path, "local/small.en")
     assert [m.spelling for g in converted.learned_for("local/small.en") for m in g.meanings] == [
-        "Dictum"
+        "Entune"
     ]
 
 

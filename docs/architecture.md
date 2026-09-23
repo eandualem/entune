@@ -4,8 +4,8 @@ One Python process. A Starlette app served by uvicorn holds the local HTTP
 API and the page; on macOS a menu-bar app runs on the main thread beside it.
 
 ```
-src/dictum/
-  cli.py          the `dictum` command: data directory, port check, server thread, menu-bar app
+src/entune/
+  cli.py          the `entune` command: data directory, port check, server thread, menu-bar app
   service.py      what the app does: settings, models, transcription, dictionary, capture
   processing.py   text-processing workflow; service passes explicit settings/key,
                   retains persistence and delivery coordination
@@ -64,7 +64,7 @@ keeps the exact raw text and skips cleanup/formatting; a failure in either later
 keeps its input and skips remaining enhancements. No model generates text or deletion offsets. Code validates its own
 proposed spans before applying edits; original speech and operation counts remain separate.
 History polling invalidates on processing updates as well as
-new recordings. Dictum owns a lazy Jev event loop and HTTP pool: cancellable
+new recordings. Entune owns a lazy Jev event loop and HTTP pool: cancellable
 requests share one processing deadline, including bounded retries, and the
 desktop owner (or CLI in browser mode) closes the client at shutdown. Speech and
 processing failures are distinct.

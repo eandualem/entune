@@ -7,13 +7,13 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from dictum import cleanup, formatting, jev, text_edits
-from dictum.processing import notice, process_text
-from dictum.providers.contracts import Transcript
-from dictum.server import create_app
-from dictum.service import Dictum
-from dictum.store import Store
-from dictum.text_edits import Change
+from entune import cleanup, formatting, jev, text_edits
+from entune.processing import notice, process_text
+from entune.providers.contracts import Transcript
+from entune.server import create_app
+from entune.service import Entune
+from entune.store import Store
+from entune.text_edits import Change
 from tests.conftest import WEBM_HEADER
 from tests.dictionary_samples import JEV
 from tests.test_jev import answering, call
@@ -256,7 +256,7 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
         return handler(request)
 
     with closing(jev.Client(httpx.MockTransport(respond))) as network:
-        service = Dictum(store, [provider], jev_client=network)
+        service = Entune(store, [provider], jev_client=network)
         with TestClient(create_app(service), base_url="http://localhost") as client:
             assert not client.get("/api/settings").json()["jev"]["cleanup"]
             for value in (True, "on", 1):

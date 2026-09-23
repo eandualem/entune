@@ -1,4 +1,4 @@
-"""Build dist/Dictum.app with PyInstaller.
+"""Build dist/Entune.app with PyInstaller.
 
 Run: uv run --group build python packaging/build_app.py
 """
@@ -11,16 +11,16 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SPEC = ROOT / "packaging" / "Dictum.spec"
+SPEC = ROOT / "packaging" / "Entune.spec"
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
 
 
 def main() -> None:
     if sys.platform != "darwin":
-        sys.exit("Dictum.app can only be built on macOS.")
-    shutil.rmtree(DIST / "Dictum.app", ignore_errors=True)
-    shutil.rmtree(DIST / "Dictum", ignore_errors=True)
+        sys.exit("Entune.app can only be built on macOS.")
+    shutil.rmtree(DIST / "Entune.app", ignore_errors=True)
+    shutil.rmtree(DIST / "Entune", ignore_errors=True)
     subprocess.run(
         [
             sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
@@ -29,8 +29,8 @@ def main() -> None:
         cwd=SPEC.parent,
         check=True,
     )  # fmt: skip
-    shutil.rmtree(DIST / "Dictum", ignore_errors=True)  # the unbundled copy, not needed
-    print(f"\nBuilt {DIST / 'Dictum.app'}. Drag it to /Applications and open it.")
+    shutil.rmtree(DIST / "Entune", ignore_errors=True)  # the unbundled copy, not needed
+    print(f"\nBuilt {DIST / 'Entune.app'}. Drag it to /Applications and open it.")
 
 
 if __name__ == "__main__":

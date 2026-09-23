@@ -1,5 +1,5 @@
 [project]
-name = "dictum"
+name = "entune"
 version = "0.1.0"
 description = "Personal dictation workbench: record, transcribe with the speech-to-text model you pick, keep the history, retry with another model, copy."
 readme = "README.md"
@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.scripts]
-dictum = "dictum.cli:main"
+entune = "entune.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.8"]
@@ -40,7 +40,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["packaging/Dictum.spec"]
+extend-exclude = ["packaging/Entune.spec"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
@@ -48,7 +48,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 [tool.mypy]
 strict = true
 mypy_path = "src"
-files = ["src/dictum", "tests"]
+files = ["src/entune", "tests"]
 
 [[tool.mypy.overrides]]
 module = ["sounddevice", "objc", "Quartz", "ApplicationServices", "AppKit", "AVFoundation", "Foundation", "WebKit", "PyObjCTools", "pystray.*", "webview.*", "PIL.*", "parakeet_mlx", "parakeet_mlx.*", "mlx.*", "librosa"]

@@ -11,7 +11,7 @@ def test_dragged_indicator_position_survives_a_status_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     appkit = pytest.importorskip("AppKit", reason="macOS only")
-    from dictum.desktop.macos.indicator import ORIGIN_KEY, Indicator
+    from entune.desktop.macos.indicator import ORIGIN_KEY, Indicator
 
     saved: dict[str, list[float]] = {}
     defaults = SimpleNamespace(setObject_forKey_=lambda value, key: saved.update({key: value}))
@@ -52,7 +52,7 @@ def test_dragged_indicator_position_survives_a_status_change(
 @pytest.fixture
 def cocoa(monkeypatch: pytest.MonkeyPatch) -> Any:
     pytest.importorskip("AppKit", reason="macOS only")
-    from dictum.desktop.macos import webview as native
+    from entune.desktop.macos import webview as native
 
     notices: list[tuple[str, str]] = []
     adapter = native.CocoaWebview(
@@ -109,7 +109,7 @@ def test_selector_registration_is_once_and_callbacks_detach(
     import objc
     from webview.platforms.cocoa import BrowserView
 
-    from dictum.desktop.macos.webview import CocoaWebview
+    from entune.desktop.macos.webview import CocoaWebview
 
     def unexpected(*args: Any) -> None:
         pytest.fail("selectors must only be registered once per process")
@@ -192,7 +192,7 @@ def test_picker_uses_requesting_view_and_finishes_on_cancel_or_failure(
 
 def test_close_hides_but_destroy_really_closes(monkeypatch: pytest.MonkeyPatch) -> None:
     appkit = pytest.importorskip("AppKit", reason="macOS only")
-    from dictum.desktop.webview import _Window
+    from entune.desktop.webview import _Window
 
     calls: list[str] = []
     window = _Window("http://localhost:4187/")
@@ -209,7 +209,7 @@ def test_close_hides_but_destroy_really_closes(monkeypatch: pytest.MonkeyPatch) 
 def test_titlebar_fullscreen_and_missing_native_hierarchy(cocoa: Any) -> None:
     import AppKit
 
-    from dictum.desktop.macos.webview import layout_titlebar
+    from entune.desktop.macos.webview import layout_titlebar
 
     # Full-screen layout belongs to AppKit and must not touch the hierarchy.
     layout_titlebar(SimpleNamespace(styleMask=lambda: AppKit.NSWindowStyleMaskFullScreen), 52)
@@ -228,11 +228,11 @@ def test_native_quit_saves_capture_and_closes_processing_before_termination(
     import webview
     from webview.platforms.cocoa import BrowserView
 
-    from dictum.desktop import webview as shell
-    from dictum.desktop.app import DictumApp
-    from dictum.recorder import Capture
-    from dictum.service import Dictum
-    from dictum.store import Store
+    from entune.desktop import webview as shell
+    from entune.desktop.app import EntuneApp
+    from entune.recorder import Capture
+    from entune.service import Entune
+    from entune.store import Store
     from tests.test_app import FakeActions, FakeHotkeys, FakePermissions, FakeRecorder
 
     monkeypatch.setattr(shell, "_hotkeys", FakeHotkeys)
@@ -253,17 +253,17 @@ def test_native_quit_saves_capture_and_closes_processing_before_termination(
 
     platform = shell.WebviewPlatform("http://localhost:4187/")
     recorder = FakeRecorder(Capture(b"\x00\x00" * 16_000, 16_000))
-    dictum = Dictum(Store(tmp_path), [])
-    close = dictum.close
+    entune = Entune(Store(tmp_path), [])
+    close = entune.close
 
     def cleanup() -> bool:
         assert not recorder.recording
-        assert len(dictum.store.list_recordings()) == 1
+        assert len(entune.store.list_recordings()) == 1
         calls.append("processing closed")
         return close()
 
-    monkeypatch.setattr(dictum, "close", cleanup)
-    app = DictumApp(dictum, platform, platform.url, recorder=recorder)
+    monkeypatch.setattr(entune, "close", cleanup)
+    app = EntuneApp(entune, platform, platform.url, recorder=recorder)
 
     def run(**kwargs: Any) -> None:
         app.start_recording()
@@ -283,7 +283,7 @@ def test_window_fits_the_dictionary_page_and_smaller_screens(
 ) -> None:
     import webview
 
-    from dictum.desktop import webview as window
+    from entune.desktop import webview as window
 
     monkeypatch.setattr(webview, "screens", [SimpleNamespace(width=1512, height=982)])
     assert window._window_size() == (1120, 800)

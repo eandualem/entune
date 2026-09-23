@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 pytest.importorskip("ApplicationServices", reason="macOS only")
-from dictum.desktop.macos import actions
+from entune.desktop.macos import actions
 
 
 @pytest.mark.parametrize(

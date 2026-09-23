@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from dictum import llm, onboarding
-from dictum.providers.contracts import Clip, Transcript
-from dictum.recorder import wav_bytes
-from dictum.server import create_app
-from dictum.service import Dictum
-from dictum.store import Store
+from entune import llm, onboarding
+from entune.providers.contracts import Clip, Transcript
+from entune.recorder import wav_bytes
+from entune.server import create_app
+from entune.service import Entune
+from entune.store import Store
 from tests.conftest import wait_for_build
 from tests.dictionary_samples import proposed
 from tests.test_server import StubProvider
@@ -73,7 +73,7 @@ def test_wispr_import_deduplicates_backups_without_importing_history(
 
 def test_import_upload_validates_audio_and_survives_restart(tmp_path: Path) -> None:
     store = Store(tmp_path)
-    client = TestClient(create_app(Dictum(store, [])), base_url="http://localhost")
+    client = TestClient(create_app(Entune(store, [])), base_url="http://localhost")
     for bad in (b"private text", wav_bytes(b"")):
         response = client.post("/api/dictionary/audio", files={"audio": ("clip.wav", bad)})
         assert response.status_code == 400
@@ -131,8 +131,8 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
     monkeypatch.setattr(stub, "transcribe", transcribe)
     monkeypatch.setattr(llm, "BATCH_CHARS", 30)
     store = Store(tmp_path)
-    dictum = Dictum(store, [stub], llm_call=fake)
-    client = TestClient(create_app(dictum), base_url="http://localhost")
+    entune = Entune(store, [stub], llm_call=fake)
+    client = TestClient(create_app(entune), base_url="http://localhost")
     assert (
         client.post(
             "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
@@ -207,7 +207,7 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
 
     store = Store(tmp_path)
     client = TestClient(
-        create_app(Dictum(store, [stub], llm_call=fake)), base_url="http://localhost"
+        create_app(Entune(store, [stub], llm_call=fake)), base_url="http://localhost"
     )
     client.put("/api/settings", json={"keys": {"stub": "k", "openai": "k"}})
     client.post("/api/dictionary/audio", files={"audio": ("clip.wav", wav_bytes(b"\0\0" * 16))})
@@ -266,7 +266,7 @@ def test_import_source_is_recorded_not_inferred_from_the_file_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = Store(tmp_path)
-    client = TestClient(create_app(Dictum(store, [])), base_url="http://localhost")
+    client = TestClient(create_app(Entune(store, [])), base_url="http://localhost")
     root = tmp_path / "wispr"
     root.mkdir()
     flow = flow_db(root / "flow.sqlite", [wav_bytes(b"\x02\x00" * 16)])
