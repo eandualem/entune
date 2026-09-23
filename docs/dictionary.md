@@ -95,7 +95,8 @@ approving the revised mapping.
 Direct-only dictation needs no contextual request (cleanup/formatting may make their own).
 Mixed dictation still makes one request, with one focused Choice per occurrence. The
 state holds only an excerpt of up to 160 characters either side, the span marked; each
-option states its span, output spelling, definition and personal usage directly.
+option states its span, output spelling, definition and personal usage directly; for
+overlapping spans it also states how the marked words read with that choice.
 `tools/jev_eval.py` compares this request with the previous format, a variant that
 adds the whole transcript, and one with generic contrastive examples, on labelled
 occurrences with a fixed dictionary. It renders requests offline and calls Jev only

@@ -310,8 +310,13 @@ class MeaningRequest:
     support: dict[int, dict[str, tuple[str, ...]]]  # occurrence -> option -> meaning IDs
 
 
-def _option(text: str, interpretation: Interpretation) -> str:
+def _option(text: str, component: Component, interpretation: Interpretation) -> str:
     parts = []
+    if len(component.matches) > 1:
+        # Overlapping spans: say which words change, since the same meaning can apply
+        # to different spans of the marked text.
+        reading = component.output(text, interpretation)
+        parts.append(prompts.render_text("jev-meaning-reading.txt", reading=reading).strip())
     for c in interpretation.choices:
         meaning = c.meaning.meaning
         if c.meaning.personal_context:
@@ -365,7 +370,7 @@ def meaning_request(
         outputs[i], support[i] = {}, {}
         for n, plan in enumerate(eligible):
             option = f"i{n}"
-            question["criteria"][option] = _option(text, plan)
+            question["criteria"][option] = _option(text, component, plan)
             outputs[i][option] = component.output(text, plan)
             support[i][option] = tuple(c.meaning.id for c in plan.choices)
         before = text[max(0, component.start - WINDOW) : component.start]
