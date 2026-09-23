@@ -130,6 +130,14 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 /* Nothing is cut off: long model names and the Used details wrap within their cells. */
 .perf-grid { display: grid; grid-template-columns: minmax(11rem, 1.5fr) minmax(6rem, auto) minmax(7.5rem, auto) minmax(8.5rem, 1fr); gap: var(--sp-10); align-items: baseline; padding: var(--sp-8) var(--sp-14); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line-faint); }
 .perf-grid > span { min-width: 0; overflow-wrap: anywhere; }
+/* Processing activity: one row per step, numbers aligned, the result allowed to wrap. */
+.activity-grid { display: grid; grid-template-columns: minmax(10rem, 1.6fr) repeat(4, minmax(4.5rem, auto)) minmax(5.5rem, auto); gap: var(--sp-10); align-items: baseline; padding: var(--sp-8) var(--sp-14); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line-faint); }
+.activity-grid > span { min-width: 0; overflow-wrap: anywhere; }
+.activity-grid:last-child { border-bottom: 0; }
+.perf-table .activity-grid { min-width: 34rem; }
+.activity-detail { grid-column: 1 / -1; margin-top: calc(-1 * var(--sp-6)); }
+.activity-total { margin: 0; padding: var(--sp-12) var(--sp-14); border-bottom: 1px solid var(--line-faint); }
+.activity-total:has(+ #activity-table[hidden]) { border-bottom: 0; }
 .perf-empty { margin: 0; padding: var(--sp-14) var(--sp-16); border-bottom: 1px solid var(--line-faint); }
 /* Narrow windows scroll the table sideways; heading and rows move together. */
 .perf-table { overflow-x: auto; }

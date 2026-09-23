@@ -57,32 +57,15 @@
       <section class="view" id="view-models" role="tabpanel">
         <div class="settings">
           <nav class="rail" aria-label="Models">
-            <button type="button" id="msec-compare" aria-selected="true">Compare models</button>
-            <button type="button" id="msec-cloud" aria-selected="false">Cloud services</button>
-            <button type="button" id="msec-local" aria-selected="false">On this Mac</button>
+            <button type="button" id="msec-cloud" aria-selected="true">Cloud providers</button>
+            <button type="button" id="msec-local" aria-selected="false">Local models</button>
+            <button type="button" id="msec-performance" aria-selected="false">Performance</button>
             <div class="spacer"></div>
             <p class="rail-note">Pick the model your shortcut uses in the toolbar.</p>
           </nav>
 
           <div class="settings-content">
-            <div class="section" id="models-compare" data-active>
-              <p class="caption section-intro">How each speech model has done on your own dictations.</p>
-              <div class="scard perf-card">
-                <div class="perf-table" id="metrics-table">
-                  <div class="perf-grid perf-head"><span>Model</span><span>Speed</span><span>Corrections</span><span>Used</span></div>
-                  <div id="metrics-rows"></div>
-                </div>
-                <p class="caption perf-empty" id="metrics-empty" hidden>Nothing to compare yet. Each model you dictate with appears here.</p>
-                <div class="srow foot"><span class="caption"><b>Speed</b>: the wait per minute of audio; fast mode uploads while you record. <b>Corrections</b>: dictionary fixes per 100 words. Neither is an accuracy score.</span></div>
-              </div>
-              <details class="scard advanced" id="processing-activity">
-                <summary>Corrections &amp; formatting activity</summary>
-                <div class="srow foot"><span class="caption">What Jev did after speech recognition, across all dictations and every speech model. It counts work done, not accuracy.</span></div>
-                <div class="srow foot"><span class="caption" id="jev-summary" role="status" style="white-space: pre-line"></span></div>
-              </details>
-            </div>
-
-            <div class="section" id="models-cloud">
+            <div class="section" id="models-cloud" data-active>
               <p class="caption section-intro">Add a key only for the services you use; their models then appear in the toolbar picker. Your audio is sent to the service you pick.</p>
               <form class="scard" id="keys-form">
                 <div id="keys"></div>
@@ -97,6 +80,28 @@
                 <span class="caption" id="local-summary"></span>
               </div>
               <div id="local-cards"></div>
+            </div>
+
+            <div class="section" id="models-performance">
+              <h2 class="sec-label">Speech models</h2>
+              <p class="caption section-intro">How each speech model has done on your own dictations.</p>
+              <div class="scard perf-card">
+                <div class="perf-table" id="metrics-table">
+                  <div class="perf-grid perf-head"><span>Model</span><span>Speed</span><span>Corrections</span><span>Used</span></div>
+                  <div id="metrics-rows"></div>
+                </div>
+                <p class="caption perf-empty" id="metrics-empty" hidden>Nothing to compare yet. Each model you dictate with appears here.</p>
+                <div class="srow foot"><span class="caption"><b>Speed</b>: the wait per minute of audio; fast mode uploads while you record. <b>Corrections</b>: dictionary fixes per 100 words. Neither is an accuracy score.</span></div>
+              </div>
+              <h2 class="sec-label">Corrections &amp; formatting</h2>
+              <p class="caption section-intro">What Jev did after speech recognition, across all dictations and every speech model. It counts work done, not accuracy.</p>
+              <div class="scard activity-card" id="processing-activity">
+                <p class="caption activity-total" id="activity-total"></p>
+                <div class="perf-table" id="activity-table" hidden>
+                  <div class="activity-grid perf-head"><span>Step</span><span>Succeeded</span><span>Failed</span><span>Skipped</span><span>Retries</span><span>Median time</span></div>
+                  <div id="activity-rows"></div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
