@@ -5,9 +5,11 @@ from __future__ import annotations
 import io
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 from zipfile import ZipFile
 
 import httpx
@@ -444,6 +446,27 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     assert client.get("/api/dictionary").json() == current.json()
     assert client.get("/api/dictionary/build").json()["phase"] == "ready"
     assert entune.close()
+
+
+def test_agent_corrections_are_logged_before_a_reset_can_start(
+    tmp_path: Path, stub: StubProvider
+) -> None:
+    entune = Entune(Store(tmp_path), [stub])
+    held: list[bool] = []
+    log = entune.store.add_corrections
+
+    def logging(*args: Any) -> None:
+        # A reset waits on this lock; another thread must not get it while rows are written.
+        other = threading.Thread(
+            target=lambda: held.append(not entune.operations._lock.acquire(blocking=False))
+        )
+        other.start()
+        other.join()
+        log(*args)
+
+    entune.store.add_corrections = logging  # type: ignore[method-assign,assignment]
+    entune.dictionary.add_agent_corrections({"terms": ["Soniox"]})
+    assert held == [True]
 
 
 def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvider) -> None:

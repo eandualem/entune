@@ -93,8 +93,9 @@ class DictionaryFile:
             updated, added = add_corrections(current, corrections)
             if added:
                 dictionary_document.save(self._store.data_dir, updated)
+                # Logged under the same lock, so a data reset cannot land between the two.
+                source = data.get("source")
+                self._store.add_corrections(added, source if isinstance(source, str) else None)
         if added:
-            source = data.get("source")
-            self._store.add_corrections(added, source if isinstance(source, str) else None)
             self._changed()
         return added
