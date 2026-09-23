@@ -172,7 +172,7 @@ class Entune:
         self._desktop_status: dict[str, object] = {"desktop": False}
         self._capture_lock = threading.Lock()
         self._import_lock = threading.Lock()
-        self._imports = 0  # audio imports in progress; a reset waits for none
+        self._using: list[str] = []  # imports and exports in progress; a reset waits for none
         self._resetting = False
         self._capture = CaptureStatus("idle", None)
         self._speech = SpeechResources(
@@ -281,17 +281,17 @@ class Entune:
         }
 
     @contextmanager
-    def importing(self) -> Iterator[None]:
-        """Mark an audio import in progress; none may start while data is being deleted."""
+    def using_data(self, what: str) -> Iterator[None]:
+        """Mark an import or export in progress; none may start while data is deleted."""
         with self._import_lock:
             if self._resetting:
-                raise Busy("Entune is deleting all data; import again afterwards.")
-            self._imports += 1
+                raise Busy(f"Entune is deleting all data; try the {what} again afterwards.")
+            self._using.append(what)
         try:
             yield
         finally:
             with self._import_lock:
-                self._imports -= 1
+                self._using.remove(what)
 
     def reset_data(self) -> dict[str, list[str]]:
         """Delete everything Entune keeps locally and continue with an empty folder.
@@ -305,8 +305,8 @@ class Entune:
             if any(status.state == "downloading" for status in self.local_models()):
                 raise ValueError("A model is still downloading; wait for it to finish first.")
             with self._import_lock:
-                if self._imports:
-                    raise Busy("Audio is still being imported; wait for it to finish first.")
+                if self._using:
+                    raise Busy(f"Wait for the {self._using[0]} to finish first.")
                 self._resetting = True
             try:
                 return self._reset_now()

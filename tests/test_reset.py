@@ -209,18 +209,20 @@ def test_a_failed_deletion_leaves_the_app_usable(
     assert not (data / "backups").exists()
 
 
-def test_imports_and_a_reset_never_overlap(
+def test_imports_exports_and_a_reset_never_overlap(
     setup: tuple[TestClient, Entune, Path, LocalStub],
 ) -> None:
     client, app, _, _ = setup
     confirm = {"confirm": RESET_PHRASE}
-    with app.importing():
-        res = client.post("/api/data/reset", json=confirm)
-        assert res.status_code == 409 and "imported" in res.text
+    for what in ("audio import", "export"):
+        with app.using_data(what):
+            res = client.post("/api/data/reset", json=confirm)
+            assert res.status_code == 409 and what in res.text
     app._resetting = True  # as while a reset runs
     audio = wav_bytes(b"\0\1" * 1600, 1600)
     res = client.post("/api/dictionary/audio", files={"audio": ("a.wav", audio, "audio/wav")})
     assert res.status_code == 400 and "deleting all data" in res.text
+    assert client.get("/api/exports/audio").status_code == 409
     app._resetting = False
     assert client.get("/api/dictionary/audio").json()["items"] == []
     assert client.post("/api/data/reset", json=confirm).status_code == 200
