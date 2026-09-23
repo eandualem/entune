@@ -244,3 +244,19 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
 )
 def test_source_recording_times_become_utc_or_none(value: object, expected: str | None) -> None:
     assert onboarding.recorded_at(value) == expected
+
+
+def test_reimporting_saved_audio_adds_a_missing_date_only(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    try:
+        audio = wav_bytes(b"\x00\x00" * 16)
+        assert store.import_dictionary_audio(audio, "old.wav", "audio/wav") is True
+        assert store.dictionary_audio()[0].created_at is None
+        dated = "2026-06-01T08:00:00.000Z"
+        assert store.import_dictionary_audio(audio, "old.wav", "audio/wav", dated) is False
+        assert store.import_dictionary_audio(audio, "old.wav", "audio/wav", "2027-01-01") is False
+        (saved,) = store.dictionary_audio()
+        assert saved.created_at == dated
+        assert store.dictionary_audio_path(saved).read_bytes() == audio
+    finally:
+        store.close()

@@ -91,7 +91,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     el("audio-models").textContent = !speech
       ? "Choose a speech model in the toolbar first."
       : !language
-        ? "Add an Anthropic or OpenAI key in Settings › Providers to choose a dictionary model."
+        ? (el("dictionary-model-note").hidden ? "Add an Anthropic or OpenAI key in Settings › Providers to choose a dictionary model." : el("dictionary-model-note").textContent)
         : `Transcribe ${duration(seconds(chosen))} with ${speech.label}, then build with ${language}.`;
     const blocked = importing || buildBusy || !chosen.length || !speech || !language;
     el("build-audio-dictionary").disabled = el("refine-audio-dictionary").disabled = blocked;
@@ -138,6 +138,17 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   // The two handles cannot cross; at least one whole recording stays included.
   start.addEventListener("input", () => { from = Math.min(nearest(+start.value), to - 1); draw(); });
   end.addEventListener("input", () => { to = Math.max(nearest(+end.value), from + 1); draw(); });
+  // Arrow, Page and Home/End keys move a handle by whole recordings.
+  for (const [handle, isStart] of [[start, true], [end, false]]) {
+    handle.addEventListener("keydown", (event) => {
+      const step = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -10, PageUp: 10, Home: -Infinity, End: Infinity }[event.key];
+      if (step === undefined) return;
+      event.preventDefault();
+      if (isStart) from = Math.max(0, Math.min(to - 1, from + (Number.isFinite(step) ? step : step > 0 ? list.length : -list.length)));
+      else to = Math.min(list.length, Math.max(from + 1, to + (Number.isFinite(step) ? step : step > 0 ? list.length : -list.length)));
+      draw();
+    });
+  }
   el("audio-other-models").addEventListener("change", choose);
   el("audio-detail").addEventListener("toggle", () => draw());
   el("audio-more").addEventListener("click", () => { shown += PAGE; draw(); });

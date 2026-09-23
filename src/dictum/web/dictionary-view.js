@@ -20,8 +20,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
   const proposalPanel = el("proposal");
   const proposalBody = el("proposal-body");
   const modelSelect = el("dictionary-model");
+  let missingKey = false; // the saved dictionary model's provider has no key
   const onboarding = createAudioOnboarding({
-    getModel, getSettings, getDictionaryModelName: () => languageName(getSettings()?.dictionaryModel),
+    getModel, getSettings, getDictionaryModelName: () => missingKey ? null : languageName(getSettings()?.dictionaryModel),
     onBuild(selection) { return builds.start("audio", selection); },
     onBusy(value) { importing = value; gate(); },
   });
@@ -46,8 +47,10 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
   function fillModels() {
     const settings = getSettings();
     if (!settings) return;
-    const keyed = settings.llmProviders.filter((p) => p.keyHint);
     const current = settings.dictionaryModel;
+    const owner = settings.llmProviders.find((p) => current?.startsWith(`${p.id}:`));
+    // The saved model stays shown, with its missing key named, rather than another model.
+    const keyed = settings.llmProviders.filter((p) => p.keyHint || p === owner);
     modelSelect.replaceChildren(...keyed.map((provider) => {
       const group = document.createElement("optgroup"); group.label = provider.name;
       const models = [...provider.models];
@@ -56,8 +59,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
       return group;
     }));
     const note = el("dictionary-model-note");
-    note.hidden = keyed.length > 0;
-    note.textContent = "Add an Anthropic or OpenAI key in Settings › Providers to choose a dictionary model.";
+    missingKey = Boolean(owner && !owner.keyHint);
+    note.hidden = keyed.length > 0 && !missingKey;
+    note.textContent = missingKey
+      ? `${languageName(current)} needs an API key for ${owner.name}: add it in Settings › Providers, or choose another model.`
+      : "Add an Anthropic or OpenAI key in Settings › Providers to choose a dictionary model.";
     if (!keyed.length) modelSelect.add(new Option("No key yet", ""));
     modelSelect.disabled = building || !keyed.length;
     gate();
@@ -69,7 +75,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     } catch (err) { flash(buildStatus, errorText(err), "err"); fillModels(); }
   });
   function gate() {
-    const ready = Boolean(getModel() && getSettings()?.dictionaryModel);
+    const ready = Boolean(getModel() && getSettings()?.dictionaryModel && !missingKey);
     buildBtn.disabled = refineBtn.disabled = importing || building || !ready;
     el("open-audio-dialog").disabled = building;
   }
@@ -134,8 +140,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     b.textContent = text; b.addEventListener("click", fn); return b;
   };
   const node = (tag, text, cls = "") => Object.assign(document.createElement(tag), { textContent: text, className: cls });
-  function meanings(doc = dict) {
-    return new Map([...doc.pinned, ...learnedOf(doc)].flatMap((g) => g.meanings).map((m) => [m.id, m]));
+  function meanings(doc = dict, modelId = getModel()?.id) {
+    const learned = modelId ? doc.learned[modelId] ?? [] : [];
+    return new Map([...doc.pinned, ...learned].flatMap((g) => g.meanings).map((m) => [m.id, m]));
   }
   function field(parent, label, value, update, options = null) {
     const wrap = node("label", label, "group-field");
@@ -228,7 +235,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
         })); panel.append(section);
       }
       panel.append(button("Add meaning", () => { draft.meanings.push({ id: id("m"), spelling: "", meaning: "", personal_context: null, casing: "fixed" }); render(); }));
-      const known = meanings(); for (const m of draft.meanings) known.set(m.id, m);
+      const known = meanings(dict, model?.id); for (const m of draft.meanings) known.set(m.id, m);
       for (const form of draft.recognized_forms) {
         const section = node("fieldset", "", "group-form-editor"); section.append(node("legend", "Recognized form"));
         field(section, "What the speech model writes", form.text, (v) => {
