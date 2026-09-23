@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -472,6 +473,11 @@ def create_app(app: Entune) -> Starlette:
             }
         )
 
+    def imported[T](action: Callable[..., T], *args: object) -> T:
+        """An import runs whole or not at all around a data reset."""
+        with app.importing():
+            return action(*args)
+
     async def import_dictionary_audio(request: Request) -> Response:
         async with request.form() as form:
             audio = form.get("audio")
@@ -482,6 +488,7 @@ def create_app(app: Entune) -> Starlette:
             modified = form.get("modified")
             try:
                 added = await run_in_threadpool(
+                    imported,
                     onboarding.import_audio,
                     app.store,
                     await audio.read(),
@@ -494,7 +501,7 @@ def create_app(app: Entune) -> Starlette:
 
     async def import_wispr(_: Request) -> Response:
         try:
-            result = await run_in_threadpool(onboarding.import_wispr, app.store)
+            result = await run_in_threadpool(imported, onboarding.import_wispr, app.store)
         except (ValueError, OSError) as exc:
             return _bad(str(exc))
         return JSONResponse(result)

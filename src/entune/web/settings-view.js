@@ -362,6 +362,10 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   });
   reset.phrase.addEventListener("input", () => { reset.confirm.disabled = reset.phrase.value.trim().toLowerCase() !== PHRASE; });
   reset.confirm.addEventListener("click", async () => {
+    if (document.documentElement.hasAttribute("data-importing")) {
+      reset.status.textContent = "Audio is still being imported; wait for it to finish first.";
+      return;
+    }
     reset.confirm.disabled = true;
     reset.status.textContent = "";
     try {
