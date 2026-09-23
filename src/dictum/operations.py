@@ -42,9 +42,9 @@ class Operations:
     def message(self) -> str:
         if self.active and self.active.kind == "learning":
             return (
-                "Finish learning by applying or discarding the proposal first."
+                "Apply or discard the dictionary suggestions first."
                 if self.active.stage == "review"
-                else "Dictum is busy learning."
+                else "Dictum is preparing dictionary suggestions; stop them or wait."
             )
         return "Finish the current dictation and delivery first."
 

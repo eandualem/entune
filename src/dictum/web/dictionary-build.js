@@ -2,7 +2,7 @@ import { api, el, errorText, flash } from "./ui.js";
 
 // Both sources use the same server-owned job. Poll small status records; fetch a
 // potentially large proposal once per job, and name that job on every action.
-export function createDictionaryBuild({ names, onBusy, onProposal, onAccepted, getSelected }) {
+export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelected }) {
   const progress = el("dictionary-build-status");
   const cancel = el("cancel-dictionary-build");
   let state = { phase: "idle" };
@@ -24,28 +24,26 @@ export function createDictionaryBuild({ names, onBusy, onProposal, onAccepted, g
     el("abandon-dictionary-build").hidden = running() || !["failed", "cancelled"].includes(state.phase);
     cancel.disabled = state.phase === "cancelling";
     progress.classList.toggle("err", state.phase === "failed");
-    const model = names.speech(state.model);
     const kept = (n = 0) => `${n} temporary transcript${n === 1 ? "" : "s"}`;
-    const task = state.mode === "refine" ? "Refining" : "Generating";
+    const task = state.mode === "refine" ? "Checking your entries" : "Looking for new entries";
     const from = state.source === "audio" ? "audio" : "history";
     const messages = {
-      idle: "", queued: `Preparing to learn from ${from}…`,
-      transcribing: `Transcribing audio ${state.completed} of ${state.total} with ${model}…`,
-      building: `${task} with ${names.language(state.dictionaryModel)} · step ${state.step ?? 0} of ${state.steps ?? "…"}`,
-      cancelling: "Cancelling… the current speech operation may need to finish. No further clips or chunks will start.",
-      cleaning: "Finishing cleanup…", ready: `Proposal ready for ${model}. Review before accepting.`,
-      cancelled: `You stopped. ${state.completedBatches ?? 0} of ${state.steps ?? 0} batches completed.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept for Retry.` : ""}`,
-      failed: `${state.error} No dictionary changed.${from === "audio" ? ` Original audio is kept; ${kept(state.cachedTranscripts)} kept for Retry.` : ""}`,
-      accepted: state.applied ? "Changes applied; fully covered inputs marked learned." : "No changes applied. Inputs remain eligible.",
+      idle: "", queued: `Getting ready to read your ${from === "audio" ? "audio" : "transcripts"}…`,
+      transcribing: `Transcribing recording ${state.completed} of ${state.total}…`,
+      building: state.steps > 1 ? `${task} · part ${state.step} of ${state.steps}…` : `${task}…`,
+      cancelling: "Stopping… a transcription already under way may need to finish.",
+      cleaning: "Finishing…", ready: "Suggestions are ready below.",
+      cancelled: `Stopped after ${state.completedBatches ?? 0} of ${state.steps ?? 0} parts. Retry to continue, or discard.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept for Retry.` : ""}`,
+      failed: `Something went wrong: ${state.error} Your dictionary is unchanged.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept for Retry; your audio is kept.` : ""}`,
+      accepted: state.applied ? "Applied. Your dictionary is updated." : "Closed without changes.",
       discarded: from === "audio" ? "Proposal discarded. Original audio is kept." : "Proposal discarded.",
     };
     let message = messages[state.phase] ?? state.phase;
     if (state.phase === "ready") {
-      const coverage = `${state.completedBatches} of ${state.steps} batches; ${state.coveredInputs} of ${state.total} inputs fully covered`;
-      message = state.outcome === "stopped" ? `You stopped after ${coverage}. Review the completed portion, retry, or discard.`
-        : state.outcome === "failed" ? `${state.error} Completed ${coverage}. Review the completed portion, retry, or discard.`
-        : `Ready for review: ${coverage}. Edit or dismiss changes, then apply the remainder once.`;
-      message += " Finish learning before dictating or editing the active dictionary.";
+      const coverage = `${state.coveredInputs} of ${state.total} ${from === "audio" ? "recordings" : "dictations"} read`;
+      message = state.outcome === "stopped" ? `Stopped with ${coverage}. Review what's ready, retry the rest, or discard.`
+        : state.outcome === "failed" ? `${state.error} ${coverage}. Review what's ready, retry the rest, or discard.`
+        : `Suggestions are ready below (${coverage}). Review them, then apply or discard to resume dictation.`;
     }
     progress.textContent = message;
     const actions = ["cancel-dictionary-build", "retry-dictionary-build", "abandon-dictionary-build"];
