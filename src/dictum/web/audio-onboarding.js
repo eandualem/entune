@@ -39,8 +39,10 @@ export function createAudioOnboarding({ getModel, getSettings, onBuild, onBusy }
 
   function visibleItems() {
     const from = el("audio-from").value, through = el("audio-through").value;
+    const speech = el("audio-other-models").checked ? getModel()?.id : null;
     return items.filter(item => {
       const date = item.created_at?.slice(0, 10);
+      if (speech && item.models.includes(speech)) return false;
       return (!from && !through) || date && (!from || date >= from) && (!through || date <= through);
     });
   }
@@ -52,12 +54,12 @@ export function createAudioOnboarding({ getModel, getSettings, onBuild, onBusy }
       check.checked = selected.has(item.id);
       check.addEventListener("change", () => { check.checked ? selected.add(item.id) : selected.delete(item.id); render(); });
       const text = document.createElement("span");
-      text.textContent = `${item.name} · ${item.created_at ? new Date(item.created_at).toLocaleString() : "imported audio"} · ${item.seconds == null ? "duration unknown" : timeLabel(item.seconds)}`;
+      text.textContent = `${item.name} · ${item.created_at ? new Date(item.created_at).toLocaleString() : "imported audio"} · ${item.seconds == null ? "duration unknown" : timeLabel(item.seconds)}${item.models.length ? ` · transcribed by ${item.models.join(", ")}` : ""}`;
       row.append(check, text); list.append(row);
     }
     render();
   }
-  for (const id of ["audio-from", "audio-through"]) el(id).addEventListener("change", drawSelection);
+  for (const id of ["audio-from", "audio-through", "audio-other-models"]) el(id).addEventListener("change", drawSelection);
   el("audio-select-visible").addEventListener("click", () => { if (!buildBusy) { for (const item of visibleItems()) selected.add(item.id); drawSelection(); } });
   el("audio-clear").addEventListener("click", () => { if (!buildBusy) { selected.clear(); drawSelection(); } });
 
