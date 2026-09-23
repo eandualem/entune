@@ -16,7 +16,13 @@ import uvicorn
 
 from entune import __version__
 from entune.desktop import create_platform
-from entune.paths import LegacyDataInUse, data_override, default_data_dir, migrate_legacy_data
+from entune.paths import (
+    LegacyDataInUse,
+    adopt_legacy_files,
+    data_override,
+    default_data_dir,
+    migrate_legacy_data,
+)
 from entune.providers.registry import default_providers
 from entune.server import create_app
 from entune.service import Entune
@@ -166,6 +172,7 @@ def main(argv: list[str] | None = None) -> None:
         moved = (
             migrate_legacy_data(data_dir) if args.data is None and data_override() is None else None
         )
+        adopt_legacy_files(data_dir)  # also a --data or DICTUM_DATA folder from Dictum
     except LegacyDataInUse as exc:
         # Starting with an empty folder instead would leave the data behind for good.
         message = (
