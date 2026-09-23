@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from entune.text_edits import Change, overlaps, protected
+from entune.processing.text_edits import Change, overlaps, protected
 
 # A small explicit vocabulary, not arbitrary repeated words or spoken edit commands.
 _RUN = re.compile(

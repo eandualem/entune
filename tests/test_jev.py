@@ -14,11 +14,12 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from entune import jev, text_edits
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import entries as dictionary_entries
 from entune.dictionary import matching
-from entune.processing import Processed, process_text
+from entune.processing import jev, jev_client, text_edits
+from entune.processing.pipeline import process_text
+from entune.processing.results import Processed
 from entune.server import create_app
 from entune.service import Entune
 from entune.store import Store
@@ -49,7 +50,7 @@ def answering(
         body = json.loads(request.content)
         requests.append(body)
         assert request.headers["authorization"] == "Bearer ts-key"
-        assert body["model"] == jev.MODEL
+        assert body["model"] == jev_client.MODEL
         answers = {}
         for name, question in body["questions"].items():
             p = {option: 0.0 for option in question["criteria"]}
@@ -60,14 +61,14 @@ def answering(
                 "probabilities": p,
                 "confidence": 0.9,
             }
-        return httpx.Response(200, json={"model": jev.MODEL, "answers": answers})
+        return httpx.Response(200, json={"model": jev_client.MODEL, "answers": answers})
 
     return requests, handler
 
 
-def call(client: jev.Client, policy: jev.Policy | None = None) -> jev.Call:
-    policy = policy or jev.Policy()
-    return jev.Call(client, "ts-key", policy, time.monotonic() + policy.total_seconds)
+def call(client: jev_client.Client, policy: jev_client.Policy | None = None) -> jev_client.Call:
+    policy = policy or jev_client.Policy()
+    return jev_client.Call(client, "ts-key", policy, time.monotonic() + policy.total_seconds)
 
 
 @pytest.mark.parametrize("pinned", [False, True])
@@ -76,7 +77,7 @@ def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> N
     requests, handler = answering(
         lambda name, _: {"i1": 1.0} if name in ("o0", "o2") else {"i0": 1.0}
     )
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         context = call(client)
         document = dictionary_entries.Dictionary(learned={"speech/model": GROUPS})
         if pinned:
@@ -122,8 +123,8 @@ def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> N
     ],
 )
 def test_missing_or_invalid_probabilities_and_choices_are_rejected(answer: object) -> None:
-    with pytest.raises(jev.JevError, match="unusable answer"):
-        jev._probabilities(answer, {"i0", "i1"})
+    with pytest.raises(jev_client.JevError, match="unusable answer"):
+        jev_client._probabilities(answer, {"i0", "i1"})
 
 
 def test_transient_retry_reuses_client_and_nonretryable_answers_stop() -> None:
@@ -135,7 +136,7 @@ def test_transient_retry_reuses_client_and_nonretryable_answers_stop() -> None:
         calls += 1
         return httpx.Response(529, text="overloaded") if calls == 1 else good(request)
 
-    with closing(jev.Client(httpx.MockTransport(respond))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         context = call(client)
         jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
         assert context.attempts == 2 and len(requests) == 1
@@ -156,9 +157,9 @@ def test_transient_retry_reuses_client_and_nonretryable_answers_stop() -> None:
         def reject(_: httpx.Request, response: httpx.Response = response) -> httpx.Response:
             return response
 
-        with closing(jev.Client(httpx.MockTransport(reject))) as client:
+        with closing(jev_client.Client(httpx.MockTransport(reject))) as client:
             context = call(client)
-            with pytest.raises(jev.JevError) as caught:
+            with pytest.raises(jev_client.JevError) as caught:
                 jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
             assert "ts-key" not in str(caught.value)
             assert context.attempts == 1
@@ -177,11 +178,11 @@ def test_total_deadline_cancels_a_dripping_body_and_releases_the_socket() -> Non
             closed.set()
 
     with closing(
-        jev.Client(httpx.MockTransport(lambda _: httpx.Response(200, stream=Drip())))
+        jev_client.Client(httpx.MockTransport(lambda _: httpx.Response(200, stream=Drip())))
     ) as client:
-        context = call(client, jev.Policy(total_seconds=0.15, attempt_seconds=1.0))
+        context = call(client, jev_client.Policy(total_seconds=0.15, attempt_seconds=1.0))
         started = time.monotonic()
-        with pytest.raises(jev.JevError):
+        with pytest.raises(jev_client.JevError):
             jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
         elapsed = time.monotonic() - started
         assert 0.1 <= elapsed < 0.6
@@ -201,16 +202,16 @@ def test_shutdown_cancels_inflight_work_and_rejects_new_requests() -> None:
             cancelled.set()
         return httpx.Response(200)
 
-    client = jev.Client(httpx.MockTransport(stalled))
+    client = jev_client.Client(httpx.MockTransport(stalled))
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(jev.decide, "Jeff", matches(GROUPS, "Jeff"), call(client))
         assert entered.wait(1)
         started = time.monotonic()
         client.close()
         assert time.monotonic() - started < 1.0 and cancelled.is_set()
-        with pytest.raises(jev.JevError, match="shutting down"):
+        with pytest.raises(jev_client.JevError, match="shutting down"):
             future.result(timeout=1)
-    with pytest.raises(jev.JevError, match="shutting down"):
+    with pytest.raises(jev_client.JevError, match="shutting down"):
         jev.decide("Jeff", matches(GROUPS, "Jeff"), call(client))
     client.close()
 
@@ -225,7 +226,7 @@ def test_formatting_inserts_breaks_and_bullets_and_keeps_every_word() -> None:
         "S04": {"continues": 0.3, "new_paragraph": 0.7, "list_item": 0.0},
     }
     requests, handler = answering(lambda name, _: plan[name])
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         formatted = text_edits.apply(text, jev.format_edits(text, call(client)).changes)
     assert (
         formatted == "Two things.\n\n- First, the key.\n- And the model.\n- Second, the port.\n\n"
@@ -236,7 +237,7 @@ def test_formatting_inserts_breaks_and_bullets_and_keeps_every_word() -> None:
     assert "S00" in requests[0]["questions"]
     weak = {name: {"continues": 0.5, "new_paragraph": 0.5, "list_item": 0.0} for name in plan}
     with closing(
-        jev.Client(httpx.MockTransport(answering(lambda name, _: weak[name])[1]))
+        jev_client.Client(httpx.MockTransport(answering(lambda name, _: weak[name])[1]))
     ) as client:
         assert jev.format_edits(text, call(client)).changes == ()
         context = call(client)
@@ -252,7 +253,7 @@ def test_correction_failure_returns_exact_raw_and_skips_later_stages() -> None:
         seen.append(request)
         return httpx.Response(200, json={"answers": {"o0": {}}})
 
-    with closing(jev.Client(httpx.MockTransport(malformed))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(malformed))) as client:
         result = process_text(
             raw,
             GROUPS,
@@ -261,7 +262,7 @@ def test_correction_failure_returns_exact_raw_and_skips_later_stages() -> None:
             cleanup=True,
             key="ts-key",
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
         assert result.text == raw
         assert result.correction.status == "failed" and result.formatting.status == "skipped"
@@ -275,7 +276,7 @@ def test_correction_failure_returns_exact_raw_and_skips_later_stages() -> None:
             formatting=True,
             key=None,
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
         assert missing.text == raw and missing.correction.attempts == 0
         assert missing.correction.error == "no TypeSafe API key" and len(seen) == 1
@@ -287,7 +288,7 @@ def test_formatter_failure_preserves_successful_correction() -> None:
             return httpx.Response(401, text="invalid key")
         return answering(lambda *_: {"i0": 1.0})[1](request)
 
-    with closing(jev.Client(httpx.MockTransport(respond))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
             "Jeff is fast. Next topic.",
             GROUPS,
@@ -295,7 +296,7 @@ def test_formatter_failure_preserves_successful_correction() -> None:
             formatting=True,
             key="ts-key",
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
     assert result.text == "Jev is fast. Next topic."
     assert result.correction.status == "succeeded" and result.correction.replacements == 1
@@ -315,7 +316,7 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
         seen_pending.append(store.history_version())
         return handler(request)
 
-    with closing(jev.Client(httpx.MockTransport(respond))) as network:
+    with closing(jev_client.Client(httpx.MockTransport(respond))) as network:
         service = Entune(store, [StubProvider()], jev_client=network)
         with TestClient(create_app(service), base_url="http://localhost") as client:
             settings = client.get("/api/settings").json()["jev"]
@@ -411,7 +412,7 @@ def test_all_three_stages_share_one_deadline() -> None:
         await asyncio.sleep(0.08)
         return answering(lambda *_: {"i0": 1.0})[1](request)
 
-    with closing(jev.Client(httpx.MockTransport(respond))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         started = time.monotonic()
         result = process_text(
             "Um um Jeff is fast. Next topic.",
@@ -421,7 +422,7 @@ def test_all_three_stages_share_one_deadline() -> None:
             cleanup=True,
             key="ts-key",
             client=client,
-            policy=jev.Policy(total_seconds=0.2, attempt_seconds=1.0),
+            policy=jev_client.Policy(total_seconds=0.2, attempt_seconds=1.0),
         )
         assert time.monotonic() - started < 0.6
     assert result.text == "Um Jev is fast. Next topic."
@@ -443,14 +444,14 @@ def test_network_timeout_retries_but_honors_retry_after_dates() -> None:
             raise httpx.ReadTimeout("stalled ts-key")
         return answering(lambda *_: {"i0": 1.0})[1](request)
 
-    with closing(jev.Client(httpx.MockTransport(respond))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         context = call(client)
         assert jev.decide("Jeff", matches(GROUPS, "Jeff"), context)[0].edit is not None
         assert context.attempts == 2
     from email.utils import formatdate
 
-    assert 9 <= jev._retry_after(formatdate(time.time() + 10, usegmt=True)) <= 10
-    assert jev._retry_after("malformed") == 0
+    assert 9 <= jev_client._retry_after(formatdate(time.time() + 10, usegmt=True)) <= 10
+    assert jev_client._retry_after("malformed") == 0
 
 
 def test_postprocessing_exceptions_cannot_erase_speech_or_skip_release(
@@ -498,7 +499,7 @@ def test_final_write_failure_preserves_completed_stage_evidence(
 
         monkeypatch.setattr(store, "finish_processing", fail_final)
         with closing(
-            jev.Client(httpx.MockTransport(answering(lambda *_: {"i0": 1.0})[1]))
+            jev_client.Client(httpx.MockTransport(answering(lambda *_: {"i0": 1.0})[1]))
         ) as network:
             service = Entune(store, [StubProvider()], jev_client=network)
             with TestClient(create_app(service), base_url="http://localhost") as client:
@@ -547,7 +548,7 @@ def test_formatting_with_dictionary_disabled_does_not_apply_even_direct_mappings
     requests, handler = answering(
         lambda *_: {"continues": 0.0, "new_paragraph": 1.0, "list_item": 0.0}
     )
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             "Jeff is fast. Next topic.",
             (group("Jev", "Jeff", direct=True),),
@@ -555,7 +556,7 @@ def test_formatting_with_dictionary_disabled_does_not_apply_even_direct_mappings
             formatting=True,
             key="ts-key",
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
     assert result.text == "Jeff is fast.\n\nNext topic."
     assert len(requests) == 1 and "sentences" in requests[0]["state"]
@@ -568,7 +569,7 @@ def test_identical_output_senses_do_not_pool_scores() -> None:
     from tests.dictionary_samples import CLOUD
 
     requests, handler = answering(lambda *_: {"i0": 0.4, "i1": 0.3, "i2": 0.3})
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         decisions = jev.decide(
             "Ask cloud here.", matches((CLOUD,), "Ask cloud here."), call(client)
         )
@@ -589,7 +590,7 @@ def test_jif_uses_highest_eligible_meaning_even_when_scores_are_close(
     expected: str,
 ) -> None:
     _, handler = answering(lambda *_: scores)
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             "Use Jif here.",
             (JEV,),
@@ -597,7 +598,7 @@ def test_jif_uses_highest_eligible_meaning_even_when_scores_are_close(
             formatting=False,
             key="ts-key",
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
     assert result.text == expected and result.correction.abstained == 0
 
@@ -617,7 +618,7 @@ def test_exact_tie_honors_validated_provider_choice_not_json_or_candidate_order(
             },
         )
 
-    with closing(jev.Client(httpx.MockTransport(respond))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         decisions = jev.decide("Jif", matches((JEV,), "Jif"), call(client))
     assert decisions[0].edit is not None and decisions[0].edit.text == "GIF"
     assert decisions[0].meaning_ids == ("c_gif",)
@@ -627,7 +628,7 @@ def test_shorter_interpretation_can_win_over_phrase_and_edits_do_not_cascade() -
     groups = (group("Agent Backbone", "agent back bone"), group("backbone", "back bone"))
     requests, handler = answering(lambda *_: {"i1": 1.0})
     raw = "😀 Restart agent back bone."
-    with closing(jev.Client(httpx.MockTransport(handler))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             raw,
             groups,
@@ -635,7 +636,7 @@ def test_shorter_interpretation_can_win_over_phrase_and_edits_do_not_cascade() -
             formatting=False,
             key="ts-key",
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
     assert result.text == "😀 Restart agent backbone."
     assert requests[0]["state"] == {
@@ -655,7 +656,7 @@ def test_direct_only_needs_no_request_but_failure_in_mixed_text_still_returns_al
     def failure(_: httpx.Request) -> httpx.Response:
         return httpx.Response(401, text="unavailable")
 
-    with closing(jev.Client(httpx.MockTransport(failure))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(failure))) as client:
         result = process_text(
             "Open dictim.",
             (direct,),
@@ -663,7 +664,7 @@ def test_direct_only_needs_no_request_but_failure_in_mixed_text_still_returns_al
             formatting=False,
             key=None,
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
         assert result.text == "Open Entune." and result.correction.attempts == 0
         assert result.correction.direct_replacements == 1 and result.correction.decisions == 0
@@ -675,7 +676,7 @@ def test_direct_only_needs_no_request_but_failure_in_mixed_text_still_returns_al
             formatting=False,
             key="ts-key",
             client=client,
-            policy=jev.Policy(),
+            policy=jev_client.Policy(),
         )
     assert result.text == raw and result.correction.status == "failed"
     assert result.correction.replacements == result.correction.direct_replacements == 0
@@ -696,9 +697,9 @@ def test_explicit_terminal_error_never_retries_even_with_429(body: dict[str, obj
         requests.append(request)
         return httpx.Response(429, json=body)
 
-    with closing(jev.Client(httpx.MockTransport(respond))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         context = call(client)
-        with pytest.raises(jev.JevError):
+        with pytest.raises(jev_client.JevError):
             jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
     assert context.attempts == 1 and len(requests) == 1
 

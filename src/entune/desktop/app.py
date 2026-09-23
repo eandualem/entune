@@ -17,7 +17,7 @@ from entune.audio.recorder import Capture, Recorder, Sink
 from entune.desktop.engine import ShortcutEngine
 from entune.desktop.platform import Microphone, Platform
 from entune.operations import Busy, Operation
-from entune.processing import notice
+from entune.processing.results import notice
 from entune.providers.cloud.contracts import Upload
 from entune.service import Entune, NoDefaultModel, UnknownModel
 from entune.store import Recording

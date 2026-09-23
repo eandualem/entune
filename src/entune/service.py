@@ -15,7 +15,7 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
-from entune import jev, llm, processing
+from entune import llm
 from entune.audio.formats import sniff_mime
 from entune.builds import BuildInput, DictionaryBuilds, Source
 from entune.desktop import shortcuts
@@ -26,7 +26,11 @@ from entune.dictionary.changes import Proposal
 from entune.dictionary.corrections import Correction, add_corrections, read_entries
 from entune.dictionary.entries import Dictionary, Groups
 from entune.operations import Busy, Operation, Operations
-from entune.processing import Processed, Stage, process_text
+from entune.processing import results
+from entune.processing.jev_client import Client as JevClient
+from entune.processing.jev_client import Policy
+from entune.processing.pipeline import process_text
+from entune.processing.results import Processed, Stage
 from entune.providers.cloud.contracts import Streams, Upload
 from entune.providers.contracts import Clip, Failure, Provider, Transcript
 from entune.providers.local.contracts import Downloadable, LocalModelStatus
@@ -159,11 +163,11 @@ class Entune:
         providers: list[Provider],
         llm_call: llm.Caller = llm.call_model,
         *,
-        jev_client: jev.Client | None = None,
+        jev_client: JevClient | None = None,
     ) -> None:
         self.store = store
         self.providers = providers
-        self._jev_client = jev_client or jev.Client()
+        self._jev_client = jev_client or JevClient()
         self._listeners: list[Callable[[], None]] = []
         self._capture_listeners: list[Callable[[], None]] = []
         self._dictionary_lock = threading.RLock()  # dictionary() may save inside a write
@@ -414,11 +418,11 @@ class Entune:
             self.store.set_setting(JEV_CLEANUP_KEY, "1" if cleanup else None)
         self._changed()
 
-    def jev_policy(self) -> jev.Policy:
+    def jev_policy(self) -> Policy:
         saved = self.store.get_setting(JEV_POLICY_KEY)
-        return jev.Policy(**json.loads(saved)) if saved else jev.Policy()
+        return Policy(**json.loads(saved)) if saved else Policy()
 
-    def set_jev_policy(self, policy: jev.Policy) -> None:
+    def set_jev_policy(self, policy: Policy) -> None:
         self.store.set_setting(JEV_POLICY_KEY, json.dumps(asdict(policy)))
         self._changed()
 
@@ -970,7 +974,7 @@ class Entune:
                 raw = result.text if isinstance(result, Transcript) else None
                 status = self.jev_status()
                 initial = (
-                    processing.pending(
+                    results.pending(
                         raw,
                         contextual=status.dictionary,
                         formatting=status.formatting,
@@ -1014,12 +1018,12 @@ class Entune:
                     )
                 except CancelledError:
                     self.store.finish_processing(
-                        attempt_id, processing.interrupted(latest, "Cancelled")
+                        attempt_id, results.interrupted(latest, "Cancelled")
                     )
                     self.store.cancel_recording(recording.id, attempt_id)
                     raise
                 except Exception as exc:
-                    processed = processing.failed(
+                    processed = results.failed(
                         latest.text,
                         latest,
                         f"{type(exc).__name__}: {exc}",
@@ -1030,7 +1034,7 @@ class Entune:
                 except Exception as exc:
                     # Completed stages were saved individually. A final-write failure
                     # must never revert a successful earlier enhancement to raw speech.
-                    processed = processing.interrupted(
+                    processed = results.interrupted(
                         latest,
                         f"Could not save processing: {type(exc).__name__}: {exc}",
                     )
