@@ -614,13 +614,24 @@ class Dictum:
         return provider, api_key, model
 
     def start_dictionary_build(
-        self, source: Source, *, scope: str = "new", audio_ids: list[str] | None = None
+        self,
+        source: Source,
+        *,
+        mode: str,
+        scope: str = "new",
+        audio_ids: list[str] | None = None,
     ) -> dict[str, object]:
+        # Generation and refinement are different jobs; the workflow names which one.
+        if mode not in {"generate", "refine"}:
+            raise ValueError("Choose generate or refine")
         if scope not in {"new", "all"}:
             raise ValueError("Choose new or all history")
         previous = self._builds.status()
         state = self._builds.start(
-            lambda: self._build_input(source, scope=scope, audio_ids=audio_ids)
+            lambda: replace(
+                self._build_input(source, scope=scope, audio_ids=audio_ids),
+                mode="generate" if mode == "generate" else "refine",
+            )
         )
         if previous.get("phase") in {"failed", "cancelled"}:
             self.store.finish_learning(

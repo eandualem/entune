@@ -184,9 +184,11 @@ provider's response verbatim.
 Speech models mishear names, products and everyday words. The Dictionary tab groups
 recognized forms with their possible meanings, definitions and exact output spellings.
 Explicit associations decide which meanings can compete for a form; context decides
-which one applies. Edit groups directly, or ask the configured language model to build
-or refine them from this speech model's raw history. Additions, before/after updates,
-and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
+which one applies. Edit groups directly, or ask the configured language model to
+**generate** new groups from this speech model's raw history, or to **refine** the
+current dictionary by comparing each raw transcript with what the dictionary step made
+of it. Generation only adds; refinement can add, revise or remove learned groups.
+Additions, before/after updates, and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
 then apply the remainder once. Dismissing a proposal does not delete active knowledge.
 
 Learned associations stay specific to the speech model. Pinning shares and protects a
@@ -217,8 +219,10 @@ retry the completed portion. No changes are applied automatically.
 
 Default history refinement uses up to 300 recent, unprocessed attempts for the selected
 speech model; “All history” deliberately includes older/previously examined data.
-Original speech and its processing records are supplied as distinct evidence, not
-confirmed intended wording. Applying at least one actual change marks only fully
+Refinement pairs each raw transcript with the dictionary step's recorded result and
+decisions, which show what the system did, not confirmed intended wording. Filler
+reduction, formatting and the delivered text are never sent. Older attempts without a
+recorded result, and freshly transcribed audio, are sent as raw text only. Applying at least one actual change marks only fully
 covered input IDs learned for that model. Applying none leaves them eligible. A
 partially processed transcript remains eligible. New dictations after selection and
 other models' boundaries are unaffected. Pinned definitions can be reviewed and updated;
@@ -228,7 +232,7 @@ the agent cannot delete pinned meanings or remove any existing pinned variant.
 ### Jev decides each match in context
 
 With a [TypeSafe](https://typesafe.ai) key and contextual correction enabled, **Jev**
-classifies eligible meanings using the original transcript. Jev generates no replacement
+classifies eligible meanings from the words around each occurrence. Jev generates no replacement
 text: Dictum applies the selected stored spelling. A literal Jeff or GIF is a meaning in
 its own right. Every valid response selects the highest-scoring eligible meaning, even
 when scores are close. Exact ties use Jev's declared tied winner. Invalid responses
@@ -302,10 +306,12 @@ Enabled features determine what is sent out:
   mode starts uploading during recording. Local Whisper.cpp and Parakeet transcribe
   on this machine, without sending audio to a speech service.
 - **Dictionary builds:** the chosen Anthropic or OpenAI model receives raw source
-  transcripts, relevant processing records, and the pinned/working confusion groups, including definitions and
-  personal context. Refinement sends the current dictionary again with each chunk.
-- **Jev correction:** TypeSafe receives the original transcript, matched occurrences
-  and their eligible meanings, spellings, definitions and personal context.
+  transcripts (for refinement, beside the dictionary step's recorded result) and the
+  pinned/working confusion groups, including definitions and personal context. Each
+  chunk sends the current working dictionary again.
+- **Jev correction:** TypeSafe receives up to 160 characters of the original transcript
+  either side of each matched occurrence, and each eligible meaning's spelling,
+  definition and personal context.
   **Jev filler reduction** sends its input text and code-proposed deletion spans;
   **Jev formatting** sends the text being formatted and its sentence spans.
   Turning on any of these features sends text even when speech recognition is local.

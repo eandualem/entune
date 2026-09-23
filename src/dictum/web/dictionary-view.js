@@ -15,17 +15,18 @@ export function createDictionary({ getModel, getSettings }) {
   let proposalModel = null;
   const dictionaryBox = el("dictionary");
   const buildBtn = el("build-dictionary");
+  const refineBtn = el("refine-dictionary");
   const buildStatus = el("build-status");
   const proposalPanel = el("proposal");
   const proposalBody = el("proposal-body");
   const onboarding = createAudioOnboarding({
     getModel, getSettings,
     onBuild(selection) { return builds.start("audio", selection); },
-    onBusy(value) { importing = value; buildBtn.disabled = importing || building; },
+    onBusy(value) { importing = value; buildBtn.disabled = refineBtn.disabled = importing || building; },
   });
 
   const builds = createDictionaryBuild({
-    onBusy(value) { building = value; buildBtn.disabled = importing || building; onboarding.setBuildBusy(value); lockEditors(); },
+    onBusy(value) { building = value; buildBtn.disabled = refineBtn.disabled = importing || building; onboarding.setBuildBusy(value); lockEditors(); },
     onProposal(value) { if (value) renderProposal(value); else proposalPanel.hidden = true; },
     onAccepted: () => loadDictionary(false),
     getSelected: () => proposalChanges.filter(c => c.included).map(c => ({id: c.id, after: c.after})),
@@ -222,16 +223,18 @@ export function createDictionary({ getModel, getSettings }) {
     if (rows.length === 0) {
       const none = document.createElement("div");
       none.className = "entry-row none";
-      none.textContent = filter === "learned" ? "Nothing learned for this model yet. Build from history proposes a list." : "Nothing here yet.";
+      none.textContent = filter === "learned" ? "Nothing learned for this model yet. Generate from history proposes a list." : "Nothing here yet.";
       rows.push(none);
     }
     el("dict-rows").replaceChildren(...rows);
     el("filter-learned").textContent = model ? `Learned · ${model.label.replace(" / ", " · ")}` : "Learned";
     el("pin-all").hidden = learned.length === 0;
-    buildBtn.textContent = learned.length ? "Refine from history" : "Build from history";
     buildBtn.title = dictionaryModel
-      ? `Send this model's recent transcripts to ${dictionaryModel} and review a proposal; nothing is saved before Accept`
+      ? `Propose new entries from this model's transcripts with ${dictionaryModel}; nothing is saved before you apply`
       : "Needs an Anthropic or OpenAI key in Settings › Providers";
+    refineBtn.title = dictionaryModel
+      ? `Review how the dictionary behaved in this model's dictations with ${dictionaryModel}; nothing is saved before you apply`
+      : buildBtn.title;
     if (jsonText !== undefined) dictionaryBox.value = jsonText;
     lockEditors();
   }
@@ -368,7 +371,8 @@ export function createDictionary({ getModel, getSettings }) {
     el("accept-proposal").textContent = included ? `Apply ${included} changes` : "Finish without changes";
     if (!proposalChanges.length) proposalBody.append(node("p", "No changes proposed. Finishing leaves these inputs eligible for another learning run."));
   }
-  buildBtn.addEventListener("click", () => builds.start("history", {scope: el("learning-scope").value}));
+  buildBtn.addEventListener("click", () => builds.start("history", {mode: "generate", scope: el("learning-scope").value}));
+  refineBtn.addEventListener("click", () => builds.start("history", {mode: "refine", scope: el("learning-scope").value}));
 
   return { load: loadDictionary, showHelp, refreshAudio: () => onboarding.load() };
 }

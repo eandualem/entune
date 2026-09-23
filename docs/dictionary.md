@@ -93,7 +93,13 @@ Editing an output spelling or casing clears its approvals; save that edit before
 approving the revised mapping.
 
 Direct-only dictation needs no contextual request (cleanup/formatting may make their own).
-Mixed dictation still makes one request. Exact unchanged outputs need no decision call.
+Mixed dictation still makes one request, with one focused Choice per occurrence. The
+state holds only an excerpt of up to 160 characters either side, the span marked; each
+option states its span, output spelling, definition and personal usage directly.
+`tools/jev_eval.py` compares this request with the previous format, a variant that
+adds the whole transcript, and one with generic contrastive examples, on labelled
+occurrences with a fixed dictionary. It renders requests offline and calls Jev only
+with `--run`. Exact unchanged outputs need no decision call.
 When dictionary correction is off, the entire dictionary stage is disabled, including
 approved direct mappings. Explicit safe-copy recovery is a separate user action. Historical unconditional results retain
 their old method label and are not represented as approved direct work.
@@ -234,10 +240,23 @@ quality. Paid evaluation needs separate authorization.
 
 ## Generation, editing and migration
 
-Default refinement uses up to 300 recent, not-yet-covered attempts for this speech model;
-explicit All history includes older data. Original speech and completed processing
-outputs, stage outcomes and selection provenance are distinct evidence: generated
-corrections are not ground truth. Audio learning uses selected saved/imported recordings,
+Learning runs in one of two explicit modes, chosen by the button that starts it, never
+inferred from whether a dictionary exists. **Generate** sends raw transcripts and the
+current dictionary, and accepts additions only: new groups, which may link a new form to
+an existing meaning by ID. **Refine** sends the current effective dictionary and, for
+each dictation, the raw transcript beside the text right after the dictionary step and
+that step's per-span decisions (method and meaning IDs). The pair is rebuilt from the
+step's recorded edits; it exists only when the step ran and recorded them. Failed or
+disabled steps, older attempts without recorded edits, `legacy_final` history and
+temporary audio transcripts are labelled and sent raw-only. Filler reduction, formatting
+and delivered text are never sent. A decision naming a meaning that is no longer in the
+dictionary is marked as such. Machine corrections are evidence of what the system did,
+not ground truth. Refinement accepts additions, complete revisions of named groups and
+removals of learned groups, each group named once.
+
+Default learning uses up to 300 recent, not-yet-covered attempts for this speech model;
+explicit All history includes older data. Generation and refinement share that coverage:
+applying either consumes the inputs it fully covered. Audio learning uses selected saved/imported recordings,
 of any age. Temporary target-model transcripts stay in memory and are reused on retry;
 they never enter the database or ordinary history. Applying, discarding, replacing the
 workflow or closing the app clears them, while source audio remains. The generation
@@ -246,8 +265,10 @@ The configured model is honored; suggestions remain Sonnet 5 and GPT-5.4 mini wi
 medium reasoning where supported. No generation or classification model rewrites dictation.
 
 Sequential steps contain about 24,000 transcript characters; the full growing dictionary
-adds to that request size. Each step can add groups, revise complete groups or explicitly
-remove learned group IDs. Unmentioned knowledge remains. New temporary IDs are assigned
+adds to that request size. A long transcript split across steps carries only its own
+span of the dictionary result. Step numbers stay in the app for progress and resume. Each
+reply may use up to 32,000 output tokens, including the model's thinking; a reply cut at
+that limit fails its step visibly. Unmentioned knowledge remains. New temporary IDs are assigned
 persistent IDs once; subsequent steps and editor changes retain them. Pinned definitions
 and usage can be proposed for review, but existing pinned variants/meanings cannot be
 removed. Separate editing and dictation are blocked from generation through review;

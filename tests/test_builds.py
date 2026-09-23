@@ -44,7 +44,7 @@ def test_competing_sources_and_named_actions_share_one_job(
         started.set()
         while not release.is_set():
             await asyncio.sleep(0.01)
-        return '{"groups": [], "remove": []}'
+        return '{"additions": []}'
 
     monkeypatch.setattr(app._builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
@@ -52,7 +52,9 @@ def test_competing_sources_and_named_actions_share_one_job(
 
     def start(source: str) -> int:
         barrier.wait()
-        return client.post("/api/dictionary/build", json={"source": source}).status_code
+        return client.post(
+            "/api/dictionary/build", json={"mode": "generate", "source": source}
+        ).status_code
 
     try:
         with ThreadPoolExecutor(2) as pool:
@@ -67,10 +69,17 @@ def test_competing_sources_and_named_actions_share_one_job(
     ready = wait_for_build(client)
     assert ready["phase"] == "ready"
     assert "proposal" not in client.get("/api/dictionary/build").json()
-    assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 409
+    assert (
+        client.post(
+            "/api/dictionary/build", json={"mode": "generate", "source": "history"}
+        ).status_code
+        == 409
+    )
     assert client.post(f"/api/dictionary/build/{ready['id']}/cancel").status_code == 409
     assert client.delete(f"/api/dictionary/build/{ready['id']}").status_code == 200
-    next_job = client.post("/api/dictionary/build", json={"source": "history"}).json()
+    next_job = client.post(
+        "/api/dictionary/build", json={"mode": "generate", "source": "history"}
+    ).json()
     for method, suffix in (("POST", "/cancel"), ("POST", "/accept"), ("DELETE", ""), ("GET", "")):
         assert (
             client.request(method, f"/api/dictionary/build/{ready['id']}{suffix}").status_code
@@ -97,7 +106,9 @@ def test_generation_cancel_closes_request_before_publishing_and_discards_text(
     monkeypatch.setattr(app._builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
     original = client.get("/api/dictionary").content
-    state = client.post("/api/dictionary/build", json={"source": "audio"}).json()
+    state = client.post(
+        "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
+    ).json()
     assert entered.wait(2)
     before = time.monotonic()
     assert client.post(f"/api/dictionary/build/{state['id']}/cancel").status_code == 200
@@ -128,12 +139,19 @@ def test_cancel_during_speech_waits_for_cleanup_and_never_starts_next_clip(
     monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
     monkeypatch.setattr(app._builds, "_call", forbidden)
     client = TestClient(create_app(app), base_url="http://localhost")
-    state = client.post("/api/dictionary/build", json={"source": "audio"}).json()
+    state = client.post(
+        "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
+    ).json()
     try:
         assert entered.wait(2)
         cancelled = client.post(f"/api/dictionary/build/{state['id']}/cancel")
         assert cancelled.json()["phase"] == "cancelling"
-        assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 409
+        assert (
+            client.post(
+                "/api/dictionary/build", json={"mode": "generate", "source": "history"}
+            ).status_code
+            == 409
+        )
         assert client.delete(f"/api/dictionary/build/{state['id']}").status_code == 409
     finally:
         release.set()
@@ -154,11 +172,11 @@ def test_cancel_between_chunks_stops_refinement_and_reports_full_input_size(
         assert state["inputCharacters"] == calls[0] > llm.BATCH_CHARS
         assert state["steps"] == 2
         app.cancel_dictionary_build(str(state["id"]))
-        return '{"groups": [], "remove": []}'
+        return '{"additions": []}'
 
     monkeypatch.setattr(app._builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
-    client.post("/api/dictionary/build", json={"source": "audio"})
+    client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
     partial = wait_for_build(client)
     assert partial["phase"] == "ready" and partial["outcome"] == "stopped"
     assert partial["completedBatches"] == 1 and partial["steps"] == 2
@@ -174,7 +192,7 @@ def test_failure_scrubs_keys_and_keeps_originals(
 
     monkeypatch.setattr(app._builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
-    client.post("/api/dictionary/build", json={"source": "history"})
+    client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
     state = wait_for_build(client)
     assert state["phase"] == "failed" and "[redacted]" in state["error"]
     assert "build-secret" not in state["error"] and "proposal" not in state
@@ -196,7 +214,7 @@ def test_shutdown_is_bounded_and_drains_a_blocked_speech_owner(
     monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
     monkeypatch.setattr(app.providers[0], "close", closed.set, raising=False)
     client = TestClient(create_app(app), base_url="http://localhost")
-    client.post("/api/dictionary/build", json={"source": "audio"})
+    client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
     try:
         assert entered.wait(2)
         before = time.monotonic()
@@ -205,7 +223,12 @@ def test_shutdown_is_bounded_and_drains_a_blocked_speech_owner(
         assert 1.8 <= elapsed < 2.5  # lazy Jev client has no active loop to drain
         assert not closed.is_set()
         assert "still draining" in str(app.desktop_status()["lastError"])
-        assert client.post("/api/dictionary/build", json={"source": "audio"}).status_code == 409
+        assert (
+            client.post(
+                "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
+            ).status_code
+            == 409
+        )
     finally:
         release.set()
     assert closed.wait(2)
@@ -228,7 +251,7 @@ def test_shutdown_deadline_also_bounds_waiting_for_a_source_snapshot(
 
     monkeypatch.setattr(app, "_build_input", slow_snapshot)
     with ThreadPoolExecutor(1) as pool:
-        started = pool.submit(app.start_dictionary_build, "history")
+        started = pool.submit(app.start_dictionary_build, "history", mode="generate")
         try:
             assert entered.wait(1)
             before = time.monotonic()
