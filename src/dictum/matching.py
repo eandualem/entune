@@ -111,7 +111,7 @@ class Matcher:
             body = r"\s+".join(map(re.escape, surface.split()))
             pattern = re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
             approved = direct.get(surface, set())
-            self._index.setdefault(key(first.group()), []).append(
+            self._index.setdefault(_folded(first.group()), []).append(
                 (
                     pattern,
                     tuple(meanings[mid] for mid in sorted(ids)),
@@ -122,10 +122,17 @@ class Matcher:
     def matches(self, text: str) -> list[Match]:
         found = []
         for word in re.finditer(r"\w+", text):
-            for pattern, meanings, direct in self._index.get(key(word.group()), ()):
+            for pattern, meanings, direct in self._index.get(_folded(word.group()), ()):
                 if match := pattern.match(text, word.start()):
                     found.append(Match(match.start(), match.end(), meanings, direct))
         return sorted(found, key=lambda m: (m.start, m.end))
+
+
+def _folded(word: str) -> str:
+    # A lookup key only: casefold also joins pairs IGNORECASE matches (final and
+    # medial sigma, micro sign and mu); a wider join (sharp s and ss) is rejected
+    # by the regex that confirms each match.
+    return key(word).casefold()
 
 
 @lru_cache(maxsize=8)

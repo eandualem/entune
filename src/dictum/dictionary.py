@@ -274,7 +274,7 @@ def validate(dictionary: Dictionary) -> Dictionary:
     return dictionary
 
 
-def parse(text: str) -> Dictionary:
+def parse(text: str, legacy_model: str | None = None) -> Dictionary:
     try:
         data = json.loads(text or "{}")
     except json.JSONDecodeError as exc:
@@ -284,7 +284,7 @@ def parse(text: str) -> Dictionary:
     if "version" not in data:
         from dictum.dictionary_legacy import convert
 
-        return validate(convert(data))
+        return validate(convert(data, legacy_model))
     obj = _object(data, "dictionary", {"version", "pinned", "learned"})
     if type(obj["version"]) is not int or obj["version"] != VERSION:
         raise ValueError(f"Unsupported dictionary version: {obj['version']!r}")
@@ -335,12 +335,12 @@ def _backup(path: Path) -> None:
                 ) from None
 
 
-def load(data_dir: Path) -> Dictionary:
+def load(data_dir: Path, legacy_model: str | None = None) -> Dictionary:
     path = data_dir / FILENAME
     if not path.exists():
         return EMPTY
     text = path.read_text(encoding="utf-8")
-    dictionary = parse(text)
+    dictionary = parse(text, legacy_model)
     if "version" not in json.loads(text):
         save(data_dir, dictionary)
     return dictionary

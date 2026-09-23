@@ -97,13 +97,21 @@ def _convert(entries: tuple[Correction, ...], scope: str) -> Groups:
     return tuple(groups)
 
 
-def convert(data: dict[str, object]) -> Dictionary:
+def convert(data: dict[str, object], legacy_model: str | None = None) -> Dictionary:
     if "terms" in data or "replacements" in data:
         return Dictionary(_convert(read_entries(data, "dictionary"), "pinned"))
     if unknown := set(data) - {"pinned", "learned", "agents"}:
         raise ValueError(f"Unknown keys: {', '.join(sorted(unknown))}")
     learned = data.get("learned", {})
-    if not isinstance(learned, dict) or "terms" in learned or "replacements" in learned:
+    if isinstance(learned, dict) and ("terms" in learned or "replacements" in learned):
+        # The earlier single learned list belongs to the default model of its time.
+        if legacy_model is None:
+            raise ValueError(
+                "learned is one list for every model (the earlier form); set a default model"
+                " and it moves under that model, or key it by provider/model"
+            )
+        learned = {legacy_model: learned}
+    if not isinstance(learned, dict):
         raise ValueError("learned must be an object keyed by speech model")
     return Dictionary(
         (

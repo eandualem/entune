@@ -506,7 +506,7 @@ class Dictum:
     def dictionary(self) -> Dictionary:
         # A file in an earlier form is rewritten in the current one (load does it once).
         with self._dictionary_lock:
-            return dictionary_file.load(self.store.data_dir)
+            return dictionary_file.load(self.store.data_dir, self.default_model())
 
     def dictionary_text(self) -> str:
         return dictionary_file.dumps(self.dictionary())
