@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import Any
 
+import httpx
+import httpx2
 import pytest
 from mistralai.client.utils import RetryConfig
 from pydantic_ai.exceptions import ModelHTTPError
@@ -433,6 +435,18 @@ def request(
     )
 
 
+class Finished(FunctionModel):
+    """A scripted model that, like a provider, says each reply finished normally."""
+
+    finish: Any = "stop"
+
+    @asynccontextmanager
+    async def request_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[StreamedResponse]:
+        async with super().request_stream(*args, **kwargs) as response:
+            response.finish_reason = self.finish
+            yield response
+
+
 def scripted(*replies_: str) -> tuple[FunctionModel, list[int]]:
     calls: list[int] = []
 
@@ -440,7 +454,7 @@ def scripted(*replies_: str) -> tuple[FunctionModel, list[int]]:
         calls.append(len(messages))
         yield replies_[len(calls) - 1]
 
-    return FunctionModel(stream_function=stream), calls
+    return Finished(stream_function=stream), calls
 
 
 def test_a_reply_breaking_the_schema_is_sent_back_with_the_rule_and_the_person_told() -> None:
@@ -469,14 +483,8 @@ def test_rules_the_schema_cannot_hold_are_checked_and_fixed_at_most_twice() -> N
 
 
 def test_a_reply_cut_at_the_output_limit_is_never_retried() -> None:
-    class Cut(FunctionModel):
-        @asynccontextmanager
-        async def request_stream(
-            self, *args: Any, **kwargs: Any
-        ) -> AsyncIterator[StreamedResponse]:
-            async with super().request_stream(*args, **kwargs) as response:
-                response.finish_reason = "length"
-                yield response
+    class Cut(Finished):
+        finish = "length"
 
     calls: list[int] = []
 
@@ -487,6 +495,117 @@ def test_a_reply_cut_at_the_output_limit_is_never_retried() -> None:
     with pytest.raises(ValueError, match="32000-token output limit"):
         asyncio.run(suggestion_model.call_model(request(), Cut(stream_function=stream)))
     assert calls == [1]
+
+
+def openai_stream(*kinds: str) -> httpx2.Response:
+    """An OpenAI Responses stream carrying a valid reply, ending as `kinds` say."""
+    text = json.dumps({"additions": []})
+
+    def response(status: str) -> dict[str, Any]:
+        message = {"type": "output_text", "text": text, "annotations": []}
+        return {
+            "id": "r1",
+            "object": "response",
+            "created_at": 0,
+            "model": "gpt-6-luna",
+            "status": status,
+            "output": [
+                {
+                    "type": "message",
+                    "id": "m1",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [message],
+                }
+            ],
+            "parallel_tool_calls": False,
+            "tool_choice": "auto",
+            "tools": [],
+        }
+
+    events: list[dict[str, Any]] = [
+        {"type": "response.created", "response": response("in_progress")},
+        {
+            "type": "response.output_text.delta",
+            "item_id": "m1",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": text,
+        },
+    ]
+    if "completed" in kinds:
+        events.append({"type": "response.completed", "response": response("completed")})
+    if "failed" in kinds:
+        failed = {**response("failed"), "error": {"code": "server_error", "message": "boom"}}
+        events.append({"type": "response.failed", "response": failed})
+    body = "".join(
+        f"event: {e['type']}\ndata: {json.dumps({**e, 'sequence_number': i})}\n\n"
+        for i, e in enumerate(events)
+    )
+    return httpx2.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+
+@pytest.mark.parametrize("ending", ["completed", "cut", "failed"])
+def test_only_a_stream_the_provider_finished_is_used_and_it_carries_the_saved_key(
+    monkeypatch: pytest.MonkeyPatch, ending: str
+) -> None:
+    monkeypatch.setenv("OPENAI_CUSTOM_HEADERS", "Authorization: Bearer from-environment")
+    sent: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request.headers["authorization"])
+        return openai_stream(ending)
+
+    monkeypatch.setattr(
+        providers,
+        "_http2",
+        lambda header, value: httpx2.AsyncClient(
+            transport=httpx2.MockTransport(respond),
+            event_hooks=providers._credential(header, value),
+        ),
+    )
+    run = suggestion_model.call_model(request())
+    if ending == "completed":
+        assert json.loads(asyncio.run(run)) == {"additions": []}
+    else:
+        with pytest.raises(ValueError, match="did not finish its reply"):
+            asyncio.run(run)
+    assert sent == ["Bearer k"]  # the saved key, not the environment's
+
+
+@pytest.mark.parametrize(
+    "provider,variable,header,expected",
+    [
+        ("anthropic", "ANTHROPIC_CUSTOM_HEADERS", "x-api-key", "k"),
+        ("groq", "GROQ_CUSTOM_HEADERS", "authorization", "Bearer k"),
+    ],
+)
+def test_environment_headers_never_replace_the_saved_key(
+    monkeypatch: pytest.MonkeyPatch, provider: str, variable: str, header: str, expected: str
+) -> None:
+    monkeypatch.setenv(variable, f"{header}: from-environment")
+    sent: list[str] = []
+    library: Any = httpx2 if provider == "anthropic" else httpx
+
+    def respond(outgoing: Any) -> Any:
+        sent.append(outgoing.headers[header])
+        return library.Response(500, json={"error": "stop here"})
+
+    monkeypatch.setattr(
+        providers,
+        "_http2" if provider == "anthropic" else "_http",
+        lambda header, value: library.AsyncClient(
+            transport=library.MockTransport(respond),
+            event_hooks=providers._credential(header, value),
+        ),
+    )
+    with pytest.raises(ModelHTTPError):
+        asyncio.run(
+            suggestion_model.call_model(
+                replace(request(), provider=provider, model=f"{provider}:some-model")
+            )
+        )
+    assert sent == [expected]
 
 
 def test_request_failures_are_not_retried() -> None:
