@@ -86,14 +86,16 @@ def _focused_in_frontmost_app() -> Any:
 def _editable(element: Any) -> bool:
     if element is None or _attribute(element, "AXEnabled") is False:
         return False
-    role = _attribute(element, "AXRole")
+    role, editable = _attribute(element, "AXRole"), _attribute(element, "AXEditable")
+    if editable is False:
+        return False  # an element that says it is read-only never gets a paste
     return bool(
-        _attribute(element, "AXEditable") is True
+        editable is True
         or _settable(element, "AXSelectedText")
         or (role in _TEXT_ROLES and _settable(element, "AXValue"))
-        # A text input with a caret that does not expose a settable value, such as a
-        # terminal: it takes a paste, which is then reported as unverified.
-        or (role in _TEXT_ROLES and _range(element) is not None)
+        # A text input with a caret that neither states its editability nor exposes a
+        # settable value, such as a terminal: it takes a paste, reported as unverified.
+        or (role in _TEXT_ROLES and editable is None and _range(element) is not None)
     )
 
 

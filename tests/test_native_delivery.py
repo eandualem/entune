@@ -33,6 +33,8 @@ def test_missing_accessibility_is_not_reported_as_a_missing_field(
         ("AXGroup", True, False, False, False, True),
         ("AXTextArea", None, False, False, True, True),  # a terminal: a caret, no settable value
         ("AXTextArea", None, False, False, False, False),
+        ("AXTextArea", False, False, False, True, False),  # read-only text with a selection
+        ("AXTextField", False, True, True, True, False),  # explicit read-only wins
     ],
 )
 def test_current_target_requires_editability(
