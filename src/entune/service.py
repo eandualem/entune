@@ -17,7 +17,7 @@ from pathlib import Path
 
 from entune import dictionary as dictionary_file
 from entune import jev, llm, processing, shortcuts
-from entune.audio import sniff_mime
+from entune.audio.formats import sniff_mime
 from entune.builds import BuildInput, DictionaryBuilds, Source
 from entune.dictionary import Dictionary, Groups, Proposal
 from entune.dictionary_corrections import Correction, add_corrections, read_entries

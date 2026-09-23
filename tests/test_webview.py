@@ -228,9 +228,9 @@ def test_native_quit_saves_capture_and_closes_processing_before_termination(
     import webview
     from webview.platforms.cocoa import BrowserView
 
+    from entune.audio.recorder import Capture
     from entune.desktop import webview as shell
     from entune.desktop.app import EntuneApp
-    from entune.recorder import Capture
     from entune.service import Entune
     from entune.store import Store
     from tests.test_app import FakeActions, FakeHotkeys, FakePermissions, FakeRecorder

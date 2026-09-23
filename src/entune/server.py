@@ -24,7 +24,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from entune import __version__, jev, llm, onboarding, shortcuts
-from entune.audio import extension_for, safe_mime
+from entune.audio.formats import extension_for, safe_mime
 from entune.builds import JobConflict
 from entune.operations import Busy
 from entune.service import (

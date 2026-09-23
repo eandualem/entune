@@ -13,12 +13,12 @@ import time
 from collections.abc import Callable
 from concurrent.futures import CancelledError
 
+from entune.audio.recorder import Capture, Recorder, Sink
 from entune.desktop.engine import ShortcutEngine
 from entune.desktop.platform import Microphone, Platform
 from entune.operations import Busy, Operation
 from entune.processing import notice
 from entune.providers.cloud.contracts import Upload
-from entune.recorder import Capture, Recorder, Sink
 from entune.service import Entune, NoDefaultModel, UnknownModel
 from entune.store import Recording
 

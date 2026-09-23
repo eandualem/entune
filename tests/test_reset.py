@@ -7,10 +7,10 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from entune.audio.formats import wav_bytes
 from entune.llm import LearningText
 from entune.providers.contracts import Clip, TranscribeResult, Transcript
 from entune.providers.local.contracts import LocalModelStatus
-from entune.recorder import wav_bytes
 from entune.server import RESET_PHRASE, create_app
 from entune.service import Entune
 from entune.store import Store

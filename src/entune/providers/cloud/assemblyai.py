@@ -26,6 +26,7 @@ from collections.abc import Callable, Iterator
 
 import httpx
 
+from entune.audio.formats import wav_bytes
 from entune.providers.cloud.contracts import Upload
 from entune.providers.cloud.http import (
     DEFAULT_TIMEOUT,
@@ -34,7 +35,6 @@ from entune.providers.cloud.http import (
     text_or_failure,
 )
 from entune.providers.contracts import Clip, Failure, TranscribeResult
-from entune.recorder import wav_bytes
 
 SYNC_URL = "https://sync.assemblyai.com/transcribe"
 SYNC_LIMIT_SECONDS = 120.0  # documented limit of the sync endpoint
