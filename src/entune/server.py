@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -130,6 +131,9 @@ def _optional_text(value: object, name: str) -> str | None:
     if value is not None and not isinstance(value, str):
         raise ValueError(f"{name} must be a string or null")
     return value
+
+
+RESET_PHRASE = "delete everything"
 
 
 def create_app(app: Entune) -> Starlette:
@@ -351,6 +355,32 @@ def create_app(app: Entune) -> Starlette:
             return _bad(str(exc), 409 if isinstance(exc, Busy) else 400)
         return JSONResponse({"added": [e.as_json() for e in added]})
 
+    # Deleting all local data: the page lists the scope first, then sends the phrase
+    # the person typed; the server checks it too.
+    def data_inventory(_: Request) -> Response:
+        return JSONResponse(app.data_inventory())
+
+    async def reset_data(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict) or body.get("confirm") != RESET_PHRASE:
+            return _bad(f'Type "{RESET_PHRASE}" to confirm', 400)
+        try:
+            result = await run_in_threadpool(app.reset_data)
+        except (JobConflict, Busy) as exc:
+            return _bad(str(exc), 409)
+        except ValueError as exc:
+            return _bad(str(exc), 409)
+        except OSError as exc:
+            return _bad(
+                f"Could not delete everything: {exc}. What was already deleted is gone;"
+                " the rest is still there.",
+                500,
+            )
+        return JSONResponse(result)
+
     def build_status(request: Request) -> Response:
         try:
             return JSONResponse(app.dictionary_build_status(request.path_params.get("job_id")))
@@ -443,6 +473,11 @@ def create_app(app: Entune) -> Starlette:
             }
         )
 
+    def imported[T](action: Callable[..., T], *args: object) -> T:
+        """An import runs whole or not at all around a data reset."""
+        with app.using_data("audio import"):
+            return action(*args)
+
     async def import_dictionary_audio(request: Request) -> Response:
         async with request.form() as form:
             audio = form.get("audio")
@@ -453,6 +488,7 @@ def create_app(app: Entune) -> Starlette:
             modified = form.get("modified")
             try:
                 added = await run_in_threadpool(
+                    imported,
                     onboarding.import_audio,
                     app.store,
                     await audio.read(),
@@ -465,7 +501,7 @@ def create_app(app: Entune) -> Starlette:
 
     async def import_wispr(_: Request) -> Response:
         try:
-            result = await run_in_threadpool(onboarding.import_wispr, app.store)
+            result = await run_in_threadpool(imported, onboarding.import_wispr, app.store)
         except (ValueError, OSError) as exc:
             return _bad(str(exc))
         return JSONResponse(result)
@@ -642,8 +678,13 @@ def create_app(app: Entune) -> Starlette:
         )
 
     def export_transcripts(_: Request) -> Response:
+        try:
+            with app.using_data("export"):
+                recordings = app.store.list_recordings()
+        except Busy as exc:
+            return _bad(str(exc), 409)
         return JSONResponse(
-            {"recordings": [_recording_json(r) for r in app.store.list_recordings()]},
+            {"recordings": [_recording_json(r) for r in recordings]},
             headers={
                 "Content-Disposition": 'attachment; filename="entune-transcripts.json"',
                 "Cache-Control": "no-store",
@@ -657,10 +698,14 @@ def create_app(app: Entune) -> Starlette:
         directory = TemporaryDirectory(prefix="entune-export-")
         path = Path(directory.name) / "entune-audio.zip"
         try:
-            recordings = app.store.list_recordings()
-            imported = app.store.dictionary_audio()
-            manifest: dict[str, list[dict[str, Any]]] = {"recordings": [], "dictionary_audio": []}
-            with ZipFile(path, "w", strict_timestamps=False) as archive:
+            # A data reset waits until the archive is built; afterwards it has its own copy.
+            with app.using_data("export"), ZipFile(path, "w", strict_timestamps=False) as archive:
+                recordings = app.store.list_recordings()
+                imported = app.store.dictionary_audio()
+                manifest: dict[str, list[dict[str, Any]]] = {
+                    "recordings": [],
+                    "dictionary_audio": [],
+                }
                 for recording in recordings:
                     source = app.store.audio_path(recording)
                     name = f"audio/{source.name}"
@@ -683,6 +728,8 @@ def create_app(app: Entune) -> Starlette:
                 )
         except Exception as exc:
             directory.cleanup()
+            if isinstance(exc, Busy):
+                return _bad(str(exc), 409)
             if isinstance(exc, OSError):
                 return _bad(f"Could not export audio: {exc}", 500)
             raise
@@ -703,6 +750,8 @@ def create_app(app: Entune) -> Starlette:
             Route("/api/settings", put_settings, methods=["PUT"]),
             Route("/api/exports/audio", export_audio),
             Route("/api/exports/transcripts", export_transcripts),
+            Route("/api/data", data_inventory),
+            Route("/api/data/reset", reset_data, methods=["POST"]),
             Route("/api/dictionary", get_dictionary, methods=["GET"]),
             Route("/api/dictionary/pin", pin_meaning, methods=["POST"]),
             Route(

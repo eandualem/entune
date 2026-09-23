@@ -340,6 +340,47 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     );
   }
 
+  // Delete all data: the dialog lists the scope and the folder, offers exports, and
+  // enables the button only for the exact phrase, which the server checks again.
+  const PHRASE = "delete everything";
+  const reset = { dialog: el("reset-dialog"), phrase: el("reset-phrase"), confirm: el("reset-confirm"), status: el("reset-status") };
+  el("reset-open").addEventListener("click", async () => {
+    reset.phrase.value = "";
+    reset.confirm.disabled = true;
+    reset.status.textContent = "";
+    el("reset-size").textContent = "";
+    reset.dialog.showModal();
+    try {
+      const data = await api("/api/data");
+      el("reset-folder").textContent = data.folder;
+      const bytes = data.items.reduce((sum, item) => sum + item.bytes, 0);
+      el("reset-size").textContent = `About ${bytes >= 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1048576))} MB`} in total.`
+        + (data.other.length ? ` ${data.other.length} other file${data.other.length === 1 ? "" : "s"} in the folder ${data.other.length === 1 ? "is" : "are"} left alone.` : "");
+    } catch (err) {
+      reset.status.textContent = errorText(err);
+    }
+  });
+  reset.phrase.addEventListener("input", () => { reset.confirm.disabled = reset.phrase.value.trim().toLowerCase() !== PHRASE; });
+  reset.confirm.addEventListener("click", async () => {
+    if (document.documentElement.hasAttribute("data-importing")) {
+      reset.status.textContent = "Audio is still being imported; wait for it to finish first.";
+      return;
+    }
+    reset.confirm.disabled = true;
+    reset.status.textContent = "";
+    try {
+      await api("/api/data/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: PHRASE }) });
+    } catch (err) {
+      reset.status.textContent = errorText(err);
+      reset.confirm.disabled = false;
+      return;
+    }
+    // This window's appearance choices go too; then the page starts again, empty.
+    try { localStorage.removeItem("theme"); localStorage.removeItem("scale"); sessionStorage.setItem("entune-reset", "1"); } catch (e) {}
+    location.hash = "";
+    location.reload();
+  });
+
   async function loadSettings() {
     settings = await api("/api/settings");
     el("keys").replaceChildren(...settings.providers.filter((p) => !p.local).map(keyRow));
