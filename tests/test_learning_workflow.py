@@ -13,9 +13,11 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from entune import dictionary, llm
+from entune import llm
 from entune.audio.formats import wav_bytes
-from entune.dictionary import Dictionary
+from entune.dictionary import changes as dictionary_changes
+from entune.dictionary import entries as dictionary_entries
+from entune.dictionary.entries import Dictionary
 from entune.providers.contracts import Clip, Failure, Transcript
 from entune.server import create_app
 from entune.service import Entune
@@ -46,11 +48,11 @@ def test_review_edits_and_dismissal_apply_once_without_deleting_dismissed_entrie
     )
     current = Dictionary(learned={"model": (before, removed)})
     after = replace(before, meanings=(replace(before.meanings[0], meaning="An assistant."),))
-    proposal = dictionary.propose(current, (after, added), "model")
+    proposal = dictionary_changes.propose(current, (after, added), "model")
     assert {c.kind for c in proposal.changes} == {"add", "update", "remove"}
     edited = after.as_json()
     edited["meanings"][0]["meaning"] = "A reviewed assistant definition."
-    result = dictionary.review(
+    result = dictionary_changes.review(
         current,
         proposal,
         [
@@ -62,7 +64,7 @@ def test_review_edits_and_dismissal_apply_once_without_deleting_dismissed_entrie
     assert groups[removed.id] == removed  # dismissing the removal keeps active knowledge
     assert groups[before.id].meanings[0].meaning == "A reviewed assistant definition."
     assert groups[added.id] == added
-    assert dictionary.review(current, proposal, []) is current
+    assert dictionary_changes.review(current, proposal, []) is current
 
 
 def test_review_validation_rejects_pinned_removal_even_in_edited_whole_group() -> None:
@@ -70,12 +72,12 @@ def test_review_validation_rejects_pinned_removal_even_in_edited_whole_group() -
     changed = replace(
         JEV, meanings=(replace(JEV.meanings[0], meaning="A classifier."), *JEV.meanings[1:])
     )
-    proposal = dictionary.propose(current, (changed,), "model")
+    proposal = dictionary_changes.propose(current, (changed,), "model")
     record = changed.as_json()
     record["recognized_forms"] = record["recognized_forms"][1:]
     with pytest.raises(ValueError, match="pinned variant"):
-        dictionary.review(current, proposal, [{"id": JEV.id, "after": record}])
-    approved = dictionary.review(current, proposal)
+        dictionary_changes.review(current, proposal, [{"id": JEV.id, "after": record}])
+    approved = dictionary_changes.review(current, proposal)
     assert approved.pinned[0].meanings[0].meaning == "A classifier."
 
 
@@ -503,9 +505,11 @@ def test_refinement_pairs_raw_text_with_the_dictionary_step_result_only(tmp_path
         paired = inputs[str(attempts["paired"])]
         assert paired.text == raw and paired.result is not None
 
-        claude = dictionary.Meaning("m_claude", "Claude", "An AI assistant.")
-        form = dictionary.Form("cloud", (dictionary.Association("m_claude"),))
-        current = Dictionary(learned={"stub/good": (dictionary.Group("g", (claude,), (form,)),)})
+        claude = dictionary_entries.Meaning("m_claude", "Claude", "An AI assistant.")
+        form = dictionary_entries.Form("cloud", (dictionary_entries.Association("m_claude"),))
+        current = Dictionary(
+            learned={"stub/good": (dictionary_entries.Group("g", (claude,), (form,)),)}
+        )
         (step,) = llm.learning_batches(list(inputs.values()))
         prompt = llm.build_user_prompt("refine", current, step.snippets, "stub/good")
         entries = json.loads(prompt.split("(JSON).")[1].split("\n", 1)[1])

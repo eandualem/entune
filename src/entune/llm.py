@@ -19,9 +19,11 @@ from typing import Any, Literal
 
 import httpx
 
-from entune import dictionary as dictionary_file
 from entune import prompts, text_edits
-from entune.dictionary import Dictionary, Group, Groups, key
+from entune.dictionary import changes as dictionary_changes
+from entune.dictionary import document as dictionary_document
+from entune.dictionary import entries as dictionary_entries
+from entune.dictionary.entries import Dictionary, Group, Groups, key
 from entune.processing import Selection
 from entune.text_edits import Change
 
@@ -293,7 +295,7 @@ def parse_generation(
 ) -> Groups:
     """Generation only adds: new groups, which may link forms to existing meanings."""
     data = _reply(content, {"additions"})
-    additions = dictionary_file.parse_groups(data["additions"], "additions")
+    additions = dictionary_document.parse_groups(data["additions"], "additions")
     existing = {g.id for g in (*pinned, *proposed)}
     meanings = {m.id for g in (*pinned, *proposed) for m in g.meanings}
     if any(g.id in existing for g in additions):
@@ -310,8 +312,8 @@ def parse_refinement(
 ) -> Groups:
     """Explicit additions, complete revisions of named groups, and learned-group removals."""
     data = _reply(content, {"additions", "revisions", "removals"})
-    additions = dictionary_file.parse_groups(data["additions"], "additions")
-    revisions = dictionary_file.parse_groups(data["revisions"], "revisions")
+    additions = dictionary_document.parse_groups(data["additions"], "additions")
+    revisions = dictionary_document.parse_groups(data["revisions"], "revisions")
     existing = {g.id for g in (*pinned, *proposed)}
     if any(g.id in existing for g in additions):
         raise ValueError("An addition needs a new_ group ID; revise existing groups instead")
@@ -346,7 +348,7 @@ def _apply(
     old.update({g.id: g for g in proposed})
     known_groups = set(old)
     known_meanings = {m.id: m for g in old.values() for m in g.meanings}
-    known_links: dict[tuple[str, str], list[dictionary_file.Association]] = {}
+    known_links: dict[tuple[str, str], list[dictionary_entries.Association]] = {}
     for group in old.values():
         for form in group.recognized_forms:
             for association in form.associations:
@@ -453,7 +455,7 @@ def _apply(
         for form in record["recognized_forms"]:
             for link in form["associations"]:
                 link["meaning_id"] = ids.get(link["meaning_id"], link["meaning_id"])
-    revised = dictionary_file.parse_groups(raw_groups, "the model's reply")
+    revised = dictionary_document.parse_groups(raw_groups, "the model's reply")
     updated = {gid: group for gid, group in old.items() if gid not in removed}
     updated.update({g.id: g for g in revised})
     result = tuple(updated.values())
@@ -476,8 +478,8 @@ def _apply(
             != (known_meanings[approval[0]].spelling, known_meanings[approval[0]].casing)
         ):
             raise ValueError("The generator cannot remove or change an approved direct mapping")
-    dictionary_file.protect_pinned(pinned, result)
-    dictionary_file.validate(Dictionary(learned={"working": result}))
+    dictionary_changes.protect_pinned(pinned, result)
+    dictionary_document.validate(Dictionary(learned={"working": result}))
     return result
 
 
@@ -636,7 +638,7 @@ async def propose_learned(
     stay in the app for progress and resume. Raises ValueError carrying the provider's or
     the model's own words when a step fails; the checkpoint keeps only validated steps.
     """
-    current = dictionary_file.share(current, set())
+    current = dictionary_changes.share(current, set())
     proposed = current.effective(speech_model) if working is None else working
     steps = learning_batches(
         inputs

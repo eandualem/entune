@@ -15,14 +15,16 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
-from entune import dictionary as dictionary_file
 from entune import jev, llm, processing
 from entune.audio.formats import sniff_mime
 from entune.builds import BuildInput, DictionaryBuilds, Source
 from entune.desktop import shortcuts
 from entune.desktop.shortcuts import Shortcuts
-from entune.dictionary import Dictionary, Groups, Proposal
-from entune.dictionary_corrections import Correction, add_corrections, read_entries
+from entune.dictionary import changes as dictionary_changes
+from entune.dictionary import document as dictionary_document
+from entune.dictionary.changes import Proposal
+from entune.dictionary.corrections import Correction, add_corrections, read_entries
+from entune.dictionary.entries import Dictionary, Groups
 from entune.operations import Busy, Operation, Operations
 from entune.processing import Processed, Stage, process_text
 from entune.providers.cloud.contracts import Streams, Upload
@@ -585,10 +587,10 @@ class Entune:
     def dictionary(self) -> Dictionary:
         # A file in an earlier form is rewritten in the current one (load does it once).
         with self._dictionary_lock:
-            return dictionary_file.load(self.store.data_dir)
+            return dictionary_document.load(self.store.data_dir)
 
     def dictionary_text(self) -> str:
-        return dictionary_file.dumps(self.dictionary())
+        return dictionary_document.dumps(self.dictionary())
 
     def dictionary_snapshot(self) -> tuple[str, str]:
         """The editor's document and revision from the same locked read."""
@@ -597,7 +599,7 @@ class Entune:
 
     def dictionary_version(self) -> str:
         """A hash of the file as it is on disk; a writer names the version it edited."""
-        path = self.store.data_dir / dictionary_file.FILENAME
+        path = self.store.data_dir / dictionary_document.FILENAME
         raw = path.read_bytes() if path.exists() else b""
         return str(hashlib.sha256(raw).hexdigest()[:16])
 
@@ -605,14 +607,14 @@ class Entune:
         """Validate and save the JSON form. Raises ValueError with the reason, and
         DictionaryChanged when `expected_version` is given and the file moved on since:
         an edit made on a stale copy would silently drop what was added meanwhile."""
-        parsed = dictionary_file.parse(text)
+        parsed = dictionary_document.parse(text)
         with self.operations.dictionary_edit(), self._dictionary_lock:
             if expected_version is not None and expected_version != self.dictionary_version():
                 raise DictionaryChanged(
                     "The dictionary changed since it was loaded (an agent or a hand edit);"
                     " reload it and redo the change."
                 )
-            dictionary_file.save(self.store.data_dir, parsed)
+            dictionary_document.save(self.store.data_dir, parsed)
         self._changed()
         return parsed
 
@@ -620,12 +622,12 @@ class Entune:
         with self.operations.dictionary_edit(), self._dictionary_lock:
             current = self.dictionary()
             if group is None or meaning is None:
-                updated = dictionary_file.share(
+                updated = dictionary_changes.share(
                     current, {m.id for g in current.learned_for(model) for m in g.meanings}
                 )
             else:
-                updated = dictionary_file.pin(current, model, group, meaning)
-            self.set_dictionary(dictionary_file.dumps(updated), version)
+                updated = dictionary_changes.pin(current, model, group, meaning)
+            self.set_dictionary(dictionary_document.dumps(updated), version)
 
     def safe_mapping_recovery(self, recording_id: int, attempt_id: int) -> dict[str, object]:
         recording = self.store.get_recording(recording_id)
@@ -675,7 +677,7 @@ class Entune:
             current = self.dictionary()
             updated, added = add_corrections(current, corrections)
             if added:
-                dictionary_file.save(self.store.data_dir, updated)
+                dictionary_document.save(self.store.data_dir, updated)
         if added:
             source = data.get("source")
             self.store.add_corrections(added, source if isinstance(source, str) else None)
@@ -751,7 +753,7 @@ class Entune:
                     spec,
                     speech_key=speech_key,
                     builder=self._dictionary_builder(),
-                    dictionary=dictionary_file.share(self.dictionary(), set()),
+                    dictionary=dictionary_changes.share(self.dictionary(), set()),
                     revision=self.dictionary_version(),
                 )
 
@@ -766,14 +768,14 @@ class Entune:
                         "Discard this proposal and rebuild from the current file."
                     )
                 current = self.dictionary()
-                updated = dictionary_file.review(current, proposal, selected)
+                updated = dictionary_changes.review(current, proposal, selected)
                 applied = updated != current
                 state = self._builds.status()
                 state["coveredInputIds"] = list(covered)
-                path = self.store.data_dir / dictionary_file.FILENAME
+                path = self.store.data_dir / dictionary_document.FILENAME
                 original = path.read_bytes() if path.exists() else None
                 if applied:
-                    dictionary_file.save(self.store.data_dir, updated)
+                    dictionary_document.save(self.store.data_dir, updated)
                 try:
                     self.store.finish_learning(
                         job_id,
@@ -810,7 +812,7 @@ class Entune:
         except UnknownModel as exc:
             raise ValueError(str(exc)) from exc
         with self._dictionary_lock:
-            current = dictionary_file.share(self.dictionary(), set())
+            current = dictionary_changes.share(self.dictionary(), set())
             version = self.dictionary_version()
         if source == "history":
             inputs = self.store.learning_inputs(

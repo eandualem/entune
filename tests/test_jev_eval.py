@@ -10,7 +10,9 @@ from types import ModuleType
 
 import pytest
 
-from entune import dictionary, jev
+from entune import jev
+from entune.dictionary import document as dictionary_document
+from entune.dictionary import entries as dictionary_entries
 from tests.dictionary_samples import JEV, group
 
 
@@ -30,7 +32,7 @@ def test_every_variant_renders_offline_and_outcomes_are_judged_by_written_text(
     harness = _harness()
     monkeypatch.setattr(jev.Client, "ask", lambda *_: pytest.fail("no request without --run"))
     (tmp_path / "dictionary.json").write_text(
-        dictionary.dumps(dictionary.Dictionary(learned={"s/m": (JEV,)}))
+        dictionary_document.dumps(dictionary_entries.Dictionary(learned={"s/m": (JEV,)}))
     )
     cases = [
         {

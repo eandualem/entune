@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 
 from entune import cleanup, formatting, prompts
-from entune.matching import Component, Edit, Interpretation
+from entune.dictionary.matching import Component, Edit, Interpretation
 from entune.text_edits import Change
 
 MODEL = "jev-1.13.0"
