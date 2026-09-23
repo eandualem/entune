@@ -122,6 +122,10 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     for (const name of ["total_seconds", "attempt_seconds", "max_attempts"]) {
       el(`jev-${name}`).value = j.policy[name];
     }
+    renderJevSummary();
+  }
+  function renderJevSummary() {
+    const j = settings.jev;
     const s = j.summary;
     const lines = [];
     if (s.transcriptions) {
@@ -293,7 +297,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   function renderAgents() {
     const endpoint = `${location.origin}/api/dictionary/corrections`;
     el("agent-endpoint").textContent = endpoint;
-    el("agent-curl").textContent = `curl -s -m 2 -X POST ${endpoint} \\\n  -H 'content-type: application/json' \\\n  -d '{"entries": [{"spelling": "Claude Code", "description": "Anthropic\'s coding agent", "heard": ["cloud code"]}], "source": "my-agent"}'`;
+    el("agent-curl").textContent = `curl -s -m 2 -X POST ${endpoint} \\\n  -H 'content-type: application/json' \\\n  -d '{"entries": [{"spelling": "Claude Code", "description": "Anthropic'"'"'s coding agent", "heard": ["cloud code"]}], "source": "my-agent"}'`;
   }
   for (const button of document.querySelectorAll(".copy-btn")) {
     button.addEventListener("click", async () => {
@@ -450,5 +454,9 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     });
   }
 
-  return { load: loadSettings, save: saveSetting, refreshCorrections: () => loadCorrections().catch((err) => onError(errorText(err))) };
+  return {
+    load: loadSettings, save: saveSetting,
+    refreshCorrections: () => loadCorrections().catch((err) => onError(errorText(err))),
+    async refreshJev() { if (settings) { settings.jev.summary = (await api("/api/settings")).jev.summary; renderJevSummary(); } },
+  };
 }
