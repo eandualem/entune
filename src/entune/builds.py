@@ -185,6 +185,14 @@ class DictionaryBuilds:
             self._release()
             self._state.update(phase="accepted", applied=applied)
 
+    def forget(self) -> None:
+        """Drop a finished, failed or stopped job with its temporary transcripts."""
+        with self._lock:
+            if self._state["phase"] in RUNNING or self._operation is not None:
+                raise JobConflict("Stop or finish the dictionary suggestions first")
+            self._clear()
+            self._state = {"phase": "idle"}
+
     def _clear(self) -> None:
         self._proposal = self._spec = self._working = None
         self._texts.clear()
