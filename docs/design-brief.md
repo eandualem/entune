@@ -56,8 +56,8 @@ attached image; treat it as the inventory, not the direction.
 window, for testing a model). The default model picker: one list of every
 model the person has a key for or has downloaded; picking one applies at
 once and is what the shortcut uses. Beside it, a chart button that opens a
-small table of performance by model (runs, minutes of audio, median wait,
-speed as seconds of audio per second waited, plain versus fast mode). A
+small table of performance by model and mode (speed as the wait for a minute
+of audio, dictionary corrections per 100 words, and runs with total audio). A
 status line for what is happening now. Three views: History, Dictionary,
 Settings.
 

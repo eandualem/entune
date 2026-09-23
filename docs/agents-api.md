@@ -41,7 +41,7 @@ silently if Dictum is not running.
 |---|---|
 | `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode, `jev` (key hint, `dictionary`, `cleanup` and `formatting` on or off, shared retry policy and separate stage summaries); each provider says whether it `streams` (fast mode) or is `local` |
 | `GET /api/models` | the models of every provider that has a key, plus the downloaded local ones |
-| `GET /api/metrics` | the performance table: per model and mode, runs, audio seconds, median wait, speed |
+| `GET /api/metrics` | the performance table: per model and mode, runs and successes, audio seconds, seconds of wait per minute of audio (with the number of timed runs), and dictionary replacements, words, corrected and checked dictations |
 | `GET /api/local/models` | the local models with size, state (absent, downloading with progress, ready, error, unavailable when the engine is not installed) |
 | `POST /api/local/models/{name}/download`, `DELETE /api/local/models/{name}` | fetch or remove one |
 | `GET /api/status` | version, shortcuts, default model, whether the desktop app runs and listens |

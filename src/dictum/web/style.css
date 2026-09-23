@@ -133,8 +133,10 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
   background: var(--control); border-radius: var(--r-10); box-shadow: var(--shadow-popover); padding: var(--sp-6) 0;
 }
 .popover-head { display: flex; align-items: baseline; gap: var(--sp-8); padding: var(--sp-8) var(--sp-14) var(--sp-6); font-size: var(--fs-13); font-weight: 600; }
-.perf-grid { display: grid; grid-template-columns: 1fr 3.75rem 4.375rem 4.375rem 5.625rem 6.25rem; padding: var(--sp-8) var(--sp-14); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line-faint); }
-.perf-grid > :nth-child(2) { color: var(--text-dim); }
+.perf-grid { display: grid; grid-template-columns: minmax(10rem, 1fr) 6.5rem 7.5rem 10rem; gap: var(--sp-10); align-items: baseline; padding: var(--sp-8) var(--sp-14); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line-faint); white-space: nowrap; }
+.perf-grid > span { overflow: hidden; text-overflow: ellipsis; }
+.perf-model .tag { margin-left: var(--sp-6); padding: 0 var(--sp-6); border-radius: var(--r-6); background: var(--accent-wash); color: var(--accent-text); font-size: var(--fs-11); }
+.perf-failed { color: var(--error); }
 .perf-head { font-size: var(--fs-11-5); color: var(--text-dim); border-bottom-color: var(--line); padding-top: var(--sp-4); padding-bottom: var(--sp-4); }
 .popover-foot { padding: var(--sp-8) var(--sp-14) var(--sp-6); font-size: var(--fs-11-5); line-height: 1.5; color: var(--text-faint); }
 
@@ -200,11 +202,6 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .help-btn[aria-expanded="true"] { color: var(--text); }
 .json-editor { margin-bottom: var(--sp-14); }
 .json-editor .row-actions { display: flex; align-items: center; gap: var(--sp-10); margin-top: var(--sp-8); flex-wrap: wrap; }
-.help-panel { padding: var(--sp-14) var(--sp-16) var(--sp-12); border-radius: var(--r-10); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--line-soft); margin-bottom: var(--sp-12); font-size: var(--fs-13); line-height: var(--lh-body); color: var(--text-secondary); }
-.defs { display: grid; grid-template-columns: 6rem 1fr; gap: var(--sp-6) var(--sp-14); }
-.defs b { color: var(--text); font-weight: 600; }
-.defs.more { margin-top: var(--sp-10); padding-top: var(--sp-10); border-top: 1px solid var(--line-faint); }
-.help-panel .link { margin-top: var(--sp-10); font-size: var(--fs-12-5); }
 .proposal { border-radius: var(--r-10); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--accent-wash-hover); margin-bottom: var(--sp-12); }
 .proposal-head { display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-12) var(--sp-16); border-bottom: 1px solid var(--line-faint); }
 .proposal-title { font-weight: 600; }
@@ -337,13 +334,6 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 /* Learning: history actions on the page, one dictionary model, a status line of its own. */
 .dict h2 { margin: 0; font-size: var(--fs-13-5); font-weight: 600; }
 .learn { padding: var(--sp-14) var(--sp-16); margin-bottom: var(--sp-14); border-radius: var(--r-10); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--line-soft); }
-.learn-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--sp-8) var(--sp-16); }
-.learn-heading { flex: 1 1 18rem; min-width: 0; }
-.learn-heading .caption { margin: var(--sp-2) 0 0; }
-.learn-model { display: flex; align-items: center; gap: var(--sp-8); font-size: var(--fs-12-5); color: var(--text-muted); white-space: nowrap; }
-.learn-model .select { max-width: 15rem; }
-.learn-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); margin-top: var(--sp-12); }
-.learn-actions .select { max-width: 17rem; }
 .learn-note { margin: var(--sp-8) 0 0; }
 .learn-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8) var(--sp-12); margin-top: var(--sp-12); padding-top: var(--sp-12); border-top: 1px solid var(--line-faint); }
 .learn-progress { flex: 1 1 20rem; min-width: 0; margin: 0; font-size: var(--fs-12-5); color: var(--text-muted); overflow-wrap: anywhere; }
@@ -437,3 +427,46 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .editor-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6); }
 .editor-foot .save-status { flex: 1 1 12rem; margin: 0; }
 .group-editor.new .editor-foot { position: sticky; bottom: 0; z-index: 1; padding: var(--sp-8) 0 var(--sp-10); background: var(--surface-raised); border-top: 1px solid var(--line-faint); }
+
+/* History: processing details on demand; failures stay visible. */
+.processing-toggle { height: var(--h-26); gap: var(--sp-4); padding: 0 var(--sp-6); font-size: var(--fs-12); }
+.processing-toggle.err { color: var(--error); }
+.processing-toggle[aria-expanded="true"] { background: var(--control-hover); color: var(--text); }
+.processing { margin: var(--sp-8) 0 0; padding: var(--sp-8) var(--sp-12); border-radius: var(--r-8); background: var(--well); font-size: var(--fs-12-5); color: var(--text-muted); }
+.processing .step { display: flex; flex-wrap: wrap; gap: var(--sp-4) var(--sp-10); padding: var(--sp-2) 0; }
+.processing .step.err { color: var(--error); }
+.processing .took { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.processing .changes { margin: var(--sp-2) 0 var(--sp-4); padding-left: var(--sp-16); color: var(--text-soft); -webkit-user-select: text; user-select: text; }
+.processing del { color: var(--text-faint); }
+.processing ins { text-decoration: none; color: var(--text); }
+.processing-alert { margin-top: var(--sp-8); padding: var(--sp-6) var(--sp-10); border-radius: var(--r-8); background: var(--error-wash); color: var(--error); font-size: var(--fs-12-5); overflow-wrap: anywhere; }
+.retry-label { display: inline-flex; align-items: center; gap: var(--sp-4); font-size: var(--fs-12); color: var(--text-faint); }
+
+/* Improve your dictionary: one model line, then the two ways to get suggestions. */
+.learn-intro { margin: var(--sp-4) 0 var(--sp-12); max-width: 46rem; }
+.learn-model { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); font-size: var(--fs-13); color: var(--text-secondary); }
+.learn-model .select { max-width: 16rem; }
+.learn-ways { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: var(--sp-12); margin-top: var(--sp-14); }
+.learn-way { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-8); padding: var(--sp-12) var(--sp-14); border-radius: var(--r-10); background: var(--surface); box-shadow: 0 0 0 1px var(--line-faint); }
+.learn-way h3 { margin: 0; font-size: var(--fs-13); font-weight: 600; }
+.learn-way .caption { margin: 0; }
+.learn-way .select { max-width: 100%; }
+.learn-actions { display: flex; flex-wrap: wrap; gap: var(--sp-8); }
+.groups-intro { margin: calc(-1 * var(--sp-4)) 0 var(--sp-12); max-width: 46rem; }
+.editor-intro { margin: var(--sp-8) 0 var(--sp-4); max-width: 44rem; }
+.field-hint { margin: calc(-1 * var(--sp-4)) 0 var(--sp-6); }
+.editor-advanced { margin: var(--sp-8) 0; }
+.editor-advanced summary { font-size: var(--fs-12); color: var(--text-dim); cursor: default; }
+
+/* The guide: a readable, scrollable document over the page. */
+.help-dialog { width: min(40rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); padding: 0; border: 0; border-radius: var(--r-14); background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-popover); }
+.help-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.help-inner { display: flex; flex-direction: column; max-height: calc(100vh - 2rem); margin: 0; }
+.help-dialog .dialog-head { border-bottom: 1px solid var(--line-faint); padding-bottom: var(--sp-12); }
+.guide { overflow: auto; padding: var(--sp-4) var(--sp-24) var(--sp-20); font-size: var(--fs-13-5); line-height: 1.6; color: var(--text-secondary); -webkit-user-select: text; user-select: text; }
+.guide h3 { margin: var(--sp-20) 0 var(--sp-4); font-size: var(--fs-14); font-weight: 600; color: var(--text); }
+.guide p { margin: var(--sp-6) 0; }
+.guide ul { margin: var(--sp-6) 0; padding-left: var(--sp-20); }
+.guide li { margin: var(--sp-4) 0; }
+.guide b { color: var(--text); font-weight: 600; }
+.guide-example { margin: var(--sp-8) 0; padding: var(--sp-10) var(--sp-14); border-radius: var(--r-8); background: var(--well); font-size: var(--fs-13); line-height: 1.8; }
