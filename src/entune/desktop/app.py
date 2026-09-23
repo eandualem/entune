@@ -489,6 +489,13 @@ class EntuneApp:
                     completion = "Copied to clipboard — no active text field."
                 elif outcome == "focus_moving":
                     completion = "Copied to clipboard — focus kept changing before paste."
+                elif outcome == "no_permission":
+                    permissions.request_post()
+                    title = "Entune: copied, not pasted"
+                    completion = (
+                        f"Copied to clipboard. Allow Accessibility in {permissions.settings_hint} "
+                        "to paste. Cmd+V for now."
+                    )
                 elif outcome == "unverified":
                     completion = (
                         "Copied to clipboard. Paste was sent, but insertion could not be verified."

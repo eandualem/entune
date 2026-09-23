@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 import ApplicationServices as AX
+from AppKit import NSWorkspace
 
 from entune.desktop.platform import Delivery
 
@@ -47,13 +48,39 @@ def _settable(element: Any, name: str) -> bool:
     return error == 0 and bool(value)
 
 
+# Chromium and Electron apps build their accessibility tree only when an assistive app
+# asks for it; until then they report no focused element, even in a focused text box.
+_TREE_SWITCHES = ("AXManualAccessibility", "AXEnhancedUserInterface")
+_TEXT_ROLES = {"AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"}
+
+
 def _focused() -> Any:
     system = AX.AXUIElementCreateSystemWide()
     AX.AXUIElementSetMessagingTimeout(system, 0.2)
-    element = _attribute(system, "AXFocusedUIElement")
+    element = _attribute(system, "AXFocusedUIElement") or _focused_in_frontmost_app()
     if element is not None:
         AX.AXUIElementSetMessagingTimeout(element, 0.2)
     return element
+
+
+def _focused_in_frontmost_app() -> Any:
+    """Ask the frontmost app itself, switching its accessibility tree on when it has none."""
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    if app is None:
+        return None
+    element = AX.AXUIElementCreateApplication(app.processIdentifier())
+    AX.AXUIElementSetMessagingTimeout(element, 0.2)
+    focused = _attribute(element, "AXFocusedUIElement")
+    if focused is not None:
+        return focused
+    # Left on, as screen readers leave it: the app builds the tree once, not per dictation.
+    for name in _TREE_SWITCHES:
+        AX.AXUIElementSetAttributeValue(element, name, True)
+    deadline = time.monotonic() + 0.5
+    while focused is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+        focused = _attribute(element, "AXFocusedUIElement")
+    return focused
 
 
 def _editable(element: Any) -> bool:
@@ -63,8 +90,16 @@ def _editable(element: Any) -> bool:
     return bool(
         _attribute(element, "AXEditable") is True
         or _settable(element, "AXSelectedText")
-        or (role in {"AXTextField", "AXTextArea", "AXComboBox"} and _settable(element, "AXValue"))
+        or (role in _TEXT_ROLES and _settable(element, "AXValue"))
+        # A text input with a caret that does not expose a settable value, such as a
+        # terminal: it takes a paste, which is then reported as unverified.
+        or (role in _TEXT_ROLES and _range(element) is not None)
     )
+
+
+def _trusted() -> bool:
+    """Accessibility is granted: without it no field can be read and no paste sent."""
+    return bool(AX.AXIsProcessTrusted())
 
 
 def _range(element: Any) -> tuple[int, int] | None:
@@ -72,7 +107,11 @@ def _range(element: Any) -> tuple[int, int] | None:
     if value is None:
         return None
     ok, span = AX.AXValueGetValue(value, AX.kAXValueCFRangeType, None)
-    return (int(span.location), int(span.length)) if ok else None
+    if not ok:
+        return None
+    # PyObjC hands a CFRange back as a (location, length) tuple, not a struct.
+    location, length = (span.location, span.length) if hasattr(span, "location") else span
+    return int(location), int(length)
 
 
 def paste_into_focused_app(text: str, check: Callable[[], None] | None = None) -> Delivery:
@@ -82,6 +121,8 @@ def paste_into_focused_app(text: str, check: Callable[[], None] | None = None) -
     insertion; editors that cannot expose a verifiable value get truthful feedback.
     AX ranges count UTF-16 code units, including two units for an emoji.
     """
+    if not _trusted():
+        return "no_permission"  # never reported as a missing text field
     target = _focused()
     expected: str | None = None
     caret: tuple[int, int] | None = None
