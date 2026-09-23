@@ -194,18 +194,24 @@ then apply the remainder once. Dismissing a proposal does not delete active know
 Learned associations stay specific to the speech model. Pinning shares and protects a
 meaning and its associations across models, without giving it priority over competitors.
 Existing dictionaries are backed up before conversion and retained for review. Confirmed
-agent corrections still use the existing local API. Generation suggestions are Sonnet 5
-and GPT-5.4 mini; the model selected in Settings is honored.
+agent corrections still use the existing local API. The dictionary model is chosen on
+the Dictionary page and serves every learning run; keys are added in Settings.
+Generation suggestions are Sonnet 5 and GPT-5.4 mini. **New group** creates a group by
+hand: meanings with output spellings and definitions, recognized forms, and which
+meanings each form may stand for.
 
-**Learn from audio**, in the Dictionary tab, selects saved recordings directly or imports audio from
-Wispr Flow on this Mac (including its local backups) or an audio folder. Other
+**Learn from audio**, in the Dictionary tab, opens a dialog. Choose Dictum recordings,
+or import audio from Wispr Flow on this Mac (including its local backups) or from an
+audio folder; imports keep their recording date where the source has one. Other
 applications' transcripts are ignored. Dictum keeps a local copy of each distinct
 audio file in `dictionary-audio/`, separate from recording history, and can reuse
 it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
 up to 199 MB can be uploaded; the chosen provider must support the audio format
 and length. A build uses the speech and dictionary models selected when it starts.
-Select individual recordings or a date range; available and selected duration is shown
-where known. Fresh transcripts stay in memory within the workflow and never become
+A two-handle range over recorded time, oldest to newest without the gaps between days,
+selects a continuous stretch of whole recordings: all audio by default, the most recent
+by dragging the left handle. The exact duration, count and edge dates are shown, and
+the included recordings can be listed and played. Fresh transcripts stay in memory within the workflow and never become
 history attempts. Retry reuses successful transcriptions, including after a later
 generation failure. Finishing, discarding, replacing the workflow, or closing Dictum
 clears that temporary text. Source audio is kept.

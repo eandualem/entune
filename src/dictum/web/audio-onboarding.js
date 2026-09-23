@@ -1,76 +1,176 @@
-const timeLabel = seconds => seconds < 60 ? `${Math.round(seconds)} s` : `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`;
 import { api, el, errorText } from "./ui.js";
 
-export function createAudioOnboarding({ getModel, getSettings, onBuild, onBusy }) {
-  const folder = el("audio-folder");
-  const choose = el("choose-audio-folder");
-  const wispr = el("import-wispr");
-  const build = el("build-audio-dictionary");
-  const refine = el("refine-audio-dictionary");
-  const status = el("audio-import-status");
-  let items = [];
-  const selected = new Set();
-  let importing = false;
-  let buildBusy = false;
+// Learn from audio: one source at a time, a contiguous span chosen on a range over
+// recorded time (oldest to newest, without calendar gaps), whole recordings only.
+const PAGE = 60;
+const NOTES = {
+  dictum: "Recordings you made in Dictum.",
+  wispr: "Audio that Wispr Flow kept on this Mac, including its local backups. Only audio is copied; Wispr's transcripts are never read.",
+  folder: "Audio files from a folder: WAV, MP3, M4A, FLAC, OGG or WebM, up to 199 MB each. A file's modification time dates it.",
+};
 
-  function render() {
-    const duration = values => {
-      const seconds = values.reduce((sum, item) => sum + (item.seconds ?? 0), 0);
-      const unknown = values.filter(item => item.seconds == null).length;
-      return `${timeLabel(seconds)} known${unknown ? ` + ${unknown} unknown duration${unknown === 1 ? "" : "s"}` : ""}`;
-    };
-    const chosen = items.filter(item => selected.has(item.id));
-    el("audio-count").textContent = `Available: ${items.length} recordings · ${duration(items)}. Selected: ${chosen.length} · ${duration(chosen)}.`;
+export function duration(seconds) {
+  const minutes = Math.round(seconds / 60);
+  if (seconds < 60) return `${Math.round(seconds)} s`;
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
+}
+const day = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "Undated";
+const moment = (iso) => iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "Undated";
+
+export function createAudioOnboarding({ getModel, getSettings, getDictionaryModelName, onBuild, onBusy }) {
+  const dialog = el("audio-dialog");
+  const folder = el("audio-folder");
+  const start = el("audio-range-start"), end = el("audio-range-end");
+  const player = new Audio();
+  let items = [];
+  let source = "dictum";
+  let list = [];          // this source's recordings, oldest first
+  let edges = [0];        // cumulative position of each boundary, 0..1000
+  let from = 0, to = 0;   // included recordings: list[from .. to - 1]
+  let shown = PAGE;
+  let importing = false, buildBusy = false, loaded = false;
+  let playing = null;
+
+  function positions() {
+    // A recording of unknown duration takes the average known length, so every
+    // recording keeps its own selectable stretch of the range.
+    const measured = list.filter((item) => item.seconds != null);
+    const typical = measured.length ? measured.reduce((sum, item) => sum + item.seconds, 0) / measured.length : 1;
+    const widths = list.map((item) => item.seconds ?? typical);
+    const total = widths.reduce((sum, width) => sum + width, 0) || 1;
+    edges = [0];
+    for (const width of widths) edges.push(edges.at(-1) + (width / total) * 1000);
+  }
+  const nearest = (value) => edges.reduce((best, edge, i) => Math.abs(edge - value) < Math.abs(edges[best] - value) ? i : best, 0);
+
+  function choose() {
+    const skip = source === "dictum" && el("audio-other-models").checked ? getModel()?.id : null;
+    list = items
+      .filter((item) => item.source === source && !(skip && item.models.includes(skip)))
+      .map((item, order) => ({ ...item, order }))
+      .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? "") || a.order - b.order);
+    positions();
+    from = 0; to = list.length; shown = PAGE;
+    stop();
+    draw();
+  }
+
+  function draw() {
+    for (const tab of dialog.querySelectorAll("[data-source]")) tab.setAttribute("aria-selected", String(tab.dataset.source === source));
+    el("audio-source-note").textContent = NOTES[source];
+    el("import-wispr").hidden = source !== "wispr";
+    el("choose-audio-folder").hidden = source !== "folder";
+    const some = items.some((item) => item.source === source);
+    el("import-wispr").textContent = some ? "Import new Wispr audio" : "Import from Wispr Flow";
+    el("choose-audio-folder").textContent = some ? "Add another folder…" : "Choose folder…";
+    el("audio-other-models").closest("label").hidden = source !== "dictum";
+    el("audio-pick").hidden = !list.length;
+    el("audio-empty").hidden = !loaded || list.length > 0;
+    el("audio-empty").textContent = source === "dictum"
+      ? (items.some((item) => item.source === "dictum") ? "Every recording here was already transcribed by this speech model." : "No Dictum recordings yet.")
+      : "Nothing imported from this source yet.";
+    const chosen = list.slice(from, to);
+    const seconds = (values) => values.reduce((sum, item) => sum + (item.seconds ?? 0), 0);
+    const unknown = chosen.filter((item) => item.seconds == null).length;
+    el("audio-selected").textContent = list.length ? `${duration(seconds(chosen))} selected` : "";
+    el("audio-available").textContent = list.length
+      ? `${chosen.length} of ${list.length} recordings · ${duration(seconds(list))} available${unknown ? ` · ${unknown} without a known duration` : ""}`
+      : "";
+    start.value = String(Math.round(edges[from] ?? 0));
+    end.value = String(Math.round(edges[to] ?? 1000));
+    el("audio-range-fill").style.left = `${(edges[from] ?? 0) / 10}%`;
+    el("audio-range-fill").style.right = `${100 - (edges[to] ?? 1000) / 10}%`;
+    el("audio-start-label").textContent = chosen.length ? day(chosen[0].created_at) : "";
+    el("audio-end-label").textContent = chosen.length ? day(chosen.at(-1).created_at) : "";
+    el("audio-detail-summary").textContent = `Show the ${chosen.length} included recording${chosen.length === 1 ? "" : "s"}`;
+    if (el("audio-detail").open) drawList(chosen);
     const speech = getModel();
-    const language = getSettings()?.dictionaryModel;
-    el("audio-models").textContent = speech && language
-      ? `Transcribe with ${speech.label}; build the dictionary with ${language}. Cloud provider charges may apply; no cost estimate is available. Review before accepting.`
-      : "Choose a speech model in the toolbar and a dictionary model in Settings → Providers.";
-    choose.disabled = wispr.disabled = importing || buildBusy;
-    build.disabled = refine.disabled = importing || buildBusy || !selected.size || !speech || !language;
-    for (const field of el("learning-audio-list").querySelectorAll("input")) field.disabled = importing || buildBusy;
+    const language = getDictionaryModelName();
+    el("audio-speech-model").textContent = speech?.label ?? "the selected speech model";
+    el("audio-models").textContent = !speech
+      ? "Choose a speech model in the toolbar first."
+      : !language
+        ? (el("dictionary-model-note").hidden ? "Add an Anthropic or OpenAI key in Settings › Providers to choose a dictionary model." : el("dictionary-model-note").textContent)
+        : `Transcribe ${duration(seconds(chosen))} with ${speech.label}, then build with ${language}.`;
+    const blocked = importing || buildBusy || !chosen.length || !speech || !language;
+    el("build-audio-dictionary").disabled = el("refine-audio-dictionary").disabled = blocked;
+    for (const control of [start, end, el("import-wispr"), el("choose-audio-folder")]) control.disabled = importing || buildBusy;
     onBusy(importing);
   }
 
-  async function refreshCount() {
-    items = (await api("/api/dictionary/audio")).items;
-    for (const id of selected) if (!items.some(item => item.id === id)) selected.delete(id);
-    drawSelection();
+  function drawList(chosen) {
+    const box = el("learning-audio-list");
+    box.replaceChildren();
+    for (const item of chosen.slice(0, shown)) {
+      const row = document.createElement("div"); row.className = "audio-row";
+      const play = document.createElement("button");
+      play.type = "button"; play.className = "btn ghost sm play";
+      play.textContent = playing === item.id ? "Stop" : "Play";
+      play.setAttribute("aria-label", `${playing === item.id ? "Stop" : "Play"} recording from ${moment(item.created_at)}`);
+      play.addEventListener("click", () => toggle(item));
+      const when = document.createElement("span"); when.className = "when"; when.textContent = moment(item.created_at);
+      const length = document.createElement("span"); length.className = "length"; length.textContent = item.seconds == null ? "—" : duration(item.seconds);
+      const about = document.createElement("span"); about.className = "about caption";
+      about.textContent = item.source === "dictum" ? (item.models.join(", ") || "Not transcribed") : item.name;
+      row.append(play, when, length, about);
+      box.append(row);
+    }
+    el("audio-more").hidden = chosen.length <= shown;
   }
 
-  function visibleItems() {
-    const from = el("audio-from").value, through = el("audio-through").value;
-    const speech = el("audio-other-models").checked ? getModel()?.id : null;
-    return items.filter(item => {
-      const date = item.created_at?.slice(0, 10);
-      if (speech && item.models.includes(speech)) return false;
-      return (!from && !through) || date && (!from || date >= from) && (!through || date <= through);
+  function stop() { player.pause(); playing = null; }
+  function toggle(item) {
+    if (playing === item.id) { stop(); }
+    else {
+      player.src = item.source === "dictum" ? `/api/recordings/${item.id.split(":")[1]}/audio` : `/api/dictionary/audio/${item.id}/file`;
+      player.play().catch((err) => {
+        playing = null;
+        el("audio-import-status").textContent = `Could not play that recording: ${errorText(err)}`;
+        drawList(list.slice(from, to));
+      });
+      playing = item.id;
+    }
+    drawList(list.slice(from, to));
+  }
+  player.addEventListener("ended", () => { playing = null; drawList(list.slice(from, to)); });
+
+  // The two handles cannot cross; at least one whole recording stays included.
+  start.addEventListener("input", () => { from = Math.min(nearest(+start.value), to - 1); draw(); });
+  end.addEventListener("input", () => { to = Math.max(nearest(+end.value), from + 1); draw(); });
+  // Arrow, Page and Home/End keys move a handle by whole recordings.
+  for (const [handle, isStart] of [[start, true], [end, false]]) {
+    handle.addEventListener("keydown", (event) => {
+      const step = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -10, PageUp: 10, Home: -Infinity, End: Infinity }[event.key];
+      if (step === undefined) return;
+      event.preventDefault();
+      if (isStart) from = Math.max(0, Math.min(to - 1, from + (Number.isFinite(step) ? step : step > 0 ? list.length : -list.length)));
+      else to = Math.min(list.length, Math.max(from + 1, to + (Number.isFinite(step) ? step : step > 0 ? list.length : -list.length)));
+      draw();
     });
   }
-  function drawSelection() {
-    const list = el("learning-audio-list"); list.replaceChildren();
-    for (const item of visibleItems()) {
-      const row = document.createElement("label"); row.className = "learning-audio-item";
-      const check = document.createElement("input"); check.type = "checkbox";
-      check.checked = selected.has(item.id);
-      check.addEventListener("change", () => { check.checked ? selected.add(item.id) : selected.delete(item.id); render(); });
-      const text = document.createElement("span");
-      text.textContent = `${item.name} · ${item.created_at ? new Date(item.created_at).toLocaleString() : "imported audio"} · ${item.seconds == null ? "duration unknown" : timeLabel(item.seconds)}${item.models.length ? ` · transcribed by ${item.models.join(", ")}` : ""}`;
-      row.append(check, text); list.append(row);
-    }
-    render();
+  el("audio-other-models").addEventListener("change", choose);
+  el("audio-detail").addEventListener("toggle", () => draw());
+  el("audio-more").addEventListener("click", () => { shown += PAGE; draw(); });
+  for (const tab of dialog.querySelectorAll("[data-source]")) {
+    tab.addEventListener("click", () => { source = tab.dataset.source; el("audio-import-status").textContent = ""; choose(); });
   }
-  for (const id of ["audio-from", "audio-through", "audio-other-models"]) el(id).addEventListener("change", drawSelection);
-  el("audio-select-visible").addEventListener("click", () => { if (!buildBusy) { for (const item of visibleItems()) selected.add(item.id); drawSelection(); } });
-  el("audio-clear").addEventListener("click", () => { if (!buildBusy) { selected.clear(); drawSelection(); } });
+  dialog.addEventListener("close", stop);
 
-  choose.addEventListener("click", () => folder.click());
+  async function refresh() {
+    items = (await api("/api/dictionary/audio")).items;
+    loaded = true;
+    choose();
+  }
+
+  el("choose-audio-folder").addEventListener("click", () => folder.click());
   folder.addEventListener("change", async () => {
-    const selected = [...folder.files];
-    const files = selected.filter((f) => /\.(wav|mp3|m4a|flac|ogg|webm)$/i.test(f.name));
-    if (!selected.length) return;
+    const picked = [...folder.files];
+    const files = picked.filter((f) => /\.(wav|mp3|m4a|flac|ogg|webm)$/i.test(f.name));
+    if (!picked.length) return;
     importing = true;
-    render();
+    draw();
+    const status = el("audio-import-status");
     status.classList.remove("err");
     let added = 0;
     try {
@@ -79,24 +179,25 @@ export function createAudioOnboarding({ getModel, getSettings, onBuild, onBusy }
         if (file.size > 199 * 1024 * 1024) throw new Error(`${file.name}: exceeds the 199 MB file limit.`);
         const form = new FormData();
         form.append("audio", file);
-        const result = await api("/api/dictionary/audio", { method: "POST", body: form });
-        if (result.added) added++;
+        form.append("modified", String(file.lastModified));
+        if ((await api("/api/dictionary/audio", { method: "POST", body: form })).added) added++;
       }
-      status.textContent = `Imported ${added}; ${files.length - added} already saved; ${selected.length - files.length} other files skipped.`;
+      status.textContent = `Imported ${added}; ${files.length - added} already saved; ${picked.length - files.length} other files skipped.`;
     } catch (err) {
       status.textContent = `${errorText(err)} Import stopped; ${added} new audio files kept.`;
       status.classList.add("err");
     } finally {
       importing = false;
       folder.value = "";
-      await refreshCount();
+      await refresh();
     }
   });
-  wispr.addEventListener("click", async () => {
+  el("import-wispr").addEventListener("click", async () => {
     importing = true;
-    render();
+    draw();
+    const status = el("audio-import-status");
     status.classList.remove("err");
-    status.textContent = "Copying retained Wispr audio from this Mac…";
+    status.textContent = "Copying the audio Wispr Flow kept on this Mac…";
     try {
       const result = await api("/api/dictionary/audio/wispr", { method: "POST" });
       status.textContent = `Imported ${result.added}; ${result.duplicates} already saved; ${result.empty} empty recordings skipped.`;
@@ -105,14 +206,22 @@ export function createAudioOnboarding({ getModel, getSettings, onBuild, onBusy }
       status.classList.add("err");
     } finally {
       importing = false;
-      await refreshCount();
+      await refresh();
     }
   });
-  build.addEventListener("click", () => onBuild({mode: "generate", audio_ids: [...selected]}));
-  refine.addEventListener("click", () => onBuild({mode: "refine", audio_ids: [...selected]}));
+  for (const [id, mode] of [["build-audio-dictionary", "generate"], ["refine-audio-dictionary", "refine"]]) {
+    el(id).addEventListener("click", async () => {
+      const ids = list.slice(from, to).map((item) => item.id);
+      dialog.close();
+      await onBuild({ mode, audio_ids: ids });
+    });
+  }
 
   return {
-    load: refreshCount,
-    setBuildBusy(value) { buildBusy = value; render(); },
+    load: refresh,
+    async open() { dialog.showModal(); await refresh(); },
+    // Status polls repeat the same value; redraw only on a change, keeping focus in the list.
+    setBuildBusy(value) { if (value !== buildBusy) { buildBusy = value; draw(); } },
+    redraw: draw,
   };
 }
