@@ -639,9 +639,9 @@ def test_shorter_interpretation_can_win_over_phrase_and_edits_do_not_cascade() -
         "occurrences": {"o0": "😀 Restart \u27e6agent back bone\u27e7."}
     }
     options = requests[0]["questions"]["o0"]["criteria"]
-    assert sorted(option.split(" means ")[0] for option in options.values()) == [
-        "agent back bone",
-        "back bone",
+    assert sorted(option.split('"')[1] for option in options.values()) == [
+        "Agent Backbone",
+        "agent backbone",
     ]
     assert result.correction.decisions == 1  # classify the overlap as one coherent choice
 
@@ -727,3 +727,14 @@ def test_meaning_request_variants_add_only_the_compared_context() -> None:
     examples = jev.meaning_request(text, found, jev.Variant(examples=True))
     assert len(examples.questions["o0"]["instructions"]["examples"]) == 4
     assert examples.questions["o0"]["criteria"] == focused.questions["o0"]["criteria"]
+
+
+def test_overlapping_options_say_which_words_they_change() -> None:
+    text = "Use go go go."
+    found = matches((group("GoGo", "go go"),), text)
+    request = jev.meaning_request(text, found)
+    options = list(request.questions["o0"]["criteria"].values())
+    assert len(set(options)) == len(options) == 2
+    assert {o.split('"')[1] for o in options} == {"GoGo go", "go GoGo"}
+    single = jev.meaning_request("Use jif.", matches((JEV,), "Use jif."))
+    assert all("marked words read" not in o for o in single.questions["o0"]["criteria"].values())

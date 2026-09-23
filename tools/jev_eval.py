@@ -133,11 +133,18 @@ def prepare(case: Case, groups: dictionary.Groups, variant: jev.Variant | None) 
         raise ValueError(f"{case.id}: no dictionary match covers the labelled span")
     raw = case.text[component.start : component.end]
     eligible = [p for p in component.interpretations if all(c.meaning.meaning for c in p.choices)]
-    intended = next(
-        (p for p in eligible if {c.meaning.id for c in p.choices} == set(case.intended)), None
-    )
-    if intended is None:
-        raise ValueError(f"{case.id}: the intended meanings are not an eligible option")
+    # The labelled span and meanings together identify one interpretation.
+    matching_plans = [
+        p
+        for p in eligible
+        if {c.meaning.id for c in p.choices} == set(case.intended)
+        and any((c.match.start, c.match.end) == (case.start, case.end) for c in p.choices)
+    ]
+    if len(matching_plans) != 1:
+        raise ValueError(
+            f"{case.id}: the labelled span and meanings match {len(matching_plans)} options"
+        )
+    intended = matching_plans[0]
     outputs = {f"i{n}": component.output(case.text, p) for n, p in enumerate(eligible)}
     if variant is None:
         state, questions = previous_request(case.text, component, eligible)

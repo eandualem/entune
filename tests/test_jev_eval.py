@@ -11,7 +11,7 @@ from types import ModuleType
 import pytest
 
 from dictum import dictionary, jev
-from tests.dictionary_samples import JEV
+from tests.dictionary_samples import JEV, group
 
 
 def _harness() -> ModuleType:
@@ -66,3 +66,16 @@ def test_every_variant_renders_offline_and_outcomes_are_judged_by_written_text(
     assert harness.outcome(term, written["Jeff"]) == "missed_correction"
     name = harness.prepare(harness.load_cases(tmp_path / "cases.jsonl")[1], groups, None)
     assert harness.outcome(name, {v: k for k, v in name.outputs.items()}["Jev"]) == "wrong_literal"
+
+
+def test_labels_resolve_overlapping_interpretations_by_span() -> None:
+    harness = _harness()
+    groups = (group("GoGo", "go go"),)
+    text = "Use go go go."
+    second = harness.Case("second", text, 7, 12, ("a_gogo",))
+    prepared = harness.prepare(second, groups, jev.Variant())
+    assert prepared.intended_output == "go GoGo"
+    chosen = {v: k for k, v in prepared.outputs.items()}["go GoGo"]
+    assert harness.outcome(prepared, chosen) == "correct"
+    with pytest.raises(ValueError, match="match 0 options"):
+        harness.prepare(harness.Case("off", text, 5, 12, ("a_gogo",)), groups, jev.Variant())
