@@ -27,10 +27,17 @@ export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelec
     const kept = (n = 0) => `${n} temporary transcript${n === 1 ? "" : "s"}`;
     const task = state.mode === "refine" ? "Checking your entries" : "Looking for new entries";
     const from = state.source === "audio" ? "audio" : "history";
+    // A part takes as long as the model takes; say which part runs, how many are done
+    // and how long this one has run, never a percentage.
+    const clock = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+    const partElapsed = state.stepStartedAt ? clock(Math.max(0, Date.now() / 1000 - state.stepStartedAt)) : null;
+    const building = state.steps > 1
+      ? `${task} · part ${state.step} of ${state.steps} · ${state.completedBatches ?? 0} done${partElapsed ? ` · this part ${partElapsed}` : ""}`
+      : `${task}${partElapsed ? ` · ${partElapsed}` : ""}`;
     const messages = {
       idle: "", queued: `Getting ready to read your ${from === "audio" ? "audio" : "transcripts"}…`,
       transcribing: `Transcribing recording ${state.completed} of ${state.total}…`,
-      building: state.steps > 1 ? `${task} · part ${state.step} of ${state.steps}…` : `${task}…`,
+      building,
       cancelling: "Stopping… a transcription already under way may need to finish.",
       cleaning: "Finishing…", ready: "Suggestions are ready below.",
       cancelled: `Stopped after ${state.completedBatches ?? 0} of ${state.steps ?? 0} parts. Retry to continue, or discard.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept for Retry.` : ""}`,
@@ -46,6 +53,11 @@ export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelec
         : `Suggestions are ready below (${coverage}). Review them, then apply or discard to resume dictation.`;
     }
     progress.textContent = message;
+    el("build-spinner").hidden = !running();
+    const failed = state.phase === "failed" || (state.phase === "ready" && state.outcome === "failed");
+    const detail = failed ? state.errorDetail : "";
+    el("build-error-text").textContent = detail || "";
+    el("build-error-detail").hidden = !detail;
     const actions = ["cancel-dictionary-build", "retry-dictionary-build", "abandon-dictionary-build"];
     el("learn-status").hidden = !message && actions.every((id) => el(id).hidden);
     if (state.phase === "accepted" && acceptedId !== state.id) {

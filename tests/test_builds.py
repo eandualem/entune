@@ -195,8 +195,8 @@ def test_failure_scrubs_keys_and_keeps_originals(
     client = TestClient(create_app(app), base_url="http://localhost")
     client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
     state = wait_for_build(client)
-    assert state["phase"] == "failed" and "[redacted]" in state["error"]
-    assert "build-secret" not in state["error"] and "proposal" not in state
+    assert state["phase"] == "failed" and "[redacted]" in state["errorDetail"]
+    assert "build-secret" not in state["error"] + state["errorDetail"] and "proposal" not in state
     assert len(app.store.dictionary_audio()) == 2
     assert app.store.list_recordings()[0].transcriptions[0].text == "history text"
 
