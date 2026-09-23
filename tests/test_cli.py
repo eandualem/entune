@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from dictum.cli import applications_folder, build_parser, main, port_is_free
+from entune.cli import applications_folder, build_parser, main, port_is_free
 
 
 def test_port_probe_sees_a_listener(tmp_path: Path) -> None:
@@ -27,14 +27,14 @@ def test_install_app_writes_a_launchable_bundle(tmp_path: Path) -> None:
     pytest.importorskip("Foundation", reason="macOS only")
     import plistlib
 
-    from dictum.desktop.macos.bundle import install_app
+    from entune.desktop.macos.bundle import install_app
 
     app = install_app(tmp_path)
     info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
-    assert info["CFBundleName"] == "Dictum" and info["LSUIElement"] is True
-    launcher = app / "Contents" / "MacOS" / "Dictum"
+    assert info["CFBundleName"] == "Entune" and info["LSUIElement"] is True
+    launcher = app / "Contents" / "MacOS" / "Entune"
     assert launcher.stat().st_mode & 0o111
-    assert "-m dictum" in launcher.read_text()
+    assert "-m entune" in launcher.read_text()
     assert (app / "Contents" / "Resources" / info["CFBundleIconFile"]).exists()
     install_app(tmp_path)  # replacing an existing bundle is fine
 
@@ -43,32 +43,32 @@ def test_install_app_can_copy_a_built_bundle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("Foundation", reason="macOS only")
-    from dictum.desktop.macos.bundle import install_app
+    from entune.desktop.macos.bundle import install_app
 
-    built = tmp_path / "built" / "Dictum.app"
+    built = tmp_path / "built" / "Entune.app"
     (built / "Contents" / "MacOS").mkdir(parents=True)
-    (built / "Contents" / "MacOS" / "Dictum").write_bytes(b"binary")
+    (built / "Contents" / "MacOS" / "Entune").write_bytes(b"binary")
     (built / "Contents" / "Info.plist").write_bytes(
-        plistlib.dumps({"CFBundleExecutable": "Dictum"})
+        plistlib.dumps({"CFBundleExecutable": "Entune"})
     )
-    monkeypatch.setattr("dictum.desktop.macos.bundle.sign", lambda app: "-")
+    monkeypatch.setattr("entune.desktop.macos.bundle.sign", lambda app: "-")
     installed = install_app(tmp_path / "apps", source=built)
-    assert (installed / "Contents" / "MacOS" / "Dictum").read_bytes() == b"binary"
+    assert (installed / "Contents" / "MacOS" / "Entune").read_bytes() == b"binary"
 
 
 @pytest.mark.parametrize("failure", ["source", "copy", "sign", "replace"])
 def test_failed_install_preserves_the_previous_app(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    from dictum.desktop.macos import bundle
+    from entune.desktop.macos import bundle
 
-    built = tmp_path / "built" / "Dictum.app"
+    built = tmp_path / "built" / "Entune.app"
     (built / "Contents" / "MacOS").mkdir(parents=True)
-    (built / "Contents" / "MacOS" / "Dictum").write_bytes(b"new app")
+    (built / "Contents" / "MacOS" / "Entune").write_bytes(b"new app")
     (built / "Contents" / "Info.plist").write_bytes(
-        plistlib.dumps({"CFBundleExecutable": "Dictum"})
+        plistlib.dumps({"CFBundleExecutable": "Entune"})
     )
-    installed = tmp_path / "apps" / "Dictum.app"
+    installed = tmp_path / "apps" / "Entune.app"
     installed.mkdir(parents=True)
     (installed / "working").write_bytes(b"old app")
 
@@ -79,14 +79,14 @@ def test_failed_install_preserves_the_previous_app(
     if failure == "source":
         (built / "Contents" / "Info.plist").unlink()
     elif failure == "copy":
-        monkeypatch.setattr("dictum.desktop.macos.bundle.shutil.copytree", fail)
+        monkeypatch.setattr("entune.desktop.macos.bundle.shutil.copytree", fail)
     elif failure == "sign":
         monkeypatch.setattr(bundle, "sign", fail)
     else:
         rename = Path.rename
 
         def fail_replace(path: Path, target: Path) -> Path:
-            if path.name == "Dictum.app" and path != installed:
+            if path.name == "Entune.app" and path != installed:
                 raise OSError("injected failure")
             return rename(path, target)
 
@@ -102,7 +102,7 @@ def test_signing_failure_is_not_reported_as_success(
 ) -> None:
     import subprocess
 
-    from dictum.desktop.macos import bundle
+    from entune.desktop.macos import bundle
 
     monkeypatch.setattr(bundle, "signing_identity", lambda: None)
     monkeypatch.setattr(
@@ -125,7 +125,7 @@ def test_install_app_signs_with_the_stable_identity_when_present(
 ) -> None:
     import subprocess
 
-    from dictum.desktop.macos import bundle
+    from entune.desktop.macos import bundle
 
     calls: list[list[str]] = []
     listed = '  1) ABCD "Dictum Developer"\n     1 valid identities found\n'
@@ -147,7 +147,7 @@ def test_install_app_falls_back_to_ad_hoc_when_the_certificate_cannot_sign(
 ) -> None:
     import subprocess
 
-    from dictum.desktop.macos import bundle
+    from entune.desktop.macos import bundle
 
     calls: list[list[str]] = []
 

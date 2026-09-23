@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from dictum import llm, prompts
-from dictum.dictionary import Dictionary, parse_groups
+from entune import llm, prompts
+from entune.dictionary import Dictionary, parse_groups
 from tests.dictionary_samples import JEV
 
 

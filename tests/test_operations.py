@@ -11,18 +11,18 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from dictum import dictionary, jev
-from dictum.desktop.app import DictumApp
-from dictum.desktop.platform import Delivery
-from dictum.providers.contracts import Clip, Transcript
-from dictum.recorder import wav_bytes
-from dictum.server import create_app
-from dictum.service import Dictum
+from entune import dictionary, jev
+from entune.desktop.app import EntuneApp
+from entune.desktop.platform import Delivery
+from entune.providers.contracts import Clip, Transcript
+from entune.recorder import wav_bytes
+from entune.server import create_app
+from entune.service import Entune
 from tests.dictionary_samples import JEV
 from tests.test_app import FakeActions, FakePlatform, make, wait_for
 
 
-def configured(tmp_path: Path) -> tuple[DictumApp, FakePlatform, Dictum]:
+def configured(tmp_path: Path) -> tuple[EntuneApp, FakePlatform, Entune]:
     app, platform, service = make(tmp_path)
     service.set_key("stub", "synthetic")
     service.set_default_model("stub/good")

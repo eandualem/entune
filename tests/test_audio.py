@@ -1,4 +1,4 @@
-from dictum.audio import extension_for, identify, sniff_mime, webm_duration_seconds
+from entune.audio import extension_for, identify, sniff_mime, webm_duration_seconds
 from tests.conftest import WEBM_HEADER
 
 

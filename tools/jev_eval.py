@@ -30,7 +30,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from dictum import dictionary, jev, matching
+from entune import dictionary, jev, matching
 
 VARIANTS = {
     "previous": None,  # the request format dictation used before the redesign

@@ -13,20 +13,20 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from dictum import dictionary, llm
-from dictum.dictionary import Dictionary
-from dictum.providers.contracts import Clip, Failure, Transcript
-from dictum.recorder import wav_bytes
-from dictum.server import create_app
-from dictum.service import Dictum
-from dictum.store import Store
+from entune import dictionary, llm
+from entune.dictionary import Dictionary
+from entune.providers.contracts import Clip, Failure, Transcript
+from entune.recorder import wav_bytes
+from entune.server import create_app
+from entune.service import Entune
+from entune.store import Store
 from tests.conftest import WEBM_HEADER, wait_for_build
 from tests.dictionary_samples import JEV, group, proposed
 from tests.test_server import StubProvider
 
 
-def setup(store: Store, caller: llm.Caller) -> tuple[Dictum, TestClient]:
-    app = Dictum(store, [StubProvider()], llm_call=caller)
+def setup(store: Store, caller: llm.Caller) -> tuple[Entune, TestClient]:
+    app = Entune(store, [StubProvider()], llm_call=caller)
     app.set_key("stub", "speech-key")
     app.set_key("openai", "generation-key")
     app.set_default_model("stub/good")
@@ -371,8 +371,8 @@ def test_stop_during_audio_keeps_its_success_for_retry_and_discard_clears_it(
 def test_split_sources_carry_only_their_own_part_of_the_dictionary_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dictum.processing import Selection
-    from dictum.text_edits import Change, apply
+    from entune.processing import Selection
+    from entune.text_edits import Change, apply
 
     monkeypatch.setattr(llm, "BATCH_CHARS", 12)
     raw = "  use cloud here and cloud there"
@@ -438,8 +438,8 @@ def test_audio_from_other_models_creates_then_refines_the_selected_models_dictio
 
 
 def test_refinement_pairs_raw_text_with_the_dictionary_step_result_only(tmp_path: Path) -> None:
-    from dictum.processing import Processed, Selection, Stage
-    from dictum.text_edits import Change
+    from entune.processing import Processed, Selection, Stage
+    from entune.text_edits import Change
 
     raw = "Ask cloud about the cloud backups um um today."
     corrected = "Ask Claude about the cloud backups um um today."

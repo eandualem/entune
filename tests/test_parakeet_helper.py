@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from dictum.providers.local import parakeet_helper as helper
+from entune.providers.local import parakeet_helper as helper
 
 
 def test_helper_caps_and_clears_gpu_cache_on_success_and_failure(
