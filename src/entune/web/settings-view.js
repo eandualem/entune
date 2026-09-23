@@ -124,24 +124,35 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     }
     renderJevSummary();
   }
+  // Corrections & formatting activity on the Performance page: one aligned row per step,
+  // across every dictation and speech model. Counts describe work done, not accuracy.
   function renderJevSummary() {
     const j = settings.jev;
     const s = j.summary;
-    const lines = [];
-    if (s.transcriptions) {
-      lines.push(`${s.transcriptions} processed transcripts · median +${s.median_seconds?.toFixed(1) ?? "–"} s`);
-      for (const [method, label] of [["contextual", "Dictionary, read in context"], ["deterministic", "Dictionary, always-apply entries"], ["cleanup", "Repeated fillers"], ["formatting", "Paragraphs and bullets"]]) {
-        const stage = s.stages[method];
-        if (!stage.succeeded && !stage.failed && !stage.replacements && !stage.decisions) continue;
-        if (["cleanup", "formatting"].includes(method)) {
-          lines.push(`${label}: ${stage.succeeded} succeeded, ${stage.failed} failed, ${stage.skipped} skipped; decisions: ${stage.decisions}; recorded span changes: ${stage.changes}; words removed: ${stage.removed_words}; retries: ${stage.retries}; median +${stage.median_seconds?.toFixed(1) ?? "–"} s`);
-          continue;
-        }
-        lines.push(`${label}: ${stage.succeeded} succeeded, ${stage.failed} failed, ${stage.skipped} skipped; retries: ${stage.retries}; decisions: ${stage.decisions}; replacements: ${stage.replacements} (${stage.direct_replacements ?? 0} direct); preserved: ${stage.preserved}; unresolved: ${stage.abstained}`);
+    const seconds = (value) => (value === null || value === undefined ? "–" : `+${value.toFixed(1)} s`);
+    el("activity-total").textContent = s.transcriptions
+      ? `${s.transcriptions} processed transcript${s.transcriptions === 1 ? "" : "s"} · median ${seconds(s.median_seconds)} added per dictation. Span counts cover recorded edits only.`
+      : j.key_hint ? "No processed dictations yet." : "Add a TypeSafe key in Settings › Corrections & formatting to enable processing.";
+    const steps = [["contextual", "Dictionary, read in context"], ["deterministic", "Dictionary, always-apply entries"], ["cleanup", "Repeated fillers"], ["formatting", "Paragraphs and bullets"]];
+    const rows = [];
+    for (const [method, label] of steps) {
+      const stage = s.stages[method];
+      if (!s.transcriptions || (!stage.succeeded && !stage.failed && !stage.replacements && !stage.decisions)) continue;
+      const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+      const result = method === "cleanup" ? `${plural(stage.removed_words, "word")} removed · ${plural(stage.changes, "span change")}`
+        : method === "formatting" ? plural(stage.changes, "span change")
+        : `${plural(stage.replacements, "replacement")} (${stage.direct_replacements ?? 0} always-apply) · ${stage.preserved} kept · ${stage.abstained} unresolved`;
+      const row = document.createElement("div");
+      row.className = "activity-grid";
+      for (const text of [label, stage.succeeded, stage.failed, stage.skipped, stage.retries, seconds(stage.median_seconds)]) {
+        row.append(Object.assign(document.createElement("span"), { textContent: String(text) }));
       }
-      lines.push("Counts describe processing, not accuracy. Span counts cover recorded edits only.");
+      // The step's outcome in words, under its numbers.
+      row.append(Object.assign(document.createElement("span"), { className: "activity-detail caption", textContent: `${plural(stage.decisions, "decision")} · ${result}` }));
+      rows.push(row);
     }
-    el("jev-summary").textContent = lines.join("\n") || (j.key_hint ? "No processed dictations yet." : "Add a TypeSafe key in Settings › Corrections & formatting to enable processing.");
+    el("activity-rows").replaceChildren(...rows);
+    el("activity-table").hidden = rows.length === 0;
   }
   el("jev-policy-form").addEventListener("submit", async (e) => {
     e.preventDefault();

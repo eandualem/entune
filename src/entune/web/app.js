@@ -92,7 +92,7 @@ function showView(name) {
 function show(name) { selectTab(name); showView(name); }
 
 // The Models page: three jobs, one at a time, like Settings.
-const MODEL_SECTIONS = ["compare", "cloud", "local"];
+const MODEL_SECTIONS = ["cloud", "local", "performance"];
 const modelSections = Object.fromEntries(MODEL_SECTIONS.map((name) => [name, el(`models-${name}`)]));
 let modelSectionChosen = false;
 const pickModelSection = segmentedGroup(Object.fromEntries(MODEL_SECTIONS.map((name) => [name, el(`msec-${name}`)])), (name) => {
@@ -173,8 +173,8 @@ async function loadMetrics() {
   const rows = await api("/api/metrics");
   el("metrics-table").hidden = rows.length === 0;
   el("metrics-empty").hidden = rows.length > 0;
-  // Until a model has been used there is nothing to compare, so setup opens first.
-  if (!modelSectionChosen && rows.length === 0) { pickModelSection("cloud"); showModelSection("cloud"); }
+  // Setup comes first until there is something to compare; then the page opens on Performance.
+  if (!modelSectionChosen) { const start = rows.length ? "performance" : "cloud"; pickModelSection(start); showModelSection(start); }
   const cell = (text, title = "") => Object.assign(document.createElement("span"), { textContent: text, title });
   metricsRows.replaceChildren(
     ...rows.map((m) => {
