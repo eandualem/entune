@@ -209,7 +209,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
   function editGroup(host, source, original, created = false) {
     host.querySelector(".group-editor")?.remove();
     const draft = structuredClone(original);
-    const panel = node("div", "", "group-editor");
+    const panel = node("div", "", created ? "group-editor new" : "group-editor");
     const status = node("p", "", "caption save-status");
     let scope = source;
     // A learned draft belongs to the speech model it was started for, even if the
@@ -219,7 +219,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     function render() {
       panel.replaceChildren();
       if (created) {
-        panel.append(node("h3", "New confusion group"));
+        // Collapse and Discard stay at the top, so the form can be closed without scrolling.
+        const head = node("div", "", "editor-head");
+        head.append(node("h3", "New confusion group"), node("span", "", "spacer"),
+          button("Collapse", () => showNewGroup(false)), button("Discard", discardNewGroup));
+        panel.append(head);
         field(panel, "Scope", scope, (v) => { scope = v; }, [["pinned", "Pinned · every speech model"], ...(model ? [["learned", `Learned · ${model.label}`]] : [])]);
       }
       for (const meaning of draft.meanings) {
@@ -270,7 +274,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
         panel.append(section);
       }
       panel.append(button("Add recognized form", () => { draft.recognized_forms.push({ text: "", associations: [], direct: null, direct_reason: "" }); render(); }));
-      panel.append(button("Save group", async () => {
+      const foot = node("div", "", "editor-foot");
+      panel.append(foot);
+      foot.append(button("Save group", async () => {
         const problem = draft.meanings.some((m) => !m.spelling.trim()) ? "Give every meaning an output spelling."
           : draft.recognized_forms.some((f) => !f.text.trim()) ? "Give every recognized form its text, or remove it."
           : draft.recognized_forms.some((f) => !f.associations.length) ? "Link every recognized form to at least one meaning."
@@ -296,8 +302,12 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
               ? { meaning_id: a.meaning_id, basis: "user", evidence: [] } : a);
           }
         }
-        if (await saveDictionary(next, false, status) && created) panel.remove();
-      }), button("Cancel", () => panel.remove()), status);
+        // Remove this saved panel only; a newer draft started meanwhile stays as it is.
+        if (await saveDictionary(next, false, status) && created) {
+          panel.remove();
+          showNewGroup(!(newGroupEditor()?.hidden ?? true));
+        }
+      }), button(created ? "Discard" : "Cancel", () => created ? discardNewGroup() : panel.remove()), status);
     }
     function clearDirect(mid) {
       for (const f of draft.recognized_forms) if (f.direct === mid) { f.direct = null; f.direct_reason = ""; }
@@ -331,11 +341,28 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
 
   el("pin-all").addEventListener("click", () => pinMeaning(null, null));
 
+  // New group toggles one draft: collapsing keeps what was typed; only Discard or a
+  // successful save removes it.
+  const newGroupEditor = () => el("new-group").querySelector(".group-editor");
+  function showNewGroup(open) {
+    const editor = newGroupEditor();
+    if (editor) editor.hidden = !open;
+    const add = el("add-entry-btn");
+    add.textContent = !editor ? "New group" : open ? "Hide new group" : "Show new group draft";
+    add.setAttribute("aria-expanded", String(Boolean(editor && open)));
+  }
+  function discardNewGroup() {
+    newGroupEditor()?.remove();
+    showNewGroup(false);
+  }
   el("add-entry-btn").addEventListener("click", () => {
+    const editor = newGroupEditor();
+    if (editor) { showNewGroup(editor.hidden); if (!editor.hidden) editor.querySelector("input, select")?.focus(); return; }
     const meaning = { id: id("m"), spelling: "", meaning: "", personal_context: null, casing: "fixed" };
     editGroup(el("new-group"), "pinned", { id: id("g"), needs_review: false, meanings: [meaning],
       recognized_forms: [{ text: "", associations: [{ meaning_id: meaning.id, basis: "user", evidence: [] }], direct: null, direct_reason: "" }] }, true);
-    el("new-group").scrollIntoView({ block: "nearest" });
+    showNewGroup(true);
+    el("new-group").scrollIntoView({ block: "start" });
     el("new-group").querySelector(".group-meaning input")?.focus();
   });
 
