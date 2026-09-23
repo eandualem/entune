@@ -33,11 +33,14 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   let playing = null;
 
   function positions() {
-    const known = list.reduce((sum, item) => sum + (item.seconds ?? 0), 0);
-    // Without any known duration, each recording takes an equal share of the range.
-    const width = (item) => known ? (item.seconds ?? 0) / known : 1 / list.length;
+    // A recording of unknown duration takes the average known length, so every
+    // recording keeps its own selectable stretch of the range.
+    const measured = list.filter((item) => item.seconds != null);
+    const typical = measured.length ? measured.reduce((sum, item) => sum + item.seconds, 0) / measured.length : 1;
+    const widths = list.map((item) => item.seconds ?? typical);
+    const total = widths.reduce((sum, width) => sum + width, 0) || 1;
     edges = [0];
-    for (const item of list) edges.push(edges.at(-1) + width(item) * 1000);
+    for (const width of widths) edges.push(edges.at(-1) + (width / total) * 1000);
   }
   const nearest = (value) => edges.reduce((best, edge, i) => Math.abs(edge - value) < Math.abs(edges[best] - value) ? i : best, 0);
 

@@ -205,12 +205,15 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     const panel = node("div", "", "group-editor");
     const status = node("p", "", "caption save-status");
     let scope = source;
+    // A learned draft belongs to the speech model it was started for, even if the
+    // toolbar selection changes before it is saved.
+    const model = getModel();
     host.append(panel);
     function render() {
       panel.replaceChildren();
       if (created) {
         panel.append(node("h3", "New confusion group"));
-        field(panel, "Scope", scope, (v) => { scope = v; }, [["pinned", "Pinned · every speech model"], ...(getModel() ? [["learned", `Learned · ${getModel().label}`]] : [])]);
+        field(panel, "Scope", scope, (v) => { scope = v; }, [["pinned", "Pinned · every speech model"], ...(model ? [["learned", `Learned · ${model.label}`]] : [])]);
       }
       for (const meaning of draft.meanings) {
         const section = node("fieldset", "", "group-meaning"); section.append(node("legend", "Meaning"));
@@ -261,13 +264,13 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
       }
       panel.append(button("Add recognized form", () => { draft.recognized_forms.push({ text: "", associations: [], direct: null, direct_reason: "" }); render(); }));
       panel.append(button("Save group", async () => {
-        const problem = !draft.meanings.length ? "Add at least one meaning."
-          : draft.meanings.some((m) => !m.spelling.trim()) ? "Give every meaning an output spelling."
+        const problem = draft.meanings.some((m) => !m.spelling.trim()) ? "Give every meaning an output spelling."
           : draft.recognized_forms.some((f) => !f.text.trim()) ? "Give every recognized form its text, or remove it."
           : draft.recognized_forms.some((f) => !f.associations.length) ? "Link every recognized form to at least one meaning."
           : !draft.meanings.length && !draft.recognized_forms.length ? "An empty group has no knowledge." : "";
         if (problem) { flash(status, problem, "err"); return; }
-        const next = clone(), list = scope === "pinned" ? next.pinned : learnedOf(next);
+        if (scope === "learned" && !model) { flash(status, "Choose a speech model first.", "err"); return; }
+        const next = clone(), list = scope === "pinned" ? next.pinned : (next.learned[model.id] ??= []);
         draft.needs_review = draft.meanings.some((m) => !m.meaning.trim());
         if (created) list.push(draft);
         else list[list.findIndex((g) => g.id === original.id)] = draft;
