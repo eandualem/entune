@@ -130,7 +130,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const lines = [];
     if (s.transcriptions) {
       lines.push(`${s.transcriptions} processed transcripts · median +${s.median_seconds?.toFixed(1) ?? "–"} s`);
-      for (const [method, label] of [["contextual", "Contextual dictionary"], ["deterministic", "Approved direct mappings"], ["cleanup", "Filler reduction"], ["formatting", "Formatting"]]) {
+      for (const [method, label] of [["contextual", "Dictionary, read in context"], ["deterministic", "Dictionary, always-apply entries"], ["cleanup", "Repeated fillers"], ["formatting", "Paragraphs and bullets"]]) {
         const stage = s.stages[method];
         if (!stage.succeeded && !stage.failed && !stage.replacements && !stage.decisions) continue;
         if (["cleanup", "formatting"].includes(method)) {
@@ -141,7 +141,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       }
       lines.push("Counts describe processing, not accuracy. Span counts cover recorded edits only.");
     }
-    el("jev-summary").textContent = lines.join("\n") || (j.key_hint ? "" : "Add a TypeSafe key to enable processing.");
+    el("jev-summary").textContent = lines.join("\n") || (j.key_hint ? "No processed dictations yet." : "Add a TypeSafe key in Settings › Corrections & formatting to enable processing.");
   }
   el("jev-policy-form").addEventListener("submit", async (e) => {
     e.preventDefault();

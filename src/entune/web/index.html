@@ -55,36 +55,50 @@
       </section>
 
       <section class="view" id="view-models" role="tabpanel">
-        <div class="models">
-          <header class="page-head">
-            <h2>Speech models</h2>
-            <p class="caption">Speech models turn your voice into text. Add a cloud service's key or download a model to this Mac, then pick one in the toolbar; your shortcut uses it.</p>
-          </header>
+        <div class="settings">
+          <nav class="rail" aria-label="Models">
+            <button type="button" id="msec-compare" aria-selected="true">Compare models</button>
+            <button type="button" id="msec-cloud" aria-selected="false">Cloud services</button>
+            <button type="button" id="msec-local" aria-selected="false">On this Mac</button>
+            <div class="spacer"></div>
+            <p class="rail-note">Pick the model your shortcut uses in the toolbar.</p>
+          </nav>
 
-          <section id="compare" aria-labelledby="compare-title" hidden>
-          <h2 class="sec-label" id="compare-title">Compare your models</h2>
-          <div class="scard perf-card">
-            <div class="perf-table">
-              <div class="perf-grid perf-head"><span>Model</span><span>Speed</span><span>Corrections</span><span>Used</span></div>
-              <div id="metrics-rows"></div>
+          <div class="settings-content">
+            <div class="section" id="models-compare" data-active>
+              <p class="caption section-intro">How each speech model has done on your own dictations.</p>
+              <div class="scard perf-card">
+                <div class="perf-table" id="metrics-table">
+                  <div class="perf-grid perf-head"><span>Model</span><span>Speed</span><span>Corrections</span><span>Used</span></div>
+                  <div id="metrics-rows"></div>
+                </div>
+                <p class="caption perf-empty" id="metrics-empty" hidden>Nothing to compare yet. Each model you dictate with appears here.</p>
+                <div class="srow foot"><span class="caption"><b>Speed</b>: the wait per minute of audio; fast mode uploads while you record. <b>Corrections</b>: dictionary fixes per 100 words. Neither is an accuracy score.</span></div>
+              </div>
+              <details class="scard advanced" id="processing-activity">
+                <summary>Corrections &amp; formatting activity</summary>
+                <div class="srow foot"><span class="caption">What Jev did after speech recognition, across all dictations and every speech model. It counts work done, not accuracy.</span></div>
+                <div class="srow foot"><span class="caption" id="jev-summary" role="status" style="white-space: pre-line"></span></div>
+              </details>
             </div>
-            <div class="srow foot"><span class="caption"><b>Speed</b>: the wait per minute of audio; fast mode uploads while you record. <b>Corrections</b>: dictionary fixes per 100 words. Neither is an accuracy score.</span></div>
-          </div>
-          </section>
 
-          <h2 class="sec-label">Cloud services</h2>
-          <form class="scard" id="keys-form">
-            <div class="scard-head"><div class="caption">Add a key only for the services you use; their models then appear in the toolbar picker. Your audio is sent to the service you pick.</div></div>
-            <div id="keys"></div>
-            <div class="srow foot"><button type="submit" class="btn accent" title="Keys are only sent when you save">Save keys</button><span class="caption">Only filled-in keys are saved.</span><span class="caption save-status" id="keys-status" role="status"></span></div>
-          </form>
+            <div class="section" id="models-cloud">
+              <p class="caption section-intro">Add a key only for the services you use; their models then appear in the toolbar picker. Your audio is sent to the service you pick.</p>
+              <form class="scard" id="keys-form">
+                <div id="keys"></div>
+                <div class="srow foot"><button type="submit" class="btn accent" title="Keys are only sent when you save">Save keys</button><span class="caption">Only filled-in keys are saved.</span><span class="caption save-status" id="keys-status" role="status"></span></div>
+              </form>
+            </div>
 
-          <h2 class="sec-label">On this Mac</h2>
-          <div class="local-bar">
-            <input class="input search" id="local-search" type="search" placeholder="Search models" aria-label="Search models on this Mac" />
-            <span class="caption" id="local-summary"></span>
+            <div class="section" id="models-local">
+              <p class="caption section-intro">Speech recognition that runs on this Mac: your audio stays here.</p>
+              <div class="local-bar">
+                <input class="input search" id="local-search" type="search" placeholder="Search models" aria-label="Search models on this Mac" />
+                <span class="caption" id="local-summary"></span>
+              </div>
+              <div id="local-cards"></div>
+            </div>
           </div>
-          <div id="local-cards"></div>
         </div>
       </section>
 
@@ -374,10 +388,6 @@
                   <div class="srow note"><span></span><span class="caption">All three steps share the maximum wait, including retries.</span></div>
                   <div class="srow foot"><button type="submit" class="btn">Save wait limits</button><span class="caption save-status" id="jev-policy-status" role="status"></span></div>
                 </form>
-              </details>
-              <details class="scard advanced">
-                <summary>Activity</summary>
-                <div class="srow foot"><span class="caption" id="jev-summary" role="status" style="white-space: pre-line"></span></div>
               </details>
             </div>
 
