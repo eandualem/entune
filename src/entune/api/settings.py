@@ -1,0 +1,172 @@
+"""Settings: read everything the pages show, and save changes with validation."""
+
+from __future__ import annotations
+
+from dataclasses import asdict
+
+from starlette.concurrency import run_in_threadpool
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Route
+
+from entune.api.common import bad, optional_text, shortcuts_json
+from entune.app.entune import Entune
+from entune.app.metrics import processing_summary
+from entune.app.models import UnknownModel
+from entune.app.settings import JEV_PROVIDER
+from entune.desktop import shortcuts
+from entune.learning import suggestion_model
+from entune.processing import jev_client
+
+
+def routes(app: Entune) -> list[Route]:
+    def get_settings(_: Request) -> Response:
+        return JSONResponse(
+            {
+                "providers": [
+                    {
+                        "id": s.id,
+                        "name": s.name,
+                        "keyHint": s.key_hint,
+                        "streams": s.streams,
+                        "local": s.local,
+                    }
+                    for s in app.models.provider_statuses()
+                ],
+                "defaultModel": app.models.default_model(),
+                "shortcuts": shortcuts_json(app),
+                "llmProviders": [
+                    {
+                        "id": s.id,
+                        "name": s.name,
+                        "keyHint": s.key_hint,
+                        "defaultModel": s.default_model,
+                        "models": [{"id": m.id, "name": m.name} for m in s.models],
+                    }
+                    for s in app.settings.suggestion_providers()
+                ],
+                "dictionaryModel": app.settings.dictionary_model(),
+                "fastMode": app.settings.fast_mode(),
+                "jev": {
+                    **asdict(app.settings.jev_status()),
+                    "policy": asdict(app.settings.jev_policy()),
+                    "summary": asdict(processing_summary(app.store)),
+                },
+            }
+        )
+
+    async def put_settings(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except ValueError as exc:
+            return bad(str(exc))
+        return await run_in_threadpool(update_settings, body)
+
+    def update_settings(body: object) -> Response:
+        try:
+            if not isinstance(body, dict):
+                raise ValueError("Body must be a JSON object")
+            keys = body.get("keys", {})
+            if not isinstance(keys, dict):
+                raise ValueError("keys must be an object")
+            known = (
+                {p.id for p in app.providers}
+                | suggestion_model.LLM_PROVIDERS.keys()
+                | {JEV_PROVIDER}
+            )
+            for provider_id, key in keys.items():
+                if provider_id not in known:
+                    raise ValueError(f"Unknown provider: {provider_id}")
+                if not isinstance(key, str) or not key.strip():
+                    raise ValueError(f"Empty or invalid key for {provider_id}")
+            default_model = optional_text(body.get("defaultModel"), "defaultModel")
+            if default_model is not None and app.models.resolve(default_model) is None:
+                raise UnknownModel(default_model)
+            dictionary_model = optional_text(body.get("dictionaryModel"), "dictionaryModel")
+            if dictionary_model:
+                provider, separator, model = dictionary_model.partition(":")
+                if (
+                    not separator
+                    or provider not in suggestion_model.LLM_PROVIDERS
+                    or not model.strip()
+                ):
+                    raise ValueError(
+                        "dictionaryModel must be provider:model for Anthropic or OpenAI"
+                    )
+            if "fastMode" in body and not isinstance(body["fastMode"], bool):
+                raise ValueError("fastMode must be a boolean")
+            jev_settings = body.get("jev", {})
+            if not isinstance(jev_settings, dict) or set(jev_settings) - {
+                "dictionary",
+                "formatting",
+                "cleanup",
+                "policy",
+            }:
+                raise ValueError(
+                    "jev must contain dictionary, formatting, cleanup or policy settings"
+                )
+            for name in ("dictionary", "formatting", "cleanup"):
+                if name in jev_settings and not isinstance(jev_settings[name], bool):
+                    raise ValueError(f"jev.{name} must be a boolean")
+            policy = None
+            if "policy" in jev_settings:
+                value = jev_settings["policy"]
+                if not isinstance(value, dict) or set(value) != {
+                    "total_seconds",
+                    "attempt_seconds",
+                    "max_attempts",
+                }:
+                    raise ValueError(
+                        "jev.policy needs total_seconds, attempt_seconds and max_attempts"
+                    )
+                policy = jev_client.Policy(**value)
+            if (
+                (
+                    jev_settings.get("dictionary")
+                    or jev_settings.get("formatting")
+                    or jev_settings.get("cleanup")
+                )
+                and JEV_PROVIDER not in keys
+                and app.settings.jev_status().key_hint is None
+            ):
+                raise ValueError("Save a TypeSafe API key first.")
+            shortcut_settings = body.get("shortcuts", {})
+            if not isinstance(shortcut_settings, dict):
+                raise ValueError("shortcuts must be an object")
+            hold = optional_text(shortcut_settings.get("hold"), "shortcuts.hold")
+            toggle = optional_text(shortcut_settings.get("toggle"), "shortcuts.toggle")
+            cancel = optional_text(
+                shortcut_settings.get("cancel", shortcuts_json(app)["cancel"]), "shortcuts.cancel"
+            )
+            shortcuts.parse(hold, toggle, cancel)
+
+            # Validate the complete request before storing any field: a bad shortcut
+            # or model must not leave a seemingly failed Save with some keys changed.
+            for provider_id, key in keys.items():
+                app.settings.set_key(provider_id, key)
+            if "defaultModel" in body:
+                app.models.set_default_model(default_model)
+            if "dictionaryModel" in body:
+                app.settings.set_dictionary_model(dictionary_model or None)
+            if "fastMode" in body:
+                app.settings.set_fast_mode(body["fastMode"])
+            if jev_settings:
+                app.settings.set_jev(
+                    jev_settings.get("dictionary"),
+                    jev_settings.get("formatting"),
+                    jev_settings.get("cleanup"),
+                )
+            if policy is not None:
+                app.settings.set_jev_policy(policy)
+            if "shortcuts" in body:
+                app.settings.set_shortcuts(hold, toggle, cancel)
+        except UnknownModel as exc:
+            return bad(f"Unknown model: {exc}")
+        except ValueError as exc:
+            return bad(str(exc))
+        return JSONResponse({"ok": True})
+
+    return [
+        Route("/api/settings", get_settings, methods=["GET"]),
+        Route("/api/settings", put_settings, methods=["PUT"]),
+    ]
