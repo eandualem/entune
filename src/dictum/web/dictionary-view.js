@@ -307,20 +307,25 @@ export function createDictionary({ getModel, getSettings }) {
           editor.append(node("summary", "After · inspect and edit"));
           editor.open = true;
           // A shared meaning can be proposed in several groups; its copies stay one definition.
-          const copies = id => proposalChanges.flatMap(c => c.after?.meanings ?? []).filter(m => m.id === id);
+          // Redraw when another copy changed, so every editor shows what Apply submits.
+          const shared = (id, edit) => {
+            const copies = proposalChanges.flatMap(c => c.after?.meanings ?? []).filter(m => m.id === id);
+            copies.forEach(edit);
+            if (copies.length > 1) drawProposal();
+          };
           for (const meaning of change.after.meanings) {
             const row = node("div", "", "meaning-editor");
             const spelling = field(row, "Output spelling", meaning.spelling, value => {
-              for (const copy of copies(meaning.id)) copy.spelling = value;
               for (const form of proposalChanges.flatMap(c => c.after?.recognized_forms ?? [])) {
                 if (form.direct === meaning.id) { form.direct = null; form.direct_reason = ""; }
                 form.associations = form.associations.map(a => a.basis === "literal" && a.meaning_id === meaning.id
                   ? {meaning_id: a.meaning_id, basis: "user", evidence: []} : a);
               }
+              shared(meaning.id, copy => { copy.spelling = value; });
             });
             spelling.readOnly = pinnedIds.has(meaning.id);
-            field(row, "Definition", meaning.meaning, value => { for (const copy of copies(meaning.id)) copy.meaning = value; });
-            field(row, "Personal usage", meaning.personal_context, value => { for (const copy of copies(meaning.id)) copy.personal_context = value || null; });
+            field(row, "Definition", meaning.meaning, value => shared(meaning.id, copy => { copy.meaning = value; }));
+            field(row, "Personal usage", meaning.personal_context, value => shared(meaning.id, copy => { copy.personal_context = value || null; }));
             editor.append(row);
           }
           for (const form of change.after.recognized_forms) {
