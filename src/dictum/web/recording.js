@@ -66,6 +66,8 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
       onStatus(result.notice ?? "Saved to history.");
     } catch (err) {
       onStatus(errorText(err));
+      // A request refused before the server claimed the audio leaves the capture open.
+      await api(`/api/operations/${operationId}`, {method: "DELETE"}).catch(() => {});
     }
     uploading = false; operationId = null;
     button.disabled = false;

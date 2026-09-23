@@ -188,8 +188,9 @@ class Store:
         # A previous process may have stopped after saving speech but before processing.
         rows = self._db.execute(
             "SELECT * FROM transcriptions WHERE processing_state = 'processing'"
-            " OR correction LIKE '%pending%' OR cleanup LIKE '%pending%'"
-            " OR formatting LIKE '%pending%'"
+            " OR json_extract(correction, '$.status') = 'pending'"
+            " OR json_extract(cleanup, '$.status') = 'pending'"
+            " OR json_extract(formatting, '$.status') = 'pending'"
         ).fetchall()
         for row in rows:
             attempt = _transcription(row)

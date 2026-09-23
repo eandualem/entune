@@ -310,7 +310,11 @@ export function createDictionary({ getModel, getSettings }) {
             const row = node("div", "", "meaning-editor");
             const spelling = field(row, "Output spelling", meaning.spelling, value => {
               meaning.spelling = value;
-              for (const form of change.after.recognized_forms) if (form.direct === meaning.id) { form.direct = null; form.direct_reason = ""; }
+              for (const form of proposalChanges.flatMap(c => c.after?.recognized_forms ?? [])) {
+                if (form.direct === meaning.id) { form.direct = null; form.direct_reason = ""; }
+                form.associations = form.associations.map(a => a.basis === "literal" && a.meaning_id === meaning.id
+                  ? {meaning_id: a.meaning_id, basis: "user", evidence: []} : a);
+              }
             });
             spelling.readOnly = pinnedIds.has(meaning.id);
             field(row, "Definition", meaning.meaning, value => { meaning.meaning = value; });
@@ -354,5 +358,5 @@ export function createDictionary({ getModel, getSettings }) {
   }
   buildBtn.addEventListener("click", () => builds.start("history", {scope: el("learning-scope").value}));
 
-  return { load: loadDictionary, showHelp };
+  return { load: loadDictionary, showHelp, refreshAudio: () => onboarding.load() };
 }
