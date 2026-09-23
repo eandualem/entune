@@ -13,14 +13,15 @@ import time
 from collections.abc import Callable
 from concurrent.futures import CancelledError
 
+from entune.app.entune import Entune
+from entune.app.models import NoDefaultModel, UnknownModel
+from entune.app.operations import Busy, Operation
+from entune.audio.recorder import Capture, Recorder, Sink
 from entune.desktop.engine import ShortcutEngine
 from entune.desktop.platform import Microphone, Platform
-from entune.operations import Busy, Operation
-from entune.processing import notice
+from entune.processing.results import notice
 from entune.providers.cloud.contracts import Upload
-from entune.recorder import Capture, Recorder, Sink
-from entune.service import Entune, NoDefaultModel, UnknownModel
-from entune.store import Recording
+from entune.storage.records import Recording
 
 MIN_CLIP_SECONDS = 0.25  # a tap on the hold key is not a dictation
 KEYS_UP_WAIT_SECONDS = 1.0  # let chord keys come up before pasting so Cmd+V is just Cmd+V
@@ -65,15 +66,17 @@ class EntuneApp:
         platform.tray.set_actions(self.open_window, self.open_settings, self.quit)
         platform.every(PERMISSION_POLL_SECONDS, self._recheck_permission)
         entune.on_change(lambda: platform.run_on_ui_thread(self.apply_shortcut))
-        entune.on_capture(lambda: platform.run_on_ui_thread(self.begin_capture))
-        entune.on_cancel_capture(lambda: platform.run_on_ui_thread(platform.hotkeys.cancel_capture))
-        entune.on_show_window(lambda: platform.run_on_ui_thread(self.open_window))
-        entune.on_permission_request(
+        entune.capture.on_capture(lambda: platform.run_on_ui_thread(self.begin_capture))
+        entune.capture.on_cancel_capture(
+            lambda: platform.run_on_ui_thread(platform.hotkeys.cancel_capture)
+        )
+        entune.desktop.on_show_window(lambda: platform.run_on_ui_thread(self.open_window))
+        entune.desktop.on_permission_request(
             lambda name, settings: platform.run_on_ui_thread(
                 lambda: self._request_permission(name, settings)
             )
         )
-        entune.report_status(desktop=True, shell=type(platform).__name__)
+        entune.desktop.report_status(desktop=True, shell=type(platform).__name__)
         self.apply_shortcut()
         if show_window:
             platform.call_later(0.1, lambda: self._show_window_when_served(time.monotonic()))
@@ -124,7 +127,7 @@ class EntuneApp:
 
     def _shutdown_warning(self, message: str) -> None:
         logging.getLogger(__name__).warning(message)
-        self.entune.report_status(lastError=message)
+        self.entune.desktop.report_status(lastError=message)
         self.platform.actions.notify("Entune: shutdown", message)
 
     def _show_window_when_served(self, started: float) -> None:
@@ -132,7 +135,7 @@ class EntuneApp:
         if not self._server_answers() and time.monotonic() - started < SERVER_WAIT_SECONDS:
             self.platform.call_later(0.2, lambda: self._show_window_when_served(started))
             return
-        needs_setup = not self.entune.shortcuts() or any(
+        needs_setup = not self.entune.settings.shortcuts() or any(
             state != "granted" for state in self._permission_status().values()
         )
         self.platform.window.show("#settings" if needs_setup else "")
@@ -150,7 +153,7 @@ class EntuneApp:
     def apply_shortcut(self) -> None:
         if self._quitting:
             return
-        shortcuts = self.entune.shortcuts()
+        shortcuts = self.entune.settings.shortcuts()
         permissions = self.platform.permissions
         unchanged = self.engine is not None and self.engine.shortcuts == shortcuts
         if self._recording and not unchanged:
@@ -195,7 +198,7 @@ class EntuneApp:
     def _set_status(self, text: str) -> None:
         self.platform.tray.set_status(text)
         permissions = self.platform.permissions
-        self.entune.report_status(
+        self.entune.desktop.report_status(
             status=text,
             listening=self._listening,
             canListen=permissions.can_listen(),
@@ -235,7 +238,7 @@ class EntuneApp:
             permissions.request_listen()
         else:
             permissions.request_post()
-        self.entune.report_status(permissions=self._permission_status())
+        self.entune.desktop.report_status(permissions=self._permission_status())
 
     def begin_capture(self) -> None:
         """Settings asked for a shortcut to be pressed: record it with the global listener."""
@@ -243,10 +246,10 @@ class EntuneApp:
             return
         if not self.platform.permissions.can_listen():
             self.platform.permissions.request_listen()
-            self.entune.cancel_capture()
+            self.entune.capture.cancel_capture()
             return
         self.platform.hotkeys.start(self.engine)  # runs even with no shortcut configured yet
-        self.platform.hotkeys.begin_capture(self.entune.finish_capture)
+        self.platform.hotkeys.begin_capture(self.entune.capture.finish_capture)
 
     def _recheck_permission(self) -> None:
         """Start listening as soon as Input Monitoring is granted, without a restart."""
@@ -254,9 +257,9 @@ class EntuneApp:
             return
         if self._recording:
             self._refresh_state()
-        shortcuts = self.entune.shortcuts()
+        shortcuts = self.entune.settings.shortcuts()
         permissions = self.platform.permissions
-        self.entune.report_status(
+        self.entune.desktop.report_status(
             permissions=self._permission_status(),
             canListen=permissions.can_listen(),
             canPost=permissions.can_post(),
@@ -289,7 +292,7 @@ class EntuneApp:
                 self.recorder.start(self._begin_upload)
             except Exception as exc:
                 message = f"{type(exc).__name__}: {exc}"
-                self.entune.report_status(lastError=message)
+                self.entune.desktop.report_status(lastError=message)
                 self._notify_later("Entune: microphone", message)
                 if self.engine:
                     self.engine.recording = False
@@ -298,13 +301,13 @@ class EntuneApp:
                     self._upload = None
                 self._finish(operation)
                 return
-            self.entune.report_status(lastRecordingStarted=time.time(), lastError=None)
+            self.entune.desktop.report_status(lastRecordingStarted=time.time(), lastError=None)
             self._quiet_notified = False
             self._recording = True
             self._later(self._refresh_state)
 
     def _begin_upload(self, sample_rate: int) -> Sink | None:
-        self._upload = self.entune.begin_upload(sample_rate)
+        self._upload = self.entune.dictation.begin_upload(sample_rate)
         return self._upload.feed if self._upload is not None else None
 
     def stop_recording(self) -> None:
@@ -350,7 +353,7 @@ class EntuneApp:
         while True:
             capture, upload, operation = self._captures.get()
             try:
-                recording = self.entune.store_recording(capture.wav(), "audio/wav")
+                recording = self.entune.dictation.store_recording(capture.wav(), "audio/wav")
                 self._saved_recording = recording
             except Exception as exc:
                 self._capture_error = f"{type(exc).__name__}: {exc}"
@@ -370,7 +373,7 @@ class EntuneApp:
         self._later(lambda: self._notify(title, message))
 
     def _notify(self, title: str, message: str) -> None:
-        self.entune.report_status(delivery=message)
+        self.entune.desktop.report_status(delivery=message)
         self.platform.tray.complete(message)
         self.platform.actions.notify(title, message)
 
@@ -430,7 +433,7 @@ class EntuneApp:
         try:
             operation.check()
             started = time.monotonic()
-            recording = self.entune.transcribe_recording(
+            recording = self.entune.dictation.transcribe_recording(
                 recording, None, upload, operation=operation
             )
             operation.check()
@@ -491,7 +494,7 @@ class EntuneApp:
                         "Copied to clipboard. Paste was sent, but insertion could not be verified."
                     )
                 else:
-                    self.entune.report_status(delivery="Inserted into current text field")
+                    self.entune.desktop.report_status(delivery="Inserted into current text field")
                     self.platform.tray.complete("Inserted into current text field")
             else:
                 permissions.request_post()

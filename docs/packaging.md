@@ -7,8 +7,8 @@ lighter but macOS's permission panels may refuse to list it.
 
 Writes `/Applications/Entune.app` when that folder is writable, else
 `~/Applications/Entune.app` (or `--into DIR`): an Info.plist with
-Entune's name, bundle id `dev.elias.dictum` (kept from Entune's former name, Dictum,
-so macOS keeps its permissions; see below), `LSUIElement`, the microphone
+Entune's name, bundle id `dev.elias.dictum` (macOS ties the granted permissions to
+it; see below), `LSUIElement`, the microphone
 usage string and an icns built from the shipped PNG with `sips` and
 `iconutil`; and an executable that is a two-line shell script running the
 current Python with `-m entune`. Nothing is copied, so the app follows the
@@ -29,8 +29,8 @@ To keep them across rebuilds, create a certificate once. Three steps in
 Keychain Access, as it took on macOS 26 (2026-09-18):
 
 1. Certificate Assistant › Create a Certificate…: name **Entune Developer**
-   exactly (a certificate made earlier as **Dictum Developer** keeps working
-   and is used when there is no Entune one), identity type Self Signed Root, certificate type **Code
+   exactly (one named **Dictum Developer** is also used when there is no Entune
+   one), identity type Self Signed Root, certificate type **Code
    Signing** (the popup defaults to S/MIME; that one cannot sign code).
 2. My Certificates › double-click it › Trust › Code Signing: **Always
    Trust**. Without this `security find-identity -v -p codesigning` lists
@@ -149,20 +149,10 @@ Windows has no native shortcut/paste/indicator/permission/lifecycle implementati
 or supported desktop package yet. Its data-directory branch and portable WebView
 libraries do not change that; Windows native work is tracked separately in #36.
 
-## From Dictum to Entune
+## Bundle identity
 
-Entune was called Dictum. Upgrading keeps everything:
-
-- **Data.** On its first start, with no other instance running, Entune moves
-  `~/Library/Application Support/dictum` to `…/entune` in one rename (recordings,
-  transcripts, dictionary, keys, settings and downloaded models) and names its
-  database and log `entune.db` and `entune.log`. It never replaces an existing
-  `entune` folder. `DICTUM_DATA` is still honoured after `ENTUNE_DATA`.
-- **Permissions.** The bundle id stays `dev.elias.dictum` and an existing
-  **Dictum Developer** certificate keeps signing, so Microphone, Input Monitoring
-  and Accessibility carry over. A new **Entune Developer** certificate would be a
-  new identity, and macOS would ask for the three permissions again.
-- **The old app.** `entune install-app` moves a stopped `Dictum.app` in the same
-  folder to the Trash. If Dictum is running it is left alone: quit it from its
-  menu-bar icon, open Entune, then delete `Dictum.app` or install again.
-- **Agents** keep posting to the same local API on port 4187.
+The bundle id is `dev.elias.dictum` and the app is signed with an existing
+**Dictum Developer** certificate when there is no **Entune Developer** one.
+macOS ties Microphone, Input Monitoring and Accessibility to that identity, so
+keeping it keeps the granted permissions; a new identity means granting all
+three again.

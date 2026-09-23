@@ -192,7 +192,7 @@ def test_picker_uses_requesting_view_and_finishes_on_cancel_or_failure(
 
 def test_close_hides_but_destroy_really_closes(monkeypatch: pytest.MonkeyPatch) -> None:
     appkit = pytest.importorskip("AppKit", reason="macOS only")
-    from entune.desktop.webview import _Window
+    from entune.desktop.webview.shell import _Window
 
     calls: list[str] = []
     window = _Window("http://localhost:4187/")
@@ -228,11 +228,11 @@ def test_native_quit_saves_capture_and_closes_processing_before_termination(
     import webview
     from webview.platforms.cocoa import BrowserView
 
-    from entune.desktop import webview as shell
+    from entune.app.entune import Entune
+    from entune.audio.recorder import Capture
     from entune.desktop.app import EntuneApp
-    from entune.recorder import Capture
-    from entune.service import Entune
-    from entune.store import Store
+    from entune.desktop.webview import shell as shell
+    from entune.storage.store import Store
     from tests.test_app import FakeActions, FakeHotkeys, FakePermissions, FakeRecorder
 
     monkeypatch.setattr(shell, "_hotkeys", FakeHotkeys)
@@ -283,7 +283,7 @@ def test_window_fits_the_dictionary_page_and_smaller_screens(
 ) -> None:
     import webview
 
-    from entune.desktop import webview as window
+    from entune.desktop.webview import shell as window
 
     monkeypatch.setattr(webview, "screens", [SimpleNamespace(width=1512, height=982)])
     assert window._window_size() == (1120, 800)

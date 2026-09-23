@@ -8,11 +8,12 @@ calls it.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from typing import Literal, Protocol
 
+from entune.audio.recorder import Capture, SinkFactory
 from entune.desktop.engine import ShortcutEngine
-from entune.recorder import Capture, SinkFactory
 
 State = str  # operation stage, plus idle/quiet
 Delivery = Literal["inserted", "no_target", "unverified", "focus_moving"]
@@ -103,3 +104,14 @@ class Platform(Protocol):
         ...
 
     def quit(self) -> None: ...
+
+
+def create_platform(url: str) -> Platform | None:
+    """The platform for this operating system, or None where there is no desktop app yet."""
+    if sys.platform == "darwin":
+        from entune.desktop.macos.bundle import name_this_process
+        from entune.desktop.webview.shell import WebviewPlatform
+
+        name_this_process()
+        return WebviewPlatform(url)
+    return None

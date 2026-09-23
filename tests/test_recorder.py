@@ -6,7 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from entune.recorder import QUIET_SECONDS, Capture, Recorder, duration_seconds, wav_bytes
+from entune.audio.formats import wav_bytes
+from entune.audio.recorder import QUIET_SECONDS, Capture, Recorder, duration_seconds
 
 
 def test_wav_bytes_is_a_valid_16khz_mono_wav() -> None:
@@ -115,7 +116,7 @@ def test_quiet_input_warns_after_ten_seconds_and_recovers_without_dropping_audio
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = 0.0
-    monkeypatch.setattr("entune.recorder.monotonic", lambda: now)
+    monkeypatch.setattr("entune.audio.recorder.monotonic", lambda: now)
     recorder = Recorder()
     recorder._stream = Mock()
     quiet = b"\x01\x00" * 100

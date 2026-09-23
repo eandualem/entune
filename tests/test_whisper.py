@@ -7,10 +7,10 @@ from typing import Any
 import httpx
 import pytest
 
+from entune.audio.formats import wav_bytes
 from entune.providers.contracts import Clip, Failure, Transcript
 from entune.providers.local.whisper import CATALOGUE, WhisperCpp, pcm16k
 from entune.providers.registry import resolve_model
-from entune.recorder import wav_bytes
 from tests.conftest import mock_client
 
 
@@ -203,8 +203,8 @@ def test_rapid_selection_changes_coalesce_to_the_latest_model(
 ) -> None:
     import threading
 
-    from entune.service import Entune
-    from entune.store import Store
+    from entune.app.entune import Entune
+    from entune.storage.store import Store
 
     for name in ("base.en", "small.en"):
         (tmp_path / f"ggml-{name}.bin").write_bytes(b"model")
@@ -221,13 +221,13 @@ def test_rapid_selection_changes_coalesce_to_the_latest_model(
 
     monkeypatch.setattr(local, "warm", warm)
     try:
-        app.set_default_model("local/base.en")
+        app.models.set_default_model("local/base.en")
         assert entered.wait(1)
         for _ in range(10):
-            app.set_default_model("local/small.en")
+            app.models.set_default_model("local/small.en")
     finally:
         release.set()
-    wait_until(lambda: not app._speech.warming)
+    wait_until(lambda: not app.speech.warming)
     assert warmed == ["base.en", "small.en"]
     assert app.close()
 
@@ -275,7 +275,7 @@ def test_converter_timeout_removes_its_temporary_audio(
 ) -> None:
     import subprocess
 
-    from entune.providers.local import audio
+    from entune.audio import convert
 
     temporary: list[Path] = []
 
@@ -285,9 +285,9 @@ def test_converter_timeout_removes_its_temporary_audio(
         assert temporary[0].read_bytes() == b"clip"
         raise subprocess.TimeoutExpired(command, 300)
 
-    monkeypatch.setattr("entune.providers.local.audio.shutil.which", lambda name: "/fake/ffmpeg")
-    monkeypatch.setattr("entune.providers.local.audio.subprocess.run", timeout)
-    monkeypatch.setattr("entune.providers.local.audio.tempfile.tempdir", str(tmp_path))
+    monkeypatch.setattr("entune.audio.convert.shutil.which", lambda name: "/fake/ffmpeg")
+    monkeypatch.setattr("entune.audio.convert.subprocess.run", timeout)
+    monkeypatch.setattr("entune.audio.convert.tempfile.tempdir", str(tmp_path))
     with pytest.raises(subprocess.TimeoutExpired):
-        audio.to_wav_with_ffmpeg(b"clip", sample_rate=16_000)
+        convert.to_wav_with_ffmpeg(b"clip", sample_rate=16_000)
     assert not temporary[0].exists()

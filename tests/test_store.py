@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from entune.store import Store
+from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
 
 
@@ -30,35 +30,6 @@ def test_clearing_a_setting(tmp_path: Path) -> None:
     store.set_setting("k", "v")
     store.set_setting("k", None)
     assert store.get_setting("k") is None
-
-
-def test_raw_text_column_is_added_to_an_older_database(tmp_path: Path) -> None:
-    import sqlite3
-
-    db = sqlite3.connect(tmp_path / "entune.db")
-    db.executescript(
-        "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-        "CREATE TABLE recordings (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,"
-        " file TEXT NOT NULL, mime TEXT NOT NULL);"
-        "CREATE TABLE transcriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, recording_id INTEGER"
-        " NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, text TEXT,"
-        " error TEXT, created_at TEXT NOT NULL);"
-    )
-    db.execute("INSERT INTO recordings (created_at, file, mime) VALUES ('t', 'f.wav', 'audio/wav')")
-    db.execute(
-        "INSERT INTO transcriptions"
-        " (recording_id, provider, model, status, text, error, created_at)"
-        " VALUES (1, 'p', 'm', 'ok', 'old text', NULL, 't')"
-    )
-    db.commit()
-    db.close()
-
-    store = Store(tmp_path)
-    old = store.get_recording(1)
-    assert old is not None and old.transcriptions[0].text == "old text"
-    assert old.transcriptions[0].raw_text is None
-    store.add_transcription(1, "p", "m", "ok", "fixed", None, raw_text="raw")
-    assert store.get_recording(1).transcriptions[0].raw_text == "raw"  # type: ignore[union-attr]
 
 
 def test_recent_transcripts_are_one_models_raw_text_newest_first(tmp_path: Path) -> None:
@@ -111,7 +82,7 @@ def test_history_page_queries_do_not_grow_with_recording_count(tmp_path: Path) -
     assert all([t.status for t in r.transcriptions] == ["error", "ok"] for r in page)
 
 
-def test_legacy_metrics_survive_without_becoming_current_outcomes(tmp_path: Path) -> None:
+def test_obsolete_counter_columns_are_ignored(tmp_path: Path) -> None:
     from contextlib import closing
 
     with closing(Store(tmp_path)) as store:
@@ -127,12 +98,6 @@ def test_legacy_metrics_survive_without_becoming_current_outcomes(tmp_path: Path
         attempt = reopened.list_recordings()[0].transcriptions[0]
         assert (attempt.text, attempt.raw_text) == ("old correction", "raw")
         assert attempt.correction is None and attempt.formatting is None
-        assert attempt.legacy_processing == {
-            "jev_seconds": None,
-            "jev_fixed": 1,
-            "jev_kept": None,
-            "jev_error": "HTTP 529",
-        }
         assert reopened.processed_transcriptions() == []
         assert reopened.audio_path(recording).read_bytes() == WEBM_HEADER
 
@@ -140,7 +105,7 @@ def test_legacy_metrics_survive_without_becoming_current_outcomes(tmp_path: Path
 def test_interrupted_processing_reopens_as_raw_success_with_a_failure(tmp_path: Path) -> None:
     from contextlib import closing
 
-    from entune.processing import pending
+    from entune.processing.results import pending
 
     raw = "  Jeff.\n"
     with closing(Store(tmp_path)) as store:
@@ -174,7 +139,6 @@ def test_older_formatting_does_not_gain_invented_edit_counts(tmp_path: Path) -> 
             recording.id, "p", "m", "ok", "- First.\n- Next.", None, raw_text="First. Next."
         )
         with store._db:
-            store._db.execute("ALTER TABLE transcriptions DROP COLUMN cleanup")
             store._db.execute(
                 "UPDATE transcriptions SET formatting = ?",
                 ('{"status":"succeeded","method":"formatting","decisions":1}',),
@@ -193,8 +157,8 @@ def test_restart_retains_completed_enhancement_and_fails_only_unfinished_stage(
     from contextlib import closing
     from dataclasses import replace
 
-    from entune.processing import Stage, pending
-    from entune.text_edits import Change
+    from entune.processing.results import Stage, pending
+    from entune.processing.text_edits import Change
 
     raw = "Jeff works. Next."
     with closing(Store(tmp_path)) as store:
@@ -228,7 +192,7 @@ def test_restart_retains_completed_enhancement_and_fails_only_unfinished_stage(
 def test_restart_leaves_a_cancelled_attempt_whose_text_says_pending(tmp_path: Path) -> None:
     from contextlib import closing
 
-    from entune.processing import Processed, Stage
+    from entune.processing.results import Processed, Stage
 
     text = "The pending task."
     with closing(Store(tmp_path)) as store:

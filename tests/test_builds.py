@@ -10,12 +10,13 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from entune import llm, onboarding
+from entune.app import audio_import
+from entune.app.entune import Entune
+from entune.audio.formats import wav_bytes
+from entune.learning import batches
 from entune.providers.contracts import Clip, Transcript
-from entune.recorder import wav_bytes
 from entune.server import create_app
-from entune.service import Entune
-from entune.store import Store
+from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, wait_for_build
 from tests.test_server import StubProvider
 
@@ -23,13 +24,13 @@ from tests.test_server import StubProvider
 @pytest.fixture
 def app(store: Store) -> Iterator[Entune]:
     app = Entune(store, [StubProvider()])
-    app.set_key("stub", "speech-secret")
-    app.set_key("openai", "build-secret")
-    app.set_default_model("stub/good")
+    app.settings.set_key("stub", "speech-secret")
+    app.settings.set_key("openai", "build-secret")
+    app.models.set_default_model("stub/good")
     recording = store.create_recording(WEBM_HEADER)
     store.add_transcription(recording.id, "stub", "good", "ok", "history text", None)
     for i in range(2):
-        onboarding.import_audio(store, wav_bytes(bytes([i, 0]) * 16), f"{i}.wav")
+        audio_import.import_audio(store, wav_bytes(bytes([i, 0]) * 16), f"{i}.wav")
     yield app
     assert app.close()
     store.close()
@@ -46,7 +47,7 @@ def test_competing_sources_and_named_actions_share_one_job(
             await asyncio.sleep(0.01)
         return '{"additions": []}'
 
-    monkeypatch.setattr(app._builds, "_call", fake)
+    monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
     barrier = threading.Barrier(2)
 
@@ -103,7 +104,7 @@ def test_generation_cancel_closes_request_before_publishing_and_discards_text(
             await asyncio.sleep(0.01)
             cleaned.set()
 
-    monkeypatch.setattr(app._builds, "_call", fake)
+    monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
     original = client.get("/api/dictionary").content
     state = client.post(
@@ -137,7 +138,7 @@ def test_cancel_during_speech_waits_for_cleanup_and_never_starts_next_clip(
         pytest.fail("Cancelled audio must not reach the dictionary model")
 
     monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
-    monkeypatch.setattr(app._builds, "_call", forbidden)
+    monkeypatch.setattr(app.builds, "_call", forbidden)
     client = TestClient(create_app(app), base_url="http://localhost")
     state = client.post(
         "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
@@ -164,17 +165,17 @@ def test_cancel_between_chunks_stops_refinement_and_reports_full_input_size(
     app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[int] = []
-    monkeypatch.setattr(llm, "BATCH_CHARS", 30)
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 30)
 
     async def fake(provider: str, key: str, model: str, system: str, user: str) -> str:
-        state = app.dictionary_build_status()
+        state = app.learning.dictionary_build_status()
         calls.append(len(system) + len(user))
-        assert state["inputCharacters"] == calls[0] > llm.BATCH_CHARS
+        assert state["inputCharacters"] == calls[0] > batches.BATCH_CHARS
         assert state["steps"] == 2
-        app.cancel_dictionary_build(str(state["id"]))
+        app.learning.cancel_dictionary_build(str(state["id"]))
         return '{"additions": []}'
 
-    monkeypatch.setattr(app._builds, "_call", fake)
+    monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
     client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
     partial = wait_for_build(client)
@@ -190,7 +191,7 @@ def test_failure_scrubs_keys_and_keeps_originals(
     async def fake(*args: str) -> str:
         raise ValueError("rejected build-secret")
 
-    monkeypatch.setattr(app._builds, "_call", fake)
+    monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
     client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
     state = wait_for_build(client)
@@ -222,7 +223,7 @@ def test_shutdown_is_bounded_and_drains_a_blocked_speech_owner(
         elapsed = time.monotonic() - before
         assert 1.8 <= elapsed < 2.5  # lazy Jev client has no active loop to drain
         assert not closed.is_set()
-        assert "still draining" in str(app.desktop_status()["lastError"])
+        assert "still draining" in str(app.desktop.desktop_status()["lastError"])
         assert (
             client.post(
                 "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
@@ -239,26 +240,26 @@ def test_shutdown_is_bounded_and_drains_a_blocked_speech_owner(
 def test_shutdown_deadline_also_bounds_waiting_for_a_source_snapshot(
     app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from entune.builds import BuildInput, JobConflict, Source
+    from entune.app.suggestion_runs import BuildInput, JobConflict, Source
 
     entered, release = threading.Event(), threading.Event()
-    prepare = app._build_input
+    prepare = app.learning._build_input
 
     def slow_snapshot(source: Source, **kwargs: object) -> BuildInput:
         entered.set()
         assert release.wait(2)
         return prepare(source)
 
-    monkeypatch.setattr(app, "_build_input", slow_snapshot)
+    monkeypatch.setattr(app.learning, "_build_input", slow_snapshot)
     with ThreadPoolExecutor(1) as pool:
-        started = pool.submit(app.start_dictionary_build, "history", mode="generate")
+        started = pool.submit(app.learning.start_dictionary_build, "history", mode="generate")
         try:
             assert entered.wait(1)
             before = time.monotonic()
-            assert not app._builds.close(0.02)
+            assert not app.builds.close(0.02)
             assert time.monotonic() - before < 0.2
         finally:
             release.set()
         with pytest.raises(JobConflict, match="shutting down"):
             started.result()
-    assert app.dictionary_build_status()["phase"] == "idle"
+    assert app.learning.dictionary_build_status()["phase"] == "idle"

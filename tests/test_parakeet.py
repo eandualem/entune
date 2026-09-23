@@ -8,9 +8,9 @@ from typing import Any
 import httpx
 import pytest
 
+from entune.audio.formats import wav_bytes
 from entune.providers.contracts import Clip, Failure
 from entune.providers.local.parakeet import FILES, MODEL, Parakeet
-from entune.recorder import wav_bytes
 from tests.conftest import mock_client
 
 

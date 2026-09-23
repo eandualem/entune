@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from entune.dictionary import Association, Form, Group, Meaning
+from entune.dictionary.entries import Association, Form, Group, Meaning
 
 
 def group(spelling: str, heard: str, *, literal: str | None = None, direct: bool = False) -> Group:
@@ -65,7 +65,7 @@ CLOUD = Group(
 
 
 def proposed(text: str = "I use cloud code.") -> dict[str, Any]:
-    from entune.llm import sources
+    from entune.learning.batches import sources
 
     record = group("Claude Code", "cloud code").as_json()
     record["id"] = "new_group"
@@ -82,3 +82,14 @@ def proposed(text: str = "I use cloud code.") -> dict[str, Any]:
                 ],
             )
     return {"additions": [record]}
+
+
+def document(*pinned: Group, learned: dict[str, tuple[Group, ...]] | None = None) -> dict[str, Any]:
+    """A dictionary.json body in the current format."""
+    return {
+        "version": 2,
+        "pinned": [g.as_json() for g in pinned],
+        "learned": {
+            model: [g.as_json() for g in groups] for model, groups in (learned or {}).items()
+        },
+    }

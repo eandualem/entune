@@ -25,13 +25,11 @@ from pathlib import Path
 
 from entune import __version__
 
-# Kept from when Entune was called Dictum: macOS ties Microphone, Input Monitoring and
-# Accessibility to the bundle identifier and signing certificate, so keeping them keeps
-# those permissions (and the app's saved preferences) across the rename.
+# macOS ties Microphone, Input Monitoring and Accessibility to the bundle identifier and
+# signing certificate. These are the ones the installed app's permissions were granted
+# to; changing either means granting all three again.
 BUNDLE_ID = "dev.elias.dictum"
-# A new certificate may be named for Entune; one created for Dictum keeps working.
 SIGNING_IDENTITIES = ("Entune Developer", "Dictum Developer")
-LEGACY_APP = "Dictum.app"
 ASSETS = Path(__file__).resolve().parents[2] / "assets"
 ICON_SIZES = (16, 32, 64, 128, 256, 512)
 
@@ -69,32 +67,6 @@ def install_app(directory: Path, source: Path | None = None) -> Path:
         if installed or not previous.exists():
             shutil.rmtree(staging, ignore_errors=True)
     return app
-
-
-def retire_legacy_app(directory: Path) -> str:
-    """Move the former Dictum.app beside the new install to the Trash, when it has stopped.
-
-    Both carry the same bundle identifier, so leaving it would let macOS open either.
-    A running Dictum is left alone: moving it would strand its open data folder.
-    """
-    legacy = directory / LEGACY_APP
-    if not legacy.exists():
-        return "none"
-    executable = str(legacy / "Contents" / "MacOS" / "Dictum")
-    listed = subprocess.run(["ps", "-axo", "comm="], capture_output=True, text=True, check=False)
-    if any(line.strip() == executable for line in listed.stdout.splitlines()):
-        return "running"
-    import Foundation
-
-    url = Foundation.NSURL.fileURLWithPath_(str(legacy))
-    moved, _, error = (
-        Foundation.NSFileManager.defaultManager().trashItemAtURL_resultingItemURL_error_(
-            url, None, None
-        )
-    )
-    if not moved:
-        raise OSError(f"Could not move {legacy} to the Trash: {error}")
-    return "trashed"
 
 
 def _validate_bundle(app: Path) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from entune.audio import extension_for, wav_duration_seconds, webm_duration_seconds
+from entune.audio.formats import extension_for, wav_duration_seconds, webm_duration_seconds
 
 
 @dataclass(frozen=True)
