@@ -475,7 +475,7 @@ def create_app(app: Entune) -> Starlette:
 
     def imported[T](action: Callable[..., T], *args: object) -> T:
         """An import runs whole or not at all around a data reset."""
-        with app.importing():
+        with app.using_data("audio import"):
             return action(*args)
 
     async def import_dictionary_audio(request: Request) -> Response:
@@ -678,8 +678,13 @@ def create_app(app: Entune) -> Starlette:
         )
 
     def export_transcripts(_: Request) -> Response:
+        try:
+            with app.using_data("export"):
+                recordings = app.store.list_recordings()
+        except Busy as exc:
+            return _bad(str(exc), 409)
         return JSONResponse(
-            {"recordings": [_recording_json(r) for r in app.store.list_recordings()]},
+            {"recordings": [_recording_json(r) for r in recordings]},
             headers={
                 "Content-Disposition": 'attachment; filename="entune-transcripts.json"',
                 "Cache-Control": "no-store",
@@ -693,10 +698,14 @@ def create_app(app: Entune) -> Starlette:
         directory = TemporaryDirectory(prefix="entune-export-")
         path = Path(directory.name) / "entune-audio.zip"
         try:
-            recordings = app.store.list_recordings()
-            imported = app.store.dictionary_audio()
-            manifest: dict[str, list[dict[str, Any]]] = {"recordings": [], "dictionary_audio": []}
-            with ZipFile(path, "w", strict_timestamps=False) as archive:
+            # A data reset waits until the archive is built; afterwards it has its own copy.
+            with app.using_data("export"), ZipFile(path, "w", strict_timestamps=False) as archive:
+                recordings = app.store.list_recordings()
+                imported = app.store.dictionary_audio()
+                manifest: dict[str, list[dict[str, Any]]] = {
+                    "recordings": [],
+                    "dictionary_audio": [],
+                }
                 for recording in recordings:
                     source = app.store.audio_path(recording)
                     name = f"audio/{source.name}"
@@ -719,6 +728,8 @@ def create_app(app: Entune) -> Starlette:
                 )
         except Exception as exc:
             directory.cleanup()
+            if isinstance(exc, Busy):
+                return _bad(str(exc), 409)
             if isinstance(exc, OSError):
                 return _bad(f"Could not export audio: {exc}", 500)
             raise
