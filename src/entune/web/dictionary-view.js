@@ -61,7 +61,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     note.hidden = keyed.length > 0 && !missingKey;
     note.textContent = missingKey
       ? `${languageName(current)} needs an API key for ${owner.name}: add it in Settings › Dictionary setup, or choose another model.`
-      : "Add an Anthropic or OpenAI key in Settings › Dictionary setup to choose a suggestion model.";
+      : "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral in Settings › Dictionary setup to choose a suggestion model.";
     if (!keyed.length) modelSelect.add(new Option("No key yet", ""));
     modelSelect.disabled = building || !keyed.length;
     gate();

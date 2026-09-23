@@ -11,6 +11,7 @@ from starlette.testclient import TestClient
 from entune.app import audio_import
 from entune.app.entune import Entune
 from entune.audio.formats import wav_bytes
+from entune.learning.suggestion_model import Request
 from entune.providers.contracts import Clip, Transcript
 from entune.server import create_app
 from entune.storage.store import Store
@@ -117,11 +118,11 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
         calls.append(model)
         return Transcript("I use cloud code for work.")
 
-    async def fake(provider: str, key: str, model: str, system: str, user: str) -> str:
-        prompts.append(user)
-        assert model == "openai:gpt-5.4-mini"  # frozen even when Settings changes
-        assert "I use cloud code for work." in user
-        assert "PinnedName" in user and "OtherOnly" not in user
+    async def fake(request: Request) -> str:
+        prompts.append(request.user)
+        assert request.model == "openai:gpt-5.4-mini"  # frozen even when Settings changes
+        assert "I use cloud code for work." in request.user
+        assert "PinnedName" in request.user and "OtherOnly" not in request.user
         return (
             json.dumps(proposed("I use cloud code for work."))
             if len(prompts) == 1
@@ -202,8 +203,8 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
     stub.models = ("good", "other", "bad")
     prompts: list[str] = []
 
-    async def fake(provider: str, key: str, model: str, system: str, user: str) -> str:
-        prompts.append(user)
+    async def fake(request: Request) -> str:
+        prompts.append(request.user)
         return '{"additions": []}'
 
     store = Store(tmp_path)

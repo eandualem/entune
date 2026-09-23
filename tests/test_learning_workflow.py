@@ -20,6 +20,7 @@ from entune.dictionary import entries as dictionary_entries
 from entune.dictionary.entries import Dictionary
 from entune.learning import batches, suggestion_model
 from entune.learning import inputs as learning_inputs
+from entune.learning.suggestion_model import Request
 from entune.providers.contracts import Clip, Failure, Transcript
 from entune.server import create_app
 from entune.storage.store import Store
@@ -85,7 +86,7 @@ def test_review_validation_rejects_pinned_removal_even_in_edited_whole_group() -
 def test_apply_consumes_only_examined_model_inputs_and_new_review_data_stays_eligible(
     tmp_path: Path,
 ) -> None:
-    async def call(*args: str) -> str:
+    async def call(_: Request) -> str:
         return json.dumps(proposed("cloud code"))
 
     with closing(Store(tmp_path)) as store:
@@ -125,7 +126,7 @@ def test_apply_consumes_only_examined_model_inputs_and_new_review_data_stays_eli
 
 
 def test_dismissing_every_proposal_leaves_file_and_input_boundary_unchanged(tmp_path: Path) -> None:
-    async def call(*args: str) -> str:
+    async def call(_: Request) -> str:
         return json.dumps(proposed("cloud code"))
 
     with closing(Store(tmp_path)) as store:
@@ -152,7 +153,7 @@ def test_partial_generation_keeps_validated_proposal_and_only_fully_covered_inpu
     later = threading.Event()
     calls = 0
 
-    async def call(*args: str) -> str:
+    async def call(_: Request) -> str:
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -200,7 +201,7 @@ def test_retry_audio_reuses_successes_and_generation_checkpoint_without_persisti
             return Failure("temporary audio failure")
         return Transcript("temporary private cloud code words")
 
-    async def call(*args: str) -> str:
+    async def call(_: Request) -> str:
         nonlocal generation_calls
         generation_calls += 1
         if generation_calls == 1:
@@ -239,7 +240,7 @@ def test_retry_audio_reuses_successes_and_generation_checkpoint_without_persisti
 def test_old_saved_recordings_are_selectable_with_duration_and_never_gain_learning_attempts(
     tmp_path: Path,
 ) -> None:
-    async def call(*args: str) -> str:
+    async def call(_: Request) -> str:
         return '{"additions": []}'
 
     with closing(Store(tmp_path)) as store:
@@ -278,7 +279,7 @@ def test_learning_is_rejected_while_speech_is_running(
         assert release.wait(2)
         return Transcript("cloud code")
 
-    async def call(*args: str) -> str:
+    async def call(_: Request) -> str:
         pytest.fail("Busy learning must not call generation")
 
     with closing(Store(tmp_path)) as store:
@@ -304,13 +305,13 @@ def test_retry_resumes_completed_generation_batches_with_accumulated_groups(
     monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
     prompts: list[str] = []
 
-    async def call(provider: str, key: str, model: str, system: str, user: str) -> str:
-        prompts.append(user)
+    async def call(request: Request) -> str:
+        prompts.append(request.user)
         if len(prompts) == 1:
             return json.dumps(proposed("cloud code"))
         if len(prompts) == 2:
             raise ValueError("temporary generation interruption")
-        assert "Claude Code" in user  # batch one's validated working dictionary survives
+        assert "Claude Code" in request.user  # batch one's validated working dictionary survives
         return '{"additions": []}'
 
     with closing(Store(tmp_path)) as store:
@@ -344,7 +345,7 @@ def test_stop_during_audio_keeps_its_success_for_retry_and_discard_clears_it(
             assert release.wait(2)
         return Transcript("temporary cloud code")
 
-    async def call(*args: str) -> str:
+    async def call(_: Request) -> str:
         return json.dumps(proposed("temporary cloud code"))
 
     with closing(Store(tmp_path)) as store:
@@ -406,8 +407,8 @@ def test_audio_from_other_models_creates_then_refines_the_selected_models_dictio
     prompts: list[str] = []
     heard = "hello there, I use cloud code"  # what StubProvider returns for "good"
 
-    async def call(provider: str, key: str, model: str, system: str, user: str) -> str:
-        prompts.append(user)
+    async def call(request: Request) -> str:
+        prompts.append(request.user)
         return json.dumps(
             proposed(heard)
             if len(prompts) == 1
