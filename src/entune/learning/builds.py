@@ -14,10 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from entune import llm
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary.changes import Proposal
 from entune.dictionary.entries import Dictionary, Groups
+from entune.learning import generate, suggestion_model
+from entune.learning import inputs as learning_inputs
 from entune.operations import Operation, Operations
 from entune.providers.contracts import Clip, Failure
 from entune.providers.registry import ModelRef
@@ -40,20 +41,22 @@ class BuildInput:
     builder: tuple[str, str, str]
     dictionary: Dictionary
     revision: str
-    transcripts: tuple[llm.LearningText, ...] = ()
+    transcripts: tuple[learning_inputs.LearningText, ...] = ()
     audio: tuple[tuple[DictionaryAudio, Path], ...] = ()
     scope: str = "new"
-    mode: llm.Mode = "generate"
+    mode: learning_inputs.Mode = "generate"
 
 
 class DictionaryBuilds:
-    def __init__(self, speech: SpeechResources, call: llm.Caller, operations: Operations) -> None:
+    def __init__(
+        self, speech: SpeechResources, call: suggestion_model.Caller, operations: Operations
+    ) -> None:
         self._speech, self._call, self._operations = speech, call, operations
         self._lock = threading.RLock()
         self._state: dict[str, Any] = {"phase": "idle"}
         self._proposal: Proposal | None = None
         self._spec: BuildInput | None = None
-        self._texts: dict[str, llm.LearningText] = {}
+        self._texts: dict[str, learning_inputs.LearningText] = {}
         self._working: Groups | None = None
         self._covered: set[str] = set()
         self._completed_batches = 0
@@ -222,7 +225,9 @@ class DictionaryBuilds:
             self._checkpoint()
             self._state.update(fields)
 
-    async def _generate(self, spec: BuildInput, inputs: list[llm.LearningText]) -> Groups:
+    async def _generate(
+        self, spec: BuildInput, inputs: list[learning_inputs.LearningText]
+    ) -> Groups:
         with self._lock:
             self._loop = asyncio.get_running_loop()
             self._task = asyncio.current_task()
@@ -242,7 +247,7 @@ class DictionaryBuilds:
 
         try:
             self._checkpoint()
-            return await llm.propose_learned(
+            return await generate.propose_learned(
                 *spec.builder,
                 spec.dictionary,
                 (),
@@ -291,7 +296,7 @@ class DictionaryBuilds:
                             # Preserve a successful in-flight result even if Stop arrived
                             # during inference. It can be reused on Retry, never delivered.
                             if not self._closed:
-                                self._texts[item.id] = llm.LearningText(
+                                self._texts[item.id] = learning_inputs.LearningText(
                                     item.id, result.text, "temporary_audio"
                                 )
                             self._checkpoint()

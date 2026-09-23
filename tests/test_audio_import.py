@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from entune import llm, onboarding
 from entune.audio.formats import wav_bytes
+from entune.learning import audio_import
 from entune.providers.contracts import Clip, Transcript
 from entune.server import create_app
 from entune.service import Entune
@@ -36,7 +36,7 @@ def test_wispr_snapshot_reads_committed_wal_and_ignores_later_writes(tmp_path: P
     source = tmp_path / "flow.sqlite"
     writer = flow_db(source, [b"first", b"second"])
     assert source.with_suffix(".sqlite-wal").stat().st_size > 0
-    clips = onboarding.wispr_audio(source)
+    clips = audio_import.wispr_audio(source)
     try:
         assert next(clips) == ("wispr-0.wav", b"first", "1970-01-01T00:00:00.000Z")
         writer.execute("UPDATE History SET audio = 'changed' WHERE transcriptEntityId = '1'")
@@ -56,10 +56,10 @@ def test_wispr_import_deduplicates_backups_without_importing_history(
     a, b = wav_bytes(b"\x00\x00" * 16), wav_bytes(b"\x01\x00" * 16)
     live = flow_db(root / "flow.sqlite", [a, None, wav_bytes(b"")])
     backup = flow_db(root / "backups" / "backup.sqlite", [a, b])
-    monkeypatch.setattr(onboarding, "wispr_directory", lambda: root)
+    monkeypatch.setattr(audio_import, "wispr_directory", lambda: root)
     try:
-        assert onboarding.import_wispr(store) == {"added": 2, "duplicates": 1, "empty": 1}
-        assert onboarding.import_wispr(store) == {"added": 0, "duplicates": 3, "empty": 1}
+        assert audio_import.import_wispr(store) == {"added": 2, "duplicates": 1, "empty": 1}
+        assert audio_import.import_wispr(store) == {"added": 0, "duplicates": 3, "empty": 1}
         assert [store.dictionary_audio_path(x).read_bytes() for x in store.dictionary_audio()] == [
             a,
             b,
@@ -129,7 +129,7 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
         )
 
     monkeypatch.setattr(stub, "transcribe", transcribe)
-    monkeypatch.setattr(llm, "BATCH_CHARS", 30)
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 30)
     store = Store(tmp_path)
     entune = Entune(store, [stub], llm_call=fake)
     client = TestClient(create_app(entune), base_url="http://localhost")
@@ -244,7 +244,7 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
     ],
 )
 def test_source_recording_times_become_utc_or_none(value: object, expected: str | None) -> None:
-    assert onboarding.recorded_at(value) == expected
+    assert audio_import.recorded_at(value) == expected
 
 
 def test_reimporting_saved_audio_adds_a_missing_date_only(tmp_path: Path) -> None:
@@ -271,7 +271,7 @@ def test_import_source_is_recorded_not_inferred_from_the_file_name(
     root = tmp_path / "wispr"
     root.mkdir()
     flow = flow_db(root / "flow.sqlite", [wav_bytes(b"\x02\x00" * 16)])
-    monkeypatch.setattr(onboarding, "wispr_directory", lambda: root)
+    monkeypatch.setattr(audio_import, "wispr_directory", lambda: root)
     try:
         folder_file = wav_bytes(b"\x01\x00" * 16)
         client.post("/api/dictionary/audio", files={"audio": ("wispr-looking.wav", folder_file)})

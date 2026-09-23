@@ -23,10 +23,11 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from entune import __version__, llm, onboarding
+from entune import __version__
 from entune.audio.formats import extension_for, safe_mime
-from entune.builds import JobConflict
 from entune.desktop import shortcuts
+from entune.learning import audio_import, suggestion_model
+from entune.learning.builds import JobConflict
 from entune.operations import Busy
 from entune.processing import jev_client
 from entune.service import (
@@ -191,7 +192,11 @@ def create_app(app: Entune) -> Starlette:
             keys = body.get("keys", {})
             if not isinstance(keys, dict):
                 raise ValueError("keys must be an object")
-            known = {p.id for p in app.providers} | llm.LLM_PROVIDERS.keys() | {JEV_PROVIDER}
+            known = (
+                {p.id for p in app.providers}
+                | suggestion_model.LLM_PROVIDERS.keys()
+                | {JEV_PROVIDER}
+            )
             for provider_id, key in keys.items():
                 if provider_id not in known:
                     raise ValueError(f"Unknown provider: {provider_id}")
@@ -203,7 +208,11 @@ def create_app(app: Entune) -> Starlette:
             dictionary_model = _optional_text(body.get("dictionaryModel"), "dictionaryModel")
             if dictionary_model:
                 provider, separator, model = dictionary_model.partition(":")
-                if not separator or provider not in llm.LLM_PROVIDERS or not model.strip():
+                if (
+                    not separator
+                    or provider not in suggestion_model.LLM_PROVIDERS
+                    or not model.strip()
+                ):
                     raise ValueError(
                         "dictionaryModel must be provider:model for Anthropic or OpenAI"
                     )
@@ -491,11 +500,13 @@ def create_app(app: Entune) -> Starlette:
             try:
                 added = await run_in_threadpool(
                     imported,
-                    onboarding.import_audio,
+                    audio_import.import_audio,
                     app.store,
                     await audio.read(),
                     audio.filename or "audio",
-                    onboarding.recorded_at(float(modified)) if isinstance(modified, str) else None,
+                    audio_import.recorded_at(float(modified))
+                    if isinstance(modified, str)
+                    else None,
                 )
             except (ValueError, OSError) as exc:
                 return _bad(str(exc))
@@ -503,7 +514,7 @@ def create_app(app: Entune) -> Starlette:
 
     async def import_wispr(_: Request) -> Response:
         try:
-            result = await run_in_threadpool(imported, onboarding.import_wispr, app.store)
+            result = await run_in_threadpool(imported, audio_import.import_wispr, app.store)
         except (ValueError, OSError) as exc:
             return _bad(str(exc))
         return JSONResponse(result)
