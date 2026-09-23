@@ -307,12 +307,15 @@ export function createDictionary({ getModel, getSettings }) {
           editor.append(node("summary", "After · inspect and edit"));
           editor.open = true;
           // A shared meaning can be proposed in several groups; its copies stay one definition.
-          // Redraw when another copy changed, so every editor shows what Apply submits.
-          const shared = (id, edit) => {
-            const copies = proposalChanges.flatMap(c => c.after?.meanings ?? []).filter(m => m.id === id);
-            copies.forEach(edit);
-            if (copies.length > 1) drawProposal();
+          // Update every copy and its visible input in place, so each editor shows what
+          // Apply submits without replacing the control the user moves to next.
+          const shared = (id, part, value) => {
+            for (const copy of proposalChanges.flatMap(c => c.after?.meanings ?? [])) if (copy.id === id) copy[part] = value;
+            for (const input of proposalBody.querySelectorAll("input[data-meaning]")) {
+              if (input.dataset.meaning === id && input.dataset.part === part) input.value = value ?? "";
+            }
           };
+          const tag = (input, id, part) => { input.dataset.meaning = id; input.dataset.part = part; return input; };
           for (const meaning of change.after.meanings) {
             const row = node("div", "", "meaning-editor");
             const spelling = field(row, "Output spelling", meaning.spelling, value => {
@@ -321,11 +324,12 @@ export function createDictionary({ getModel, getSettings }) {
                 form.associations = form.associations.map(a => a.basis === "literal" && a.meaning_id === meaning.id
                   ? {meaning_id: a.meaning_id, basis: "user", evidence: []} : a);
               }
-              shared(meaning.id, copy => { copy.spelling = value; });
+              shared(meaning.id, "spelling", value);
             });
             spelling.readOnly = pinnedIds.has(meaning.id);
-            field(row, "Definition", meaning.meaning, value => shared(meaning.id, copy => { copy.meaning = value; }));
-            field(row, "Personal usage", meaning.personal_context, value => shared(meaning.id, copy => { copy.personal_context = value || null; }));
+            tag(spelling, meaning.id, "spelling");
+            tag(field(row, "Definition", meaning.meaning, value => shared(meaning.id, "meaning", value)), meaning.id, "meaning");
+            tag(field(row, "Personal usage", meaning.personal_context, value => shared(meaning.id, "personal_context", value || null)), meaning.id, "personal_context");
             editor.append(row);
           }
           for (const form of change.after.recognized_forms) {
