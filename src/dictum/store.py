@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS learning_coverage (
 MIGRATIONS = [
     ("recordings", "notice", "ALTER TABLE recordings ADD COLUMN notice TEXT"),
     ("dictionary_audio", "created_at", "ALTER TABLE dictionary_audio ADD COLUMN created_at TEXT"),
+    ("dictionary_audio", "source", "ALTER TABLE dictionary_audio ADD COLUMN source TEXT"),
     ("transcriptions", "raw_text", "ALTER TABLE transcriptions ADD COLUMN raw_text TEXT"),
     ("transcriptions", "audio_seconds", "ALTER TABLE transcriptions ADD COLUMN audio_seconds REAL"),
     (
@@ -160,6 +161,7 @@ class DictionaryAudio:
     mime: str
     seconds: float | None = None
     created_at: str | None = None
+    source: str | None = None  # "wispr" or "folder"; None for imports made before it was kept
 
 
 def _now() -> str:
@@ -249,7 +251,12 @@ class Store:
         return self.data_dir / "dictionary-audio" / f"{audio.id}.{extension_for(audio.mime)}"
 
     def import_dictionary_audio(
-        self, data: bytes, name: str, mime: str, created_at: str | None = None
+        self,
+        data: bytes,
+        name: str,
+        mime: str,
+        created_at: str | None = None,
+        source: str = "folder",
     ) -> bool:
         """Keep original audio outside history. Return whether it was newly imported.
 
@@ -279,9 +286,9 @@ class Store:
                 temporary.chmod(0o600)
                 temporary.replace(path)
                 self._db.execute(
-                    "INSERT OR IGNORE INTO dictionary_audio (id, name, mime, created_at)"
-                    " VALUES (?, ?, ?, ?)",
-                    (audio.id, audio.name, audio.mime, created_at),
+                    "INSERT OR IGNORE INTO dictionary_audio (id, name, mime, created_at, source)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (audio.id, audio.name, audio.mime, created_at, source),
                 )
             finally:
                 temporary.unlink(missing_ok=True)
@@ -290,10 +297,12 @@ class Store:
     def dictionary_audio(self) -> list[DictionaryAudio]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT id, name, mime, created_at FROM dictionary_audio ORDER BY rowid"
+                "SELECT id, name, mime, created_at, source FROM dictionary_audio ORDER BY rowid"
             ).fetchall()
         return [
-            DictionaryAudio(row["id"], row["name"], row["mime"], None, row["created_at"])
+            DictionaryAudio(
+                row["id"], row["name"], row["mime"], None, row["created_at"], row["source"]
+            )
             for row in rows
         ]
 

@@ -28,13 +28,15 @@ def recorded_at(value: object) -> str | None:
     return moment.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def import_audio(store: Store, data: bytes, name: str, created_at: str | None = None) -> bool:
+def import_audio(
+    store: Store, data: bytes, name: str, created_at: str | None = None, source: str = "folder"
+) -> bool:
     mime = sniff_mime(data)
     if mime is None:
         raise ValueError(f"{name}: not a supported audio file (WAV, MP3, M4A, FLAC, OGG or WebM).")
     if mime == "audio/wav" and not wav_duration_seconds(data):
         raise ValueError(f"{name}: the WAV is empty or its header is not readable.")
-    return store.import_dictionary_audio(data, name, mime, created_at)
+    return store.import_dictionary_audio(data, name, mime, created_at, source)
 
 
 def wispr_directory() -> Path:
@@ -80,7 +82,7 @@ def import_wispr(store: Store) -> dict[str, int]:
                     if wav_duration_seconds(data) == 0:
                         empty += 1
                         continue
-                    if import_audio(store, data, name, created_at):
+                    if import_audio(store, data, name, created_at, "wispr"):
                         added += 1
                     else:
                         duplicates += 1
