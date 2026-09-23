@@ -265,6 +265,12 @@ class Store:
                 and path.is_file()
                 and hashlib.sha256(path.read_bytes()).hexdigest() == audio.id
             ):
+                # Imports made before dates were kept learn them now; audio is untouched.
+                self._db.execute(
+                    "UPDATE dictionary_audio SET created_at = ?"
+                    " WHERE id = ? AND created_at IS NULL",
+                    (created_at, audio.id),
+                )
                 return False
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             temporary = path.with_suffix(".tmp")
