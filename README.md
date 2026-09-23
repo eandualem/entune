@@ -120,8 +120,12 @@ are unchanged.
 
 **Performance.** Every transcription records how long the clip was, how long
 the provider took, and whether fast mode was used. The chart button next
-to the model picker opens the table by model: runs, minutes of audio,
-median wait, and speed as seconds of audio per second waited. Measured on 2026-09-18 with a 172-second dictation over
+to the model picker opens the table by model and mode. **Speed** is the transcription
+wait for one minute of audio, from successful runs whose length and wait were both
+measured (it covers the speech step, not later processing). **Corrections** counts
+dictionary replacements per 100 words in dictations where the dictionary step ran; it
+reflects the confusions the dictionary knows, not overall accuracy. **Used** combines the
+number of runs, failures and total audio. Measured on 2026-09-18 with a 172-second dictation over
 AssemblyAI Universal-3.5 Pro: 7.0 s with fast mode, 14.8 s without, of which
 the upload alone was 6 to 7 s. Your own table is the one to trust.
 
@@ -184,10 +188,11 @@ provider's response verbatim.
 Speech models mishear names, products and everyday words. The Dictionary tab groups
 recognized forms with their possible meanings, definitions and exact output spellings.
 Explicit associations decide which meanings can compete for a form; context decides
-which one applies. Edit groups directly, or ask the configured language model to
-**generate** new groups from this speech model's raw history, or to **refine** the
-current dictionary by comparing each raw transcript with what the dictionary step made
-of it. Generation only adds; refinement can add, revise or remove learned groups.
+which one applies. Edit entries directly, or ask the configured language model to
+suggest them: **Suggest new entries** (generation) reads this speech model's raw
+history and only adds; **Suggest improvements** (refinement) compares each raw
+transcript with what the dictionary step made of it and can add, revise or remove
+learned entries. **How the dictionary works** opens a short guide.
 Additions, before/after updates, and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
 then apply the remainder once. Dismissing a proposal does not delete active knowledge.
 
@@ -196,7 +201,7 @@ meaning and its associations across models, without giving it priority over comp
 Existing dictionaries are backed up before conversion and retained for review. Confirmed
 agent corrections still use the existing local API. The dictionary model is chosen on
 the Dictionary page and serves every learning run; keys are added in Settings.
-Generation suggestions are Sonnet 5 and GPT-5.4 mini. **New group** creates a group by
+Generation suggestions are Sonnet 5 and GPT-5.4 mini. **Add an entry** creates a group by
 hand: meanings with output spellings and definitions, recognized forms, and which
 meanings each form may stand for.
 

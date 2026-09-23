@@ -8,7 +8,7 @@ import { createDictionary } from "./dictionary-view.js";
 import { createSettings } from "./settings-view.js";
 import { createPermissions } from "./permissions-view.js";
 import { initRecording } from "./recording.js";
-import { ICON, api, el, errorText, fillModels, segmentedGroup } from "./ui.js";
+import { ICON, api, el, errorText, fillModels, segmentedGroup, shortModel } from "./ui.js";
 
 const status = el("status");
 const modelSelect = el("model");
@@ -26,15 +26,19 @@ let recordingsCount = 0;
 
 // The Mac's real window controls share the toolbar. Browser windows keep their
 // own chrome; only the native bridge adds the space and follows text scaling.
-window.addEventListener("pywebviewready", () => {
-  if (!window.pywebview.api.layout_titlebar) return;
+// The bridge may be ready before this module runs, so check as well as listen.
+function alignWindowButtons() {
+  if (!window.pywebview?.api?.layout_titlebar || alignWindowButtons.done) return;
+  alignWindowButtons.done = true;
   document.documentElement.classList.add("native-mac");
   const tabs = document.querySelector(".toolbar > .segmented");
   new ResizeObserver(() => {
     const box = tabs.getBoundingClientRect();
     window.pywebview.api.layout_titlebar((box.top + box.height / 2) * 2);
   }).observe(document.querySelector(".toolbar"));
-});
+}
+window.addEventListener("pywebviewready", alignWindowButtons);
+alignWindowButtons();
 
 // ---- Preferences kept in this window: theme, text size, hints ----
 function applyTheme(theme) {
@@ -122,8 +126,8 @@ async function loadModels() {
   renderStart();
   // A model change only changes the pickers, never the cards or their audio.
   for (const select of historyList.querySelectorAll(".retry-model")) {
-    fillModels(models, select, select.value, "No models");
-    const retry = select.nextElementSibling;
+    fillModels(models, select, defaultModel?.id ?? select.value, "No models");
+    const retry = select.closest(".card-row").querySelector(".retry");
     if (!retry.dataset.busy) retry.disabled = select.disabled;
   }
 }
@@ -155,23 +159,36 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !metricsPopover.hidden) showMetrics(false); });
 
+function audioLength(seconds) {
+  if (seconds < 60) return `${Math.max(1, Math.round(seconds))} s`;
+  const minutes = Math.round(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
 async function loadMetrics() {
   const rows = await api("/api/metrics");
   metricsToggle.hidden = rows.length === 0;
   if (rows.length === 0) showMetrics(false);
-  const cell = (text) => Object.assign(document.createElement("span"), { textContent: text });
+  const cell = (text, title = "") => Object.assign(document.createElement("span"), { textContent: text, title });
   metricsRows.replaceChildren(
     ...rows.map((m) => {
       const row = document.createElement("div");
       row.className = "perf-grid";
-      row.append(
-        cell(`${m.provider} / ${m.model}`),
-        cell(m.fast ? "fast" : "plain"),
-        cell(m.ok === m.runs ? String(m.runs) : `${m.ok} of ${m.runs} ok`),
-        cell(`${Math.round(m.audio_seconds / 60)} min`),
-        cell(m.median_wait === null ? "–" : `${m.median_wait.toFixed(1)} s`),
-        cell(m.speed === null ? "–" : `${m.speed.toFixed(0)}× realtime`),
-      );
+      const name = cell(shortModel(m.provider_name, m.provider, m.model), `${m.provider}/${m.model}${m.fast ? " · Fast mode" : ""}`);
+      name.className = "perf-model";
+      if (m.fast) name.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "Fast" }));
+      const speed = m.seconds_per_minute === null
+        ? cell("–", "No successful run with a known length yet")
+        : cell(`1 min → ${m.seconds_per_minute < 10 ? m.seconds_per_minute.toFixed(1) : Math.round(m.seconds_per_minute)} s`,
+          `Transcription wait per minute of audio, from ${m.timed_runs} run${m.timed_runs === 1 ? "" : "s"} with a known length. Longer and shorter clips vary.`);
+      const corrections = m.checked === 0 || m.words === 0
+        ? cell("–", "No dictation with the dictionary on yet")
+        : cell(`${m.replacements ? (100 * m.replacements / m.words).toFixed(1) : "0"} / 100 words`,
+          `${m.replacements} replacement${m.replacements === 1 ? "" : "s"} in ${m.corrected} of ${m.checked} dictations checked by the dictionary`);
+      const failed = m.runs - m.ok;
+      const used = cell(`${m.runs} run${m.runs === 1 ? "" : "s"} · ${m.audio_seconds ? audioLength(m.audio_seconds) : "length unknown"}`,
+        failed ? `${failed} failed` : "");
+      if (failed) used.append(Object.assign(document.createElement("span"), { className: "perf-failed", textContent: ` · ${failed} failed` }));
+      row.append(name, speed, corrections, used);
       return row;
     }),
   );

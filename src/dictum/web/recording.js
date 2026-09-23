@@ -15,7 +15,7 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   cancel.type = "button"; cancel.className = "btn ghost";
   cancel.textContent = "Cancel dictation"; cancel.hidden = true;
   button.after(cancel);
-  const labels = {recording: "Recording…", saving: "Saving audio…", transcribing: "Transcribing…", correction: "Contextual correction…", cleanup: "Reducing fillers…", formatting: "Formatting…", delivering: "Delivering…", cancelling: "Canceling — keeping audio…", learning: "Dictum is busy learning.", review: "Finish learning: apply or discard the proposal."};
+  const labels = {recording: "Recording…", saving: "Saving audio…", transcribing: "Transcribing…", correction: "Checking the dictionary…", cleanup: "Reducing fillers…", formatting: "Formatting…", delivering: "Delivering…", cancelling: "Canceling — keeping audio…", learning: "Preparing dictionary suggestions…", review: "Review the dictionary suggestions to dictate again."};
   let previous = null;
   async function poll() {
     try {

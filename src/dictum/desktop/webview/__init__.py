@@ -31,8 +31,8 @@ INDICATOR: dict[State, str] = {
     "formatting": "Formatting…",
     "delivering": "Delivering…",
     "cancelling": "Canceling — keeping audio…",
-    "learning": "Learning…",
-    "review": "Learning: apply or discard proposal",
+    "learning": "Preparing dictionary suggestions…",
+    "review": "Review dictionary suggestions to dictate again",
 }
 # Room for the Dictionary page and its audio dialog; smaller screens get most of their
 # visible area instead.
@@ -210,7 +210,9 @@ class _Window:
     """One pywebview window, created hidden, shown and hidden rather than closed."""
 
     def __init__(self, url: str) -> None:
-        self.url = url
+        # The page reserves room for the Mac's window buttons from its first paint;
+        # waiting for the bridge's ready event could miss it and overlap the tabs.
+        self.url = f"{url.rstrip('/')}/?shell=mac" if sys.platform == "darwin" else url
         self._window: Any = None
         self._pending: str | None = None
         self._toolbar_height = 52.0

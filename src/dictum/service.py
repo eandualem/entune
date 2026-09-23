@@ -98,13 +98,22 @@ class JevSummary:
 @dataclass(frozen=True)
 class ModelMetrics:
     provider: str
+    provider_name: str
     model: str
     fast: bool
     runs: int
     ok: int
-    audio_seconds: float
-    median_wait: float | None
-    speed: float | None  # seconds of audio per second waited
+    audio_seconds: float  # successful runs whose length is known
+    # Transcription wait for one minute of audio, from successful runs whose length and
+    # wait were both measured (`timed_runs` of them); None without such runs.
+    seconds_per_minute: float | None
+    timed_runs: int
+    # Dictionary replacements over the raw words of dictations where the dictionary
+    # step ran and recorded its edits (`checked`); other dictations are not evidence.
+    replacements: int
+    words: int
+    corrected: int
+    checked: int
 
 
 @dataclass(frozen=True)
@@ -246,30 +255,44 @@ class Dictum:
         raise ValueError(f"Unknown local model: {name}")
 
     def metrics(self) -> list[ModelMetrics]:
-        """How each model has performed in real use, fast mode apart, newest data included.
+        """How each model has performed in real use, fast mode apart.
 
-        Speed is audio seconds per second of waiting over the successful runs; the
-        median wait measures the speech stage. Processing stages have separate timings.
+        Speed is the speech step's wait per minute of audio over successful runs with
+        both measured; processing stages are timed separately. Corrections count what
+        the dictionary step changed, which is not a measure of overall accuracy.
         """
+        names = {p.id: p.name for p in self.providers}
         groups: dict[tuple[str, str, bool], list[Transcription]] = {}
         for attempt in self.store.timed_transcriptions():
             groups.setdefault((attempt.provider, attempt.model, attempt.fast), []).append(attempt)
         table = []
         for (provider, model, fast), attempts in sorted(groups.items()):
-            ok = [a for a in attempts if a.status == "ok" and a.elapsed_seconds is not None]
-            waits = sorted(a.elapsed_seconds for a in ok if a.elapsed_seconds is not None)
-            audio = sum(a.audio_seconds or 0.0 for a in ok)
-            waited = sum(waits)
+            ok = [a for a in attempts if a.status == "ok"]
+            timed = [
+                a
+                for a in ok
+                if a.audio_seconds and a.elapsed_seconds is not None and a.elapsed_seconds > 0
+            ]
+            audio = sum(a.audio_seconds or 0.0 for a in timed)
+            waited = sum(a.elapsed_seconds or 0.0 for a in timed)
+            checked = [a for a in ok if _dictionary_ran(a)]
             table.append(
                 ModelMetrics(
                     provider=provider,
+                    provider_name=names.get(provider, provider),
                     model=model,
                     fast=fast,
                     runs=len(attempts),
                     ok=len(ok),
-                    audio_seconds=audio,
-                    median_wait=statistics.median(waits) if waits else None,
-                    speed=audio / waited if waited else None,
+                    audio_seconds=sum(a.audio_seconds or 0.0 for a in ok),
+                    seconds_per_minute=60 * waited / audio if audio else None,
+                    timed_runs=len(timed),
+                    replacements=sum(
+                        len(a.correction.changes or ()) for a in checked if a.correction
+                    ),
+                    words=sum(len((a.raw_text or "").split()) for a in checked),
+                    corrected=sum(bool(a.correction and a.correction.changes) for a in checked),
+                    checked=len(checked),
                 )
             )
         return table
@@ -1101,6 +1124,17 @@ class Timing:
     audio_seconds: float | None
     elapsed_seconds: float | None
     fast: bool
+
+
+def _dictionary_ran(attempt: Transcription) -> bool:
+    """The dictionary step ran on the raw text and recorded its edits (possibly none)."""
+    stage = attempt.correction
+    return (
+        attempt.raw_text is not None
+        and stage is not None
+        and stage.changes is not None
+        and (stage.status == "succeeded" or (stage.status == "skipped" and not stage.error))
+    )
 
 
 def _finish(upload: Upload | None, ref: ModelRef, clip: Clip) -> str | None:

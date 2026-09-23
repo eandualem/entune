@@ -1,8 +1,9 @@
 // History card rendering keeps each player and retry picker attached to its card.
 
-import { ICON, errorText, fillModels, whenLabel } from "./ui.js";
+import { ICON, errorText, fillModels, modelName, whenLabel } from "./ui.js";
 
-const attemptLabel = (t) => (t.provider === "none" ? "no model set" : `${t.provider} / ${t.model}`);
+// The model that actually produced an attempt, kept as recorded at the time.
+const attemptLabel = (t, models) => (t.provider === "none" ? "no model set" : modelName(`${t.provider}/${t.model}`, models));
 const clock = (s) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "–:––");
 
 function player(url, label, seconds) {
@@ -44,57 +45,76 @@ function player(url, label, seconds) {
   return box;
 }
 
-// Stage counts describe processing, not the accuracy of the delivered words.
-function processingLines(t) {
-  const lines = [];
-  if (t.status === "ok" && t.error) {
-    const line = document.createElement("div");
-    line.className = "jev err";
-    line.setAttribute("role", "status");
-    line.textContent = t.error;
-    lines.push(line);
+// What happened after speech recognition, told plainly and kept out of the way:
+// a compact Details control, a readable breakdown on demand, and failures in view.
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const took = (stage) => [stage.attempts > 1 ? `after ${plural(stage.attempts - 1, "retry", "retries")}` : "", stage.seconds ? `${stage.seconds.toFixed(1)} s` : ""].filter(Boolean).join(" · ");
+function describe(name, stage) {
+  if (stage.status === "failed") {
+    return `${name} failed${name === "Dictionary" ? "; the original transcription was kept" : "; the text before this step was kept"}: ${stage.error}`;
   }
-  for (const [name, stage] of [["Dictionary", t.correction], ["Filler reduction", t.cleanup], ["Formatting", t.formatting]]) {
-    if (!stage || stage.status === "disabled") continue;
+  if (stage.status === "skipped") return stage.error ? `${name} skipped: ${stage.error}` : name === "Dictionary" ? "Dictionary: no known confusions in this dictation" : `${name}: nothing to change`;
+  if (stage.status === "pending") return `${name}: not finished`;
+  const changes = stage.changes?.length ?? null;
+  if (name === "Dictionary") {
+    const parts = [`Dictionary: ${stage.replacements ? plural(stage.replacements, "correction") : "no corrections needed"}`];
+    if (stage.method === "unconditional") parts.push("older fixed replacements");
+    if (stage.abstained) parts.push(`${plural(stage.abstained, "word")} left as heard (unclear meaning)`);
+    return parts.join(" · ");
+  }
+  if (name === "Filler reduction") return stage.removed_words ? `Removed ${plural(stage.removed_words, "filler word")}` : "No filler words removed";
+  return changes === null ? "Formatting applied (changes not recorded)" : changes ? `Formatting: ${plural(changes, "change")}` : "Formatting: no changes";
+}
+// Line breaks and edge spaces are drawn, so paragraph and list edits can be seen.
+const visible = (text) => text === "" ? "(nothing)" : text.replace(/\n/g, "↵").replace(/^ +| +$/g, (spaces) => "␣".repeat(spaces.length));
+function processing(t) {
+  const stages = [["Dictionary", t.correction], ["Filler reduction", t.cleanup], ["Formatting", t.formatting]].filter(([, stage]) => stage && stage.status !== "disabled");
+  const failed = stages.filter(([, stage]) => stage.status === "failed");
+  const changed = stages.reduce((sum, [, stage]) => sum + (stage.status === "succeeded" ? stage.changes?.length ?? 0 : 0), 0);
+  const panel = document.createElement("div");
+  panel.className = "processing";
+  panel.hidden = true;
+  for (const [name, stage] of stages) {
     const line = document.createElement("div");
-    line.className = stage.status === "failed" ? "jev err" : "jev";
-    line.setAttribute("role", "status");
-    const parts = [name, stage.status];
-    if (stage.status === "failed") {
-      parts.push(name === "Dictionary" ? "original transcription retained" : "prior text retained", stage.error);
-    } else if (name === "Dictionary" && stage.status === "succeeded") {
-      parts.push(`${stage.replacements} replacement${stage.replacements === 1 ? "" : "s"}`);
-      if (stage.method === "contextual") parts.push(`${stage.preserved} preserved`, `${stage.decisions} contextual decision${stage.decisions === 1 ? "" : "s"}`);
-      else parts.push(stage.method === "unconditional" ? "historical unconditional" : "approved direct mappings only");
-      parts.push(`${stage.direct_replacements ?? 0} direct`, `${stage.abstained} unresolved`);
-    }
-    if (name !== "Dictionary" && stage.status === "succeeded") {
-      parts.push(stage.changes == null ? "span changes not recorded" : `${stage.changes.length} span change${stage.changes.length === 1 ? "" : "s"}`, `${stage.decisions} decision${stage.decisions === 1 ? "" : "s"}`);
-      if (name === "Filler reduction") parts.push(`${stage.removed_words} word${stage.removed_words === 1 ? "" : "s"} removed`, `${stage.preserved} preserved`, `${stage.abstained} uncertain`);
-    }
-    if (stage.attempts > 1) parts.push(`${stage.attempts - 1} ${stage.attempts === 2 ? "retry" : "retries"}`);
-    if (stage.seconds) parts.push(`+${stage.seconds.toFixed(1)} s`);
-    line.textContent = parts.join(" · ");
-    lines.push(line);
+    line.className = stage.status === "failed" ? "step err" : "step";
+    line.append(describe(name, stage));
+    const time = took(stage);
+    if (time) line.append(Object.assign(document.createElement("span"), { className: "took", textContent: time }));
+    panel.append(line);
     if (stage.changes?.length) {
-      const details = document.createElement("details");
-      details.className = "jev";
-      const summary = document.createElement("summary");
-      summary.textContent = `${name} changes`;
-      const contents = document.createElement("pre");
-      contents.style.whiteSpace = "pre-wrap";
-      contents.textContent = stage.changes.map(change => `${JSON.stringify(change.before)} → ${JSON.stringify(change.after)}`).join("\n");
-      details.append(summary, contents);
-      lines.push(details);
+      const list = document.createElement("ul");
+      list.className = "changes";
+      for (const change of stage.changes) {
+        const item = document.createElement("li");
+        item.append(Object.assign(document.createElement("del"), { textContent: visible(change.before) }), " → ",
+          Object.assign(document.createElement("ins"), { textContent: visible(change.after) }));
+        list.append(item);
+      }
+      panel.append(list);
     }
   }
-  if (t.legacy_processing) {
-    const line = document.createElement("div");
-    line.className = "jev";
-    line.textContent = "Legacy processing record · excluded from current metrics";
-    lines.push(line);
-  }
-  return lines;
+  if (t.legacy_processing) panel.append(Object.assign(document.createElement("div"), { className: "step", textContent: "Recorded by an older version; not counted in current measurements." }));
+  const alerts = [];
+  if (t.status === "ok" && t.error) alerts.push(t.error);
+  for (const [name] of failed) alerts.push(`${name} failed. ${name === "Dictionary" ? "The original transcription was kept." : "The text before this step was kept."}`);
+  const alert = alerts.length ? Object.assign(document.createElement("div"), { className: "processing-alert", textContent: alerts.join(" ") }) : null;
+  alert?.setAttribute("role", "status");
+  if (!stages.length && !t.legacy_processing) return { alert, toggle: null, panel: null };
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = failed.length ? "btn ghost processing-toggle err" : "btn ghost processing-toggle";
+  // An icon alone when nothing changed; a short note when there is something to see.
+  const summary = failed.length ? "Needs attention" : changed ? plural(changed, "change") : "";
+  toggle.innerHTML = ICON.details;
+  if (summary) toggle.append(summary);
+  toggle.title = `Processing details${summary ? "" : ": no changes"} (dictionary, filler reduction, formatting)`;
+  toggle.setAttribute("aria-label", toggle.title);
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    toggle.setAttribute("aria-expanded", String(!panel.hidden));
+  });
+  return { alert, toggle, panel };
 }
 
 export function renderCard(r, models) {
@@ -112,7 +132,8 @@ export function renderCard(r, models) {
   when.title = new Date(r.created_at).toLocaleString();
   const model = document.createElement("span");
   model.className = "model";
-  model.textContent = latest ? attemptLabel(latest) : "";
+  model.textContent = latest ? `Transcribed with ${attemptLabel(latest, models)}` : "";
+  model.title = latest ? `${latest.provider}/${latest.model}${latest.fast ? " · Fast mode" : ""} · the model used for this recording` : "";
   const spacer = document.createElement("span");
   spacer.className = "spacer";
   const copied = document.createElement("span");
@@ -154,8 +175,10 @@ export function renderCard(r, models) {
     block.title = latest.text ? "Click to copy" : "";
     card.append(block);
     card.dataset.copy = latest.text ?? "";
-    card.append(...processingLines(latest));
   }
+  const steps = latest && latest.status === "ok" && !["processing", "cancelled"].includes(latest.processing_state) ? processing(latest) : null;
+  if (steps?.alert) card.append(steps.alert);
+  if (steps?.panel) card.append(steps.panel);
 
   const row = document.createElement("div");
   row.className = "card-row";
@@ -171,7 +194,9 @@ export function renderCard(r, models) {
   rowStatus.className = "status";
   const rowSpacer = document.createElement("span");
   rowSpacer.className = "spacer";
-  row.append(download, rowStatus, rowSpacer);
+  row.append(download);
+  if (steps?.toggle) row.append(steps.toggle);
+  row.append(rowStatus, rowSpacer);
   if (!(["processing", "cancelled"].includes(latest?.processing_state)) && latest?.raw_text !== null && latest?.raw_text !== undefined) {
     const copy = document.createElement("button");
     copy.type = "button";
@@ -194,7 +219,7 @@ export function renderCard(r, models) {
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "btn ghost attempts-toggle";
-    toggle.title = earlier.length === 1 ? `1 earlier attempt · ${attemptLabel(earlier[0])}` : `${earlier.length} earlier attempts`;
+    toggle.title = earlier.length === 1 ? `1 earlier attempt · ${attemptLabel(earlier[0], models)}` : `${earlier.length} earlier attempts`;
     toggle.setAttribute("aria-expanded", "false");
     toggle.innerHTML = `${ICON.attempts}${earlier.length}`;
     attempts = document.createElement("div");
@@ -207,12 +232,13 @@ export function renderCard(r, models) {
       const time = document.createElement("time");
       time.dateTime = t.created_at;
       time.textContent = whenLabel(t.created_at);
-      meta.append(`${attemptLabel(t)} · `, time);
+      meta.append(`${attemptLabel(t, models)} · `, time);
       const text = document.createElement("div");
       text.className = t.status === "ok" ? "text" : "text err";
       const pending = ["processing", "cancelled"].includes(t.processing_state);
       text.textContent = pending ? (t.processing_state === "cancelled" ? "Canceled — audio saved. No text delivered." : "Processing…") : t.status === "ok" ? t.text || "(no speech detected)" : t.error ?? "";
-      attempt.append(meta, text, ...(pending ? [] : processingLines(t)));
+      const detail = pending || t.status !== "ok" ? null : processing(t);
+      attempt.append(meta, text, ...[detail?.alert, detail?.toggle, detail?.panel].filter(Boolean));
       attempts.append(attempt);
     }
     toggle.addEventListener("click", () => {
@@ -221,12 +247,16 @@ export function renderCard(r, models) {
     });
     row.append(toggle);
   }
+  // A new attempt uses the chosen model; it starts at today's default, like a new dictation.
+  const again = document.createElement("label");
+  again.className = "retry-label";
+  again.textContent = "Transcribe again with";
   const select = document.createElement("select");
   select.className = "select quiet retry-model";
-  select.title = "Transcribe again with…";
-  select.setAttribute("aria-label", "Model for re-transcription");
-  const current = latest ? `${latest.provider}/${latest.model}` : null;
-  fillModels(models, select, models.find((m) => m.id !== current)?.id ?? models[0]?.id ?? null, "No models");
+  select.title = "Model for a new attempt on this recording; earlier attempts keep their own model";
+  select.setAttribute("aria-label", "Transcribe again with");
+  fillModels(models, select, models.find((m) => m.default)?.id ?? models[0]?.id ?? null, "No models");
+  again.append(select);
   const retry = document.createElement("button");
   retry.type = "button";
   retry.className = "btn-icon retry";
@@ -234,7 +264,7 @@ export function renderCard(r, models) {
   retry.setAttribute("aria-label", retry.title);
   retry.innerHTML = ICON.retry;
   retry.disabled = select.disabled;
-  row.append(select, retry);
+  row.append(again, retry);
   card.append(row);
   if (attempts) card.append(attempts);
   return card;

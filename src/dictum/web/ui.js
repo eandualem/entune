@@ -10,6 +10,7 @@ export const ICON = {
   attempts: '<svg class="i13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 5h12M2 8h12M2 11h8"/></svg>',
   retry: '<svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 3v3h-3"/></svg>',
   remove: '<svg class="i12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+  details: '<svg class="i13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 7.2v3.8M8 5v.1"/></svg>',
   chevron: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" style="width:0.625rem;height:0.625rem"><path d="M4 6l4 4 4-4"/></svg>',
 };
 
@@ -50,6 +51,18 @@ export function whenLabel(iso) {
   if (sameDay(d, yesterday)) return `Yesterday ${time}`;
   return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
 }
+// "Parakeet · tdt-0.6b-v3" rather than "Parakeet / parakeet-tdt-0.6b-v3".
+export function shortModel(name, provider, model) {
+  return `${name} · ${model.replace(new RegExp(`^${provider}[-_]`, "i"), "")}`;
+}
+// A saved `provider/model` id in short form, named from the known models when possible.
+export function modelName(id, models) {
+  const [provider, ...rest] = id.split("/");
+  const label = models.find((m) => m.id === id)?.label;
+  const name = label ? label.split(" / ")[0] : provider;
+  return shortModel(name, provider, rest.join("/"));
+}
+
 export function fillModels(models, select, selected, emptyLabel) {
   select.replaceChildren();
   if (models.length === 0) {
