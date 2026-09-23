@@ -85,11 +85,24 @@ function showView(name) {
   if (name === "history") loadHistory().catch((err) => { status.textContent = errorText(err); });
   if (name === "models") loadMetrics().catch((err) => { status.textContent = errorText(err); });
   if (name === "dictionary") dictionary.refreshAudio().catch((err) => { status.textContent = errorText(err); });
-  if (name === "settings") settingsView.refreshJev().catch((err) => { status.textContent = errorText(err); });
+  if (name === "models") settingsView.refreshJev().catch((err) => { status.textContent = errorText(err); });
   if (name === "settings" && sections.integrations.hasAttribute("data-active")) settingsView.refreshCorrections();
   permissionsView.setActive(name === "settings" && sections.general.hasAttribute("data-active"));
 }
 function show(name) { selectTab(name); showView(name); }
+
+// The Models page: three jobs, one at a time, like Settings.
+const MODEL_SECTIONS = ["compare", "cloud", "local"];
+const modelSections = Object.fromEntries(MODEL_SECTIONS.map((name) => [name, el(`models-${name}`)]));
+let modelSectionChosen = false;
+const pickModelSection = segmentedGroup(Object.fromEntries(MODEL_SECTIONS.map((name) => [name, el(`msec-${name}`)])), (name) => {
+  modelSectionChosen = true;
+  showModelSection(name);
+});
+function showModelSection(name) {
+  for (const key in modelSections) modelSections[key].toggleAttribute("data-active", key === name);
+}
+function openModels(section) { show("models"); pickModelSection(section); showModelSection(section); }
 
 const SECTIONS = ["general", "processing", "dictionary", "integrations", "privacy"];
 const sections = Object.fromEntries(SECTIONS.map((name) => [name, el(`settings-${name}`)]));
@@ -158,8 +171,10 @@ function audioLength(seconds) {
 }
 async function loadMetrics() {
   const rows = await api("/api/metrics");
-  // Until a model has been used there is nothing to compare, so setup comes first.
-  el("compare").hidden = rows.length === 0;
+  el("metrics-table").hidden = rows.length === 0;
+  el("metrics-empty").hidden = rows.length > 0;
+  // Until a model has been used there is nothing to compare, so setup opens first.
+  if (!modelSectionChosen && rows.length === 0) { pickModelSection("cloud"); showModelSection("cloud"); }
   const cell = (text, title = "") => Object.assign(document.createElement("span"), { textContent: text, title });
   metricsRows.replaceChildren(
     ...rows.map((m) => {
@@ -178,8 +193,8 @@ async function loadMetrics() {
           `${m.replacements} replacement${m.replacements === 1 ? "" : "s"} in ${m.corrected} of ${m.checked} dictations checked by the dictionary`);
       const failed = m.runs - m.ok;
       const used = cell(`${m.runs} run${m.runs === 1 ? "" : "s"} · ${m.audio_seconds ? audioLength(m.audio_seconds) : "length unknown"}`,
-        failed ? `${failed} failed` : "");
-      if (failed) used.append(Object.assign(document.createElement("span"), { className: "perf-failed", textContent: ` · ${failed} failed` }));
+        failed ? `${failed} of ${m.runs} failed` : "");
+      if (failed) used.append(Object.assign(document.createElement("span"), { className: "perf-failed", textContent: `${failed} failed` }));
       row.append(name, speed, corrections, used);
       return row;
     }),
@@ -226,7 +241,7 @@ function renderStart() {
     return li;
   };
   stepsList.replaceChildren(
-    step(haveModel, "Add a speech model", ["A cloud service's key, or a model downloaded to this Mac."], { label: "Models", go: () => show("models") }),
+    step(haveModel, "Add a speech model", ["A cloud service's key, or a model downloaded to this Mac."], { label: "Models", go: () => openModels("cloud") }),
     step(haveDefault, "Pick the default model", ["The picker in the toolbar; it applies at once."], null),
     step(recordingsCount > 0, "Dictate", dictate, shortcuts.hold || shortcuts.toggle ? null : { label: "Set a shortcut", go: () => openSettings("general") }),
   );
