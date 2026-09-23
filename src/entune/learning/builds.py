@@ -23,7 +23,7 @@ from entune.operations import Operation, Operations
 from entune.providers.contracts import Clip, Failure
 from entune.providers.registry import ModelRef
 from entune.providers.resources import SpeechResources
-from entune.store import DictionaryAudio
+from entune.storage.records import DictionaryAudio
 
 Source = Literal["history", "audio"]
 RUNNING = {"queued", "transcribing", "building", "cancelling", "cleaning"}

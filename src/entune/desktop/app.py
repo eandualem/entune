@@ -20,7 +20,7 @@ from entune.operations import Busy, Operation
 from entune.processing.results import notice
 from entune.providers.cloud.contracts import Upload
 from entune.service import Entune, NoDefaultModel, UnknownModel
-from entune.store import Recording
+from entune.storage.records import Recording
 
 MIN_CLIP_SECONDS = 0.25  # a tap on the hold key is not a dictation
 KEYS_UP_WAIT_SECONDS = 1.0  # let chord keys come up before pasting so Cmd+V is just Cmd+V

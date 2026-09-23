@@ -16,7 +16,7 @@ from entune.desktop.engine import ShortcutEngine
 from entune.desktop.platform import Delivery, State
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from entune.service import Entune
-from entune.store import Store
+from entune.storage.store import Store
 
 
 class FakeTray:
@@ -632,7 +632,7 @@ def test_capture_flush_wait_is_bounded_and_timeout_visible(
         assert release.wait(2)
         return save(data, mime)
 
-    from entune.store import Recording
+    from entune.storage.records import Recording
 
     monkeypatch.setattr(entune, "store_recording", slow_save)
     monkeypatch.setattr(desktop, "QUIT_FLUSH_SECONDS", 0.04)

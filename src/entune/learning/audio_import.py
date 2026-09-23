@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from entune.audio.formats import sniff_mime, wav_duration_seconds
-from entune.store import Store
+from entune.storage.store import Store
 
 
 def recorded_at(value: object) -> str | None:

@@ -37,7 +37,7 @@ from entune.service import (
     NoDefaultModel,
     UnknownModel,
 )
-from entune.store import Recording
+from entune.storage.records import Recording
 
 WEB_DIR = Path(__file__).parent / "web"
 

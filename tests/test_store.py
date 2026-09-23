@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from entune.store import Store
+from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
 
 

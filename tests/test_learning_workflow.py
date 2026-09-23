@@ -22,7 +22,7 @@ from entune.learning import inputs as learning_inputs
 from entune.providers.contracts import Clip, Failure, Transcript
 from entune.server import create_app
 from entune.service import Entune
-from entune.store import Store
+from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, wait_for_build
 from tests.dictionary_samples import JEV, group, proposed
 from tests.test_server import StubProvider

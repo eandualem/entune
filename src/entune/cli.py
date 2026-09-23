@@ -16,11 +16,11 @@ import uvicorn
 
 from entune import __version__
 from entune.desktop.platform import create_platform
-from entune.paths import default_data_dir
 from entune.providers.registry import default_providers
 from entune.server import create_app
 from entune.service import Entune
-from entune.store import Store
+from entune.storage.paths import default_data_dir
+from entune.storage.store import Store
 
 DEFAULT_PORT = 4187
 

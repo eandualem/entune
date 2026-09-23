@@ -13,7 +13,7 @@ from entune.providers.contracts import Clip, TranscribeResult, Transcript
 from entune.providers.local.contracts import LocalModelStatus
 from entune.server import RESET_PHRASE, create_app
 from entune.service import Entune
-from entune.store import Store
+from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
 
 

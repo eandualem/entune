@@ -14,7 +14,7 @@ from entune.processing.text_edits import Change
 from entune.providers.contracts import Transcript
 from entune.server import create_app
 from entune.service import Entune
-from entune.store import Store
+from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
 from tests.dictionary_samples import JEV
 from tests.test_jev import answering, call

@@ -36,7 +36,8 @@ from entune.providers.contracts import Clip, Failure, Provider, Transcript
 from entune.providers.local.contracts import Downloadable, LocalModelStatus
 from entune.providers.registry import ModelRef, resolve_model
 from entune.providers.resources import SpeechResources
-from entune.store import Recording, Store, Transcription
+from entune.storage.records import Recording, Transcription
+from entune.storage.store import Store
 
 DEFAULT_MODEL_KEY = "default_model"
 DICTIONARY_MODEL_KEY = "dictionary_model"
