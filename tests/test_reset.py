@@ -226,3 +226,18 @@ def test_imports_exports_and_a_reset_never_overlap(
     app._resetting = False
     assert client.get("/api/dictionary/audio").json()["items"] == []
     assert client.post("/api/data/reset", json=confirm).status_code == 200
+
+
+def test_an_unreadable_folder_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, setup: tuple[TestClient, Entune, Path, LocalStub]
+) -> None:
+    client, app, data, local = setup
+    fill(client, data, local)
+
+    def unreadable() -> tuple[list[Path], list[Path]]:
+        raise PermissionError("folder not readable")
+
+    monkeypatch.setattr(app.store, "managed", unreadable)
+    res = client.post("/api/data/reset", json={"confirm": RESET_PHRASE})
+    assert res.status_code == 500 and "folder not readable" in res.text
+    assert len(client.get("/api/recordings").json()) == 1  # still open, nothing deleted
