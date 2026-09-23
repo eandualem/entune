@@ -139,7 +139,8 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const details = [];
     for (const [method, label] of steps) {
       const stage = s.stages[method];
-      const ran = stage.succeeded + stage.failed + stage.skipped;
+      // Dictations the step handled; skips caused by an earlier failure or a cancel are not.
+      const ran = stage.succeeded + stage.failed + stage.skipped - (stage.blocked ?? 0);
       if (!s.transcriptions || !ran) continue;
       // Changes the step made, in its own unit; runs that did not record their edits are
       // counted apart, because their changes are unknown rather than none.
@@ -159,7 +160,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
         figure(seconds(stage.median_seconds), stage.median_seconds === null ? "not timed" : "median"),
       );
       rows.push(row);
-      details.push(`${label}: ${plural(stage.decisions, "decision")} · ${stage.preserved} kept as written · ${stage.retries} ${stage.retries === 1 ? "retry" : "retries"} · ${stage.skipped} with nothing to decide`);
+      details.push(`${label}: ${plural(stage.decisions, "decision")} · ${stage.preserved} kept as written · ${stage.retries} ${stage.retries === 1 ? "retry" : "retries"} · ${stage.skipped - (stage.blocked ?? 0)} with nothing to decide${stage.blocked ? ` · ${stage.blocked} not run after an earlier failure or cancel` : ""}`);
     }
     el("activity-diagnostics").replaceChildren(...details.map((text) => Object.assign(document.createElement("p"), { className: "caption", textContent: text })));
     el("activity-details").hidden = details.length === 0;

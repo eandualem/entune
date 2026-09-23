@@ -233,5 +233,15 @@ def test_unrecorded_edits_stay_distinct_from_none(tmp_path: Path) -> None:
                     Stage("succeeded", "formatting", decisions=1, changes=changes),
                 ),
             )
+        attempt = store.add_transcription(recording.id, "p", "m", "ok", "text", None, raw_text="t")
+        store.finish_processing(
+            attempt,
+            Processed(
+                "text",
+                Stage("failed", "contextual", error="HTTP 529"),
+                Stage("skipped", "formatting", error="dictionary failed"),
+            ),
+        )
         formatting = processing_summary(store).stages["formatting"]
         assert (formatting.succeeded, formatting.changes, formatting.unrecorded) == (2, 0, 1)
+        assert (formatting.skipped, formatting.blocked) == (1, 1)
