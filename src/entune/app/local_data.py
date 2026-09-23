@@ -11,7 +11,7 @@ from pathlib import Path
 from entune.app.dictionary_file import DictionaryFile
 from entune.app.models import SpeechModels
 from entune.app.operations import Busy, Operations
-from entune.learning.builds import DictionaryBuilds
+from entune.app.suggestion_runs import DictionaryBuilds
 from entune.providers.contracts import Provider
 from entune.providers.local.contracts import Downloadable
 from entune.providers.resources import SpeechResources

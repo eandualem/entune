@@ -10,9 +10,10 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from entune.app import audio_import
 from entune.app.entune import Entune
 from entune.audio.formats import wav_bytes
-from entune.learning import audio_import, batches
+from entune.learning import batches
 from entune.providers.contracts import Clip, Transcript
 from entune.server import create_app
 from entune.storage.store import Store
@@ -239,7 +240,7 @@ def test_shutdown_is_bounded_and_drains_a_blocked_speech_owner(
 def test_shutdown_deadline_also_bounds_waiting_for_a_source_snapshot(
     app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from entune.learning.builds import BuildInput, JobConflict, Source
+    from entune.app.suggestion_runs import BuildInput, JobConflict, Source
 
     entered, release = threading.Event(), threading.Event()
     prepare = app.learning._build_input

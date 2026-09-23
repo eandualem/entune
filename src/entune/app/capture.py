@@ -6,7 +6,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from entune.desktop import shortcuts
+from entune.app import shortcuts
 
 
 @dataclass(frozen=True)
