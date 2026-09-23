@@ -14,8 +14,19 @@ from entune.dictionary import changes as dictionary_changes
 from entune.dictionary.entries import Dictionary, Groups
 from entune.learning.batches import build_user_prompt, learning_batches, system_prompt
 from entune.learning.inputs import LearningText, Mode
-from entune.learning.replies import parse_generation, parse_refinement
-from entune.learning.suggestion_model import Caller, call_model
+from entune.learning.replies import (
+    GenerationReply,
+    RefinementReply,
+    parse_generation,
+    parse_refinement,
+)
+from entune.learning.suggestion_model import (
+    MAX_FIXES,
+    BrokenReply,
+    Caller,
+    Request,
+    call_model,
+)
 
 
 class StepFailed(ValueError):
@@ -29,6 +40,8 @@ class StepFailed(ValueError):
 def _service_problem(detail: str) -> str:
     """What the person can do about a failed request, from the service's own words."""
     words = detail.lower()
+    if "timed out" in words or "timeout" in words:
+        return "the suggestion model did not answer within 20 minutes."
     if any(sign in words for sign in ("401", "403", "authentication", "api key", "api_key")):
         return (
             "the suggestion model's service refused the key;"
@@ -55,6 +68,7 @@ async def propose_learned(
     *,
     mode: Mode,
     progress: Callable[[int, int, int], None] | None = None,
+    retrying: Callable[[int, str], None] | None = None,
     inputs: Sequence[LearningText] | None = None,
     checkpoint: Callable[[Groups, int, int, tuple[str, ...]], None] | None = None,
     working: Groups | None = None,
@@ -63,8 +77,10 @@ async def propose_learned(
     """Propose `speech_model`'s dictionary in the chosen mode, one bounded step at a time.
 
     Each step sees the working dictionary after the earlier steps' changes. Step numbers
-    stay in the app for progress and resume. Raises ValueError carrying the provider's or
-    the model's own words when a step fails; the checkpoint keeps only validated steps.
+    stay in the app for progress and resume. A reply that breaks a rule is sent back for
+    a fix, and `retrying` hears (attempt, rule broken) first. Raises StepFailed carrying
+    the provider's or the model's own words when a step fails; the checkpoint keeps only
+    validated steps.
     """
     current = dictionary_changes.share(current, set())
     proposed = current.effective(speech_model) if working is None else working
@@ -74,6 +90,7 @@ async def propose_learned(
         else [LearningText(str(i), text) for i, text in enumerate(transcripts)]
     )
     parse = parse_generation if mode == "generate" else parse_refinement
+    shape = GenerationReply if mode == "generate" else RefinementReply
     for number, step in enumerate(steps, 1):
         part = f"Part {number} of {len(steps)}"
         if number <= resume:
@@ -83,23 +100,40 @@ async def propose_learned(
         system = system_prompt(mode)
         if progress:
             progress(number, len(steps), len(system) + len(user_prompt))
+        texts = [s.text for s in step.snippets]
+
+        def check(reply: str, before: Groups = proposed, texts: list[str] = texts) -> Groups:
+            return parse(reply, before, transcripts=texts, pinned=current.pinned)
+
+        request = Request(
+            provider,
+            api_key,
+            model,
+            system,
+            user_prompt,
+            shape,
+            check,
+            retrying or (lambda attempt, problem: None),
+        )
         try:
-            async with asyncio.timeout(1200):
-                reply = await call(provider, api_key, model, system, user_prompt)
+            # Each attempt has its own 20 minutes; this bounds the part as a whole.
+            async with asyncio.timeout(1200 * (MAX_FIXES + 1)):
+                reply = await call(request)
         except TimeoutError as exc:
             raise StepFailed(
-                f"{part}: the suggestion model did not answer within 20 minutes.", "TimeoutError"
+                f"{part}: the suggestion model did not finish within an hour.", "TimeoutError"
+            ) from exc
+        except BrokenReply as exc:
+            raise StepFailed(
+                f"{part}: the suggestion model's reply still broke the dictionary's rules after"
+                f" {MAX_FIXES} corrections, so nothing from it was kept.",
+                f"BrokenReply: {exc}",
             ) from exc
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
             raise StepFailed(f"{part}: {_service_problem(detail)}", detail) from exc
         try:
-            proposed = parse(
-                reply,
-                proposed,
-                transcripts=[s.text for s in step.snippets],
-                pinned=current.pinned,
-            )
+            proposed = check(reply)
             if checkpoint:
                 checkpoint(proposed, number, len(steps), step.completed)
         except Exception as exc:

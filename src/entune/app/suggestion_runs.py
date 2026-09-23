@@ -226,6 +226,13 @@ class DictionaryBuilds:
             self._checkpoint()
             self._state.update(fields)
 
+    def _retrying(self, attempt: int, rule: str) -> None:
+        # Called inside the model call; Stop cancels that task, so no checkpoint here.
+        with self._lock:
+            self._state.update(
+                attempt=attempt, attempts=suggestion_model.MAX_FIXES + 1, brokenRule=rule
+            )
+
     async def _generate(
         self, spec: BuildInput, inputs: list[learning_inputs.LearningText]
     ) -> Groups:
@@ -265,7 +272,12 @@ class DictionaryBuilds:
                     steps=total,
                     inputCharacters=size,
                     stepStartedAt=time.time(),  # the page shows how long this part has run
+                    attempt=1,
+                    brokenRule=None,
                 ),
+                # A reply broke a rule and the model is asked to fix it: say so, with the
+                # rule, so the person can stop instead.
+                retrying=self._retrying,
             )
         finally:
             with self._lock:

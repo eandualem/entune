@@ -91,7 +91,8 @@ def routes(app: Entune) -> list[Route]:
                     or not model.strip()
                 ):
                     raise ValueError(
-                        "dictionaryModel must be provider:model for Anthropic or OpenAI"
+                        "dictionaryModel must be provider:model for Anthropic, OpenAI,"
+                        " Google Gemini, Groq or Mistral"
                     )
             if "fastMode" in body and not isinstance(body["fastMode"], bool):
                 raise ValueError("fastMode must be a boolean")

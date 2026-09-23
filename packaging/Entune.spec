@@ -6,7 +6,7 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
 import entune
 
@@ -24,6 +24,10 @@ a = Analysis(
             if path.suffix in {".txt", ".json"}
         ],
         (str(PACKAGE_DIR / "providers" / "local" / "parakeet_helper.py"), "entune/providers/local"),
+        # Both read their own version from package metadata when imported.
+        *copy_metadata("pydantic_ai_slim"),
+        *copy_metadata("httpx2"),
+        *copy_metadata("genai_prices"),
     ],
     hiddenimports=[
         *collect_submodules("uvicorn"),

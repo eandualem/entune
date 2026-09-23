@@ -14,6 +14,7 @@ from entune.app import audio_import
 from entune.app.entune import Entune
 from entune.audio.formats import wav_bytes
 from entune.learning import batches
+from entune.learning.suggestion_model import Request
 from entune.providers.contracts import Clip, Transcript
 from entune.server import create_app
 from entune.storage.store import Store
@@ -41,7 +42,7 @@ def test_competing_sources_and_named_actions_share_one_job(
 ) -> None:
     release, started = threading.Event(), threading.Event()
 
-    async def fake(*args: str) -> str:
+    async def fake(_: Request) -> str:
         started.set()
         while not release.is_set():
             await asyncio.sleep(0.01)
@@ -94,7 +95,7 @@ def test_generation_cancel_closes_request_before_publishing_and_discards_text(
 ) -> None:
     entered, cleaned = threading.Event(), threading.Event()
 
-    async def fake(*args: str) -> str:
+    async def fake(_: Request) -> str:
         try:
             entered.set()
             await asyncio.sleep(30)
@@ -134,7 +135,7 @@ def test_cancel_during_speech_waits_for_cleanup_and_never_starts_next_clip(
         assert release.wait(5)
         return Transcript("temporary onboarding words")
 
-    async def forbidden(*args: str) -> str:
+    async def forbidden(_: Request) -> str:
         pytest.fail("Cancelled audio must not reach the dictionary model")
 
     monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
@@ -167,9 +168,9 @@ def test_cancel_between_chunks_stops_refinement_and_reports_full_input_size(
     calls: list[int] = []
     monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 30)
 
-    async def fake(provider: str, key: str, model: str, system: str, user: str) -> str:
+    async def fake(request: Request) -> str:
         state = app.learning.dictionary_build_status()
-        calls.append(len(system) + len(user))
+        calls.append(len(request.system) + len(request.user))
         assert state["inputCharacters"] == calls[0] > batches.BATCH_CHARS
         assert state["steps"] == 2
         app.learning.cancel_dictionary_build(str(state["id"]))
@@ -188,7 +189,7 @@ def test_cancel_between_chunks_stops_refinement_and_reports_full_input_size(
 def test_failure_scrubs_keys_and_keeps_originals(
     app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def fake(*args: str) -> str:
+    async def fake(_: Request) -> str:
         raise ValueError("rejected build-secret")
 
     monkeypatch.setattr(app.builds, "_call", fake)
@@ -263,3 +264,24 @@ def test_shutdown_deadline_also_bounds_waiting_for_a_source_snapshot(
         with pytest.raises(JobConflict, match="shutting down"):
             started.result()
     assert app.learning.dictionary_build_status()["phase"] == "idle"
+
+
+def test_a_fix_request_is_shown_with_its_rule_and_stop_still_stops_it(
+    app: Entune, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[dict[str, object]] = []
+
+    async def fake(request: Request) -> str:
+        request.retrying(2, "evidence: List should have at most 0 items")
+        state = app.learning.dictionary_build_status()
+        seen.append(state)
+        app.learning.cancel_dictionary_build(str(state["id"]))
+        while True:  # the model is writing its fix when Stop arrives
+            await asyncio.sleep(0.01)
+
+    monkeypatch.setattr(app.builds, "_call", fake)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
+    assert wait_for_build(client)["phase"] == "cancelled"
+    assert seen[0]["attempt"] == 2 and seen[0]["attempts"] == 3
+    assert seen[0]["brokenRule"] == "evidence: List should have at most 0 items"

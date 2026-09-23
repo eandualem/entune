@@ -8,6 +8,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
   "httpx>=0.27",
+  "pydantic-ai-slim[anthropic,google,groq,mistral,openai]>=2.48",
   "pynput>=1.7,<2 ; sys_platform == 'darwin'",
   "pyobjc-framework-applicationservices>=10 ; sys_platform == 'darwin'",
   "pyobjc-framework-AVFoundation>=10 ; sys_platform == 'darwin'",
