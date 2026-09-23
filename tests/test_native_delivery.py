@@ -10,14 +10,29 @@ pytest.importorskip("ApplicationServices", reason="macOS only")
 from entune.desktop.macos import actions
 
 
+@pytest.fixture(autouse=True)
+def trusted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(actions, "_trusted", lambda: True)
+
+
+def test_missing_accessibility_is_not_reported_as_a_missing_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(actions, "_trusted", lambda: False)
+    monkeypatch.setattr(actions, "_focused", lambda: pytest.fail("no AX query without permission"))
+    assert actions.paste_into_focused_app("text") == "no_permission"
+
+
 @pytest.mark.parametrize(
-    "role,editable,value_settable,selection_settable,expected",
+    "role,editable,value_settable,selection_settable,caret,expected",
     [
-        ("AXButton", None, False, False, False),
-        ("AXStaticText", None, False, False, False),
-        ("AXTextField", None, True, False, True),
-        ("AXTextArea", None, False, True, True),
-        ("AXGroup", True, False, False, True),
+        ("AXButton", None, False, False, True, False),
+        ("AXStaticText", None, False, False, True, False),
+        ("AXTextField", None, True, False, False, True),
+        ("AXTextArea", None, False, True, False, True),
+        ("AXGroup", True, False, False, False, True),
+        ("AXTextArea", None, False, False, True, True),  # a terminal: a caret, no settable value
+        ("AXTextArea", None, False, False, False, False),
     ],
 )
 def test_current_target_requires_editability(
@@ -26,10 +41,12 @@ def test_current_target_requires_editability(
     editable: bool | None,
     value_settable: bool,
     selection_settable: bool,
+    caret: bool,
     expected: bool,
 ) -> None:
     element = {"AXRole": role, "AXEditable": editable, "AXEnabled": True}
     monkeypatch.setattr(actions, "_attribute", lambda target, key: target.get(key))
+    monkeypatch.setattr(actions, "_range", lambda target: (0, 0) if caret else None)
     monkeypatch.setattr(
         actions,
         "_settable",
@@ -111,3 +128,17 @@ def test_cancel_during_native_target_detection_prevents_the_paste(
     with pytest.raises(CancelledError):
         actions.paste_into_focused_app("synthetic", check)
     assert sent == []
+
+
+def test_a_caret_range_is_read_from_the_tuple_pyobjc_returns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(actions, "_attribute", lambda target, key: object())
+    monkeypatch.setattr(
+        "entune.desktop.macos.actions.AX.AXValueGetValue", lambda value, kind, _: (True, (3, 1))
+    )
+    assert actions._range(object()) == (3, 1)
+    monkeypatch.setattr(
+        "entune.desktop.macos.actions.AX.AXValueGetValue", lambda value, kind, _: (False, None)
+    )
+    assert actions._range(object()) is None

@@ -16,7 +16,7 @@ from entune.audio.recorder import Capture, SinkFactory
 from entune.desktop.engine import ShortcutEngine
 
 State = str  # operation stage, plus idle/quiet
-Delivery = Literal["inserted", "no_target", "unverified", "focus_moving"]
+Delivery = Literal["inserted", "no_target", "unverified", "focus_moving", "no_permission"]
 
 
 class Tray(Protocol):
