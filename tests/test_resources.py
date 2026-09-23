@@ -8,7 +8,7 @@ import pytest
 
 from entune.providers.local.whisper import WhisperCpp
 from entune.providers.registry import ModelRef
-from entune.resources import SpeechResources
+from entune.providers.resources import SpeechResources
 from tests.test_server import StubProvider
 from tests.test_whisper import wait_until
 

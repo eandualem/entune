@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from entune.shortcuts import Shortcuts
+from entune.desktop.shortcuts import Shortcuts
 
 
 class ShortcutEngine:

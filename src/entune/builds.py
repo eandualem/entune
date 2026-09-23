@@ -19,7 +19,7 @@ from entune.dictionary import Dictionary, Groups, Proposal
 from entune.operations import Operation, Operations
 from entune.providers.contracts import Clip, Failure
 from entune.providers.registry import ModelRef
-from entune.resources import SpeechResources
+from entune.providers.resources import SpeechResources
 from entune.store import DictionaryAudio
 
 Source = Literal["history", "audio"]

@@ -16,9 +16,11 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from entune import dictionary as dictionary_file
-from entune import jev, llm, processing, shortcuts
+from entune import jev, llm, processing
 from entune.audio.formats import sniff_mime
 from entune.builds import BuildInput, DictionaryBuilds, Source
+from entune.desktop import shortcuts
+from entune.desktop.shortcuts import Shortcuts
 from entune.dictionary import Dictionary, Groups, Proposal
 from entune.dictionary_corrections import Correction, add_corrections, read_entries
 from entune.operations import Busy, Operation, Operations
@@ -27,8 +29,7 @@ from entune.providers.cloud.contracts import Streams, Upload
 from entune.providers.contracts import Clip, Failure, Provider, Transcript
 from entune.providers.local.contracts import Downloadable, LocalModelStatus
 from entune.providers.registry import ModelRef, resolve_model
-from entune.resources import SpeechResources
-from entune.shortcuts import Shortcuts
+from entune.providers.resources import SpeechResources
 from entune.store import Recording, Store, Transcription
 
 DEFAULT_MODEL_KEY = "default_model"
