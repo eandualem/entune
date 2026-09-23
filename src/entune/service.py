@@ -20,7 +20,7 @@ from entune import jev, llm, processing, shortcuts
 from entune.audio import sniff_mime
 from entune.builds import BuildInput, DictionaryBuilds, Source
 from entune.dictionary import Dictionary, Groups, Proposal
-from entune.dictionary_legacy import Correction, add_corrections, read_entries
+from entune.dictionary_corrections import Correction, add_corrections, read_entries
 from entune.operations import Busy, Operation, Operations
 from entune.processing import Processed, Stage, process_text
 from entune.providers.cloud.contracts import Streams, Upload
@@ -42,8 +42,6 @@ JEV_POLICY_KEY = "jev_policy"
 SHORTCUT_HOLD_KEY = "shortcut_hold"
 SHORTCUT_TOGGLE_KEY = "shortcut_toggle"
 SHORTCUT_CANCEL_KEY = "shortcut_cancel"
-LEGACY_MODE_KEY = "shortcut_mode"
-LEGACY_KEYS_KEY = "shortcut_keys"
 
 
 def key_setting(provider_id: str) -> str:
@@ -455,7 +453,7 @@ class Entune:
             if stage is not None
         ]
         summaries = {}
-        for method in ("contextual", "deterministic", "unconditional", "formatting", "cleanup"):
+        for method in ("contextual", "deterministic", "formatting", "cleanup"):
             group = [s for s in stages if s.method == method]
             waits = [s.seconds for s in group if s.status in ("succeeded", "failed")]
             summaries[method] = StageSummary(
@@ -555,27 +553,12 @@ class Entune:
         self._changed()
 
     def shortcuts(self) -> Shortcuts:
-        """The configured shortcuts; empty until the user sets one.
-
-        Before two shortcuts could be active at once, the one shortcut was stored as a
-        mode plus keys. That pair is read only while neither new key exists, and
-        `set_shortcuts` deletes it, so the migration finishes the first time the user
-        saves.
-        """
-        hold = self.store.get_setting(SHORTCUT_HOLD_KEY)
-        toggle = self.store.get_setting(SHORTCUT_TOGGLE_KEY)
-        if hold is None and toggle is None:
-            mode = self.store.get_setting(LEGACY_MODE_KEY)
-            keys = self.store.get_setting(LEGACY_KEYS_KEY)
-            if mode == "hold":
-                hold = keys
-            elif mode == "toggle":
-                toggle = keys
+        """The configured shortcuts; empty until the user sets one, cancel Fn+Control."""
         cancel = self.store.get_setting(SHORTCUT_CANCEL_KEY)
         return shortcuts.parse(
-            hold,
-            toggle,
-            "fn+ctrl" if cancel is None or set(cancel.split("+")) == {"fn", "esc"} else cancel,
+            self.store.get_setting(SHORTCUT_HOLD_KEY),
+            self.store.get_setting(SHORTCUT_TOGGLE_KEY),
+            "fn+ctrl" if cancel is None else cancel,
         )
 
     def set_shortcuts(
@@ -593,8 +576,6 @@ class Entune:
         self.store.set_setting(
             SHORTCUT_CANCEL_KEY, shortcuts.format_keys(parsed.cancel) if parsed.cancel else ""
         )
-        self.store.set_setting(LEGACY_MODE_KEY, None)
-        self.store.set_setting(LEGACY_KEYS_KEY, None)
         self._changed()
         return parsed
 
@@ -603,7 +584,7 @@ class Entune:
     def dictionary(self) -> Dictionary:
         # A file in an earlier form is rewritten in the current one (load does it once).
         with self._dictionary_lock:
-            return dictionary_file.load(self.store.data_dir, self.default_model())
+            return dictionary_file.load(self.store.data_dir)
 
     def dictionary_text(self) -> str:
         return dictionary_file.dumps(self.dictionary())

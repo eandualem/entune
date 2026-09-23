@@ -7,7 +7,6 @@ alone does not make a form eligible for every meaning.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -45,7 +44,7 @@ class Evidence:
 class Association:
     meaning_id: str
     evidence: tuple[Evidence, ...] = ()
-    basis: Literal["text", "literal", "user", "legacy"] = "user"
+    basis: Literal["text", "literal", "user"] = "user"
 
 
 @dataclass(frozen=True)
@@ -214,7 +213,7 @@ def parse_groups(value: object, where: str) -> Groups:
                 a = _object(a, loc, {"meaning_id", "basis", "evidence"})
                 mid = _id(a.get("meaning_id"), f"{loc}.meaning_id")
                 basis = a.get("basis", "user")
-                if basis not in ("text", "literal", "user", "legacy"):
+                if basis not in ("text", "literal", "user"):
                     raise ValueError(f"{loc}: invalid association basis")
                 evidence = []
                 for e in _list(a.get("evidence", []), f"{loc}.evidence"):
@@ -274,20 +273,16 @@ def validate(dictionary: Dictionary) -> Dictionary:
     return dictionary
 
 
-def parse(text: str, legacy_model: str | None = None) -> Dictionary:
+def parse(text: str) -> Dictionary:
     try:
         data = json.loads(text or "{}")
     except json.JSONDecodeError as exc:
         raise ValueError(f"Not valid JSON: {exc.msg} (line {exc.lineno})") from None
     if not isinstance(data, dict):
         raise ValueError("The dictionary must be a JSON object")
-    if "version" not in data:
-        from entune.dictionary_legacy import convert
-
-        return validate(convert(data, legacy_model))
     obj = _object(data, "dictionary", {"version", "pinned", "learned"})
-    if type(obj["version"]) is not int or obj["version"] != VERSION:
-        raise ValueError(f"Unsupported dictionary version: {obj['version']!r}")
+    if type(obj.get("version")) is not int or obj["version"] != VERSION:
+        raise ValueError(f'The dictionary needs "version": {VERSION}')
     learned = obj.get("learned", {})
     if not isinstance(learned, dict) or not all(isinstance(k, str) and k.strip() for k in learned):
         raise ValueError("learned must be an object keyed by speech model")
@@ -311,45 +306,16 @@ def dumps(dictionary: Dictionary) -> str:
     )
 
 
-def _backup(path: Path) -> None:
-    if not path.exists():
-        return
-    raw = path.read_bytes()
-    try:
-        old = json.loads(raw)
-    except ValueError:
-        old = None
-    if (
-        not isinstance(old, dict)
-        or type(old.get("version")) is not int
-        or old.get("version") != VERSION
-    ):
-        backup = path.with_name(f"dictionary.pre-v2-{hashlib.sha256(raw).hexdigest()[:12]}.json")
-        try:
-            with backup.open("xb") as stream:
-                stream.write(raw)
-        except FileExistsError:
-            if backup.read_bytes() != raw:
-                raise ValueError(
-                    "Dictionary backup collision; original was not overwritten"
-                ) from None
-
-
-def load(data_dir: Path, legacy_model: str | None = None) -> Dictionary:
+def load(data_dir: Path) -> Dictionary:
     path = data_dir / FILENAME
     if not path.exists():
         return EMPTY
-    text = path.read_text(encoding="utf-8")
-    dictionary = parse(text, legacy_model)
-    if "version" not in json.loads(text):
-        save(data_dir, dictionary)
-    return dictionary
+    return parse(path.read_text(encoding="utf-8"))
 
 
 def save(data_dir: Path, dictionary: Dictionary) -> None:
     validate(dictionary)
     target = data_dir / FILENAME
-    _backup(target)
     temporary = target.with_name(FILENAME + ".tmp")
     temporary.write_text(dumps(dictionary) + "\n", encoding="utf-8")
     os.replace(temporary, target)

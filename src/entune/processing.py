@@ -17,7 +17,7 @@ from entune.text_edits import Change
 @dataclass(frozen=True)
 class Stage:
     status: Literal["pending", "succeeded", "failed", "skipped", "disabled"]
-    method: Literal["contextual", "deterministic", "unconditional", "formatting", "cleanup"]
+    method: Literal["contextual", "deterministic", "formatting", "cleanup"]
     seconds: float = 0.0
     attempts: int = 0
     decisions: int = 0

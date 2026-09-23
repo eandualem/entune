@@ -58,7 +58,6 @@ function describe(name, stage) {
   const changes = stage.changes?.length ?? null;
   if (name === "Dictionary") {
     const parts = [`Dictionary: ${stage.replacements ? plural(stage.replacements, "correction") : "no corrections needed"}`];
-    if (stage.method === "unconditional") parts.push("older fixed replacements");
     if (stage.abstained) parts.push(`${plural(stage.abstained, "word")} left as heard (unclear meaning)`);
     return parts.join(" · ");
   }
@@ -142,13 +141,12 @@ function processing(t) {
       panel.append(list);
     }
   }
-  if (t.legacy_processing) panel.append(Object.assign(document.createElement("div"), { className: "step", textContent: "Recorded by an older version; not counted in current measurements." }));
   const alerts = [];
   if (t.status === "ok" && t.error) alerts.push(t.error);
   for (const [name] of failed) alerts.push(`${name} failed. ${name === "Dictionary" ? "The original transcription was kept." : "The text before this step was kept."}`);
   const alert = alerts.length ? Object.assign(document.createElement("div"), { className: "processing-alert", textContent: alerts.join(" ") }) : null;
   alert?.setAttribute("role", "status");
-  if (!stages.length && !t.legacy_processing) return { alert, toggle: null };
+  if (!stages.length) return { alert, toggle: null };
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = failed.length ? "btn ghost processing-toggle err" : "btn ghost processing-toggle";
