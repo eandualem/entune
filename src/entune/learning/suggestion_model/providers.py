@@ -7,12 +7,43 @@ The client is closed when the call ends.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
+import httpx
+import httpx2
 from pydantic_ai.models import Model
 
 TIMEOUT = 1200.0  # seconds; a reply at high reasoning effort takes minutes
+
+
+def _credential(header: str, value: str) -> dict[str, list[Callable[[Any], Awaitable[None]]]]:
+    """Set the saved key on every request. The SDKs merge headers from the environment
+    (ANTHROPIC_CUSTOM_HEADERS and the like) over their own, so only the last step before
+    sending can guarantee which key goes out."""
+
+    async def set_credential(request: Any) -> None:
+        request.headers[header] = value
+
+    return {"request": [set_credential]}
+
+
+def _http2(header: str, value: str) -> httpx2.AsyncClient:
+    return httpx2.AsyncClient(
+        timeout=httpx2.Timeout(TIMEOUT, connect=5),
+        trust_env=False,
+        event_hooks=_credential(header, value),
+    )
+
+
+def _http(header: str, value: str) -> httpx.AsyncClient:
+    """For the SDKs still on httpx (Groq)."""
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(TIMEOUT, connect=5),
+        trust_env=False,
+        event_hooks=_credential(header, value),
+    )
 
 
 @asynccontextmanager
@@ -23,7 +54,11 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
         from pydantic_ai.providers.anthropic import AnthropicProvider
 
         async with AsyncAnthropic(
-            api_key=api_key, base_url="https://api.anthropic.com", max_retries=0, timeout=TIMEOUT
+            api_key=api_key,
+            base_url="https://api.anthropic.com",
+            max_retries=0,
+            timeout=TIMEOUT,
+            http_client=_http2("x-api-key", api_key),
         ) as anthropic:
             yield AnthropicModel(name, provider=AnthropicProvider(anthropic_client=anthropic))
         return
@@ -33,7 +68,11 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
         from pydantic_ai.providers.openai import OpenAIProvider
 
         async with AsyncOpenAI(
-            api_key=api_key, base_url="https://api.openai.com/v1", max_retries=0, timeout=TIMEOUT
+            api_key=api_key,
+            base_url="https://api.openai.com/v1",
+            max_retries=0,
+            timeout=TIMEOUT,
+            http_client=_http2("authorization", f"Bearer {api_key}"),
         ) as openai:
             yield OpenAIResponsesModel(
                 name,
@@ -61,7 +100,11 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
         from pydantic_ai.providers.groq import GroqProvider
 
         async with AsyncGroq(
-            api_key=api_key, base_url="https://api.groq.com", max_retries=0, timeout=TIMEOUT
+            api_key=api_key,
+            base_url="https://api.groq.com",
+            max_retries=0,
+            timeout=TIMEOUT,
+            http_client=_http("authorization", f"Bearer {api_key}"),
         ) as groq:
             yield GroqModel(name, provider=GroqProvider(groq_client=groq))
         return
