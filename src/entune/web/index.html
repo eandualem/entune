@@ -9,13 +9,12 @@
     <link rel="stylesheet" href="/static/tokens.css" />
     <link rel="stylesheet" href="/static/style.css" />
     <script>
-      // Apply the saved appearance, text size and hints preference before first paint.
+      // Apply the saved appearance and text size before first paint.
       try {
         const theme = localStorage.getItem("theme");
         if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
         const scale = localStorage.getItem("scale");
         if (scale === "small" || scale === "large" || scale === "larger") document.documentElement.dataset.scale = scale;
-        if (localStorage.getItem("hints") === "off") document.documentElement.dataset.hints = "off";
       } catch (e) {}
       // The Mac app's window buttons sit in the toolbar: reserve their space before first paint.
       if (new URLSearchParams(location.search).get("shell") === "mac") document.documentElement.classList.add("native-mac");
@@ -25,24 +24,12 @@
     <header class="toolbar pywebview-drag-region">
       <div class="segmented" role="tablist" aria-label="View">
         <button type="button" role="tab" id="tab-history" aria-selected="true" aria-controls="view-history">History</button>
+        <button type="button" role="tab" id="tab-models" aria-selected="false" aria-controls="view-models">Models</button>
         <button type="button" role="tab" id="tab-dictionary" aria-selected="false" aria-controls="view-dictionary">Dictionary</button>
         <button type="button" role="tab" id="tab-settings" aria-selected="false" aria-controls="view-settings">Settings</button>
       </div>
       <div class="spacer pywebview-drag-region"></div>
       <span class="status" id="status" role="status"></span>
-      <div class="perf">
-        <div class="popover" id="metrics" hidden>
-          <div class="popover-head">How your speech models are doing <span class="caption">measured on your own dictations</span></div>
-          <div class="perf-table">
-            <div class="perf-grid perf-head"><span>Model</span><span>Speed</span><span>Corrections</span><span>Used</span></div>
-            <div id="metrics-rows"></div>
-          </div>
-          <div class="popover-foot hint"><b>Speed</b>: how long a minute of audio takes to transcribe; Fast mode uploads while you record, so less is left once you stop. <b>Corrections</b>: how often your dictionary fixed a known mistake, per 100 words, where it was on. It counts only confusions the dictionary knows, so it is not an accuracy score.</div>
-        </div>
-        <button type="button" class="btn-icon" id="metrics-toggle" title="Performance by model" aria-label="Performance by model" aria-expanded="false" aria-controls="metrics" hidden>
-          <svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 13V8M8 13V3M13 13V9"/></svg>
-        </button>
-      </div>
       <select class="select" id="model" aria-label="Default model" title="Default model: what the shortcut uses. Picking one applies at once."></select>
       <label class="fast" id="fast-mode-wrap" title="Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop (AssemblyAI only)">
         <svg class="i13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"/></svg>
@@ -64,6 +51,40 @@
           <h2>Get started</h2>
           <p class="caption">Three steps, and every dictation lands here as text you can copy.</p>
           <ol class="steps" id="steps"></ol>
+        </div>
+      </section>
+
+      <section class="view" id="view-models" role="tabpanel">
+        <div class="models">
+          <header class="page-head">
+            <h2>Speech models</h2>
+            <p class="caption">Speech models turn your voice into text. Add a cloud service's key or download a model to this Mac, then pick one in the toolbar; your shortcut uses it.</p>
+          </header>
+
+          <section id="compare" aria-labelledby="compare-title" hidden>
+          <h2 class="sec-label" id="compare-title">Compare your models</h2>
+          <div class="scard perf-card">
+            <div class="perf-table">
+              <div class="perf-grid perf-head"><span>Model</span><span>Speed</span><span>Corrections</span><span>Used</span></div>
+              <div id="metrics-rows"></div>
+            </div>
+            <div class="srow foot"><span class="caption"><b>Speed</b>: the wait per minute of audio; fast mode uploads while you record. <b>Corrections</b>: dictionary fixes per 100 words. Neither is an accuracy score.</span></div>
+          </div>
+          </section>
+
+          <h2 class="sec-label">Cloud services</h2>
+          <form class="scard" id="keys-form">
+            <div class="scard-head"><div class="caption">Add a key only for the services you use; their models then appear in the toolbar picker. Your audio is sent to the service you pick.</div></div>
+            <div id="keys"></div>
+            <div class="srow foot"><button type="submit" class="btn accent" title="Keys are only sent when you save">Save keys</button><span class="caption">Only filled-in keys are saved.</span><span class="caption save-status" id="keys-status" role="status"></span></div>
+          </form>
+
+          <h2 class="sec-label">On this Mac</h2>
+          <div class="local-bar">
+            <input class="input search" id="local-search" type="search" placeholder="Search models" aria-label="Search models on this Mac" />
+            <span class="caption" id="local-summary"></span>
+          </div>
+          <div id="local-cards"></div>
         </div>
       </section>
 
@@ -135,7 +156,7 @@
               <div class="row-actions">
                 <button type="button" class="btn accent" id="save-dictionary">Save JSON</button>
                 <span class="caption save-status" id="dictionary-status" role="status"></span>
-                <span class="caption hint">The file is <code>dictionary.json</code> in Entune's data folder. Forms match whole words regardless of case. Context resolves eligible meanings and overlapping phrases.</span>
+                <span class="caption">The file is <code>dictionary.json</code> in Entune's data folder. Forms match whole words regardless of case. Context resolves eligible meanings and overlapping phrases.</span>
               </div>
             </div>
             <div id="new-group"></div>
@@ -214,7 +235,7 @@
                     <input type="range" id="audio-range-end" min="0" max="1000" value="1000" step="1" aria-label="Newest included audio" />
                   </div>
                   <div class="range-labels"><span id="audio-start-label"></span><span id="audio-end-label"></span></div>
-                  <p class="caption hint range-note">Drag the handles to choose a stretch of recorded time, oldest to newest.</p>
+                  <p class="caption range-note">Drag the handles to choose a stretch of recorded time, oldest to newest.</p>
                   <details class="audio-detail" id="audio-detail"><summary id="audio-detail-summary">Show included recordings</summary><div class="audio-list" id="learning-audio-list"></div><button type="button" class="btn ghost sm" id="audio-more" hidden>Show more</button></details>
                 </div>
               </div>
@@ -237,12 +258,12 @@
         <div class="settings">
           <nav class="rail" aria-label="Settings">
             <button type="button" id="sec-general" aria-selected="true">General</button>
-            <button type="button" id="sec-providers" aria-selected="false">Providers</button>
-            <button type="button" id="sec-local" aria-selected="false">Local models</button>
-            <button type="button" id="sec-privacy" aria-selected="false">Data &amp; Privacy</button>
-            <button type="button" id="sec-agents" aria-selected="false">Agents</button>
+            <button type="button" id="sec-processing" aria-selected="false">Corrections &amp; formatting</button>
+            <button type="button" id="sec-dictionary" aria-selected="false">Dictionary setup</button>
+            <button type="button" id="sec-integrations" aria-selected="false">Integrations</button>
+            <button type="button" id="sec-privacy" aria-selected="false">Data &amp; privacy</button>
             <div class="spacer"></div>
-            <p class="hint rail-note">Everything applies as you change it. Keys wait for Save.</p>
+            <p class="rail-note">Everything applies as you change it. Keys wait for Save.</p>
           </nav>
 
           <div class="settings-content">
@@ -315,25 +336,57 @@
                   </div>
                 </div>
               </div>
-
-              <h2 class="sec-label">System</h2>
-              <div class="scard">
-                <label class="srow check">
-                  <div><div class="name">Show helpful hints</div><div class="caption">Short explanations and "How it works" links. Errors, progress and required setup always show.</div></div>
-                  <input type="checkbox" id="hints" />
-                </label>
-              </div>
             </div>
 
-            <div class="section" id="settings-providers">
-              <form class="scard" id="keys-form">
-                <div class="scard-head"><div class="name strong">Speech providers</div><div class="caption hint">Add a key only for the services you will use; each one then appears in the model picker beside your local models.</div></div>
-                <div id="keys"></div>
-                <div class="srow foot"><button type="submit" class="btn accent" title="Keys are only sent when you save">Save keys</button><span class="caption hint">a half-typed key is never sent</span><span class="caption save-status" id="keys-status" role="status"></span></div>
-              </form>
-
+            <div class="section" id="settings-processing">
+              <p class="caption section-intro">After speech recognition, Entune can fix known mistakes and tidy the text. Jev, a TypeSafe decision model, makes each choice; it never writes text.</p>
+              <div class="scard" id="jev-card">
+                <div class="scard-head"><div class="name strong">Jev by TypeSafe</div><div class="caption">Needed for the steps below. It receives transcript text. On your own key, about $0.04 per million tokens: a fraction of a cent per dictation.</div></div>
+                <form id="jev-key-form">
+                  <div class="srow"><label class="name" for="key-typesafe">API key</label><input class="input field" id="key-typesafe" type="password" autocomplete="off" placeholder="Not set" /></div>
+                  <div class="srow foot"><button type="submit" class="btn accent">Save key</button><span class="caption save-status" id="jev-key-status" role="status"></span></div>
+                </form>
+              </div>
               <div class="scard">
-                <div class="scard-head"><div class="name strong">Dictionary model</div><div class="caption hint">Optional. Dictionary builds from history or audio use it; dictation and manual editing work without it.</div></div>
+                <label class="srow check">
+                  <div><div class="name">Apply your dictionary</div><div class="caption">Jev picks the meaning that fits each sentence. Off turns off every dictionary correction, including ones set to always apply.</div></div>
+                  <input type="checkbox" id="jev-dictionary" />
+                </label>
+                <label class="srow check">
+                  <div><div class="name">Reduce repeated fillers</div><div class="caption">Repeated um, uh, erm or like become one when Jev hears hesitation. Quotes and code are left alone.</div></div>
+                  <input type="checkbox" id="jev-cleanup" />
+                </label>
+                <label class="srow check">
+                  <div><div class="name">Paragraphs and bullets</div><div class="caption">Added where the dictation clearly has them. Every word is kept.</div></div>
+                  <input type="checkbox" id="jev-formatting" />
+                </label>
+                <div class="srow foot"><span class="caption">The original transcript is always kept in History.</span></div>
+              </div>
+              <details class="scard advanced">
+                <summary>Advanced: waiting and retries</summary>
+                <form id="jev-policy-form">
+                  <div class="srow"><label class="name" for="jev-total_seconds">Maximum wait (seconds)</label><input class="input field" id="jev-total_seconds" type="number" min="0.1" max="30" step="0.1" required aria-label="Maximum processing wait in seconds" /></div>
+                  <div class="srow"><label class="name" for="jev-attempt_seconds">Time per attempt (seconds)</label><input class="input field" id="jev-attempt_seconds" type="number" min="0.1" max="30" step="0.1" required /></div>
+                  <div class="srow"><label class="name" for="jev-max_attempts">Attempts per step</label><input class="input field" id="jev-max_attempts" type="number" min="1" max="3" step="1" required /></div>
+                  <div class="srow note"><span></span><span class="caption">All three steps share the maximum wait, including retries.</span></div>
+                  <div class="srow foot"><button type="submit" class="btn">Save wait limits</button><span class="caption save-status" id="jev-policy-status" role="status"></span></div>
+                </form>
+              </details>
+              <details class="scard advanced">
+                <summary>Activity</summary>
+                <div class="srow foot"><span class="caption" id="jev-summary" role="status" style="white-space: pre-line"></span></div>
+              </details>
+              <details class="how">
+                <summary>How it works</summary>
+                <p>Each transcript goes through the steps in this order: your dictionary, repeated fillers, then paragraphs and bullets. For the dictionary, Jev reads the sentence around each word your speech model often gets wrong and picks the meaning that fits; entries set to always apply skip that choice.</p>
+                <p>The steps share one time limit, including retries (see Advanced). If the dictionary step fails, you get the original transcript. If fillers or formatting fail, that step is skipped and the text before it is kept. When Jev is unsure, the text stays as it was.</p>
+                <p>Jev receives the transcript text, the words in question and the relevant dictionary meanings, even when speech recognition runs on this Mac.</p>
+              </details>
+            </div>
+
+            <div class="section" id="settings-dictionary">
+              <div class="scard">
+                <div class="scard-head"><div class="name strong">Suggestion model</div><div class="caption">Writes dictionary suggestions when you choose Get suggestions on the Dictionary page. It reads the transcripts it learns from. Dictation and editing work without it.</div></div>
                 <div class="srow summary" id="dm-summary">
                   <div><div class="name" id="dm-title">No model</div><div class="caption" id="dm-caption"></div></div>
                   <div class="field right"><button type="button" class="btn" id="dm-change">Change</button></div>
@@ -345,46 +398,36 @@
                   <div class="srow foot"><button type="submit" class="btn accent">Save</button><button type="button" class="btn ghost" id="dm-cancel">Cancel</button><span class="caption save-status" id="dm-status" role="status"></span></div>
                 </form>
               </div>
-
-              <div class="scard" id="jev-card">
-                <div class="scard-head"><div class="name strong">Jev <span class="caption">· TypeSafe</span></div><div class="caption hint">A decision model that reads each transcript after the speech model and answers questions about it; it never writes text. On your own key, about $0.04 per million tokens: a dictation costs a fraction of a cent.</div></div>
-                <form id="jev-key-form">
-                  <div class="srow"><label class="name" for="key-typesafe">API key</label><input class="input field" id="key-typesafe" type="password" autocomplete="off" placeholder="Not set" /></div>
-                  <div class="srow foot"><button type="submit" class="btn accent">Save key</button><span class="caption save-status" id="jev-key-status" role="status"></span></div>
-                </form>
-                <label class="srow check">
-                  <div><div class="name">Contextual dictionary</div><div class="caption">Jev chooses among eligible meanings using the original context. Off disables the entire dictionary stage, including approved direct mappings.</div></div>
-                  <input type="checkbox" id="jev-dictionary" />
-                </label>
-                <label class="srow check">
-                  <div><div class="name">Formatting</div><div class="caption">Paragraph breaks and bullet points where the dictation clearly has them. Keeps every word and existing structure. Measured time appears in history.</div></div>
-                  <input type="checkbox" id="jev-formatting" />
-                </label>
-                <label class="srow check">
-                  <div><div class="name">Reduce repeated fillers</div><div class="caption">Reduce adjacent repeats of um, uh, erm or like to one occurrence when Jev identifies hesitation. Quoted/code text is excluded; uncertain decisions preserve text. Original transcription is always kept.</div></div>
-                  <input type="checkbox" id="jev-cleanup" />
-                </label>
-                <form id="jev-policy-form">
-                  <div class="srow"><label class="name" for="jev-total_seconds">Maximum processing wait</label><input class="input field" id="jev-total_seconds" type="number" min="0.1" max="30" step="0.1" required aria-label="Maximum processing wait in seconds" /></div>
-                  <div class="srow"><label class="name" for="jev-attempt_seconds">Seconds per attempt</label><input class="input field" id="jev-attempt_seconds" type="number" min="0.1" max="30" step="0.1" required /></div>
-                  <div class="srow"><label class="name" for="jev-max_attempts">Attempts per request</label><input class="input field" id="jev-max_attempts" type="number" min="1" max="3" step="1" required /></div>
-                  <div class="srow note"><span></span><span class="caption">Correction, filler reduction and formatting share the total wait, including retries. If correction fails, the original transcription is delivered. A filler-reduction or formatting failure keeps that stage’s input.</span></div>
-                  <div class="srow foot"><button type="submit" class="btn">Save wait limits</button><span class="caption save-status" id="jev-policy-status" role="status"></span></div>
-                </form>
-                <div class="srow note"><span></span><span class="caption" id="jev-summary" role="status" style="white-space: pre-line"></span></div>
-              </div>
             </div>
 
-            <div class="section" id="settings-local">
-              <div class="local-bar">
-                <input class="input search" id="local-search" type="search" placeholder="Search models" />
-                <span class="caption" id="local-summary"></span>
+            <div class="section" id="settings-integrations">
+              <h2 class="sec-label">Local API</h2>
+              <div class="scard">
+                <div class="scard-head"><div class="caption">Apps and agents you dictate to can send corrections you have confirmed. Each one is added to your dictionary as a pinned entry.</div></div>
+                <div class="srow">
+                  <div><div class="name">Endpoint</div><div class="caption">HTTP on this machine only. Nothing else is exposed.</div></div>
+                  <div class="field copyable"><code class="code-line" id="agent-endpoint"></code><button type="button" class="btn copy-btn" data-copy="agent-endpoint">Copy</button></div>
+                </div>
+                <div class="srow top">
+                  <div><div class="name">Example request</div><div class="caption">Send only what the person confirmed, whole words or phrases, never guesses.</div></div>
+                  <div class="field copyable"><pre class="code-block" id="agent-curl"></pre><button type="button" class="btn copy-btn" data-copy="agent-curl">Copy</button></div>
+                </div>
               </div>
-              <div id="local-cards"></div>
+              <h2 class="sec-label">Received corrections</h2>
+              <div class="scard">
+                <div id="corrections-rows"></div>
+                <div class="srow foot"><span class="caption">Newest first. Each one is already in Pinned; remove it there if it's wrong.</span></div>
+              </div>
             </div>
 
             <div class="section" id="settings-privacy">
-              <p class="caption hint">Cloud speech sends audio to your selected provider. Dictionary builds send transcripts and dictionary contents to your chosen language model. Enabled Jev correction, filler reduction and formatting send text, proposed spans and relevant meanings to TypeSafe, even with local speech recognition. Temporary build transcripts are not saved by Entune; remote retention depends on each provider.</p>
+              <h2 class="sec-label">What leaves this Mac</h2>
+              <div class="scard">
+                <div class="srow summary"><div><div class="name">Speech recognition</div><div class="caption">Audio goes to the cloud service you pick. Models on this Mac keep it here.</div></div></div>
+                <div class="srow summary"><div><div class="name">Corrections &amp; formatting</div><div class="caption">When on, transcript text, the words in question and relevant dictionary meanings go to TypeSafe.</div></div></div>
+                <div class="srow summary"><div><div class="name">Dictionary suggestions</div><div class="caption">When you ask, transcripts and your dictionary go to your suggestion model. Transcripts made only for a suggestion run are not saved by Entune.</div></div></div>
+                <div class="srow foot"><span class="caption">Each service's own retention rules apply.</span></div>
+              </div>
               <h2 class="sec-label">Your data stays yours</h2>
               <div class="scard">
                 <div class="scard-head">
@@ -400,25 +443,6 @@
                   <a class="btn" href="/api/exports/transcripts" download>Export transcripts</a>
                 </div>
                 <div class="srow foot"><span class="caption">Exports are created on this Mac. Saved API keys and settings are excluded.</span></div>
-              </div>
-            </div>
-
-            <div class="section" id="settings-agents">
-              <h2 class="sec-label">Local API <span class="hint">· agents you dictate to can post confirmed corrections; they land in Pinned</span></h2>
-              <div class="scard">
-                <div class="srow">
-                  <div><div class="name">Endpoint</div><div class="caption">HTTP on this machine only. Nothing else is exposed.</div></div>
-                  <div class="field copyable"><code class="code-line" id="agent-endpoint"></code><button type="button" class="btn copy-btn" data-copy="agent-endpoint">Copy</button></div>
-                </div>
-                <div class="srow top">
-                  <div><div class="name">Example request</div><div class="caption">Send only what the person confirmed, whole words or phrases, never guesses.</div></div>
-                  <div class="field copyable"><pre class="code-block" id="agent-curl"></pre><button type="button" class="btn copy-btn" data-copy="agent-curl">Copy</button></div>
-                </div>
-              </div>
-              <h2 class="sec-label">Received <span class="hint">· newest first</span></h2>
-              <div class="scard">
-                <div id="corrections-rows"></div>
-                <div class="srow note hint"><span></span><span class="caption">Each one is already in Pinned by you. Remove it there if an agent got it wrong.</span></div>
               </div>
             </div>
           </div>

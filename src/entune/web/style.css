@@ -28,8 +28,6 @@ a { color: var(--accent-text); text-decoration: none; }
 ::-webkit-scrollbar-track { background: transparent; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-/* Hints: captions that only explain. Errors, progress and required setup are not hints. */
-:root[data-hints="off"] .hint { display: none !important; }
 .caption { font-size: var(--fs-12); line-height: var(--lh-caption); color: var(--text-dim); }
 .spacer { flex: 1; }
 
@@ -127,12 +125,12 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .record[aria-pressed="true"] .dot { background: var(--recording); animation: pulse 1.2s ease-in-out infinite; }
 .record .timer { color: var(--text-dim); }
 
-/* Performance popover */
-.popover {
-  position: absolute; top: calc(100% + var(--sp-6)); right: var(--sp-16); z-index: 5; width: 40rem; max-width: calc(100vw - 2rem);
-  background: var(--control); border-radius: var(--r-10); box-shadow: var(--shadow-popover); padding: var(--sp-6) 0;
-}
-.popover-head { display: flex; align-items: baseline; gap: var(--sp-8); padding: var(--sp-8) var(--sp-14) var(--sp-6); font-size: var(--fs-13); font-weight: 600; }
+/* Models page: speech models to compare, connect and download. */
+.models { padding: var(--sp-24) var(--sp-32) var(--sp-32); max-width: var(--content-max); }
+.page-head { margin-bottom: var(--sp-24); }
+.page-head h2 { margin: 0; font-size: var(--fs-16); font-weight: 600; }
+.page-head .caption { margin: var(--sp-4) 0 0; max-width: 46rem; }
+.perf-card .perf-grid:last-child { border-bottom: 0; }
 .perf-grid { display: grid; grid-template-columns: minmax(10rem, 1fr) 6.5rem 7.5rem 10rem; gap: var(--sp-10); align-items: baseline; padding: var(--sp-8) var(--sp-14); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line-faint); white-space: nowrap; }
 .perf-grid > span { overflow: hidden; text-overflow: ellipsis; }
 /* Narrow windows scroll the table sideways; heading and rows move together. */
@@ -141,7 +139,6 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .perf-model .tag { margin-left: var(--sp-6); padding: 0 var(--sp-6); border-radius: var(--r-6); background: var(--accent-wash); color: var(--accent-text); font-size: var(--fs-11); }
 .perf-failed { color: var(--error); }
 .perf-head { font-size: var(--fs-11-5); color: var(--text-dim); border-bottom-color: var(--line); padding-top: var(--sp-4); padding-bottom: var(--sp-4); }
-.popover-foot { padding: var(--sp-8) var(--sp-14) var(--sp-6); font-size: var(--fs-11-5); line-height: 1.5; color: var(--text-faint); }
 
 /* Content */
 .content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -240,7 +237,13 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .section { display: none; }
 .section[data-active] { display: block; }
 .sec-label { font-size: var(--fs-11); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); margin: 0 0 var(--sp-12); font-weight: 500; }
-.sec-label .hint { text-transform: none; letter-spacing: 0; }
+.section-intro { margin: 0 0 var(--sp-16); max-width: 46rem; }
+/* Collapsed settings cards: advanced numbers and activity stay one click away. */
+details.advanced > summary { padding: var(--sp-12) var(--sp-16); font-size: var(--fs-13); color: var(--text-muted); cursor: default; }
+details.advanced[open] > summary { border-bottom: 1px solid var(--line-faint); }
+details.how { margin: calc(-1 * var(--sp-12)) 0 var(--sp-28); font-size: var(--fs-13); color: var(--text-secondary); line-height: 1.55; }
+details.how > summary { color: var(--accent-text); font-size: var(--fs-12-5); cursor: default; }
+details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .scard { border-radius: var(--r-10); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--line-soft); margin-bottom: var(--sp-28); }
 .scard-head { padding: var(--sp-14) var(--sp-16) var(--sp-12); border-bottom: 1px solid var(--line-faint); }
 .scard-head .caption { margin-top: var(--sp-4); line-height: 1.5; font-size: var(--fs-12-5); }
@@ -251,7 +254,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .srow:last-child { border-bottom: 0; }
 .srow.top { align-items: start; }
 .srow .caption { margin-top: 3px; }
-.srow.check { cursor: default; }
+.srow.check { display: grid; cursor: default; grid-template-columns: minmax(0, 1fr) auto; }
 .srow.check input { accent-color: var(--accent); margin: 0; width: var(--i-14); height: var(--i-14); justify-self: start; }
 .srow.foot { display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-12) var(--sp-16); }
 .srow.note { padding-top: var(--sp-8); padding-bottom: var(--sp-8); }
@@ -315,6 +318,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
   .entry-row .source { display: none; }
   .toolbar { height: auto; flex-wrap: wrap; padding: var(--sp-8) var(--sp-12); }
   .history, .dict { padding-left: var(--sp-12); padding-right: var(--sp-12); }
+  .models { padding: var(--sp-16) var(--sp-12); }
 }
 
 /* Confusion groups keep meanings and their explicit recognized-form links together. */

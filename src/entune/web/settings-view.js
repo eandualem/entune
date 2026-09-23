@@ -197,8 +197,8 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       head.className = "scard-head";
       const isParakeet = provider.id === "parakeet";
       head.innerHTML = isParakeet
-        ? `<div class="name strong">Parakeet <span class="caption">· NVIDIA on Apple MLX</span></div><div class="caption hint">The most accurate offline model. Its engine is installed outside Entune, once; Entune then finds it.</div>`
-        : `<div class="name strong">Whisper <span class="caption">· whisper.cpp</span></div><div class="caption hint">Downloaded inside Entune with one click. Speech recognition runs on this machine. Enabled Jev features still send text to TypeSafe.</div>`;
+        ? `<div class="name strong">Parakeet <span class="caption">· NVIDIA on Apple MLX</span></div><div class="caption">The most accurate offline model. Its engine is installed outside Entune, once; Entune then finds it.</div>`
+        : `<div class="name strong">Whisper <span class="caption">· whisper.cpp</span></div><div class="caption">Downloaded inside Entune with one click. Speech recognition runs on this Mac.</div>`;
       card.append(head, ...mine.map((m) => localRow(m, isParakeet)));
       const missing = mine.find((m) => m.state === "unavailable");
       if (isParakeet && missing) card.append(engineNote(missing));
@@ -293,7 +293,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     }
   });
 
-  // Agents: the local API, and what arrived through it.
+  // Integrations: the local API, and what arrived through it.
   function renderAgents() {
     const endpoint = `${location.origin}/api/dictionary/corrections`;
     el("agent-endpoint").textContent = endpoint;
