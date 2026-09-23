@@ -127,21 +127,27 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 
 /* Models page: speech models to compare, connect and download. */
 .perf-card .perf-grid:last-child { border-bottom: 0; }
-/* Nothing is cut off: long model names and the Used details wrap within their cells. */
-.perf-grid { display: grid; grid-template-columns: minmax(11rem, 1.5fr) minmax(6rem, auto) minmax(7.5rem, auto) minmax(8.5rem, 1fr); gap: var(--sp-10); align-items: baseline; padding: var(--sp-8) var(--sp-14); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line-faint); }
-.perf-grid > span { min-width: 0; overflow-wrap: anywhere; }
-/* Processing activity: one row per step, numbers aligned, the result allowed to wrap. */
-.activity-grid { display: grid; grid-template-columns: minmax(10rem, 1.6fr) repeat(4, minmax(4.5rem, auto)) minmax(5.5rem, auto); gap: var(--sp-10); align-items: baseline; padding: var(--sp-8) var(--sp-14); font-size: var(--fs-12-5); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line-faint); }
-.activity-grid > span { min-width: 0; overflow-wrap: anywhere; }
-.activity-grid:last-child { border-bottom: 0; }
-.perf-table .activity-grid { min-width: 34rem; }
-.activity-detail { grid-column: 1 / -1; margin-top: calc(-1 * var(--sp-6)); }
-.activity-total { margin: 0; padding: var(--sp-12) var(--sp-14); border-bottom: 1px solid var(--line-faint); }
-.activity-total:has(+ #activity-table[hidden]) { border-bottom: 0; }
+/* Performance tables: a name column, then right-aligned figures with a line of context
+   beneath each. Nothing is cut off; narrow windows scroll the table sideways. */
+.perf-grid, .activity-grid { display: grid; gap: var(--sp-8) var(--sp-12); align-items: start; padding: var(--sp-10) var(--sp-16); font-size: var(--fs-13); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line-faint); }
+.perf-grid { grid-template-columns: minmax(9rem, 1.7fr) minmax(5.5rem, 1fr) minmax(7.5rem, 1.2fr) minmax(3.5rem, 0.6fr) minmax(4.5rem, 0.6fr); }
+.activity-grid { grid-template-columns: minmax(9rem, 1.6fr) minmax(4.5rem, 0.7fr) minmax(7.5rem, 1.3fr) minmax(5rem, 0.7fr) minmax(5rem, 0.7fr); }
+.perf-grid > span, .activity-grid > span { min-width: 0; overflow-wrap: anywhere; }
+.perf-grid:last-child, .activity-grid:last-child { border-bottom: 0; }
+.num { text-align: right; }
+.cell-main { display: block; }
+.cell-sub { display: block; margin-top: 2px; font-size: var(--fs-11-5); color: var(--text-dim); }
+.perf-model .cell-main { font-weight: 500; }
+.perf-head span { font-size: var(--fs-11-5); color: var(--text-dim); }
 .perf-empty { margin: 0; padding: var(--sp-14) var(--sp-16); border-bottom: 1px solid var(--line-faint); }
-/* Narrow windows scroll the table sideways; heading and rows move together. */
+.perf-table .activity-grid { min-width: 34rem; }
+.activity-total { margin: 0; padding: var(--sp-12) var(--sp-16); border-bottom: 1px solid var(--line-faint); }
+.activity-total:has(+ #activity-table[hidden]) { border-bottom: 0; }
+.activity-details { padding: var(--sp-10) var(--sp-16) var(--sp-12); border-top: 1px solid var(--line-faint); }
+.activity-details summary { font-size: var(--fs-12-5); color: var(--text-muted); cursor: default; }
+.activity-details p { margin: var(--sp-6) 0 0; }
 .perf-table { overflow-x: auto; }
-.perf-table .perf-grid { min-width: 34rem; }
+.perf-table .perf-grid { min-width: 33rem; }
 .perf-model .tag { margin-left: var(--sp-6); padding: 0 var(--sp-6); border-radius: var(--r-6); background: var(--accent-wash); color: var(--accent-text); font-size: var(--fs-11); }
 .perf-failed { display: block; color: var(--error); }
 .perf-head { font-size: var(--fs-11-5); color: var(--text-dim); border-bottom-color: var(--line); padding-top: var(--sp-4); padding-bottom: var(--sp-4); }

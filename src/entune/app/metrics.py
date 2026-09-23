@@ -51,6 +51,9 @@ class StageSummary:
     median_seconds: float | None
     changes: int
     removed_words: int
+    # Runs that finished without recording their edits (older records): their changes are
+    # unknown, which is not the same as none.
+    unrecorded: int
 
 
 @dataclass(frozen=True)
@@ -130,6 +133,7 @@ def processing_summary(store: Store) -> ProcessingSummary:
             retries=sum(max(0, s.attempts - 1) for s in group),
             median_seconds=statistics.median(waits) if waits else None,
             changes=sum(len(s.changes or ()) for s in group),
+            unrecorded=sum(s.status == "succeeded" and s.changes is None for s in group),
             removed_words=sum(s.removed_words for s in group),
         )
     totals = [
