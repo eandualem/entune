@@ -421,8 +421,18 @@ def create_app(app: Dictum) -> Starlette:
             )
             for r in app.store.list_recordings()
         }
+        # Sources are chosen separately in the page: this app's recordings, Wispr Flow
+        # imports, or files imported from a folder.
         items = [
-            {**asdict(item), "models": models.get(item.id, [])}
+            {
+                **asdict(item),
+                "models": models.get(item.id, []),
+                "source": "dictum"
+                if item.id.startswith("recording:")
+                else "wispr"
+                if item.name.startswith("wispr-")
+                else "folder",
+            }
             for item, _ in app.store.learning_audio()
         ]
         return JSONResponse(
@@ -439,12 +449,16 @@ def create_app(app: Dictum) -> Starlette:
             audio = form.get("audio")
             if not isinstance(audio, UploadFile):
                 return _bad("No audio file in request")
+            # The file's modification time, in milliseconds, is the best recording date
+            # a folder offers; without it the import is undated.
+            modified = form.get("modified")
             try:
                 added = await run_in_threadpool(
                     onboarding.import_audio,
                     app.store,
                     await audio.read(),
                     audio.filename or "audio",
+                    onboarding.recorded_at(float(modified)) if isinstance(modified, str) else None,
                 )
             except (ValueError, OSError) as exc:
                 return _bad(str(exc))
@@ -607,6 +621,27 @@ def create_app(app: Dictum) -> Starlette:
             headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"},
         )
 
+    def imported_audio(request: Request) -> Response:
+        # Resolve only through the saved catalog; the identifier never becomes a path.
+        found = next(
+            (
+                (item, path)
+                for item, path in app.store.learning_audio()
+                if item.id == request.path_params["id"] and not item.id.startswith("recording:")
+            ),
+            None,
+        )
+        if found is None:
+            return _bad("No such imported audio", 404)
+        item, path = found
+        return FileResponse(
+            path,
+            media_type=safe_mime(item.mime),
+            filename=f"imported.{extension_for(item.mime)}",
+            content_disposition_type="inline",
+            headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"},
+        )
+
     def export_transcripts(_: Request) -> Response:
         return JSONResponse(
             {"recordings": [_recording_json(r) for r in app.store.list_recordings()]},
@@ -685,6 +720,7 @@ def create_app(app: Dictum) -> Starlette:
             Route("/api/dictionary/audio", dictionary_audio, methods=["GET"]),
             Route("/api/dictionary/audio", import_dictionary_audio, methods=["POST"]),
             Route("/api/dictionary/audio/wispr", import_wispr, methods=["POST"]),
+            Route("/api/dictionary/audio/{id:str}/file", imported_audio, methods=["GET"]),
             Route("/api/dictionary/corrections", agent_corrections, methods=["POST"]),
             Route("/api/dictionary/corrections", received_corrections, methods=["GET"]),
             Route("/api/capture", start_capture, methods=["POST"]),

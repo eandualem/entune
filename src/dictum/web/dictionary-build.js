@@ -2,7 +2,7 @@ import { api, el, errorText, flash } from "./ui.js";
 
 // Both sources use the same server-owned job. Poll small status records; fetch a
 // potentially large proposal once per job, and name that job on every action.
-export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelected }) {
+export function createDictionaryBuild({ names, onBusy, onProposal, onAccepted, getSelected }) {
   const progress = el("dictionary-build-status");
   const cancel = el("cancel-dictionary-build");
   let state = { phase: "idle" };
@@ -24,16 +24,20 @@ export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelec
     el("abandon-dictionary-build").hidden = running() || !["failed", "cancelled"].includes(state.phase);
     cancel.disabled = state.phase === "cancelling";
     progress.classList.toggle("err", state.phase === "failed");
-    const model = state.model;
+    const model = names.speech(state.model);
+    const kept = (n = 0) => `${n} temporary transcript${n === 1 ? "" : "s"}`;
+    const task = state.mode === "refine" ? "Refining" : "Generating";
+    const from = state.source === "audio" ? "audio" : "history";
     const messages = {
-      idle: "", queued: `Preparing ${state.source} build for ${model}…`,
-      transcribing: `Transcribing ${state.completed} of ${state.total} with ${model}…`,
-      building: `Building for ${model} with ${state.dictionaryModel} · step ${state.step ?? 0} of ${state.steps ?? "…"}`,
+      idle: "", queued: `Preparing to learn from ${from}…`,
+      transcribing: `Transcribing audio ${state.completed} of ${state.total} with ${model}…`,
+      building: `${task} with ${names.language(state.dictionaryModel)} · step ${state.step ?? 0} of ${state.steps ?? "…"}`,
       cancelling: "Cancelling… the current speech operation may need to finish. No further clips or chunks will start.",
       cleaning: "Finishing cleanup…", ready: `Proposal ready for ${model}. Review before accepting.`,
-      cancelled: `You stopped. ${state.completedBatches ?? 0} of ${state.steps ?? 0} batches completed. ${state.cachedTranscripts ?? 0} temporary audio transcripts kept for Retry.`,
-      failed: `${state.error} No dictionary changed; original audio is kept. ${state.cachedTranscripts ?? 0} successful temporary audio transcripts kept for Retry.`,
-      accepted: state.applied ? "Changes applied; fully covered inputs marked learned." : "No changes applied. Inputs remain eligible.", discarded: "Proposal discarded. Original audio is kept.",
+      cancelled: `You stopped. ${state.completedBatches ?? 0} of ${state.steps ?? 0} batches completed.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept for Retry.` : ""}`,
+      failed: `${state.error} No dictionary changed.${from === "audio" ? ` Original audio is kept; ${kept(state.cachedTranscripts)} kept for Retry.` : ""}`,
+      accepted: state.applied ? "Changes applied; fully covered inputs marked learned." : "No changes applied. Inputs remain eligible.",
+      discarded: from === "audio" ? "Proposal discarded. Original audio is kept." : "Proposal discarded.",
     };
     let message = messages[state.phase] ?? state.phase;
     if (state.phase === "ready") {
@@ -44,6 +48,8 @@ export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelec
       message += " Finish learning before dictating or editing the active dictionary.";
     }
     progress.textContent = message;
+    const actions = ["cancel-dictionary-build", "retry-dictionary-build", "abandon-dictionary-build"];
+    el("learn-status").hidden = !message && actions.every((id) => el(id).hidden);
     if (state.phase === "accepted" && acceptedId !== state.id) {
       acceptedId = state.id;
       await onAccepted();

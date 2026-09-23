@@ -1,10 +1,10 @@
-import { el, flash, segmentedGroup } from "./ui.js";
+import { api, el, errorText, flash, segmentedGroup } from "./ui.js";
 import { createAudioOnboarding } from "./audio-onboarding.js";
 import { createDictionaryBuild } from "./dictionary-build.js";
 
 // The dictionary owns its document, revision and pending proposal. Model selection
 // stays in the app; getters read the current selection when an action is made.
-export function createDictionary({ getModel, getSettings }) {
+export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
   // Confusion groups are the edit unit; stable IDs distinguish meanings with one spelling.
   let dict = { version: 2, pinned: [], learned: {} };
   let dictVersion = null; // the server's ETag for the document we edit; null after a failed load
@@ -19,20 +19,61 @@ export function createDictionary({ getModel, getSettings }) {
   const buildStatus = el("build-status");
   const proposalPanel = el("proposal");
   const proposalBody = el("proposal-body");
+  const modelSelect = el("dictionary-model");
   const onboarding = createAudioOnboarding({
-    getModel, getSettings,
+    getModel, getSettings, getDictionaryModelName: () => languageName(getSettings()?.dictionaryModel),
     onBuild(selection) { return builds.start("audio", selection); },
-    onBusy(value) { importing = value; buildBtn.disabled = refineBtn.disabled = importing || building; },
+    onBusy(value) { importing = value; gate(); },
   });
 
   const builds = createDictionaryBuild({
-    onBusy(value) { building = value; buildBtn.disabled = refineBtn.disabled = importing || building; onboarding.setBuildBusy(value); lockEditors(); },
+    names: { speech: (id) => getModel()?.id === id ? getModel().label : id, language: (ref) => languageName(ref) ?? ref },
+    onBusy(value) { building = value; gate(); onboarding.setBuildBusy(value); lockEditors(); },
     onProposal(value) { if (value) renderProposal(value); else proposalPanel.hidden = true; },
     onAccepted: () => loadDictionary(false),
     getSelected: () => proposalChanges.filter(c => c.included).map(c => ({id: c.id, after: c.after})),
   });
 
   segmentedGroup({ all: el("filter-all"), pinned: el("filter-pinned"), learned: el("filter-learned") }, (name) => { filter = name; renderDictionary(); });
+
+  // One dictionary-building model for every learning run; keys stay in Settings.
+  function languageName(ref) {
+    if (!ref) return null;
+    const [provider, ...rest] = ref.split(":");
+    const known = getSettings()?.llmProviders.find((p) => p.id === provider)?.models.find((m) => m.id === ref);
+    return known?.name ?? rest.join(":");
+  }
+  function fillModels() {
+    const settings = getSettings();
+    if (!settings) return;
+    const keyed = settings.llmProviders.filter((p) => p.keyHint);
+    const current = settings.dictionaryModel;
+    modelSelect.replaceChildren(...keyed.map((provider) => {
+      const group = document.createElement("optgroup"); group.label = provider.name;
+      const models = [...provider.models];
+      if (current?.startsWith(`${provider.id}:`) && !models.some((m) => m.id === current)) models.unshift({ id: current, name: `${current.slice(provider.id.length + 1)} (custom)` });
+      group.append(...models.map((m) => new Option(m.name, m.id, false, m.id === current)));
+      return group;
+    }));
+    const note = el("dictionary-model-note");
+    note.hidden = keyed.length > 0;
+    note.textContent = "Add an Anthropic or OpenAI key in Settings › Providers to choose a dictionary model.";
+    if (!keyed.length) modelSelect.add(new Option("No key yet", ""));
+    modelSelect.disabled = building || !keyed.length;
+    gate();
+  }
+  modelSelect.addEventListener("change", async () => {
+    try {
+      await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: {}, dictionaryModel: modelSelect.value }) });
+      await onSettingsChanged();
+    } catch (err) { flash(buildStatus, errorText(err), "err"); fillModels(); }
+  });
+  function gate() {
+    const ready = Boolean(getModel() && getSettings()?.dictionaryModel);
+    buildBtn.disabled = refineBtn.disabled = importing || building || !ready;
+    el("open-audio-dialog").disabled = building;
+  }
+  el("open-audio-dialog").addEventListener("click", () => onboarding.open().catch((err) => flash(buildStatus, errorText(err), "err")));
 
   async function loadDictionary(pollBuild = true) {
     dictVersion = null;
@@ -52,11 +93,11 @@ export function createDictionary({ getModel, getSettings }) {
   // and the fresh document is shown instead. Explicit JSON repair can replace an
   // unreadable document after confirmation; table edits always need a loaded version.
   function lockEditors() {
-    for (const field of document.querySelectorAll("#dict-rows input, #dict-rows select, #dict-rows button, .add-panel input, .add-panel button, #dictionary, #save-dictionary, #pin-all")) field.disabled = building;
+    for (const field of document.querySelectorAll("#dict-rows input, #dict-rows select, #dict-rows button, #new-group input, #new-group select, #new-group button, #add-entry-btn, #dictionary, #save-dictionary, #pin-all, #dictionary-model")) field.disabled = building;
     el("dictionary-edit-lock").hidden = !building;
   }
 
-  async function saveDictionary(next, fromEditor = false) {
+  async function saveDictionary(next, fromEditor = false, target = buildStatus) {
     if (building) { flash(buildStatus, "Finish learning by applying or discarding first.", "err"); return false; }
     if (!dictVersion && !fromEditor) {
       await loadDictionary();
@@ -73,7 +114,7 @@ export function createDictionary({ getModel, getSettings }) {
       flash(el("dictionary-status"), `${text} Reloaded; please redo that change.`, "err");
       return false;
     }
-    if (!res.ok) { flash(el("dictionary-status"), text, "err"); flash(buildStatus, text, "err"); return false; }
+    if (!res.ok) { flash(el("dictionary-status"), text, "err"); flash(target, text, "err"); return false; }
     dict = JSON.parse(text);
     dictVersion = res.headers.get("etag");
     renderDictionary(text);
@@ -112,39 +153,65 @@ export function createDictionary({ getModel, getSettings }) {
     if (!res.ok) { flash(buildStatus, await res.text(), "err"); if (res.status === 409) await loadDictionary(); return; }
     await loadDictionary();
   }
+  // A group shows its recognized forms, each with the meanings it may stand for, then
+  // each meaning's output spelling and definition. Scope is stated on every group.
   function entryRow(source, group) {
-    const box = node("details", "", "confusion-group");
-    const title = node("summary", "", "group-title");
     const known = meanings();
-    const mids = new Set([...group.meanings.map((m) => m.id), ...group.recognized_forms.flatMap((f) => f.associations.map((a) => a.meaning_id))]);
-    title.append(node("strong", [...mids].map((mid) => known.get(mid)?.spelling ?? mid).join(" / ")),
-      node("span", `${source === "pinned" ? "Pinned · shared" : "Learned · this model"}${group.needs_review ? " · Imported: review definitions and casing" : ""}`, "caption"));
-    box.append(title);
-    for (const form of group.recognized_forms) {
-      const names = form.associations.map((a) => known.get(a.meaning_id)?.spelling ?? a.meaning_id);
-      box.append(node("p", `${form.text} → ${names.join(" / ")}${form.direct ? " · Approved direct mapping" : ""}`, "group-form"));
-    }
-    for (const meaning of group.meanings) {
-      const line = node("div", "", "group-meaning");
-      line.append(node("strong", meaning.spelling), node("p", meaning.meaning || "Definition needed before contextual use."),
-        node("p", meaning.personal_context || "", "caption"));
-      if (source === "learned") line.append(button("Pin this meaning", () => pinMeaning(group, meaning)));
-      box.append(line);
-    }
-    box.append(button("Edit group", () => editGroup(box, source, group)), button("Remove group", async () => {
+    const card = node("article", "", "group-card");
+    const head = node("header", "", "group-head");
+    const model = getModel()?.label ?? "this speech model";
+    head.append(node("span", source === "pinned" ? "Pinned · every speech model" : `Learned · ${model}`, `scope ${source}`));
+    if (group.needs_review) head.append(node("span", "Imported: review definitions and casing", "badge warn"));
+    head.append(node("span", "", "spacer"), button("Edit", () => editGroup(card, source, group)), button("Remove", async () => {
       const next = clone(), list = source === "pinned" ? next.pinned : learnedOf(next);
       list.splice(list.findIndex((g) => g.id === group.id), 1);
       await saveDictionary(next); // references from other groups must be resolved explicitly
     }));
-    return box;
+    const forms = node("div", "", "group-forms");
+    forms.append(node("h3", "Recognized as"));
+    for (const form of group.recognized_forms) {
+      const row = node("div", "", "form-row");
+      const chips = node("span", "", "chips");
+      for (const link of form.associations) {
+        const meaning = known.get(link.meaning_id);
+        const chip = node("span", meaning?.spelling ?? link.meaning_id, "chip");
+        if (link.basis === "literal") { chip.classList.add("literal"); chip.title = "Kept as written when this meaning fits"; chip.append(node("span", " · as written", "chip-note")); }
+        if (form.direct === link.meaning_id) { chip.classList.add("direct"); chip.title = `Always used without context: ${form.direct_reason}`; }
+        chips.append(chip);
+      }
+      row.append(node("code", form.text, "form-text"), node("span", "→", "arrow"), chips);
+      forms.append(row);
+    }
+    if (!group.recognized_forms.length) forms.append(node("p", "No recognized forms.", "caption"));
+    const list = node("div", "", "group-meanings");
+    list.append(node("h3", "Meanings"));
+    for (const meaning of group.meanings) {
+      const item = node("div", "", "meaning");
+      const line = node("div", "", "meaning-line");
+      line.append(node("strong", meaning.spelling, "spelling"), node("span", meaning.casing === "fixed" ? "exact casing" : "sentence casing", "casing"));
+      if (source === "learned") line.append(node("span", "", "spacer"), button("Pin", () => pinMeaning(group, meaning)));
+      item.append(line, node("p", meaning.meaning || "Definition needed before it can be chosen.", meaning.meaning ? "definition" : "definition missing"));
+      if (meaning.personal_context) item.append(node("p", meaning.personal_context, "personal"));
+      list.append(item);
+    }
+    const body = node("div", "", "group-body");
+    body.append(forms, list);
+    card.append(head, body);
+    return card;
   }
-  function editGroup(box, source, original) {
-    box.querySelector(".group-editor")?.remove();
+  function editGroup(host, source, original, created = false) {
+    host.querySelector(".group-editor")?.remove();
     const draft = structuredClone(original);
     const panel = node("div", "", "group-editor");
-    box.append(panel);
+    const status = node("p", "", "caption save-status");
+    let scope = source;
+    host.append(panel);
     function render() {
       panel.replaceChildren();
+      if (created) {
+        panel.append(node("h3", "New confusion group"));
+        field(panel, "Scope", scope, (v) => { scope = v; }, [["pinned", "Pinned · every speech model"], ...(getModel() ? [["learned", `Learned · ${getModel().label}`]] : [])]);
+      }
       for (const meaning of draft.meanings) {
         const section = node("fieldset", "", "group-meaning"); section.append(node("legend", "Meaning"));
         field(section, "Output spelling (including plural)", meaning.spelling, (v) => { meaning.spelling = v; clearDirect(meaning.id); });
@@ -166,7 +233,9 @@ export function createDictionary({ getModel, getSettings }) {
           form.direct = null; form.direct_reason = ""; render();
         });
         section.append(node("p", "Eligible meanings for this form", "caption"));
-        for (const [mid, m] of known) {
+        const own = new Set(draft.meanings.map((m) => m.id));
+        const linked = new Set(form.associations.map((a) => a.meaning_id));
+        for (const [mid, m] of [...known].filter(([mid]) => own.has(mid) || linked.has(mid))) {
           const label = node("label", "", "group-candidate");
           const check = document.createElement("input"); check.type = "checkbox";
           check.checked = form.associations.some((a) => a.meaning_id === mid);
@@ -177,6 +246,12 @@ export function createDictionary({ getModel, getSettings }) {
           });
           label.append(check, ` ${m.spelling || "New meaning"} — ${m.meaning || "definition needed"}`); section.append(label);
         }
+        const others = [...known].filter(([mid]) => !own.has(mid) && !linked.has(mid));
+        if (others.length) {
+          field(section, "Also eligible: a meaning from another group", "", (v) => {
+            if (v) { form.associations.push({ meaning_id: v, basis: "user", evidence: [] }); form.direct = null; form.direct_reason = ""; render(); }
+          }, [["", "Choose a meaning…"], ...others.map(([mid, m]) => [mid, `${m.spelling} — ${m.meaning || "definition needed"}`])]);
+        }
         field(section, "Without context", form.direct, (v) => { form.direct = v || null; if (!v) form.direct_reason = ""; },
           [["", "Require context"], ...form.associations.map((a) => [a.meaning_id, `Always use ${known.get(a.meaning_id)?.spelling}`])]);
         field(section, "Direct-mapping approval reason", form.direct_reason, (v) => { form.direct_reason = v; });
@@ -186,9 +261,16 @@ export function createDictionary({ getModel, getSettings }) {
       }
       panel.append(button("Add recognized form", () => { draft.recognized_forms.push({ text: "", associations: [], direct: null, direct_reason: "" }); render(); }));
       panel.append(button("Save group", async () => {
-        const next = clone(), list = source === "pinned" ? next.pinned : learnedOf(next);
+        const problem = !draft.meanings.length ? "Add at least one meaning."
+          : draft.meanings.some((m) => !m.spelling.trim()) ? "Give every meaning an output spelling."
+          : draft.recognized_forms.some((f) => !f.text.trim()) ? "Give every recognized form its text, or remove it."
+          : draft.recognized_forms.some((f) => !f.associations.length) ? "Link every recognized form to at least one meaning."
+          : !draft.meanings.length && !draft.recognized_forms.length ? "An empty group has no knowledge." : "";
+        if (problem) { flash(status, problem, "err"); return; }
+        const next = clone(), list = scope === "pinned" ? next.pinned : learnedOf(next);
         draft.needs_review = draft.meanings.some((m) => !m.meaning.trim());
-        list[list.findIndex((g) => g.id === original.id)] = draft;
+        if (created) list.push(draft);
+        else list[list.findIndex((g) => g.id === original.id)] = draft;
         const changedOutputs = new Set(draft.meanings.filter((m) => {
           const old = original.meanings.find((before) => before.id === m.id);
           return old && (old.spelling !== m.spelling || old.casing !== m.casing);
@@ -204,8 +286,8 @@ export function createDictionary({ getModel, getSettings }) {
               ? { meaning_id: a.meaning_id, basis: "user", evidence: [] } : a);
           }
         }
-        await saveDictionary(next);
-      }), button("Cancel", () => panel.remove()));
+        if (await saveDictionary(next, false, status) && created) panel.remove();
+      }), button("Cancel", () => panel.remove()), status);
     }
     function clearDirect(mid) {
       for (const f of draft.recognized_forms) if (f.direct === mid) { f.direct = null; f.direct_reason = ""; }
@@ -215,7 +297,6 @@ export function createDictionary({ getModel, getSettings }) {
 
   function renderDictionary(jsonText) {
     const model = getModel();
-    const dictionaryModel = getSettings()?.dictionaryModel;
     const learned = learnedOf(dict);
     const rows = [];
     if (filter !== "learned") rows.push(...dict.pinned.map((e) => entryRow("pinned", e)));
@@ -223,35 +304,29 @@ export function createDictionary({ getModel, getSettings }) {
     if (rows.length === 0) {
       const none = document.createElement("div");
       none.className = "entry-row none";
-      none.textContent = filter === "learned" ? "Nothing learned for this model yet. Generate from history proposes a list." : "Nothing here yet.";
+      none.textContent = filter === "learned" ? "Nothing learned for this speech model yet. Generate proposes groups from its transcripts." : "No groups yet. Generate from history, learn from audio, or create a group.";
       rows.push(none);
     }
     el("dict-rows").replaceChildren(...rows);
     el("filter-learned").textContent = model ? `Learned · ${model.label.replace(" / ", " · ")}` : "Learned";
     el("pin-all").hidden = learned.length === 0;
-    buildBtn.title = dictionaryModel
-      ? `Propose new entries from this model's transcripts with ${dictionaryModel}; nothing is saved before you apply`
-      : "Needs an Anthropic or OpenAI key in Settings › Providers";
-    refineBtn.title = dictionaryModel
-      ? `Review how the dictionary behaved in this model's dictations with ${dictionaryModel}; nothing is saved before you apply`
-      : buildBtn.title;
+    el("groups-count").textContent = `${dict.pinned.length} pinned · ${learned.length} learned for this speech model`;
+    el("learn-source").textContent = model
+      ? `Uses the saved transcripts of ${model.label}, the speech model selected above.`
+      : "Choose a speech model in the toolbar to learn from its transcripts.";
+    fillModels();
     if (jsonText !== undefined) dictionaryBox.value = jsonText;
     lockEditors();
   }
 
   el("pin-all").addEventListener("click", () => pinMeaning(null, null));
 
-  el("add-entry-btn").addEventListener("click", async () => {
-    const spelling = el("add-meant").value.trim(), definition = el("add-description").value.trim();
-    const heard = el("add-heard").value.split(",").map((h) => h.trim()).filter(Boolean);
-    if (!spelling || !definition || !heard.length) { flash(buildStatus, "Give a recognized form, spelling and definition.", "err"); return; }
-    const mid = id("m"), next = clone();
-    next.pinned.push({ id: id("g"), needs_review: false,
-      meanings: [{ id: mid, spelling, meaning: definition, personal_context: null, casing: "fixed" }],
-      recognized_forms: [...new Set([...heard, spelling])].map((text) => ({ text,
-        associations: [{ meaning_id: mid, basis: text.toLowerCase() === spelling.toLowerCase() ? "literal" : "user", evidence: [] }], direct: null, direct_reason: "" })),
-    });
-    if (await saveDictionary(next)) for (const name of ["add-heard", "add-meant", "add-description"]) el(name).value = "";
+  el("add-entry-btn").addEventListener("click", () => {
+    const meaning = { id: id("m"), spelling: "", meaning: "", personal_context: null, casing: "fixed" };
+    editGroup(el("new-group"), "pinned", { id: id("g"), needs_review: false, meanings: [meaning],
+      recognized_forms: [{ text: "", associations: [{ meaning_id: meaning.id, basis: "user", evidence: [] }], direct: null, direct_reason: "" }] }, true);
+    el("new-group").scrollIntoView({ block: "nearest" });
+    el("new-group").querySelector(".group-meaning input")?.focus();
   });
 
   // JSON editor and help panel
@@ -281,7 +356,7 @@ export function createDictionary({ getModel, getSettings }) {
   function renderProposal(p) {
     proposalModel = p.model;
     proposalChanges = p.changes.map(c => ({...structuredClone(c), included: true}));
-    el("proposal-title").textContent = `Proposed for ${p.model}`;
+    el("proposal-title").textContent = `Proposed for ${getModel()?.id === p.model ? getModel().label : p.model}`;
     drawProposal();
     proposalPanel.hidden = false;
   }
@@ -368,11 +443,11 @@ export function createDictionary({ getModel, getSettings }) {
       }
     }
     const included = proposalChanges.filter(c => c.included).length;
-    el("accept-proposal").textContent = included ? `Apply ${included} changes` : "Finish without changes";
+    el("accept-proposal").textContent = included ? `Apply ${included} change${included === 1 ? "" : "s"}` : "Finish without changes";
     if (!proposalChanges.length) proposalBody.append(node("p", "No changes proposed. Finishing leaves these inputs eligible for another learning run."));
   }
   buildBtn.addEventListener("click", () => builds.start("history", {mode: "generate", scope: el("learning-scope").value}));
   refineBtn.addEventListener("click", () => builds.start("history", {mode: "refine", scope: el("learning-scope").value}));
 
-  return { load: loadDictionary, showHelp, refreshAudio: () => onboarding.load() };
+  return { load: loadDictionary, showHelp, refreshAudio: () => onboarding.load(), refreshModels: fillModels };
 }
