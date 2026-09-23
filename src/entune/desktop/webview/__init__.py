@@ -153,7 +153,8 @@ class _Tray:
             import AppKit
 
             kwargs["darwin_nsapplication"] = AppKit.NSApplication.sharedApplication()
-        self._icon = pystray.Icon("entune", image, "Entune", menu=menu, **kwargs)
+        icon_class = _template_icon_class() if sys.platform == "darwin" else pystray.Icon
+        self._icon = icon_class("entune", image, "Entune", menu=menu, **kwargs)
         return self._icon
 
     def set_state(self, state: State) -> None:
@@ -286,6 +287,32 @@ class _Window:
 
             AppKit.NSApp.setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
         return False
+
+
+def _template_icon_class() -> type[pystray.Icon]:
+    """pystray's Mac item, showing Entune's glyph as a template image.
+
+    macOS tints a template image to suit a light or dark menu bar. The glyph is loaded at
+    three times its size and sized in points, so it stays sharp on Retina displays.
+    """
+    import AppKit
+    from pystray._darwin import Icon as DarwinIcon
+
+    class TemplateIcon(DarwinIcon):  # type: ignore[misc]
+        def _assert_image(self) -> None:
+            thickness = self._status_bar.thickness()
+            current: Any = getattr(self, "_icon_image", None)
+            if current is not None and current.size().height == thickness:
+                return
+            image = AppKit.NSImage.alloc().initWithContentsOfFile_(
+                str(ASSETS / "menubar-template.png")
+            )
+            image.setSize_((thickness, thickness))
+            image.setTemplate_(True)
+            self._icon_image = image
+            self._status_item.button().setImage_(image)
+
+    return TemplateIcon
 
 
 def _set_dock_icon() -> None:
