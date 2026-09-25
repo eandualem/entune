@@ -24,8 +24,8 @@ It is for people who dictate a meaningful share of what they write and want
 control over the engine, the cost and where their words go.
 
 <p align="center">
-  <img src="docs/demo/6-history-light.jpg" width="49%" alt="History in light mode: recordings with audio, transcript, copy and re-transcribe" />
-  <img src="docs/demo/4-settings-dark.jpg" width="49%" alt="Settings in dark mode: API keys, default model, shortcuts" />
+  <img src="docs/demo/history-light.jpg" width="49%" alt="History in light mode: each recording with its audio and transcript, or the provider's exact error, and transcribe again with another model" />
+  <img src="docs/demo/models-dark.jpg" width="49%" alt="Models in dark mode: API keys for the cloud speech services you use" />
 </p>
 
 <!-- TODO: a short recording of hold the key, speak, release, watch the paste land -->
