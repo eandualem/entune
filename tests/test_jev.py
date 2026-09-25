@@ -216,6 +216,24 @@ def test_an_answer_arriving_as_a_wait_times_out_is_used(monkeypatch: pytest.Monk
             assert client.ask(context, {}, {}) == answer
 
 
+def test_preconnect_opens_the_connection_without_the_key() -> None:
+    sent: list[httpx.Request] = []
+    done = threading.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        done.set()
+        return httpx.Response(405)
+
+    client = jev_client.Client(httpx.MockTransport(handler))
+    client.preconnect()
+    assert done.wait(2)
+    assert sent[0].method == "HEAD" and "authorization" not in sent[0].headers
+    client.close()
+    client.preconnect()  # after shutdown: nothing starts
+    assert len(sent) == 1
+
+
 def test_shutdown_cancels_inflight_work_and_rejects_new_requests() -> None:
     entered = threading.Event()
     cancelled = threading.Event()

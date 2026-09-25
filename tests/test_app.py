@@ -9,6 +9,7 @@ import weakref
 from collections.abc import Callable
 from pathlib import Path
 
+import httpx
 import pytest
 
 from entune.app.dictation import _finish
@@ -18,6 +19,7 @@ from entune.audio.recorder import Capture, SinkFactory
 from entune.desktop.app import EntuneApp
 from entune.desktop.engine import ShortcutEngine
 from entune.desktop.platform import Delivery, State
+from entune.processing.jev_client import Client as JevClient
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from entune.providers.registry import ModelRef
 from entune.storage.store import Store
@@ -282,6 +284,39 @@ def test_an_unusable_fast_mode_upload_is_logged(caplog: pytest.LogCaptureFixture
     with caplog.at_level("WARNING"):
         assert _finish(upload, ModelRef(StubProvider(), "good"), clip) is None
     assert "HTTP 503 Service Unavailable" in caplog.text
+
+
+class PreconnectingStub(StubProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.preconnected = threading.Event()
+
+    def preconnect(self) -> None:
+        self.preconnected.set()
+
+
+def test_starting_a_recording_opens_the_provider_and_jev_connections(tmp_path: Path) -> None:
+    provider, jev_opened = PreconnectingStub(), threading.Event()
+
+    def typesafe(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            jev_opened.set()
+        return httpx.Response(405)
+
+    entune = Entune(
+        Store(tmp_path), [provider], jev_client=JevClient(httpx.MockTransport(typesafe))
+    )
+    second = Capture(b"\x00\x00" * 16_000, 16_000)
+    app = EntuneApp(entune, FakePlatform(), "http://localhost:0/", recorder=FakeRecorder(second))
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_key("typesafe", "ts")
+    entune.settings.set_jev(formatting=True)
+    app.start_recording()
+    assert provider.preconnected.wait(2) and jev_opened.wait(2)
+    app.stop_recording()
+    wait_for(lambda: entune.operations.status() is None)
+    entune.close()
 
 
 def test_quiet_microphone_warns_once_and_still_saves_the_recording(tmp_path: Path) -> None:

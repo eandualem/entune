@@ -62,6 +62,8 @@ def test_cancel_inflight_jev_closes_request_keeps_raw_and_prevents_later_stages(
     entered, cancelled = threading.Event(), threading.Event()
 
     async def response(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(405)  # the connection opened when recording started
         entered.set()
         try:
             await asyncio.sleep(20)

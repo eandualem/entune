@@ -1,4 +1,4 @@
-"""Optional upload capability for fast-mode recording."""
+"""Optional capabilities of cloud adapters: fast mode's upload, an early connection."""
 
 from __future__ import annotations
 
@@ -25,3 +25,10 @@ class Streams(Protocol):
     """A provider that can take the audio while it is being recorded."""
 
     def begin_upload(self, api_key: str, sample_rate: int) -> Upload: ...
+
+
+@runtime_checkable
+class Preconnects(Protocol):
+    """A provider that can open its connection while the clip is still being recorded."""
+
+    def preconnect(self) -> None: ...

@@ -72,6 +72,7 @@ def routes(app: Entune) -> list[Route]:
 
     def begin_operation(_: Request) -> Response:
         op = app.operations.begin("dictation", "recording", source="web")
+        app.dictation.prepare()
         return JSONResponse({"id": op.id}, status_code=201)
 
     def cancel_operation(request: Request) -> Response:
