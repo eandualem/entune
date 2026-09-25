@@ -159,9 +159,15 @@ modelSelect.addEventListener("change", async () => {
   await loadModels().catch((err) => { status.textContent = errorText(err); });
 });
 
+// The switch shows what the server keeps: when the latest change is refused, it goes back
+// to the last saved value. An older change's answer never moves it.
+let fastSaved = false;
+let fastChange = 0;
 fastInput.addEventListener("change", async () => {
-  // A refused save leaves the switch as the server has it.
-  if (!(await settingsView.save({ fastMode: fastInput.checked }, null))) fastInput.checked = !fastInput.checked;
+  const change = ++fastChange;
+  const wanted = fastInput.checked;
+  if (await settingsView.save({ fastMode: wanted }, null)) fastSaved = wanted;
+  else if (change === fastChange) fastInput.checked = fastSaved;
 });
 
 // ---- Performance by model: the comparison on the Models page ----
@@ -339,6 +345,7 @@ const permissionsView = createPermissions();
 const settingsView = createSettings({
   async onLoaded(next) {
     settings = next;
+    fastSaved = Boolean(next.fastMode);
     loadMetrics().catch(() => {});
     await loadModels();
   },
