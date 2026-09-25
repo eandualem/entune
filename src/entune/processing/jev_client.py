@@ -105,7 +105,8 @@ class Client:
                     return future.result(timeout=min(0.05, remaining))
                 except TimeoutError:
                     if future.done():
-                        raise
+                        # Finished as the wait ran out: its answer, or its own error.
+                        return future.result()
         except TimeoutError as exc:
             future.cancel()
             raise JevError("processing deadline reached") from exc
