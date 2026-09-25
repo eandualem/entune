@@ -296,12 +296,10 @@ class Store:
             stage = attempt.correction
             # The dictionary step's own result, only when it ran and recorded its edits.
             # Later stages (fillers, formatting) and delivered text never stand in for it.
-            ran = stage is not None and (
-                stage.status == "succeeded" or (stage.status == "skipped" and not stage.error)
-            )
+            changes = stage.recorded_changes() if stage is not None else None
             result = (
-                DictionaryResult(stage.changes, stage.selections or None)
-                if ran and stage is not None and stage.changes is not None
+                DictionaryResult(changes, stage.selections or None)
+                if stage is not None and changes is not None
                 else None
             )
             inputs.append(LearningText(str(attempt.id), attempt.raw_text, "raw_speech", result))
@@ -496,19 +494,6 @@ class Store:
         for attempt in attempts:
             grouped.setdefault(attempt["recording_id"], []).append(transcription_from_row(attempt))
         return [Recording(**dict(row), transcriptions=grouped.get(row["id"], [])) for row in rows]
-
-    def recent_transcripts(self, provider: str, model: str, limit: int) -> list[str]:
-        """That model's text from its latest successful transcriptions, newest first, raw
-        when kept."""
-        with self._lock:
-            rows = self._db.execute(
-                "SELECT COALESCE(raw_text, text) AS text FROM transcriptions"
-                " WHERE status = 'ok' AND provider = ? AND model = ?"
-                " AND COALESCE(raw_text, text) <> ''"
-                " ORDER BY id DESC LIMIT ?",
-                (provider, model, limit),
-            ).fetchall()
-        return [str(row["text"]) for row in rows]
 
     # Corrections agents sent, so the Agents page can show what arrived and from whom.
 

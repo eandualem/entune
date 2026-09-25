@@ -146,10 +146,6 @@ class HotkeyListener:
         self._capture_keys: list[str] = []
         self._capture_down: set[str] = set()
 
-    @property
-    def running(self) -> bool:
-        return self._listener is not None
-
     def start(self, engine: ShortcutEngine | None) -> None:
         """Run the listener with this engine (None: listen, but drive nothing).
 

@@ -166,8 +166,5 @@ def _dictionary_ran(attempt: Transcription) -> bool:
     """The dictionary step ran on the raw text and recorded its edits (possibly none)."""
     stage = attempt.correction
     return (
-        attempt.raw_text is not None
-        and stage is not None
-        and stage.changes is not None
-        and (stage.status == "succeeded" or (stage.status == "skipped" and not stage.error))
+        attempt.raw_text is not None and stage is not None and stage.recorded_changes() is not None
     )
