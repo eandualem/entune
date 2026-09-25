@@ -89,7 +89,6 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged }) {
     renderDictionary(text);
     lockEditors();
     if (pollBuild) await builds.load();
-    await onboarding.load();
   }
 
   // Every edit sends the whole document, named with the version it was made on. The
