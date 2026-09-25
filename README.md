@@ -155,7 +155,7 @@ Enter a provider's API key on the Models page and its model appears in the
 model list; pick one as the default. You pay each provider directly, per minute
 of audio, at its own published rate:
 [AssemblyAI](https://www.assemblyai.com/pricing),
-[Groq](https://groq.com/pricing),
+[Groq](https://console.groq.com/docs/model/whisper-large-v3-turbo),
 [Soniox](https://soniox.com/pricing),
 [ElevenLabs](https://elevenlabs.io/pricing/api),
 [xAI](https://docs.x.ai/developers/models).
