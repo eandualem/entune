@@ -17,6 +17,7 @@ from entune.providers.cloud.http import (
     DEFAULT_TIMEOUT,
     failure_from_body,
     failure_from_response,
+    json_body,
     text_or_failure,
 )
 from entune.providers.contracts import Clip, Failure, TranscribeResult
@@ -52,18 +53,18 @@ class Soniox:
         )
         if upload.is_error:
             return failure_from_response(upload)
-        file_id = _id_of(upload.json())
+        file_id = _id_of(json_body(upload))
         if file_id is None:
-            return failure_from_body(upload.json())
+            return failure_from_body(json_body(upload))
 
         try:
             request: dict[str, object] = {"file_id": file_id, "model": model}
             created = self._client.post(f"{BASE}/transcriptions", headers=headers, json=request)
             if created.is_error:
                 return failure_from_response(created)
-            job_id = _id_of(created.json())
+            job_id = _id_of(json_body(created))
             if job_id is None:
-                return failure_from_body(created.json())
+                return failure_from_body(json_body(created))
             try:
                 return self._wait_for_transcript(job_id, headers)
             finally:
@@ -77,7 +78,7 @@ class Soniox:
             status = self._client.get(f"{BASE}/transcriptions/{job_id}", headers=headers)
             if status.is_error:
                 return failure_from_response(status)
-            body = status.json()
+            body = json_body(status)
             state = body.get("status") if isinstance(body, dict) else None
             if state == "completed":
                 transcript = self._client.get(
@@ -85,7 +86,7 @@ class Soniox:
                 )
                 if transcript.is_error:
                     return failure_from_response(transcript)
-                return text_or_failure(transcript.json())
+                return text_or_failure(json_body(transcript))
             if state == "error":
                 return Failure(f"Transcription failed\n{json.dumps(body)}")
             self._sleep(POLL_SECONDS)

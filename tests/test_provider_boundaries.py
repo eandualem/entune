@@ -40,17 +40,17 @@ def test_shared_conversion_uses_explicit_rate_and_cleans_up_failure(
     monkeypatch.setattr("entune.audio.convert.shutil.which", lambda _: "/test/ffmpeg")
 
     def run(
-        command: list[str], *, capture_output: bool, check: bool, timeout: float
+        command: list[str], *, capture_output: bool, timeout: float
     ) -> subprocess.CompletedProcess[bytes]:
         source = Path(command[command.index("-i") + 1])
         paths.append(source)
         assert source.read_bytes() == b"encoded audio"
         assert command[command.index("-ar") + 1] == "16000"
-        assert capture_output and check
+        assert capture_output
         assert timeout == 300
-        raise subprocess.CalledProcessError(1, command)
+        return subprocess.CompletedProcess(command, 183, b"", b"Invalid data found\n")
 
     monkeypatch.setattr("entune.audio.convert.subprocess.run", run)
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(RuntimeError, match=r"ffmpeg could not read the audio: Invalid data found$"):
         convert.to_wav_with_ffmpeg(b"encoded audio", sample_rate=16_000)
     assert len(paths) == 1 and not paths[0].exists()

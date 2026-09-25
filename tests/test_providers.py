@@ -4,11 +4,13 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 
 from entune.audio.formats import wav_bytes
 from entune.providers.cloud.assemblyai import AssemblyAI
 from entune.providers.cloud.elevenlabs import ElevenLabs
 from entune.providers.cloud.groq import Groq
+from entune.providers.cloud.http import NotJson
 from entune.providers.cloud.soniox import Soniox
 from entune.providers.cloud.xai import XAI
 from entune.providers.contracts import Clip, Failure, Transcript
@@ -87,6 +89,17 @@ def test_a_failed_response_is_returned_verbatim(clip: Clip) -> None:
     client = mock_client(lambda _: httpx.Response(401, content=body))
     result = Groq(client).transcribe(clip, "whisper-large-v3-turbo", "k")
     assert result == Failure(f"HTTP 401 Unauthorized\n{body}")
+
+
+@pytest.mark.parametrize("adapter", [AssemblyAI, Groq, ElevenLabs, XAI, Soniox])
+def test_a_success_status_without_json_fails_with_the_body_verbatim(
+    clip: Clip, adapter: type[AssemblyAI | Groq | ElevenLabs | XAI | Soniox]
+) -> None:
+    page = "<html>Service is under maintenance</html>"  # a proxy or gateway page
+    client = mock_client(lambda _: httpx.Response(200, text=page))
+    with pytest.raises(NotJson) as failed:
+        adapter(client).transcribe(clip, adapter.models[0], "k")
+    assert str(failed.value) == f"HTTP 200 OK\n{page}"
 
 
 def test_a_body_without_text_is_a_failure(clip: Clip) -> None:
