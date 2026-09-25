@@ -254,7 +254,6 @@ const history = createHistory({
   list: historyList, newer: el("history-newer"), older: el("history-older"), renderCard: (recording) => renderCard(recording, models),
   onChange(recordings) {
     placeDetails(); // closes the details popover if its card was redrawn
-    loadMetrics().catch(() => {});
     recordingsCount = recordings.length;
     emptyState.hidden = recordings.length > 0;
     if (recordings.length === 0) renderStart();

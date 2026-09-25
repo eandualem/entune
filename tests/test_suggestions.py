@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -687,3 +689,15 @@ def test_refinement_names_each_group_once_and_only_existing_ones() -> None:
         replies.parse_generation(
             json.dumps({"additions": [redefine]}), (learned,), transcripts=["keep turn"]
         )
+
+
+def test_starting_entune_loads_no_suggestion_sdk() -> None:
+    """Pydantic AI and the provider SDKs load with the first suggestion call, not at startup."""
+    code = (
+        "import sys, entune.cli, entune.server; "
+        "print([m for m in ('pydantic_ai', 'httpx2') if m in sys.modules])"
+    )
+    loaded = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert loaded.stdout.strip() == "[]"
