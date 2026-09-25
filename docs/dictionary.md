@@ -114,8 +114,7 @@ separately from dictionary replacements. Raw text and completed stage outputs/pr
 only the final text after processing; pending results cannot be copied as final text.
 History and Settings separate decisions, direct replacements, unresolved occurrences,
 retries, failures, preserved spans and timings. Replacements count edited disjoint
-components, not words proven correct. Old combined counters remain in exports under
-`legacy_processing`, excluded from new summaries.
+components, not words proven correct.
 
 Settings › Corrections & formatting › Advanced exposes the initial retry policy: **5 seconds total**
 across correction, cleanup and formatting, **3 seconds per attempt**, and **2 attempts
