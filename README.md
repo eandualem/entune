@@ -12,9 +12,10 @@
 
 Entune is a small, local dictation app. Hold a key or press a shortcut,
 speak, and the transcript is pasted where you were typing. You bring your
-own API key for a speech-to-text provider, AssemblyAI, Groq or Soniox, or
-download a model that runs on your own Mac, so you pick the engine that
-transcribes you instead of taking whichever one a dictation product bundles.
+own API key for a speech-to-text provider, AssemblyAI, Groq, Soniox,
+ElevenLabs or xAI, or download a model that runs on your own Mac, so you
+pick the engine that transcribes you instead of taking whichever one a
+dictation product bundles.
 Every recording and transcript is kept in a local history, with the
 provider's exact error and a one-click retry with another model when a
 transcription fails, and a performance table by model built from your own
@@ -150,17 +151,19 @@ reach other apps as a modifier. Pick another key if you need fn elsewhere.
 | Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
 | Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
 
-Enter a provider's API key in Settings and its model appears in the model
-list; pick one as the default. You pay each provider directly, per minute
+Enter a provider's API key on the Models page and its model appears in the
+model list; pick one as the default. You pay each provider directly, per minute
 of audio, at its own published rate:
 [AssemblyAI](https://www.assemblyai.com/pricing),
 [Groq](https://groq.com/pricing),
-[Soniox](https://soniox.com/pricing).
+[Soniox](https://soniox.com/pricing),
+[ElevenLabs](https://elevenlabs.io/pricing/api),
+[xAI](https://docs.x.ai/developers/models).
 
 Keys live in the local database, are only ever sent to the provider they
 belong to, and are never shown again beyond a masked hint.
 
-**Local models** need no key. Settings lists them with their size and a
+**Local models** need no key. The Models page lists them with their size and a
 Download button; a model is fetched once (resumes if interrupted) and then
 sits in the same model lists as the cloud ones, so you can make it the
 default or retry a cloud failure with it. Runs on the GPU on Apple Silicon.
