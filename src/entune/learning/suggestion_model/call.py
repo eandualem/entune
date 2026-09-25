@@ -10,10 +10,6 @@ a refusal or a reply cut at the output limit ends the call at once.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
-from typing import Any
-
 import pydantic_ai
 from pydantic import BaseModel
 from pydantic_ai import Agent, ModelRetry, NativeOutput, PromptedOutput, RunContext
@@ -23,36 +19,16 @@ from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
 from entune.learning.suggestion_model.providers import TIMEOUT, provider_model
+from entune.learning.suggestion_model.request import MAX_FIXES, BrokenReply, Request
 
 # Thinking and reasoning tokens count toward this cap, so it leaves room for a long
 # proposal after the model has reasoned. Billing follows actual use.
 MAX_OUTPUT_TOKENS = 32_000
-MAX_FIXES = 2  # corrected replies the model may send after breaking a rule
 
 pydantic_ai.BANNER_ENABLED = False  # Entune's output is its own
 
 
-@dataclass(frozen=True)
-class Request:
-    provider: str
-    api_key: str
-    model: str  # provider:model
-    system: str
-    user: str
-    shape: type[BaseModel]  # the reply's structure
-    check: Callable[[str], object]  # raises ValueError naming the rule a reply breaks
-    retrying: Callable[[int, str], None]  # (attempt about to start, the rule broken)
-
-
-Caller = Callable[[Request], Coroutine[Any, Any, str]]
-"""Returns the reply as JSON text that passed `check`."""
-
-
-class BrokenReply(ValueError):
-    """Every reply, including the corrected ones, broke a rule of the dictionary."""
-
-
-async def call_model(request: Request, model: Model | None = None) -> str:
+async def run(request: Request, model: Model | None = None) -> str:
     """One request with an explicit key and official endpoint. `model` replaces the
     provider's model in tests."""
     prefix, sep, name = request.model.partition(":")
