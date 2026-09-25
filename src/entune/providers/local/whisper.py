@@ -171,7 +171,7 @@ class WhisperCpp:
     def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         if not self._path(model).exists():
             return Failure(
-                f"Model {model} is not downloaded. Settings > Whisper.cpp has the button."
+                f"Model {model} is not downloaded. Models > Local models has the button."
             )
         try:
             audio = pcm16k(clip)

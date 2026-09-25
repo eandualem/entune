@@ -167,6 +167,9 @@ belong to, and are never shown again beyond a masked hint.
 Download button; a model is fetched once (resumes if interrupted) and then
 sits in the same model lists as the cloud ones, so you can make it the
 default or retry a cloud failure with it. Runs on the GPU on Apple Silicon.
+Local models read WAV, which is what Entune records; other imported audio
+(MP3, M4A, FLAC, Ogg, WebM) is converted with [ffmpeg](https://ffmpeg.org/),
+which you install yourself, for example `brew install ffmpeg`.
 A local model takes memory only while it is the selected model: it is loaded
 when you pick it, freed when you pick something else, and a model used for a
 single retry is freed right after.
