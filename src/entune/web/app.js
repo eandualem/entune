@@ -132,7 +132,7 @@ async function loadModels() {
   if (!defaultModel && models.length > 0) modelSelect.prepend(new Option("Pick a model", "", true, true));
   const provider = defaultModel?.id.split("/")[0];
   const streams = (settings?.providers ?? []).some((p) => p.id === provider && p.streams);
-  fastInput.disabled = !streams;
+  fastInput.disabled = !streams || fastSaving;
   fastWrap.classList.toggle("off", !streams);
   fastWrap.title = streams
     ? "Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop"
@@ -159,15 +159,14 @@ modelSelect.addEventListener("change", async () => {
   await loadModels().catch((err) => { status.textContent = errorText(err); });
 });
 
-// The switch shows what the server keeps: when the latest change is refused, it goes back
-// to the last saved value. An older change's answer never moves it.
-let fastSaved = false;
-let fastChange = 0;
+// One fast-mode save at a time: the switch waits for the server's answer, so a refused
+// save is undone exactly and never crosses another.
+let fastSaving = false;
 fastInput.addEventListener("change", async () => {
-  const change = ++fastChange;
-  const wanted = fastInput.checked;
-  if (await settingsView.save({ fastMode: wanted }, null)) fastSaved = wanted;
-  else if (change === fastChange) fastInput.checked = fastSaved;
+  fastSaving = fastInput.disabled = true;
+  if (!(await settingsView.save({ fastMode: fastInput.checked }, null))) fastInput.checked = !fastInput.checked;
+  fastSaving = false;
+  fastInput.disabled = fastWrap.classList.contains("off");
 });
 
 // ---- Performance by model: the comparison on the Models page ----
@@ -345,7 +344,6 @@ const permissionsView = createPermissions();
 const settingsView = createSettings({
   async onLoaded(next) {
     settings = next;
-    fastSaved = Boolean(next.fastMode);
     loadMetrics().catch(() => {});
     await loadModels();
   },
