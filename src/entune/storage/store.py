@@ -200,21 +200,26 @@ class Store:
         from dataclasses import replace
 
         items = [(item, self.dictionary_audio_path(item)) for item in self.dictionary_audio()]
-        for recording in self.list_recordings():
-            seconds = next(
-                (t.audio_seconds for t in recording.transcriptions if t.audio_seconds is not None),
-                None,
-            )
+        with self._lock:
+            # Each recording's length as its newest measured attempt recorded it; the
+            # attempts themselves are not needed, so their stages are never decoded.
+            rows = self._db.execute(
+                "SELECT r.id, r.created_at, r.file, r.mime, (SELECT t.audio_seconds"
+                " FROM transcriptions t WHERE t.recording_id = r.id"
+                " AND t.audio_seconds IS NOT NULL ORDER BY t.id DESC LIMIT 1) AS seconds"
+                " FROM recordings r ORDER BY r.id DESC"
+            ).fetchall()
+        for row in rows:
             items.append(
                 (
                     DictionaryAudio(
-                        f"recording:{recording.id}",
-                        f"Recording {recording.id}",
-                        recording.mime,
-                        seconds,
-                        recording.created_at,
+                        f"recording:{row['id']}",
+                        f"Recording {row['id']}",
+                        row["mime"],
+                        row["seconds"],
+                        row["created_at"],
                     ),
-                    self.audio_path(recording),
+                    self.audio_dir / row["file"],
                 )
             )
         measured = []
@@ -239,6 +244,18 @@ class Store:
                 item = replace(item, seconds=seconds)
             measured.append((item, path))
         return measured
+
+    def recording_models(self) -> dict[int, list[str]]:
+        """The speech models that transcribed each recording successfully, sorted."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT DISTINCT recording_id, provider, model FROM transcriptions"
+                " WHERE status = 'ok'"
+            ).fetchall()
+        models: dict[int, set[str]] = {}
+        for row in rows:
+            models.setdefault(row["recording_id"], set()).add(f"{row['provider']}/{row['model']}")
+        return {recording: sorted(names) for recording, names in models.items()}
 
     def learning_inputs(
         self, provider: str, model: str, *, scope: str = "new", limit: int = 300

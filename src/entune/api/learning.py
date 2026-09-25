@@ -89,12 +89,7 @@ def routes(app: Entune) -> list[Route]:
     def dictionary_audio(_: Request) -> Response:
         # Which speech models already transcribed each recording, so the page can offer
         # recordings the selected model has not heard. Imported audio has none.
-        models = {
-            f"recording:{r.id}": sorted(
-                {f"{t.provider}/{t.model}" for t in r.transcriptions if t.status == "ok"}
-            )
-            for r in app.store.list_recordings()
-        }
+        models = {f"recording:{r}": names for r, names in app.store.recording_models().items()}
         # Sources are chosen separately in the page: this app's recordings, Wispr Flow
         # imports, or files imported from a folder.
         items = [
@@ -154,17 +149,11 @@ def routes(app: Entune) -> list[Route]:
 
     def imported_audio(request: Request) -> Response:
         # Resolve only through the saved catalog; the identifier never becomes a path.
-        found = next(
-            (
-                (item, path)
-                for item, path in app.store.learning_audio()
-                if item.id == request.path_params["id"] and not item.id.startswith("recording:")
-            ),
-            None,
+        item = next(
+            (a for a in app.store.dictionary_audio() if a.id == request.path_params["id"]), None
         )
-        if found is None:
+        if item is None or not (path := app.store.dictionary_audio_path(item)).is_file():
             return bad("No such imported audio", 404)
-        item, path = found
         return FileResponse(
             path,
             media_type=safe_mime(item.mime),
