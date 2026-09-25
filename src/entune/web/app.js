@@ -156,10 +156,13 @@ modelSelect.addEventListener("change", async () => {
   } catch (err) {
     status.textContent = errorText(err);
   }
-  await loadModels();
+  await loadModels().catch((err) => { status.textContent = errorText(err); });
 });
 
-fastInput.addEventListener("change", () => settingsView.save({ fastMode: fastInput.checked }, null));
+fastInput.addEventListener("change", async () => {
+  // A refused save leaves the switch as the server has it.
+  if (!(await settingsView.save({ fastMode: fastInput.checked }, null))) fastInput.checked = !fastInput.checked;
+});
 
 // ---- Performance by model: the comparison on the Models page ----
 const metricsRows = el("metrics-rows");
@@ -348,7 +351,8 @@ initRecording({
   onStatus(message) { status.textContent = message; },
   async onUploaded() { show("history"); await history.latest(); },
 });
-await settingsView.load();
+// A failed load is shown; the page still opens its view instead of stopping here.
+await settingsView.load().catch((err) => { status.textContent = errorText(err); });
 try {
   if (sessionStorage.getItem("entune-reset")) { sessionStorage.removeItem("entune-reset"); status.textContent = "All Entune data was deleted."; }
 } catch (e) {}

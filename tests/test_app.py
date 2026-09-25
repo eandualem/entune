@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 import time
 import weakref
@@ -10,12 +11,15 @@ from pathlib import Path
 
 import pytest
 
+from entune.app.dictation import _finish
 from entune.app.entune import Entune
+from entune.app.operations import Operation
 from entune.audio.recorder import Capture, SinkFactory
 from entune.desktop.app import EntuneApp
 from entune.desktop.engine import ShortcutEngine
 from entune.desktop.platform import Delivery, State
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
+from entune.providers.registry import ModelRef
 from entune.storage.store import Store
 
 
@@ -268,6 +272,16 @@ def test_a_dictation_is_transcribed_copied_and_pasted(tmp_path: Path) -> None:
     assert platform.actions.clipboard == "hello from the fake"
     wait_for(lambda: platform.tray.states[-1] == "idle")
     assert entune.store.list_recordings()[0].transcriptions[0].text == "hello from the fake"
+
+
+def test_an_unusable_fast_mode_upload_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    upload = FakeUpload()
+    upload.error = "HTTP 503 Service Unavailable"
+    upload.finish = lambda seconds: None  # type: ignore[method-assign]
+    clip = Clip(Capture(b"\x00\x00" * 16_000, 16_000).wav(), "audio/wav")
+    with caplog.at_level("WARNING"):
+        assert _finish(upload, ModelRef(StubProvider(), "good"), clip) is None
+    assert "HTTP 503 Service Unavailable" in caplog.text
 
 
 def test_quiet_microphone_warns_once_and_still_saves_the_recording(tmp_path: Path) -> None:
@@ -563,6 +577,49 @@ def test_cancelling_retains_capture_aborts_upload_and_prevents_transcription_or_
     engine.press("fn")
     engine.release("fn")
     wait_for(lambda: platform.actions.pasted == 1)
+
+
+def test_a_store_error_while_cancelling_ends_the_dictation_and_keeps_the_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, platform, entune = make(tmp_path)
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    operation = entune.operations.begin("dictation", "saving")
+    operation.cancel.set()
+    recording = entune.store.create_recording(Capture(b"\x00\x00" * 16_000, 16_000).wav())
+
+    def disk_full(*args: object) -> None:
+        raise sqlite3.OperationalError("database or disk is full")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(entune.store, "cancel_recording", disk_full)
+        app._jobs.put((recording, 1.0, None, operation))
+        wait_for(lambda: entune.operations.status() is None)
+    assert "disk is full" in platform.actions.notices[-1][1]
+    app.start_recording()  # the same worker transcribes the next clip
+    app.stop_recording()
+    wait_for(lambda: platform.actions.pasted == 1)
+
+
+def test_a_cancel_racing_the_stop_still_saves_the_clip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, platform, entune = make(tmp_path)
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    stage = entune.operations.stage
+
+    def cancelled_meanwhile(operation: Operation, name: str) -> None:
+        operation.cancel.set()  # the web page's Cancel lands between check and stage
+        stage(operation, name)
+
+    app.start_recording()
+    monkeypatch.setattr(entune.operations, "stage", cancelled_meanwhile)
+    app.stop_recording()
+    wait_for(lambda: entune.operations.status() is None)
+    (saved,) = entune.store.list_recordings()
+    assert "audio saved" in (saved.notice or "") and platform.actions.pasted == 0
 
 
 def test_persisted_audio_is_released_while_waiting_for_the_next_recording(tmp_path: Path) -> None:

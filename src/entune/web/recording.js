@@ -30,9 +30,17 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
       cancel.hidden = active?.kind !== "dictation";
       cancel.disabled = active?.stage === "cancelling";
       if (recorder && active?.id === operationId && active.stage === "cancelling") recorder.stop();
-    } catch (err) { onStatus(errorText(err)); }
+    } catch (err) {
+      onStatus(errorText(err));
+      previous = "error"; // the next answer replaces the error, even an unchanged one
+    }
     finally { setTimeout(poll, document.hidden ? 1500 : 400); }
   }
+  // Closing or reloading the page loses a recording still in its memory. The capture
+  // it opened is closed too, or Entune would refuse every later dictation as busy.
+  addEventListener("pagehide", () => {
+    if (operationId && !uploading) fetch(`/api/operations/${operationId}`, { method: "DELETE", keepalive: true });
+  });
   cancel.addEventListener("click", async () => {
     if (!active) return;
     try { await api(`/api/operations/${active.id}/cancel`, {method: "POST"}); }

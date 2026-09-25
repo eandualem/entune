@@ -54,6 +54,29 @@ def test_stop_releases_audio_and_cancel_does_not_copy_it(monkeypatch: pytest.Mon
     assert stream.close.call_count == 2
 
 
+def test_a_microphone_that_fails_to_stop_still_hands_over_its_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = Mock()
+    stream.stop.side_effect = OSError("device unavailable")  # AirPods back in their case
+    monkeypatch.setitem(
+        sys.modules,
+        "sounddevice",
+        SimpleNamespace(
+            _initialized=1,
+            _terminate=Mock(),
+            _initialize=Mock(),
+            query_devices=lambda **kw: {"index": 0, "name": "Mic", "default_samplerate": 48_000},
+            RawInputStream=lambda **kw: stream,
+        ),
+    )
+    recorder = Recorder()
+    recorder.start()
+    recorder._on_audio(b"\x01\x00" * 100, 100, None, None)
+    assert recorder.stop().pcm == b"\x01\x00" * 100
+    assert stream.close.called and not recorder.recording and recorder._chunks == []
+
+
 def test_microphone_open_failure_releases_the_upload_sink(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(
         sys.modules,
