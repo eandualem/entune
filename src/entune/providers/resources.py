@@ -67,6 +67,16 @@ class SpeechResources:
                     with self._condition:
                         selected = None if self._closed else self._selected
                     self._unload_except(selected)
+                    if (
+                        not background
+                        and ref is not None
+                        and selected is not None
+                        and selected != ref
+                        and isinstance(selected.provider, Downloadable)
+                    ):
+                        # A retry with another local model unloaded the default one; the
+                        # next dictation should not wait for it to load again.
+                        self._start_warm()
             except Exception as exc:
                 error = f"Model cleanup: {type(exc).__name__}: {exc}"
                 self._report(error)
@@ -92,6 +102,13 @@ class SpeechResources:
             if self._closed:
                 return
             self._selected = ref
+        self._start_warm()
+
+    def _start_warm(self) -> None:
+        """Load the selected model on the warm thread, which waits for the local slot."""
+        with self._condition:
+            if self._closed:
+                return
             self._warm_pending = True
             if self._warm_thread is None or not self._warm_thread.is_alive():
                 self._warm_thread = threading.Thread(
