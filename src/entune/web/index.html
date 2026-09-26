@@ -232,10 +232,10 @@
                 <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model selected in the toolbar.</p>
                 <p>Each run reads up to 300 of that model's newest transcripts that no earlier run has read, so running it again moves on to newer dictations. To read transcripts again, turn on <b>Include transcripts already used</b> in the suggestions panel or the <b>⋯</b> menu; that costs tokens again and can repeat earlier suggestions.</p>
                 <h3 id="guide-audio">Learning from audio</h3>
-                <p>Choose a source: recordings you made in Entune, recordings another transcription app kept on this Mac (under Other providers, pick the app; only the audio is copied, never its transcripts), or a folder of audio files. For Entune recordings you can skip the ones this speech model already transcribed.</p>
+                <p>Choose a source in the <b>⋯</b> menu: your Entune recordings made with other speech models, the recordings another dictation app kept on this Mac (only the audio is copied, never its transcripts), or a folder of audio files. For Entune recordings you can include the ones this speech model already transcribed.</p>
                 <p>After you pick a source, the timeline shows all its recorded audio, oldest on the left and newest on the right. It measures recorded time, so days without recordings take no space; the dates under the handles show where you are.</p>
                 <p>Everything is selected at first. Drag the left handle right to keep only your most recent audio, or move either handle to choose any stretch. You'll see exactly how much audio and how many recordings are included, and you can list and play them. Each edge snaps to whole recordings.</p>
-                <p>Then choose <b>Get suggestions</b>. Entune transcribes the selection with your speech model, then the dictionary model reads the new text. Transcribing again can take a while and your providers may charge for both steps. You can stop at any time; finished transcripts are kept for a retry.</p>
+                <p>Then choose <b>Transcribe and suggest</b>. Entune transcribes the selection with your speech model, then the dictionary model reads the new text. Transcribing again can take a while and your providers may charge for both steps. You can stop at any time; finished transcripts are kept for a retry.</p>
                 <h3>Reviewing suggestions</h3>
                 <p>Suggestions open in a panel beside your dictionary, grouped into new entries, changes and removals. You can edit any of them, remove the ones you don't want with ×, and then apply the rest in one step. Nothing is saved until you apply. While suggestions are open, dictation pauses, so apply or discard them when you're done.</p>
                 <h3>Pinned and learned entries</h3>
@@ -243,59 +243,6 @@
                 <h3>Adding an entry yourself</h3>
                 <p>Choose <b>Add</b> and fill in one line: how it's written, what the speech model hears (several, separated by commas) and what it is. For several meanings, a spelling kept as written, or always replacing, open the full editor from the link under that line. <b>Edit</b> on an entry opens the same editor.</p>
               </article>
-            </form>
-          </dialog>
-
-          <dialog class="audio-dialog" id="audio-dialog" aria-labelledby="audio-dialog-title">
-            <form method="dialog" class="audio-dialog-inner">
-              <header class="dialog-head">
-                <div>
-                  <h2 id="audio-dialog-title">Learn from audio</h2>
-                  <p class="caption">Transcribe audio again, then get suggestions from the new text. Nothing changes until you review them.</p>
-                </div>
-                <button type="button" class="btn ghost sm help-btn" id="audio-help" aria-haspopup="dialog" aria-controls="help-dialog">How it works</button>
-                <button type="submit" class="btn-icon" id="close-audio-dialog" aria-label="Close" value="close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
-              </header>
-              <div class="dialog-body">
-                <div class="segmented audio-sources" role="tablist" aria-label="Audio source">
-                  <button type="button" role="tab" data-source="entune" aria-selected="true">Entune recordings</button>
-                  <button type="button" role="tab" data-source="provider" aria-selected="false">Other providers</button>
-                  <button type="button" role="tab" data-source="folder" aria-selected="false">Audio folder</button>
-                </div>
-                <label class="caption provider-pick" id="audio-provider-pick" hidden>Provider
-                  <select class="select" id="audio-provider"><option value="wispr">Wispr Flow</option></select>
-                </label>
-                <div class="source-note">
-                  <p class="caption" id="audio-source-note"></p>
-                  <button type="button" class="btn sm" id="import-wispr" hidden>Import from Wispr Flow</button>
-                  <button type="button" class="btn sm" id="choose-audio-folder" hidden>Choose folder…</button>
-                  <input type="file" id="audio-folder" webkitdirectory multiple hidden />
-                </div>
-                <p class="caption" id="audio-import-status" role="status"></p>
-                <label class="caption check"><input type="checkbox" id="audio-other-models" /> Skip recordings this speech model already transcribed</label>
-                <p class="audio-empty" id="audio-empty" hidden></p>
-                <div class="audio-pick" id="audio-pick">
-                  <div class="audio-total"><span class="audio-hours" id="audio-selected"></span><span class="caption" id="audio-available"></span></div>
-                  <div class="range" id="audio-range">
-                    <div class="range-track"><div class="range-fill" id="audio-range-fill"></div></div>
-                    <input type="range" id="audio-range-start" min="0" max="1000" value="0" step="1" aria-label="Oldest included audio" />
-                    <input type="range" id="audio-range-end" min="0" max="1000" value="1000" step="1" aria-label="Newest included audio" />
-                  </div>
-                  <div class="range-labels"><span id="audio-start-label"></span><span id="audio-end-label"></span></div>
-                  <p class="caption range-note">Drag the handles to choose a stretch of recorded time, oldest to newest.</p>
-                  <details class="audio-detail" id="audio-detail"><summary id="audio-detail-summary">Show included recordings</summary><div class="audio-list" id="learning-audio-list"></div><button type="button" class="btn ghost sm" id="audio-more" hidden>Show more</button></details>
-                </div>
-              </div>
-              <footer class="dialog-foot">
-                <div class="run-summary">
-                  <p id="audio-models"></p>
-                  <p class="caption">This can take a while, and cloud providers may charge for both steps.</p>
-                </div>
-                <div class="dialog-actions">
-                  <button type="submit" class="btn ghost" value="cancel">Cancel</button>
-                  <button type="button" class="btn accent" id="build-audio-dictionary" disabled>Get suggestions</button>
-                </div>
-              </footer>
             </form>
           </dialog>
 
@@ -326,6 +273,36 @@
                   <p id="learn-source">Suggestions from your recent transcripts. Nothing changes until you review them.</p>
                   <label class="check"><input type="checkbox" id="learning-reuse" /> Include transcripts already used</label>
                   <p class="caption">Reads transcripts an earlier run already read. It costs tokens again and can repeat earlier suggestions.</p>
+                </div>
+                <div class="suggest-audio" id="suggest-audio" hidden>
+                  <p id="audio-intro"></p>
+                  <div class="app-list" id="audio-provider-pick" role="radiogroup" aria-label="Dictation app" hidden>
+                    <label class="app-option"><input type="radio" name="audio-provider" value="wispr" checked /><span><span class="app-name">Wispr Flow</span><span class="caption">Its recordings on this Mac, including backups</span></span></label>
+                  </div>
+                  <div class="source-note">
+                    <p class="caption" id="audio-source-note"></p>
+                    <button type="button" class="btn sm" id="import-wispr" hidden>Import from Wispr Flow</button>
+                    <button type="button" class="btn sm" id="choose-audio-folder" hidden>Choose folder…</button>
+                    <input type="file" id="audio-folder" webkitdirectory multiple hidden />
+                  </div>
+                  <p class="caption" id="audio-import-status" role="status"></p>
+                  <label class="caption check"><input type="checkbox" id="audio-other-models" checked /> Only recordings this speech model hasn't transcribed</label>
+                  <p class="audio-empty" id="audio-empty" hidden></p>
+                  <div class="audio-pick" id="audio-pick">
+                    <div class="audio-total"><span class="audio-hours" id="audio-selected"></span><span class="caption" id="audio-available"></span></div>
+                    <div class="range" id="audio-range">
+                      <div class="range-track"><div class="range-fill" id="audio-range-fill"></div></div>
+                      <input type="range" id="audio-range-start" min="0" max="1000" value="0" step="1" aria-label="Oldest included audio" />
+                      <input type="range" id="audio-range-end" min="0" max="1000" value="1000" step="1" aria-label="Newest included audio" />
+                    </div>
+                    <div class="range-labels"><span id="audio-start-label"></span><span id="audio-end-label"></span></div>
+                    <p class="caption range-note">Drag the handles to choose a stretch of recorded time, oldest to newest.</p>
+                    <details class="audio-detail" id="audio-detail"><summary id="audio-detail-summary">Show included recordings</summary><div class="audio-list" id="learning-audio-list"></div><button type="button" class="btn ghost sm" id="audio-more" hidden>Show more</button></details>
+                  </div>
+                  <p class="caption">This can take a while, and cloud providers may charge for both steps: transcribing, then suggestions.</p>
+                  <button type="button" class="btn link" id="audio-help" aria-haspopup="dialog" aria-controls="help-dialog">How learning from audio works</button>
+                </div>
+                <div class="suggest-shared" id="suggest-shared">
                   <div class="suggest-model">
                     <label for="dictionary-model">Suggestion model</label>
                     <select class="select" id="dictionary-model" aria-describedby="dictionary-model-note"></select>
@@ -346,6 +323,8 @@
               </div>
               <footer class="drawer-foot">
                 <button type="button" class="btn primary" id="build-dictionary">Get suggestions</button>
+                <button type="button" class="btn primary" id="build-audio-dictionary" hidden disabled>Transcribe and suggest</button>
+                <span class="caption audio-models" id="audio-models" hidden></span>
                 <button type="button" class="btn primary" id="accept-proposal" hidden>Apply</button>
                 <button type="button" class="btn" id="retry-dictionary-build" hidden>Retry the rest</button>
                 <button type="button" class="btn ghost" id="cancel-dictionary-build" hidden>Stop</button>

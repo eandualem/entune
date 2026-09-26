@@ -1,16 +1,17 @@
 import { api, el, errorText } from "./ui.js";
 
-// Learn from audio: one source at a time, a contiguous span chosen on a range over
-// recorded time (oldest to newest, without calendar gaps), whole recordings only.
+// Learn from audio, in the suggestions panel: one source at a time (chosen from the menu), a
+// contiguous span chosen on a range over recorded time (oldest to newest, without calendar
+// gaps), whole recordings only.
 const PAGE = 60;
 const NOTES = {
-  entune: "Recordings you made in Entune.",
+  entune: "",
   folder: "WAV, MP3, M4A, FLAC, OGG or WebM files, up to 199 MB each, dated by when they were modified.",
 };
 // Other providers: transcription apps whose recordings Entune can import. Each entry is
 // an importer that exists; the stored source is the provider's id.
 const PROVIDERS = {
-  wispr: "Wispr Flow keeps its recordings, including backups, on this Mac. Entune copies the audio only, never Wispr's transcripts.",
+  wispr: "Entune copies the audio only, never Wispr's transcripts.",
 };
 
 export function duration(seconds) {
@@ -23,7 +24,6 @@ const day = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: "n
 const moment = (iso) => iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "Undated";
 
 export function createAudioOnboarding({ getModel, getSettings, getDictionaryModelName, onBuild, onBusy }) {
-  const dialog = el("audio-dialog");
   const folder = el("audio-folder");
   const start = el("audio-range-start"), end = el("audio-range-end");
   const player = new Audio();
@@ -48,8 +48,9 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   }
   const nearest = (value) => edges.reduce((best, edge, i) => Math.abs(edge - value) < Math.abs(edges[best] - value) ? i : best, 0);
 
-  // The stored source of the recordings shown: the tab, or the provider picked under it.
-  const shownSource = () => (source === "provider" ? el("audio-provider").value : source);
+  // The stored source of the recordings shown: Entune, a folder, or the app picked in the list.
+  const pickedApp = () => document.querySelector('input[name="audio-provider"]:checked');
+  const shownSource = () => (source === "provider" ? pickedApp()?.value ?? "wispr" : source);
 
   function choose() {
     const skip = source === "entune" && el("audio-other-models").checked ? getModel()?.id : null;
@@ -64,7 +65,6 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   }
 
   function draw() {
-    for (const tab of dialog.querySelectorAll("[data-source]")) tab.setAttribute("aria-selected", String(tab.dataset.source === source));
     el("audio-provider-pick").hidden = source !== "provider";
     el("audio-source-note").textContent = source === "provider" ? PROVIDERS[shownSource()] : NOTES[source];
     el("import-wispr").hidden = shownSource() !== "wispr";
@@ -77,7 +77,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     el("audio-empty").hidden = !loaded || list.length > 0;
     el("audio-empty").textContent = source === "entune"
       ? (items.some((item) => item.source === "entune") ? "Every recording here was already transcribed by this speech model." : "No Entune recordings yet.")
-      : source === "provider" ? `Nothing imported from ${el("audio-provider").selectedOptions[0]?.textContent ?? "this provider"} yet.`
+      : source === "provider" ? `Nothing imported from ${pickedApp()?.closest("label").querySelector(".app-name").textContent ?? "this app"} yet.`
         : "No audio files imported yet.";
     const chosen = list.slice(from, to);
     const seconds = (values) => values.reduce((sum, item) => sum + (item.seconds ?? 0), 0);
@@ -162,11 +162,10 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   el("audio-other-models").addEventListener("change", choose);
   el("audio-detail").addEventListener("toggle", () => draw());
   el("audio-more").addEventListener("click", () => { shown += PAGE; draw(); });
-  el("audio-provider").addEventListener("change", () => { el("audio-import-status").textContent = ""; choose(); });
-  for (const tab of dialog.querySelectorAll("[data-source]")) {
-    tab.addEventListener("click", () => { source = tab.dataset.source; el("audio-import-status").textContent = ""; choose(); });
+  for (const app of document.querySelectorAll('input[name="audio-provider"]')) {
+    app.addEventListener("change", () => { el("audio-import-status").textContent = ""; choose(); });
   }
-  dialog.addEventListener("close", stop);
+  el("suggest-drawer").addEventListener("close", stop);
 
   async function refresh() {
     items = (await api("/api/dictionary/audio")).items;
@@ -222,16 +221,16 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   });
   el("build-audio-dictionary").addEventListener("click", async () => {
     const ids = list.slice(from, to).map((item) => item.id);
-    dialog.close();
+    stop();
     await onBuild({ audio_ids: ids });
   });
 
   return {
     load: refresh,
     // Opens on the source the menu named: Entune recordings, another app, or a folder.
-    // The selection switches at once from the recordings already loaded, so Get suggestions
-    // never sends the previous source's audio while the list refreshes.
-    async open(pick) { if (pick && pick !== source) { source = pick; choose(); } dialog.showModal(); await refresh(); },
+    // The selection switches at once from the recordings already loaded, so Transcribe and
+    // suggest never sends the previous source's audio while the list refreshes.
+    async show(pick) { if (pick !== source) { source = pick; el("audio-import-status").textContent = ""; choose(); } await refresh(); },
     // Status polls repeat the same value; redraw only on a change, keeping focus in the list.
     setBuildBusy(value) { if (value !== buildBusy) { buildBusy = value; draw(); } },
     redraw: draw,

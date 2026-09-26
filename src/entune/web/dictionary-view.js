@@ -31,7 +31,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const jsonBox = el("dictionary");
   const onboarding = createAudioOnboarding({
     getModel, getSettings, getDictionaryModelName: () => missingKey ? null : languageName(getSettings()?.dictionaryModel),
-    onBuild(selection) { openSuggestions(); return builds.start("audio", { mode: mode(), ...selection }); },
+    onBuild(selection) { return builds.start("audio", { mode: mode(), ...selection }); },
     onBusy(value) { importing = value; gate(); },
   });
 
@@ -506,7 +506,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     openEditor(addPinned || !model ? "pinned" : "learned", { id: id("g"), needs_review: false, meanings: [meaning],
       recognized_forms: (heard.length ? heard : [""]).map((text) => ({ text, associations: [{ meaning_id: meaning.id, basis: "user", evidence: [] }], direct: null, direct_reason: "" })) }, true);
   });
-  el("empty-suggest").addEventListener("click", () => openSuggestions());
+  el("empty-suggest").addEventListener("click", () => openSuggestions("history"));
 
   // ---- The full editor, in a side panel ----
   // A learned draft belongs to the speech model it was started for, even if the toolbar
@@ -951,7 +951,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   document.addEventListener("click", (event) => { if (!menu.hidden && !event.target.closest(".menu-wrap")) closeMenu(); });
   menu.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeMenu(); menuButton.focus(); } });
   for (const item of menu.querySelectorAll("[data-audio]")) {
-    item.addEventListener("click", () => { closeMenu(); onboarding.open(item.dataset.audio).catch((err) => toast(errorText(err), "err")); });
+    item.addEventListener("click", () => openSuggestions(item.dataset.audio));
   }
   el("menu-agents").addEventListener("click", () => { closeMenu(); openSettings("integrations"); });
   const reuse = el("learning-reuse");
@@ -978,13 +978,28 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const RUNNING = ["queued", "transcribing", "building", "cancelling", "cleaning"];
   const stage = (state) => RUNNING.includes(state.phase) ? "running" : state.phase === "ready" ? "review"
     : ["failed", "cancelled"].includes(state.phase) ? "halted" : "setup";
-  function openSuggestions() {
+  // Before a run the panel starts one from a source: recent transcripts ("history"), or the
+  // audio of Entune recordings, another dictation app or a folder, each chosen in the menu.
+  let setupSource = "history";
+  const SETUP_TITLES = { history: "Get suggestions", entune: "Learn from your other models' recordings",
+    provider: "Learn from another dictation app", folder: "Learn from an audio folder" };
+  function audioIntro(source) {
+    const speech = speechName(getModel());
+    return {
+      entune: `Your Entune recordings transcribed with other speech models. Transcribing them again with ${speech} teaches it your words without dictating them again.`,
+      provider: `Recordings another dictation app keeps on this Mac, transcribed with ${speech} so it learns from all of them at once.`,
+      folder: `Any folder of audio of you talking, such as meetings, voice notes or exports, transcribed with ${speech} and then turned into suggestions.`,
+    }[source];
+  }
+  function openSuggestions(source) {
     closeMenu();
+    if (source) setupSource = source;
+    if (source && source !== "history") onboarding.show(source).catch((err) => toast(errorText(err), "err"));
     showRun(run);
     if (!suggestDrawer.open) suggestDrawer.showModal();
   }
-  el("suggest-btn").addEventListener("click", openSuggestions);
-  el("banner-action").addEventListener("click", openSuggestions);
+  el("suggest-btn").addEventListener("click", () => openSuggestions("history"));
+  el("banner-action").addEventListener("click", () => openSuggestions());
   el("suggest-close").addEventListener("click", () => suggestDrawer.close());
   async function discardRun() {
     const job = run.id;
@@ -1006,17 +1021,23 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("suggest-badge").textContent = String(included);
     el("suggest-btn").classList.toggle("waiting", now === "review");
     // The panel shows the one stage the run is in.
-    const titles = { setup: "Get suggestions", running: "Getting suggestions", review: "Review suggestions", halted: "Suggestions stopped" };
+    const titles = { setup: SETUP_TITLES[setupSource], running: "Getting suggestions", review: "Review suggestions", halted: "Suggestions stopped" };
     el("suggest-title").textContent = titles[now];
     if (now === "review") proposalTitle();
     const model = getModel();
     el("suggest-sub").textContent = now === "setup" ? `For ${speechName(model)}. Suggestions land here for review; nothing is saved before you apply.`
       : `${plural(state.total ?? 0, state.source === "audio" ? "recording" : "transcript")} · ${modelName(state.model ?? "", model ? [model] : [])} → ${languageName(state.dictionaryModel) ?? "suggestion model"}`;
-    el("suggest-setup").hidden = now !== "setup";
+    const audio = setupSource !== "history";
+    el("suggest-setup").hidden = now !== "setup" || audio;
+    el("suggest-audio").hidden = now !== "setup" || !audio;
+    if (audio) el("audio-intro").textContent = audioIntro(setupSource);
+    el("suggest-shared").hidden = now !== "setup";
     if (now === "setup") el("learn-status").hidden = true;
     el("run-note").hidden = now !== "running";
     el("proposal").hidden = now !== "review";
-    el("build-dictionary").hidden = now !== "setup";
+    el("build-dictionary").hidden = now !== "setup" || audio;
+    el("build-audio-dictionary").hidden = now !== "setup" || !audio;
+    el("audio-models").hidden = now !== "setup" || !audio;
     el("accept-proposal").hidden = now !== "review";
     el("discard-proposal").hidden = now !== "review";
     // The banner: what the run is doing, and whether editing waits for it.
