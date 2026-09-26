@@ -98,8 +98,7 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
     })();
     return reading;
   }
-  async function action(name) {
-    const id = state.id;
+  async function action(name, id = state.id) {
     version++;
     clearFeedback();
     try {
@@ -118,8 +117,9 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
   el("accept-proposal").addEventListener("click", () => action("accept"));
   return {
     load: poll,
-    // Discarding asks first, so the view confirms and then calls this.
-    discard: () => action("discard"),
+    // Discarding asks first; the view names the job it confirmed, so a run that replaced
+    // it meanwhile is refused rather than discarded.
+    discard: (id) => action("discard", id),
     async start(source, selection = {}) {
       version++;
       clearFeedback();

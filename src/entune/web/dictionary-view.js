@@ -745,6 +745,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       }
       for (const mid of form.links.filter((l) => !own.has(l))) {
         const chip = node("span", `✓ ${spellingOf(mid)}`, "pill on external");
+        chip.title = known.get(mid)?.meaning || "No description yet";
         chip.append(node("span", pinned.has(mid) ? " · pinned" : " · other entry", "pill-note"));
         const remove = button("×", () => change(() => { form.links = form.links.filter((l) => l !== mid); if (form.direct === mid) { form.direct = null; form.direct_reason = ""; } }), "pill-remove");
         remove.setAttribute("aria-label", `Unlink ${spellingOf(mid)}`);
@@ -771,7 +772,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
         pick.setAttribute("aria-label", "Link a meaning from another entry");
         pick.title = "Link a meaning from another entry";
         pick.add(new Option("+ other entry…", ""));
-        for (const [mid, m] of others) pick.add(new Option(`${m.spelling} (${pinned.has(mid) ? "pinned" : "learned"})`, mid));
+        for (const [mid, m] of others) pick.add(new Option(`${m.spelling} (${pinned.has(mid) ? "pinned" : "learned"}) — ${m.meaning || "no description yet"}`, mid));
         pick.addEventListener("change", () => { if (pick.value) change(() => { form.links.push(pick.value); }); });
         links.append(pick);
       }
@@ -980,7 +981,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   el("banner-action").addEventListener("click", openSuggestions);
   el("suggest-close").addEventListener("click", () => suggestDrawer.close());
   async function discardRun() {
-    if (await confirmAction("Discard these suggestions?", `Nothing changes in your dictionary, and a later run can read the same ${run.source === "audio" ? "recordings" : "transcripts"} again.`, "Discard")) await builds.discard();
+    const job = run.id;
+    if (await confirmAction("Discard these suggestions?", `Nothing changes in your dictionary, and a later run can read the same ${run.source === "audio" ? "recordings" : "transcripts"} again.`, "Discard")) await builds.discard(job);
   }
   el("discard-proposal").addEventListener("click", discardRun);
   el("abandon-dictionary-build").addEventListener("click", discardRun);
