@@ -940,7 +940,10 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   menuButton.addEventListener("click", () => {
     menu.hidden = !menu.hidden;
     menuButton.setAttribute("aria-expanded", String(!menu.hidden));
-    if (!menu.hidden) menu.querySelector("button:not(:disabled)")?.focus();
+    if (menu.hidden) return;
+    // In a short window the menu scrolls within the space below its button.
+    menu.style.maxHeight = `${Math.max(120, window.innerHeight - menu.getBoundingClientRect().top - 12)}px`;
+    menu.querySelector("button:not(:disabled)")?.focus();
   });
   document.addEventListener("click", (event) => { if (!menu.hidden && !event.target.closest(".menu-wrap")) closeMenu(); });
   menu.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeMenu(); menuButton.focus(); } });
@@ -1053,11 +1056,23 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     proposalChanges = p.changes.map(c => ({...structuredClone(c), included: true, editing: false}));
     drawProposal();
   }
+  // Each suggestion's summary shows what Apply submits, so it follows every edit, including
+  // edits to a meaning shared with other suggestions.
+  function refreshSummaries() {
+    for (const change of proposalChanges) {
+      if (!change.after) continue;
+      const set = (part, text) => { const e = proposalBody.querySelector(`[data-summary="${CSS.escape(`${part}:${change.id}`)}"]`); if (e) e.textContent = text; };
+      set("heard", change.after.recognized_forms.map(f => f.text).join(", "));
+      set("to", label(change.after) || title(change.after));
+      set("after", describe(change.after));
+      set("desc", change.after.meanings.map(m => m.meaning).filter(Boolean).join(" · ") || "No description yet.");
+    }
+  }
   function field(parent, text, value, update) {
     const wrap = node("label", text, "group-field");
     const control = document.createElement("input");
     control.className = "input";
-    control.value = value ?? ""; control.addEventListener("change", () => update(control.value));
+    control.value = value ?? ""; control.addEventListener("change", () => { update(control.value); refreshSummaries(); });
     wrap.append(control); parent.append(wrap); return control;
   }
   function drawProposal() {
@@ -1074,7 +1089,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
         box.classList.toggle("dismissed", !change.included);
         const head = node("div", "", "change-head");
         const struck = kind === "remove" && change.included ? " struck" : "";
-        head.append(node("code", g.recognized_forms.map(f => f.text).join(", "), `heard${struck}`), node("span", "→", "arrow"), node("b", label(g) || title(g, known), struck.trim()), node("span", "", "spacer"));
+        const summary = (element, part) => { element.dataset.summary = `${part}:${change.id}`; return element; };
+        head.append(summary(node("code", g.recognized_forms.map(f => f.text).join(", "), `heard${struck}`), "heard"), node("span", "→", "arrow"),
+          summary(node("b", label(g) || title(g, known), struck.trim()), "to"), node("span", "", "spacer"));
         const toggle = change.included
           ? button("×", () => { change.included = false; drawProposal(); }, "btn-icon remove")
           : button("Include", () => { change.included = true; drawProposal(); }, "btn link");
@@ -1085,10 +1102,10 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
         if (kind === "update" && change.before) {
           const compare = node("div", "", "compare");
           compare.append(node("span", "Now", "caption"), node("pre", describe(change.before), "before"),
-            node("span", "Suggested", "suggested"), node("pre", describe(change.after), "after"));
+            node("span", "Suggested", "suggested"), summary(node("pre", describe(change.after), "after"), "after"));
           box.append(compare);
         } else if (kind === "add") {
-          box.append(node("p", g.meanings.map(m => m.meaning).filter(Boolean).join(" · ") || "No description yet.", "change-desc"));
+          box.append(summary(node("p", g.meanings.map(m => m.meaning).filter(Boolean).join(" · ") || "No description yet.", "change-desc"), "desc"));
         } else {
           box.append(node("p", "Removed only if you keep this suggestion when applying.", "caption"));
         }
@@ -1139,6 +1156,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
                 if (check.checked) form.associations.push({meaning_id: mid, basis: "user", evidence: []});
                 else form.associations = form.associations.filter(a => a.meaning_id !== mid);
                 form.direct = null; form.direct_reason = "";
+                refreshSummaries();
               });
               wrap.append(check, `${meaning.spelling} — ${meaning.meaning}`); choices.append(wrap);
             }

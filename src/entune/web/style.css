@@ -239,7 +239,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .menu-wrap { position: relative; }
 .menu-btn { width: var(--h-28); padding: 0; justify-content: center; }
 .menu-btn[aria-expanded="true"] { background: var(--control-hover); color: var(--text); }
-.menu { position: absolute; right: 0; top: calc(100% + var(--sp-6)); z-index: 30; min-width: 18rem; padding: var(--sp-4); border-radius: var(--r-10); background: var(--control); box-shadow: var(--shadow-popover); }
+.menu { position: absolute; right: 0; top: calc(100% + var(--sp-6)); z-index: 30; min-width: 18rem; overflow-y: auto; padding: var(--sp-4); border-radius: var(--r-10); background: var(--control); box-shadow: var(--shadow-popover); }
 .menu hr { margin: var(--sp-4) 0; border: 0; border-top: 1px solid var(--line); }
 .menu-label { margin: 0; padding: var(--sp-6) var(--sp-10) var(--sp-2); font-size: var(--fs-11); letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-faint); }
 .menu button { display: flex; align-items: center; gap: var(--sp-8); width: 100%; padding: var(--sp-6) var(--sp-10); border: 0; border-radius: var(--r-6); background: none; color: var(--text); text-align: left; font-size: var(--fs-13); }
