@@ -113,83 +113,100 @@
 
       <section class="view" id="view-dictionary" role="tabpanel">
         <div class="dict">
-          <section class="learn" aria-labelledby="learn-title">
-            <div class="learn-head">
-              <h2 id="learn-title">Improve your dictionary</h2>
-              <span class="spacer"></span>
-              <button type="button" class="btn ghost sm help-btn" id="help-toggle" aria-haspopup="dialog" aria-controls="help-dialog">
-                <svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.3"/><path d="M6.2 6.3a1.9 1.9 0 0 1 3.7.5c0 1.1-1.9 1.4-1.9 2.6M8 11.6v.1"/></svg>How the dictionary works
+          <div class="dict-bar">
+            <div class="segmented dict-filters" role="tablist" aria-label="Show">
+              <button type="button" role="tab" id="filter-all" aria-selected="true" title="Pinned entries and the ones learned for this speech model">All<span class="count" id="count-all"></span></button>
+              <button type="button" role="tab" id="filter-pinned" aria-selected="false" title="Used with every speech model">Pinned<span class="count" id="count-pinned"></span></button>
+              <button type="button" role="tab" id="filter-learned" aria-selected="false"><span id="filter-learned-name">Learned</span><span class="count" id="count-learned"></span></button>
+              <button type="button" role="tab" id="filter-attention" aria-selected="false" title="Meanings without a description: Entune can't choose them yet">Needs attention<span class="count" id="count-attention"></span><span class="attention-dot" id="attention-dot" hidden></span></button>
+            </div>
+            <label class="dict-search">
+              <svg class="i12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="5" cy="5" r="3.6"/><path d="M8 8l3 3"/></svg>
+              <input class="input" type="search" id="dict-search" placeholder="Search" aria-label="Search spellings, heard forms and descriptions" />
+            </label>
+            <span class="spacer"></span>
+            <span class="caption dict-count" id="dict-count"></span>
+            <div class="segmented dict-views" role="tablist" aria-label="View" title="Two views of the same dictionary.json">
+              <button type="button" role="tab" id="show-list" aria-selected="true" aria-controls="dict-list">List</button>
+              <button type="button" role="tab" id="show-json" aria-selected="false" aria-controls="json-editor">JSON</button>
+            </div>
+            <span class="bar-rule" aria-hidden="true"></span>
+            <button type="button" class="btn suggest-btn" id="suggest-btn" aria-haspopup="dialog" aria-controls="suggest-drawer">
+              <span class="spinner" id="suggest-spinner" aria-hidden="true" hidden></span>
+              <svg class="i12" id="suggest-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M6 1v2M6 9v2M1 6h2M9 6h2M2.5 2.5l1.4 1.4M8.1 8.1l1.4 1.4M2.5 9.5l1.4-1.4M8.1 3.9l1.4-1.4"/></svg>
+              <span id="suggest-label">Get suggestions</span><span class="badge" id="suggest-badge" hidden></span>
+            </button>
+            <button type="button" class="btn accent add-btn" id="add-entry-btn" aria-expanded="false" aria-controls="add-row"><span class="plus" aria-hidden="true">+</span>Add</button>
+            <div class="menu-wrap">
+              <button type="button" class="btn menu-btn" id="dict-menu-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="dict-menu" aria-label="More" title="More ways to build the dictionary">
+                <svg class="i14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/><circle cx="11" cy="7" r="1.2"/></svg>
               </button>
-            </div>
-            <p class="caption learn-intro" id="learn-source">Suggestions from your recent transcripts. Nothing changes until you review them.</p>
-            <div class="learn-actions">
-              <button type="button" class="btn accent" id="build-dictionary">Get suggestions</button>
-              <label class="learn-model">using <select class="select" id="dictionary-model" aria-label="Model that writes suggestions" aria-describedby="dictionary-model-note"></select></label>
-              <button type="button" class="btn ghost sm disclose" id="learn-options-toggle" aria-expanded="false" aria-controls="learn-options">Options</button>
-            </div>
-            <p class="caption learn-note" id="dictionary-model-note" hidden></p>
-            <div class="learn-options" id="learn-options" hidden>
-              <label class="check"><input type="checkbox" id="learning-reuse" /> Include transcripts already used</label>
-              <p class="caption">Each run normally reads up to 300 of this speech model's newest transcripts that no earlier run has read. Turn this on to read used ones again; it costs tokens again and can repeat earlier suggestions.</p>
-            </div>
-            <div class="learn-more">
-              <button type="button" class="btn sm" id="open-audio-dialog" aria-haspopup="dialog">Learn from audio…</button>
-              <span class="caption">Transcribe Entune recordings again, or import audio from another transcription app or a folder.</span>
-            </div>
-            <div class="learn-status" id="learn-status" hidden>
-              <span class="spinner" id="build-spinner" aria-hidden="true" hidden></span>
-              <div class="learn-progress-box">
-                <p class="learn-progress" id="dictionary-build-status" role="status"></p>
-                <details class="build-error-detail" id="build-error-detail" hidden><summary>Technical details</summary><pre id="build-error-text"></pre></details>
-              </div>
-              <div class="learn-status-actions">
-                <button type="button" class="btn ghost" id="cancel-dictionary-build" hidden>Stop</button>
-                <button type="button" class="btn" id="retry-dictionary-build" hidden>Retry the rest</button>
-                <button type="button" class="btn ghost" id="abandon-dictionary-build" hidden>Discard</button>
+              <div class="menu" id="dict-menu" role="menu" aria-label="More" hidden>
+                <p class="menu-label">Build from other sources</p>
+                <button type="button" role="menuitem" data-audio="entune"><span class="menu-text">Learn from your other models' recordings<span class="menu-sub">Transcribe Entune recordings again with this speech model</span></span><span class="menu-go" aria-hidden="true">›</span></button>
+                <button type="button" role="menuitem" data-audio="provider"><span class="menu-text">Learn from another dictation app…<span class="menu-sub">The audio Wispr Flow keeps on this Mac</span></span><span class="menu-go" aria-hidden="true">›</span></button>
+                <button type="button" role="menuitem" data-audio="folder"><span class="menu-text">Learn from an audio folder…<span class="menu-sub">WAV, MP3, M4A, FLAC, OGG or WebM files</span></span><span class="menu-go" aria-hidden="true">›</span></button>
+                <button type="button" role="menuitem" id="menu-agents"><span class="menu-text">Corrections sent by agents<span class="menu-sub">Local API · Settings › Integrations</span></span><span class="menu-go" aria-hidden="true">›</span></button>
+                <hr />
+                <p class="menu-label">This dictionary</p>
+                <button type="button" role="menuitem" id="pin-all" title="Use every entry learned for this speech model with all speech models"><span class="menu-text" id="pin-all-label">Pin all learned</span><span class="menu-note" id="pin-all-count"></span></button>
+                <button type="button" role="menuitemcheckbox" id="menu-reuse" aria-checked="false"><span class="menu-text">Include used transcripts in suggestions</span><span class="menu-note" id="menu-reuse-state">Off</span></button>
+                <button type="button" role="menuitem" id="help-toggle" aria-haspopup="dialog" aria-controls="help-dialog"><span class="menu-text">How the dictionary works</span></button>
               </div>
             </div>
-            <p class="caption save-status" id="build-status" role="status"></p>
-          </section>
-
-          <p class="caption lock-note" id="dictionary-edit-lock" hidden>While suggestions are open, dictation and dictionary editing are paused. Apply or discard them to continue.</p>
-          <div class="proposal" id="proposal" hidden>
-            <div class="proposal-head">
-              <span class="proposal-title" id="proposal-title">Review suggestions</span>
-              <span class="caption">Edit any suggestion, remove the ones you don't want with ×, then apply the rest. Nothing is saved before that.</span>
-              <span class="spacer"></span>
-              <button type="button" class="btn accent" id="accept-proposal">Accept</button>
-              <button type="button" class="btn ghost" id="discard-proposal">Discard</button>
-            </div>
-            <div class="proposal-body" id="proposal-body"></div>
           </div>
 
-          <section class="groups" aria-labelledby="groups-title">
-            <div class="groups-head">
-              <h2 id="groups-title">Your dictionary</h2>
-              <div class="segmented" role="tablist" aria-label="Show">
-                <button type="button" role="tab" id="filter-all" aria-selected="true" title="Every entry used with this speech model">All</button>
-                <button type="button" role="tab" id="filter-pinned" aria-selected="false" title="Your entries, used with every speech model">Pinned</button>
-                <button type="button" role="tab" id="filter-learned" aria-selected="false" title="Entries learned for this speech model only">Learned</button>
-              </div>
-              <div class="groups-actions">
-              <button type="button" class="btn ghost sm" id="pin-all" title="Use every entry learned for this speech model with all speech models" hidden>Pin all learned</button>
-              <button type="button" class="btn ghost sm json-btn" id="json-toggle" title="Edit dictionary.json directly (advanced)" aria-expanded="false" aria-controls="json-editor"><span class="mono" aria-hidden="true">{ }</span> Edit JSON</button>
-              <button type="button" class="btn fill" id="add-entry-btn">Add an entry</button>
-              </div>
-              <p class="caption groups-scope" id="groups-count"></p>
-            </div>
-            <div class="json-editor" id="json-editor" hidden>
-              <textarea class="input code" id="dictionary" spellcheck="false" rows="12" aria-label="dictionary.json"></textarea>
-              <div class="row-actions">
-                <button type="button" class="btn accent" id="save-dictionary">Save JSON</button>
-                <span class="caption save-status" id="dictionary-status" role="status"></span>
-                <span class="caption">The file is <code>dictionary.json</code> in Entune's data folder. Forms match whole words regardless of case. Context resolves eligible meanings and overlapping phrases.</span>
-              </div>
-            </div>
-            <div id="new-group"></div>
-            <div id="dict-rows"></div>
-          </section>
+          <div class="dict-banner" id="dict-banner" hidden>
+            <span class="spinner" id="banner-spinner" aria-hidden="true" hidden></span><span class="banner-dot" id="banner-dot" aria-hidden="true"></span>
+            <span class="banner-text" id="banner-text" role="status"></span>
+            <button type="button" class="banner-action" id="banner-action" aria-haspopup="dialog" aria-controls="suggest-drawer">Details</button>
+          </div>
 
+          <div class="dict-list" id="dict-list">
+            <div class="dict-table">
+              <div class="dict-row dict-head">
+                <button type="button" class="sort" id="sort-spelling" title="Sort by spelling">Written as <span id="sort-mark">↑</span></button>
+                <span>Heard as</span>
+                <span>What it is</span>
+                <span title="Pinned: every speech model. Otherwise only the model shown.">Scope</span>
+              </div>
+              <div class="add-row" id="add-row" hidden>
+                <div class="dict-row add-fields">
+                  <input class="input" id="add-spelling" placeholder="Kubernetes" aria-label="Written as" />
+                  <input class="input mono" id="add-heard" placeholder="cooper netties, kuber netties" aria-label="Heard as: what the speech model writes, separated by commas" />
+                  <input class="input" id="add-desc" placeholder="Runs containers: clusters, pods, kubectl" aria-label="What it is" />
+                  <div class="add-actions">
+                    <button type="button" class="btn sm scope-toggle" id="add-scope" aria-pressed="false"></button>
+                    <button type="button" class="btn sm primary" id="add-save" disabled>Add</button>
+                    <button type="button" class="btn-icon" id="add-cancel" aria-label="Cancel" title="Cancel"><svg class="i12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+                  </div>
+                </div>
+                <div class="add-hint"><span id="add-hint" role="status"></span><span class="spacer"></span><button type="button" class="btn link" id="add-advanced">Several meanings, keep as written, always replace…</button></div>
+              </div>
+              <div id="dict-rows"></div>
+              <div class="dict-empty" id="dict-empty" hidden>
+                <p class="empty-title" id="empty-title"></p>
+                <p class="caption" id="empty-body"></p>
+                <button type="button" class="btn accent" id="empty-suggest" hidden>Get suggestions</button>
+              </div>
+            </div>
+            <div class="dict-legend">
+              <span><b>Pinned</b> · every speech model, protected from suggestions</span>
+              <span><b id="legend-model">Learned</b> · learned for this model only; the list follows the toolbar picker</span>
+              <span class="spacer"></span>
+              <button type="button" class="btn link" id="legend-help" aria-haspopup="dialog" aria-controls="help-dialog">How the dictionary works</button>
+            </div>
+          </div>
+
+          <div class="json-view" id="json-editor" hidden>
+            <textarea class="input code" id="dictionary" spellcheck="false" aria-label="dictionary.json"></textarea>
+            <p class="json-error" id="json-error" hidden><b id="json-error-title">Not saved.</b> <span id="json-error-text"></span></p>
+            <div class="row-actions">
+              <button type="button" class="btn accent" id="save-dictionary" disabled>Save JSON</button>
+              <button type="button" class="btn ghost" id="revert-dictionary" disabled>Revert</button>
+              <span class="caption" id="dictionary-status"></span>
+            </div>
+          </div>
           <dialog class="help-dialog" id="help-dialog" aria-labelledby="help-title">
             <form method="dialog" class="help-inner">
               <header class="dialog-head">
@@ -203,28 +220,28 @@
                 <p>An entry pairs what the speech model <em>writes</em> with what you might have <em>meant</em>. Say it often writes “cloud” when you said “Claude”. But sometimes you really mean a cloud. So the entry keeps both meanings:</p>
                 <div class="guide-example"><code>cloud</code> → <b>Claude</b>, an AI assistant you ask to write or code<br><code>cloud</code> → <b>cloud</b>, internet storage and servers</div>
                 <p>In “Ask cloud to draft the reply”, Entune writes <b>Claude</b>. In “The backups are in the cloud”, it leaves <b>cloud</b> alone. It chooses from the surrounding words, which is why each meaning has a short description: write what the thing is and what it goes with.</p>
-                <p>One entry can list several spellings the model writes (“cloud”, “clawed”) and several meanings. Tick which meanings each spelling can stand for.</p>
+                <p>One entry can list several spellings the model writes (“cloud”, “clawed”) and several meanings. Each heard spelling is linked to the meanings it can stand for.</p>
                 <h3>Getting suggestions</h3>
                 <p>You don't have to build the dictionary by hand. Entune can read your dictations and suggest entries, using the dictionary model you choose (its key is in Settings).</p>
                 <p>Choose <b>Get suggestions</b>. What it looks for depends on your dictionary:</p>
                 <ul>
                   <li>With no entries yet for this speech model, it reads your recent transcripts and suggests first entries for the mistakes it finds.</li>
                   <li>Once you have entries, pinned or learned, it also compares what the speech model wrote with what the dictionary changed. It suggests missing entries and fixes: a clearer description, a wider or narrower entry, or removing a learned entry that does more harm than good.</li>
-                  <li><b>Learn from audio</b> transcribes recordings again with your current speech model before suggesting entries. Use it when the recordings were made with another model, or come from another transcription app or a folder. It takes longer and uses more tokens.</li>
+                  <li><b>Learning from audio</b>, in the <b>⋯</b> menu, transcribes recordings again with your current speech model before suggesting entries. Use it when the recordings were made with another model, or come from another transcription app or a folder. It takes longer and uses more tokens.</li>
                 </ul>
                 <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model selected in the toolbar.</p>
-                <p>Each run reads up to 300 of that model's newest transcripts that no earlier run has read, so running it again moves on to newer dictations. To read transcripts again, turn on <b>Include transcripts already used</b> under <b>Options</b>; that costs tokens again and can repeat earlier suggestions.</p>
+                <p>Each run reads up to 300 of that model's newest transcripts that no earlier run has read, so running it again moves on to newer dictations. To read transcripts again, turn on <b>Include transcripts already used</b> in the suggestions panel or the <b>⋯</b> menu; that costs tokens again and can repeat earlier suggestions.</p>
                 <h3 id="guide-audio">Learning from audio</h3>
                 <p>Choose a source: recordings you made in Entune, recordings another transcription app kept on this Mac (under Other providers, pick the app; only the audio is copied, never its transcripts), or a folder of audio files. For Entune recordings you can skip the ones this speech model already transcribed.</p>
                 <p>After you pick a source, the timeline shows all its recorded audio, oldest on the left and newest on the right. It measures recorded time, so days without recordings take no space; the dates under the handles show where you are.</p>
                 <p>Everything is selected at first. Drag the left handle right to keep only your most recent audio, or move either handle to choose any stretch. You'll see exactly how much audio and how many recordings are included, and you can list and play them. Each edge snaps to whole recordings.</p>
                 <p>Then choose <b>Get suggestions</b>. Entune transcribes the selection with your speech model, then the dictionary model reads the new text. Transcribing again can take a while and your providers may charge for both steps. You can stop at any time; finished transcripts are kept for a retry.</p>
                 <h3>Reviewing suggestions</h3>
-                <p>Suggestions appear above your dictionary, grouped into new entries, changes and removals. You can edit any of them, remove the ones you don't want with ×, and then apply the rest in one step. Nothing is saved until you apply. While suggestions are open, dictation pauses, so apply or discard them when you're done.</p>
+                <p>Suggestions open in a panel beside your dictionary, grouped into new entries, changes and removals. You can edit any of them, remove the ones you don't want with ×, and then apply the rest in one step. Nothing is saved until you apply. While suggestions are open, dictation pauses, so apply or discard them when you're done.</p>
                 <h3>Pinned and learned entries</h3>
                 <p><b>Learned</b> entries are used only with the speech model they were learned for. <b>Pin</b> an entry to use it with every speech model; pinned entries are yours and suggestions can't remove them. Pinning doesn't make an entry win: Entune still reads the sentence.</p>
                 <h3>Adding an entry yourself</h3>
-                <p>Choose <b>Add an entry</b>. Write what you meant and describe it, then add each spelling the speech model writes and tick the meanings it can stand for. You can collapse the form and come back to it, or discard it.</p>
+                <p>Choose <b>Add</b> and fill in one line: how it's written, what the speech model hears (several, separated by commas) and what it is. For several meanings, a spelling kept as written, or always replacing, open the full editor from the link under that line. <b>Edit</b> on an entry opens the same editor.</p>
               </article>
             </form>
           </dialog>
@@ -281,6 +298,75 @@
               </footer>
             </form>
           </dialog>
+
+          <dialog class="drawer" id="entry-drawer" aria-labelledby="entry-title">
+            <div class="drawer-inner">
+              <header class="drawer-head">
+                <div><h2 id="entry-title">Edit entry</h2><p class="caption">Several meanings, keep as written, links to other entries, always replace.</p></div>
+                <button type="button" class="btn-icon" id="entry-close" aria-label="Close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+              </header>
+              <div class="drawer-body" id="entry-body"></div>
+              <footer class="drawer-foot">
+                <button type="button" class="btn primary" id="entry-save">Save</button>
+                <button type="button" class="btn ghost" id="entry-cancel">Cancel</button>
+                <span class="spacer"></span>
+                <span class="caption entry-status" id="entry-status" role="status"></span>
+              </footer>
+            </div>
+          </dialog>
+
+          <dialog class="drawer" id="suggest-drawer" aria-labelledby="suggest-title">
+            <div class="drawer-inner">
+              <header class="drawer-head">
+                <div><h2 id="suggest-title">Get suggestions</h2><p class="caption" id="suggest-sub"></p></div>
+                <button type="button" class="btn-icon" id="suggest-close" aria-label="Close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+              </header>
+              <div class="drawer-body">
+                <div class="suggest-setup" id="suggest-setup">
+                  <p id="learn-source">Suggestions from your recent transcripts. Nothing changes until you review them.</p>
+                  <label class="check"><input type="checkbox" id="learning-reuse" /> Include transcripts already used</label>
+                  <p class="caption">Reads transcripts an earlier run already read. It costs tokens again and can repeat earlier suggestions.</p>
+                  <div class="suggest-model">
+                    <label for="dictionary-model">Suggestion model</label>
+                    <select class="select" id="dictionary-model" aria-describedby="dictionary-model-note"></select>
+                    <button type="button" class="btn link" id="suggest-settings">Keys in Settings</button>
+                  </div>
+                  <p class="caption learn-note" id="dictionary-model-note" hidden></p>
+                  <p class="caption">Nothing changes in your dictionary until you apply. While a run or review is open, dictation and dictionary editing are paused.</p>
+                </div>
+                <div class="learn-status" id="learn-status" hidden>
+                  <div class="learn-line"><span class="spinner" id="build-spinner" aria-hidden="true" hidden></span><p class="learn-progress" id="dictionary-build-status" role="status"></p></div>
+                  <details class="build-error-detail" id="build-error-detail" hidden><summary>Technical details</summary><pre id="build-error-text"></pre></details>
+                  <p class="caption" id="run-note" hidden>You can close this panel; progress stays above the list. Finished parts are kept if you stop.</p>
+                </div>
+                <div class="proposal" id="proposal" hidden>
+                  <p class="caption" id="proposal-title">Edit any suggestion, or leave it out with ×. Pinned entries are never changed by suggestions.</p>
+                  <div class="proposal-body" id="proposal-body"></div>
+                </div>
+              </div>
+              <footer class="drawer-foot">
+                <button type="button" class="btn primary" id="build-dictionary">Get suggestions</button>
+                <button type="button" class="btn primary" id="accept-proposal" hidden>Apply</button>
+                <button type="button" class="btn" id="retry-dictionary-build" hidden>Retry the rest</button>
+                <button type="button" class="btn ghost" id="cancel-dictionary-build" hidden>Stop</button>
+                <button type="button" class="btn ghost" id="discard-proposal" hidden>Discard all</button>
+                <button type="button" class="btn ghost" id="abandon-dictionary-build" hidden>Discard</button>
+                <p class="caption save-status" id="build-status" role="status"></p>
+              </footer>
+            </div>
+          </dialog>
+
+          <dialog class="confirm-dialog" id="dict-confirm" aria-labelledby="confirm-title">
+            <form method="dialog" class="confirm-inner">
+              <h2 id="confirm-title"></h2>
+              <p id="confirm-body"></p>
+              <div class="dialog-actions">
+                <button type="submit" class="btn fill" value="cancel">Cancel</button>
+                <button type="submit" class="btn danger" id="confirm-ok" value="ok"></button>
+              </div>
+            </form>
+          </dialog>
+          <div class="toast" id="dict-toast" role="status" hidden></div>
         </div>
       </section>
 
