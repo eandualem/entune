@@ -1,4 +1,4 @@
-"""Groq, OpenAI-style transcriptions endpoint."""
+"""xAI Grok Voice Transcribe, synchronous speech-to-text endpoint."""
 
 from __future__ import annotations
 
@@ -13,13 +13,13 @@ from entune.providers.cloud.http import (
 )
 from entune.providers.contracts import Clip, TranscribeResult
 
-URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+URL = "https://api.x.ai/v1/stt"
 
 
-class Groq:
-    id: str = "groq"
-    name: str = "Groq"
-    models: tuple[str, ...] = ("whisper-large-v3-turbo",)
+class XAI:
+    id: str = "xai"
+    name: str = "xAI Grok"
+    models: tuple[str, ...] = ("grok-voice-transcribe-2.0",)
 
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._owns_client = client is None
@@ -33,12 +33,12 @@ class Groq:
             self._client.close()
 
     def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
-        data = {"model": model, "response_format": "json"}
+        # httpx writes `data` fields before `files`; xAI requires the file last.
         response = self._client.post(
             URL,
             headers={"Authorization": f"Bearer {api_key}"},
             files={"file": (clip.filename, clip.data, clip.mime)},
-            data=data,
+            data={"model": model},
         )
         if response.is_error:
             return failure_from_response(response)

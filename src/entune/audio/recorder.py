@@ -7,6 +7,7 @@ Providers accept any common rate, so the device's is used as is.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -108,13 +109,17 @@ class Recorder:
             if stream is None:
                 return Capture(b"", self._rate)
             try:
-                stream.stop()
-            finally:
                 try:
-                    stream.close()
+                    stream.stop()
                 finally:
-                    self._sink = None
-                    chunks, self._chunks = self._chunks, []
+                    stream.close()
+            except Exception:
+                # A device that went away mid-recording (AirPods back in their case)
+                # cannot be stopped cleanly; what it captured before then is still kept.
+                logging.getLogger(__name__).exception("The microphone did not stop cleanly")
+            finally:
+                self._sink = None
+                chunks, self._chunks = self._chunks, []
             return Capture(b"" if discard else b"".join(chunks), self._rate)
 
     def _on_audio(self, indata: Any, frames: int, time: Any, status: Any) -> None:

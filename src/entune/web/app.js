@@ -132,7 +132,7 @@ async function loadModels() {
   if (!defaultModel && models.length > 0) modelSelect.prepend(new Option("Pick a model", "", true, true));
   const provider = defaultModel?.id.split("/")[0];
   const streams = (settings?.providers ?? []).some((p) => p.id === provider && p.streams);
-  fastInput.disabled = !streams;
+  fastInput.disabled = !streams || fastSaving;
   fastWrap.classList.toggle("off", !streams);
   fastWrap.title = streams
     ? "Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop"
@@ -156,10 +156,18 @@ modelSelect.addEventListener("change", async () => {
   } catch (err) {
     status.textContent = errorText(err);
   }
-  await loadModels();
+  await loadModels().catch((err) => { status.textContent = errorText(err); });
 });
 
-fastInput.addEventListener("change", () => settingsView.save({ fastMode: fastInput.checked }, null));
+// One fast-mode save at a time: the switch waits for the server's answer, so a refused
+// save is undone exactly and never crosses another.
+let fastSaving = false;
+fastInput.addEventListener("change", async () => {
+  fastSaving = fastInput.disabled = true;
+  if (!(await settingsView.save({ fastMode: fastInput.checked }, null))) fastInput.checked = !fastInput.checked;
+  fastSaving = false;
+  fastInput.disabled = fastWrap.classList.contains("off");
+});
 
 // ---- Performance by model: the comparison on the Models page ----
 const metricsRows = el("metrics-rows");
@@ -254,7 +262,6 @@ const history = createHistory({
   list: historyList, newer: el("history-newer"), older: el("history-older"), renderCard: (recording) => renderCard(recording, models),
   onChange(recordings) {
     placeDetails(); // closes the details popover if its card was redrawn
-    loadMetrics().catch(() => {});
     recordingsCount = recordings.length;
     emptyState.hidden = recordings.length > 0;
     if (recordings.length === 0) renderStart();
@@ -349,7 +356,8 @@ initRecording({
   onStatus(message) { status.textContent = message; },
   async onUploaded() { show("history"); await history.latest(); },
 });
-await settingsView.load();
+// A failed load is shown; the page still opens its view instead of stopping here.
+await settingsView.load().catch((err) => { status.textContent = errorText(err); });
 try {
   if (sessionStorage.getItem("entune-reset")) { sessionStorage.removeItem("entune-reset"); status.textContent = "All Entune data was deleted."; }
 } catch (e) {}

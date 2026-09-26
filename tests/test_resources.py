@@ -72,6 +72,35 @@ def test_foreground_wins_between_clips_and_switch_does_not_unload_in_use_model(
         assert owner.close()
 
 
+def test_a_retry_with_another_local_model_loads_the_default_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local = WhisperCpp(tmp_path)
+    loaded: list[str] = []
+    warmed = threading.Event()
+
+    def warm(name: str) -> None:
+        loaded.append(name)
+        warmed.set()
+
+    monkeypatch.setattr(local, "unload", lambda keep=None: None)
+    monkeypatch.setattr(local, "warm", warm)
+    owner = SpeechResources([local], pytest.fail)
+    owner.select(ModelRef(local, "base.en"))
+    assert warmed.wait(2)
+    warmed.clear()
+    with owner.use(ModelRef(local, "small.en")):  # a retry from history
+        pass
+    assert warmed.wait(2) and loaded == ["base.en", "base.en"]
+    with owner.use(ModelRef(local, "small.en"), background=True):  # learning keeps its model
+        pass
+    with owner.use(ModelRef(local, "base.en")):  # the default itself
+        pass
+    wait_until(lambda: not owner.warming)
+    assert loaded == ["base.en", "base.en"]
+    assert owner.close()
+
+
 def test_cleanup_finishes_before_background_can_return_and_failure_releases_slot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

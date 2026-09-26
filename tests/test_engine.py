@@ -175,6 +175,21 @@ def test_injected_keys_such_as_our_own_paste_never_reach_the_engine() -> None:
     assert events == ["start", "stop"] and not engine.recording
 
 
+def test_a_failing_shortcut_action_never_reaches_pynput() -> None:
+    pytest.importorskip("Quartz", reason="macOS only")
+    from pynput.keyboard import Key
+
+    from entune.desktop.macos.hotkeys import HotkeyListener
+
+    def fail() -> None:
+        raise OSError("microphone unavailable")
+
+    listener = HotkeyListener()
+    listener._engine = ShortcutEngine(shortcuts.parse("alt_r", None), fail, fail, fail)
+    listener._on_press(Key.alt_r)  # pynput stops listening if a callback raises
+    listener._on_release(Key.alt_r)
+
+
 @pytest.mark.parametrize("hands_free", [False, True])
 def test_fn_control_cancels_without_submitting_or_restarting(hands_free: bool) -> None:
     engine, events = make("fn", "cmd+fn")

@@ -5,6 +5,7 @@ Written against `platform.Platform` only; no operating-system code lives here.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import queue
 import socket
@@ -302,6 +303,7 @@ class EntuneApp:
                 self._finish(operation)
                 return
             self.entune.desktop.report_status(lastRecordingStarted=time.time(), lastError=None)
+            self.entune.dictation.prepare()
             self._quiet_notified = False
             self._recording = True
             self._later(self._refresh_state)
@@ -333,7 +335,9 @@ class EntuneApp:
                 self._finish(operation)
                 return
             if not operation.cancel.is_set():
-                self.entune.operations.stage(operation, "saving")
+                # Cancelled a moment ago: the clip is still saved, then not transcribed.
+                with contextlib.suppress(CancelledError):
+                    self.entune.operations.stage(operation, "saving")
             self._captures.put((capture, upload, operation))
 
     def cancel_recording(self) -> None:
@@ -384,6 +388,13 @@ class EntuneApp:
                 if self._quitting:
                     operation.cancel.set()
                 self._transcribe_and_deliver(recording, seconds, upload, operation)
+            except Exception as exc:
+                # The only transcription thread outlives one clip's failure (a store error
+                # while cancelling, say), and that clip's operation ends, so the next
+                # dictation is not refused as busy.
+                logging.getLogger(__name__).exception("Transcription worker")
+                self._notify_later("Entune: transcription failed", f"{type(exc).__name__}: {exc}")
+                self._finish(operation)
             finally:
                 self._jobs.task_done()
 

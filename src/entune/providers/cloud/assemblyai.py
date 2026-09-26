@@ -29,9 +29,11 @@ import httpx
 from entune.audio.formats import wav_bytes
 from entune.providers.cloud.contracts import Upload
 from entune.providers.cloud.http import (
-    DEFAULT_TIMEOUT,
     failure_from_body,
     failure_from_response,
+    json_body,
+    new_client,
+    open_connection,
     text_or_failure,
 )
 from entune.providers.contracts import Clip, Failure, TranscribeResult
@@ -54,9 +56,12 @@ class AssemblyAI:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._owns_client = client is None
-        self._client = client or httpx.Client(timeout=DEFAULT_TIMEOUT)
+        self._client = client or new_client()
         self._sleep = sleep
         self._uploads: weakref.WeakSet[StreamingUpload] = weakref.WeakSet()
+
+    def preconnect(self) -> None:
+        open_connection(self._client, SYNC_URL)  # where clips up to two minutes go
 
     def close(self) -> None:
         uploads = list(self._uploads)
@@ -77,7 +82,7 @@ class AssemblyAI:
         )
         if response.is_error:
             return failure_from_response(response)
-        return text_or_failure(response.json())
+        return text_or_failure(json_body(response))
 
     def _transcribe_long(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         headers = {"Authorization": api_key}
@@ -90,7 +95,7 @@ class AssemblyAI:
             )
             if upload.is_error:
                 return failure_from_response(upload)
-            body = upload.json()
+            body = json_body(upload)
             audio_url = body.get("upload_url") if isinstance(body, dict) else None
             if not isinstance(audio_url, str):
                 return failure_from_body(body)
@@ -99,7 +104,7 @@ class AssemblyAI:
         created = self._client.post(f"{BASE}/transcript", headers=headers, json=request)
         if created.is_error:
             return failure_from_response(created)
-        job = created.json()
+        job = json_body(created)
         job_id = job.get("id") if isinstance(job, dict) else None
         if not isinstance(job_id, str):
             return failure_from_body(job)
@@ -120,7 +125,7 @@ class AssemblyAI:
             status = self._client.get(f"{BASE}/transcript/{job_id}", headers=headers)
             if status.is_error:
                 return failure_from_response(status)
-            body = status.json()
+            body = json_body(status)
             state = body.get("status") if isinstance(body, dict) else None
             if state == "completed":
                 return text_or_failure(body)
@@ -217,7 +222,7 @@ class StreamingUpload:
             if response.is_error:
                 self.error = failure_from_response(response).error
                 return
-            body = response.json()
+            body = json_body(response)
             url = body.get("upload_url") if isinstance(body, dict) else None
             if isinstance(url, str):
                 self.url = url

@@ -12,9 +12,10 @@
 
 Entune is a small, local dictation app. Hold a key or press a shortcut,
 speak, and the transcript is pasted where you were typing. You bring your
-own API key for a speech-to-text provider, AssemblyAI, Groq or Soniox, or
-download a model that runs on your own Mac, so you pick the engine that
-transcribes you instead of taking whichever one a dictation product bundles.
+own API key for a speech-to-text provider, AssemblyAI, Groq, Soniox,
+ElevenLabs or xAI, or download a model that runs on your own Mac, so you
+pick the engine that transcribes you instead of taking whichever one a
+dictation product bundles.
 Every recording and transcript is kept in a local history, with the
 provider's exact error and a one-click retry with another model when a
 transcription fails, and a performance table by model built from your own
@@ -24,8 +25,8 @@ It is for people who dictate a meaningful share of what they write and want
 control over the engine, the cost and where their words go.
 
 <p align="center">
-  <img src="docs/demo/6-history-light.jpg" width="49%" alt="History in light mode: recordings with audio, transcript, copy and re-transcribe" />
-  <img src="docs/demo/4-settings-dark.jpg" width="49%" alt="Settings in dark mode: API keys, default model, shortcuts" />
+  <img src="docs/demo/history-light.jpg" width="49%" alt="History in light mode: each recording with its audio and transcript, or the provider's exact error, and transcribe again with another model" />
+  <img src="docs/demo/models-dark.jpg" width="49%" alt="Models in dark mode: API keys for the cloud speech services you use" />
 </p>
 
 <!-- TODO: a short recording of hold the key, speak, release, watch the paste land -->
@@ -145,23 +146,30 @@ reach other apps as a modifier. Pick another key if you need fn elsewhere.
 | AssemblyAI | universal-3-5-pro | sync endpoint; clips over two minutes use the long-form endpoint |
 | Groq | whisper-large-v3-turbo | OpenAI-style transcriptions endpoint |
 | Soniox | stt-async-v5 | upload, poll, fetch; the upload is deleted afterwards |
+| ElevenLabs | scribe_v2 | synchronous speech-to-text endpoint |
+| xAI Grok | grok-voice-transcribe-2.0 | synchronous speech-to-text endpoint |
 | Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
 | Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
 
-Enter a provider's API key in Settings and its model appears in the model
-list; pick one as the default. You pay each provider directly, per minute
+Enter a provider's API key on the Models page and its model appears in the
+model list; pick one as the default. You pay each provider directly, per minute
 of audio, at its own published rate:
 [AssemblyAI](https://www.assemblyai.com/pricing),
-[Groq](https://groq.com/pricing),
-[Soniox](https://soniox.com/pricing).
+[Groq](https://console.groq.com/docs/model/whisper-large-v3-turbo),
+[Soniox](https://soniox.com/pricing),
+[ElevenLabs](https://elevenlabs.io/pricing/api),
+[xAI](https://docs.x.ai/developers/models).
 
 Keys live in the local database, are only ever sent to the provider they
 belong to, and are never shown again beyond a masked hint.
 
-**Local models** need no key. Settings lists them with their size and a
+**Local models** need no key. The Models page lists them with their size and a
 Download button; a model is fetched once (resumes if interrupted) and then
 sits in the same model lists as the cloud ones, so you can make it the
 default or retry a cloud failure with it. Runs on the GPU on Apple Silicon.
+Local models read WAV, which is what Entune records; other imported audio
+(MP3, M4A, FLAC, Ogg, WebM) is converted with [ffmpeg](https://ffmpeg.org/),
+which you install yourself, for example `brew install ffmpeg`.
 A local model takes memory only while it is the selected model: it is loaded
 when you pick it, freed when you pick something else, and a model used for a
 single retry is freed right after.
@@ -206,7 +214,9 @@ meaning and its associations across models, without giving it priority over comp
 Existing dictionaries are backed up before conversion and retained for review. Confirmed
 agent corrections still use the existing local API. The dictionary model is chosen on
 the Dictionary page and serves every learning run; keys are added in Settings.
-Generation suggestions are Sonnet 5 and GPT-5.4 mini. **Add an entry** creates a group by
+The dictionary model can come from Anthropic, OpenAI, Google Gemini, Groq or Mistral;
+Groq uses the same key as Groq speech. Generation suggestions are Sonnet 5 and GPT-5.4
+mini. **Add an entry** creates a group by
 hand: meanings with output spellings and definitions, recognized forms, and which
 meanings each form may stand for.
 
@@ -232,6 +242,12 @@ including while proposals await review. Stop or a later failure retains validate
 completed batches for review, with their actual coverage and cause. A running speech
 call may need to finish; a generation request can be interrupted. Apply, discard, or
 retry the completed portion. No changes are applied automatically.
+
+The dictionary model's reply must match the dictionary's format, which the provider
+enforces where it can. When a reply still breaks one of the dictionary's rules, the
+model is shown the rule and asked for a corrected reply, at most twice per part. The
+progress line says so and names the rule, and **Stop** ends it. Failed requests,
+refused keys and replies cut at the output limit are never retried.
 
 Default history refinement uses up to 300 recent, unprocessed attempts for the selected
 speech model; “All history” deliberately includes older/previously examined data.
@@ -321,7 +337,7 @@ Enabled features determine what is sent out:
 - **Cloud speech:** the selected provider receives the audio clip; AssemblyAI fast
   mode starts uploading during recording. Local Whisper.cpp and Parakeet transcribe
   on this machine, without sending audio to a speech service.
-- **Dictionary builds:** the chosen Anthropic or OpenAI model receives raw source
+- **Dictionary builds:** the chosen dictionary model's provider receives raw source
   transcripts (for refinement, beside the dictionary step's recorded result) and the
   pinned/working confusion groups, including definitions and personal context. Each
   chunk sends the current working dictionary again.
@@ -352,9 +368,11 @@ from imported audio are not saved or included in the transcript export.
 ## Development
 
 The app uses Starlette and SQLite, plain browser JavaScript modules without
-a build step, and httpx for provider calls. Dictionary builds call Anthropic
-or OpenAI directly; the suggested model list is kept in `learning/suggestion_model.py`, with a
-custom model field in Settings.
+a build step, and httpx for speech-provider calls. Dictionary builds use Pydantic AI,
+which gives the reply a declared schema and one interface to each language-model
+provider; `learning/suggestion_model/` holds the provider list and suggested models
+(`catalog.py`), the per-provider clients (`providers.py`) and the call (`call.py`),
+with a custom model field in Settings.
 
 Speech adapters are organized under providers/cloud and providers/local,
 with common contracts separate from HTTP and local lifecycle capabilities.

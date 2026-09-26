@@ -4,11 +4,15 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 
 from entune.audio.formats import wav_bytes
 from entune.providers.cloud.assemblyai import AssemblyAI
+from entune.providers.cloud.elevenlabs import ElevenLabs
 from entune.providers.cloud.groq import Groq
+from entune.providers.cloud.http import NotJson
 from entune.providers.cloud.soniox import Soniox
+from entune.providers.cloud.xai import XAI
 from entune.providers.contracts import Clip, Failure, Transcript
 from entune.providers.registry import default_providers, resolve_model
 from tests.conftest import mock_client
@@ -46,11 +50,81 @@ def test_groq_sends_the_openai_style_form(clip: Clip) -> None:
     assert b'name="file"; filename="clip.webm"' in request.content
 
 
+def test_elevenlabs_sends_scribe_synchronously(clip: Clip) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"text": "hi", "words": []})
+
+    result = ElevenLabs(mock_client(handler)).transcribe(clip, "scribe_v2", "k")
+    assert result == Transcript("hi")
+    request = seen[0]
+    assert str(request.url) == "https://api.elevenlabs.io/v1/speech-to-text"
+    assert request.headers["xi-api-key"] == "k"
+    assert b'name="model_id"\r\n\r\nscribe_v2' in request.content
+    assert b'name="file"; filename="clip.webm"' in request.content
+    assert b"webhook" not in request.content and b"keyterms" not in request.content
+
+
+def test_xai_sends_the_file_after_every_other_field(clip: Clip) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"text": "hi", "language": "en", "words": []})
+
+    result = XAI(mock_client(handler)).transcribe(clip, "grok-voice-transcribe-2.0", "k")
+    assert result == Transcript("hi")
+    request = seen[0]
+    assert str(request.url) == "https://api.x.ai/v1/stt"
+    assert request.headers["authorization"] == "Bearer k"
+    body = request.content
+    assert body.index(b'name="model"\r\n\r\ngrok-voice-transcribe-2.0') < body.index(b'name="file"')
+    assert b"keyterm" not in body
+
+
 def test_a_failed_response_is_returned_verbatim(clip: Clip) -> None:
     body = '{"error":{"message":"Invalid API Key"}}'
     client = mock_client(lambda _: httpx.Response(401, content=body))
     result = Groq(client).transcribe(clip, "whisper-large-v3-turbo", "k")
     assert result == Failure(f"HTTP 401 Unauthorized\n{body}")
+
+
+@pytest.mark.parametrize("adapter", [AssemblyAI, Groq, ElevenLabs, XAI, Soniox])
+def test_a_success_status_without_json_fails_with_the_body_verbatim(
+    clip: Clip, adapter: type[AssemblyAI | Groq | ElevenLabs | XAI | Soniox]
+) -> None:
+    page = "<html>Service is under maintenance</html>"  # a proxy or gateway page
+    client = mock_client(lambda _: httpx.Response(200, text=page))
+    with pytest.raises(NotJson) as failed:
+        adapter(client).transcribe(clip, adapter.models[0], "k")
+    assert str(failed.value) == f"HTTP 200 OK\n{page}"
+
+
+@pytest.mark.parametrize(
+    ("adapter", "host"),
+    [
+        (AssemblyAI, "sync.assemblyai.com"),
+        (Groq, "api.groq.com"),
+        (ElevenLabs, "api.elevenlabs.io"),
+        (XAI, "api.x.ai"),
+        (Soniox, "api.soniox.com"),
+    ],
+)
+def test_preconnect_opens_the_endpoint_without_a_key_or_audio(
+    adapter: type[AssemblyAI | Groq | ElevenLabs | XAI | Soniox], host: str
+) -> None:
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        raise httpx.ConnectError("offline")  # a failure is left to the request itself
+
+    adapter(mock_client(handler)).preconnect()
+    ((request,),) = [sent]
+    assert (request.method, request.url.host) == ("HEAD", host)
+    assert "authorization" not in request.headers and not request.content
 
 
 def test_a_body_without_text_is_a_failure(clip: Clip) -> None:
@@ -294,15 +368,20 @@ def test_adapters_close_owned_clients_but_leave_injected_clients_to_the_caller(
     tmp_path: Path,
 ) -> None:
     from entune.providers.cloud.assemblyai import AssemblyAI
+    from entune.providers.cloud.elevenlabs import ElevenLabs
     from entune.providers.cloud.groq import Groq
     from entune.providers.cloud.soniox import Soniox
+    from entune.providers.cloud.xai import XAI
     from entune.providers.local.parakeet import Parakeet
     from entune.providers.local.whisper import WhisperCpp
 
-    owned: list[AssemblyAI | Groq | Soniox | WhisperCpp | Parakeet] = [
+    Adapter = AssemblyAI | Groq | Soniox | ElevenLabs | XAI | WhisperCpp | Parakeet
+    owned: list[Adapter] = [
         AssemblyAI(),
         Groq(),
         Soniox(),
+        ElevenLabs(),
+        XAI(),
         WhisperCpp(tmp_path),
         Parakeet(tmp_path),
     ]
@@ -310,10 +389,12 @@ def test_adapters_close_owned_clients_but_leave_injected_clients_to_the_caller(
         provider.close()
         assert provider._client.is_closed
     with mock_client(lambda req: httpx.Response(200)) as client:
-        injected: list[AssemblyAI | Groq | Soniox | WhisperCpp | Parakeet] = [
+        injected: list[Adapter] = [
             AssemblyAI(client),
             Groq(client),
             Soniox(client),
+            ElevenLabs(client),
+            XAI(client),
             WhisperCpp(tmp_path, client=client),
             Parakeet(tmp_path, client=client),
         ]

@@ -190,6 +190,50 @@ def test_total_deadline_cancels_a_dripping_body_and_releases_the_socket() -> Non
     assert client._thread is not None and not client._thread.is_alive()
 
 
+def test_an_answer_arriving_as_a_wait_times_out_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    answer = {"q": {"yes": 1.0}}
+
+    class JustInTime:
+        arrived = False
+
+        def result(self, timeout: float | None = None) -> dict[str, dict[str, float]]:
+            if timeout is not None and not self.arrived:
+                self.arrived = True  # the answer lands while this wait runs out
+                raise TimeoutError
+            return answer
+
+        def done(self) -> bool:
+            return self.arrived
+
+    def schedule(coroutine: Any, loop: object) -> JustInTime:
+        coroutine.close()
+        return JustInTime()
+
+    with closing(jev_client.Client(httpx.MockTransport(lambda _: httpx.Response(500)))) as client:
+        context = jev_client.Call(client, "k", jev_client.Policy(), time.monotonic() + 5)
+        with monkeypatch.context() as patched:
+            patched.setattr(asyncio, "run_coroutine_threadsafe", schedule)
+            assert client.ask(context, {}, {}) == answer
+
+
+def test_preconnect_opens_the_connection_without_the_key() -> None:
+    sent: list[httpx.Request] = []
+    done = threading.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        done.set()
+        return httpx.Response(405)
+
+    client = jev_client.Client(httpx.MockTransport(handler))
+    client.preconnect()
+    assert done.wait(2)
+    assert sent[0].method == "HEAD" and "authorization" not in sent[0].headers
+    client.close()
+    client.preconnect()  # after shutdown: nothing starts
+    assert len(sent) == 1
+
+
 def test_shutdown_cancels_inflight_work_and_rejects_new_requests() -> None:
     entered = threading.Event()
     cancelled = threading.Event()

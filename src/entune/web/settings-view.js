@@ -59,7 +59,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       el("dm-caption").textContent = provider.keyHint ? `key saved ${provider.keyHint}` : `no key for ${provider.name} yet: add one to build the dictionary`;
     } else {
       el("dm-title").textContent = "No model";
-      el("dm-caption").textContent = anyKey ? "" : "Add an Anthropic or OpenAI key to build the dictionary from your history.";
+      el("dm-caption").textContent = anyKey ? "" : "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral to build the dictionary from your history.";
     }
   }
   function splitRef(ref) {

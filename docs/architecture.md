@@ -33,8 +33,9 @@ src/entune/
   dictionary/     entries.py: meanings, forms, groups; document.py: dictionary.json;
                   changes.py: pinning, proposals and review; matching.py: eligible meanings
                   and exact edits; corrections.py: confirmed corrections from other apps
-  learning/       dictionary suggestions: suggestion_model.py (providers, one call),
-                  inputs.py, batches.py (requests), replies.py (parse and apply), generate.py
+  learning/       dictionary suggestions: suggestion_model/ (catalog, providers and one
+                  Pydantic AI call), inputs.py, batches.py (requests), replies.py (reply
+                  schema, parse and apply), generate.py
   storage/        store.py: SQLite rows + audio files; records.py, schema.py;
                   data_folder.py: what Entune owns in its folder; paths.py: where it is
   prompts/        packaged generation text and structured Jev questions/criteria/examples;

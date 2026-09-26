@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import math
 import threading
 import time
@@ -86,13 +87,9 @@ class Client:
         with self._lock:
             if self._closed:
                 raise JevError("correction is shutting down")
-            if self._loop is None:
-                self._loop = asyncio.new_event_loop()
-                self._thread = threading.Thread(
-                    target=self._loop.run_forever, daemon=True, name="entune-jev"
-                )
-                self._thread.start()
-            future = asyncio.run_coroutine_threadsafe(self._ask(call, state, questions), self._loop)
+            future = asyncio.run_coroutine_threadsafe(
+                self._ask(call, state, questions), self._running_loop()
+            )
         try:
             while True:
                 if call.cancel is not None and call.cancel.is_set():
@@ -105,7 +102,8 @@ class Client:
                     return future.result(timeout=min(0.05, remaining))
                 except TimeoutError:
                     if future.done():
-                        raise
+                        # Finished as the wait ran out: its answer, or its own error.
+                        return future.result()
         except TimeoutError as exc:
             future.cancel()
             raise JevError("processing deadline reached") from exc
@@ -114,14 +112,42 @@ class Client:
                 raise
             raise JevError("correction is shutting down") from exc
 
-    async def _ask(
-        self, call: Call, state: object, questions: dict[str, Any]
-    ) -> dict[str, dict[str, float]]:
+    def preconnect(self) -> None:
+        """Open the connection the next question will use while the user is still
+        speaking. A HEAD request without the key; its answer is ignored, and so is a
+        failure, which the question will meet within its own deadline and retries."""
+        with self._lock:
+            if self._closed:
+                return
+            asyncio.run_coroutine_threadsafe(self._preconnect(), self._running_loop())
+
+    def _running_loop(self) -> asyncio.AbstractEventLoop:
+        """The client's event loop, started on first use; the caller holds the lock."""
+        if self._loop is None:
+            self._loop = asyncio.new_event_loop()
+            self._thread = threading.Thread(
+                target=self._loop.run_forever, daemon=True, name="entune-jev"
+            )
+            self._thread.start()
+        return self._loop
+
+    def _pool(self) -> httpx.AsyncClient:
+        """The HTTP pool, made on the client's loop the first time it is needed."""
         if self._http is None:
             self._http = httpx.AsyncClient(
                 transport=self._transport,
                 limits=httpx.Limits(max_keepalive_connections=1, keepalive_expiry=60.0),
             )
+        return self._http
+
+    async def _preconnect(self) -> None:
+        with contextlib.suppress(httpx.HTTPError):
+            await self._pool().head(URL, timeout=5.0)
+
+    async def _ask(
+        self, call: Call, state: object, questions: dict[str, Any]
+    ) -> dict[str, dict[str, float]]:
+        http = self._pool()
         error = "processing deadline reached"
         while call.attempts < call.policy.max_attempts:
             remaining = call.deadline - time.monotonic()
@@ -132,7 +158,7 @@ class Client:
             delay = 0.15 * 2 ** (call.attempts - 1)
             try:
                 async with asyncio.timeout(budget):
-                    response = await self._http.post(
+                    response = await http.post(
                         URL,
                         headers={"Authorization": f"Bearer {call.key}"},
                         json={"model": MODEL, "state": state, "questions": questions},

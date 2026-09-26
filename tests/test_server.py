@@ -20,6 +20,7 @@ from entune.api import data as data_api
 from entune.app.entune import Entune
 from entune.app.metrics import model_metrics
 from entune.audio.formats import wav_bytes
+from entune.learning.suggestion_model import Request
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from entune.server import create_app
 from entune.storage.store import Store
@@ -120,6 +121,17 @@ def test_record_fail_retry_and_history(client: TestClient, stub: StubProvider) -
     audio = client.get(f"/api/recordings/{failed['id']}/audio")
     assert audio.status_code == 200 and audio.content == WEBM_HEADER
     assert audio.headers["content-type"].startswith("audio/webm")
+
+
+def test_a_page_recording_opens_the_provider_connection(tmp_path: Path) -> None:
+    opened = threading.Event()
+    stub = StubProvider()
+    stub.preconnect = opened.set  # type: ignore[attr-defined]
+    app = Entune(Store(tmp_path), [stub])
+    client = TestClient(create_app(app), base_url="http://localhost")
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    assert client.post("/api/operations").status_code == 201
+    assert opened.wait(2)
 
 
 def test_unknown_routes(client: TestClient) -> None:
@@ -349,7 +361,13 @@ def test_dictionary_direct_mappings_are_explicit_and_scope_is_preserved(
 
 def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     settings = client.get("/api/settings").json()
-    assert [p["id"] for p in settings["llmProviders"]] == ["anthropic", "openai"]
+    assert [p["id"] for p in settings["llmProviders"]] == [
+        "anthropic",
+        "openai",
+        "google",
+        "groq",
+        "mistral",
+    ]
     assert settings["llmProviders"][0]["defaultModel"] == "anthropic:claude-sonnet-5"
     assert settings["llmProviders"][0]["models"][0] == {
         "id": "anthropic:claude-sonnet-5",
@@ -367,6 +385,10 @@ def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     assert settings["llmProviders"][0]["keyHint"] == "••••1234"
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
     assert client.get("/api/settings").json()["dictionaryModel"] == "openai:gpt-6-astra"
+    # One Groq key serves speech and suggestions.
+    client.put("/api/settings", json={"keys": {"groq": "gsk-5678"}})
+    groq = next(p for p in client.get("/api/settings").json()["llmProviders"] if p["id"] == "groq")
+    assert groq["keyHint"] == "••••5678"
 
 
 def test_learning_needs_an_explicit_mode(client: TestClient) -> None:
@@ -380,10 +402,10 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
 ) -> None:
     calls: list[tuple[str, str]] = []
 
-    async def fake(provider: str, api_key: str, model: str, system: str, user: str) -> str:
-        calls.append((model, api_key))
-        assert "hello there, I use cloud code" in user
-        assert "from another model" not in user
+    async def fake(request: Request) -> str:
+        calls.append((request.model, request.api_key))
+        assert "hello there, I use cloud code" in request.user
+        assert "from another model" not in request.user
         if len(calls) == 2:
             with pytest.raises(ValueError, match="preparing dictionary suggestions"):
                 entune.dictionary.add_agent_corrections(
@@ -394,7 +416,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     entune = Entune(Store(tmp_path), [stub], llm_call=fake)
     client = TestClient(create_app(entune), base_url="http://localhost")
     res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
-    assert res.status_code == 400 and "Add an Anthropic or OpenAI key" in res.text
+    assert res.status_code == 400 and "Add a key for Anthropic, OpenAI" in res.text
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
     res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
     assert res.status_code == 400 and "No API key set for OpenAI" in res.text

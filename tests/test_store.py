@@ -44,6 +44,20 @@ def test_recent_transcripts_are_one_models_raw_text_newest_first(tmp_path: Path)
     assert store.recent_transcripts("p", "other", 10) == ["another model's"]
 
 
+def test_learning_audio_lists_recordings_with_their_newest_length_and_models(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    rec = store.create_recording(WEBM_HEADER)
+    store.add_transcription(rec.id, "p", "b", "ok", "x", None, audio_seconds=1.0)
+    store.add_transcription(rec.id, "p", "a", "ok", "y", None, audio_seconds=2.0)
+    store.add_transcription(rec.id, "p", "a", "ok", "z", None)  # newest, length unknown
+    store.add_transcription(rec.id, "q", "c", "error", None, "boom")
+    ((item, path),) = store.learning_audio()
+    assert (item.id, item.seconds, path) == (f"recording:{rec.id}", 2.0, store.audio_path(rec))
+    assert store.recording_models() == {rec.id: ["p/a", "p/b"]}
+
+
 def test_timing_columns_persist_and_older_databases_get_them(tmp_path: Path) -> None:
     store = Store(tmp_path)
     recording = store.create_recording(b"abc", "audio/wav")

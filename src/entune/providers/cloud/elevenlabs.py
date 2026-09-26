@@ -1,4 +1,4 @@
-"""Groq, OpenAI-style transcriptions endpoint."""
+"""ElevenLabs Scribe, synchronous speech-to-text endpoint."""
 
 from __future__ import annotations
 
@@ -13,13 +13,13 @@ from entune.providers.cloud.http import (
 )
 from entune.providers.contracts import Clip, TranscribeResult
 
-URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+URL = "https://api.elevenlabs.io/v1/speech-to-text"
 
 
-class Groq:
-    id: str = "groq"
-    name: str = "Groq"
-    models: tuple[str, ...] = ("whisper-large-v3-turbo",)
+class ElevenLabs:
+    id: str = "elevenlabs"
+    name: str = "ElevenLabs"
+    models: tuple[str, ...] = ("scribe_v2",)
 
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._owns_client = client is None
@@ -33,12 +33,12 @@ class Groq:
             self._client.close()
 
     def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
-        data = {"model": model, "response_format": "json"}
+        # No `webhook`, so the transcript comes back in this response.
         response = self._client.post(
             URL,
-            headers={"Authorization": f"Bearer {api_key}"},
+            headers={"xi-api-key": api_key},
             files={"file": (clip.filename, clip.data, clip.mime)},
-            data=data,
+            data={"model_id": model, "tag_audio_events": "false"},
         )
         if response.is_error:
             return failure_from_response(response)

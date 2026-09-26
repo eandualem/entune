@@ -14,9 +14,11 @@ from collections.abc import Callable
 import httpx
 
 from entune.providers.cloud.http import (
-    DEFAULT_TIMEOUT,
     failure_from_body,
     failure_from_response,
+    json_body,
+    new_client,
+    open_connection,
     text_or_failure,
 )
 from entune.providers.contracts import Clip, Failure, TranscribeResult
@@ -37,8 +39,11 @@ class Soniox:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._owns_client = client is None
-        self._client = client or httpx.Client(timeout=DEFAULT_TIMEOUT)
+        self._client = client or new_client()
         self._sleep = sleep
+
+    def preconnect(self) -> None:
+        open_connection(self._client, BASE)
 
     def close(self) -> None:
         if self._owns_client:
@@ -52,18 +57,18 @@ class Soniox:
         )
         if upload.is_error:
             return failure_from_response(upload)
-        file_id = _id_of(upload.json())
+        file_id = _id_of(json_body(upload))
         if file_id is None:
-            return failure_from_body(upload.json())
+            return failure_from_body(json_body(upload))
 
         try:
             request: dict[str, object] = {"file_id": file_id, "model": model}
             created = self._client.post(f"{BASE}/transcriptions", headers=headers, json=request)
             if created.is_error:
                 return failure_from_response(created)
-            job_id = _id_of(created.json())
+            job_id = _id_of(json_body(created))
             if job_id is None:
-                return failure_from_body(created.json())
+                return failure_from_body(json_body(created))
             try:
                 return self._wait_for_transcript(job_id, headers)
             finally:
@@ -77,7 +82,7 @@ class Soniox:
             status = self._client.get(f"{BASE}/transcriptions/{job_id}", headers=headers)
             if status.is_error:
                 return failure_from_response(status)
-            body = status.json()
+            body = json_body(status)
             state = body.get("status") if isinstance(body, dict) else None
             if state == "completed":
                 transcript = self._client.get(
@@ -85,7 +90,7 @@ class Soniox:
                 )
                 if transcript.is_error:
                     return failure_from_response(transcript)
-                return text_or_failure(transcript.json())
+                return text_or_failure(json_body(transcript))
             if state == "error":
                 return Failure(f"Transcription failed\n{json.dumps(body)}")
             self._sleep(POLL_SECONDS)
