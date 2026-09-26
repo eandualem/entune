@@ -169,14 +169,15 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   // and the fresh document is shown instead. Explicit JSON repair can replace an
   // unreadable document after confirmation; list edits always need a loaded version.
   // Returns an error message, or "" when saved.
-  async function saveDictionary(next, fromEditor = false) {
+  // `base` is the revision `next` was made from, when that is older than the loaded one.
+  async function saveDictionary(next, fromEditor = false, base = dictVersion) {
     if (building) return "Apply or discard the open suggestions first.";
-    if (!dictVersion && !fromEditor) {
+    if (!base && !fromEditor) {
       await loadDictionary();
       return dictVersion ? "Dictionary reloaded; please redo that change." : "The dictionary could not be loaded.";
     }
     const headers = { "content-type": "application/json" };
-    if (dictVersion) headers["if-match"] = dictVersion;
+    if (base) headers["if-match"] = base;
     else if (!await confirmAction("Replace dictionary.json?", "The dictionary could not be loaded. Saving replaces the file with this JSON.", "Replace")) return "Not saved.";
     const res = await fetch("/api/dictionary", { method: "PUT", headers, body: JSON.stringify(next) });
     const text = await res.text();
@@ -414,6 +415,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     return touched;
   }
   async function removeEntry(scope, g) {
+    const version = dictVersion; // a reload while confirming makes this a conflict, not an overwrite
     const next = clone();
     const list = scope === "pinned" ? next.pinned : next.learned[getModel()?.id] ?? [];
     const at = list.findIndex((x) => x.id === g.id);
@@ -422,7 +424,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const name = title(g);
     const body = "Its meanings and heard forms are deleted." + (others ? ` ${plural(others, "other entry", "other entries")} linked to its meanings; those links are removed too.` : "");
     if (!await confirmAction(`Remove “${name}”?`, body, "Remove")) return;
-    const problem = await saveDictionary(next);
+    const problem = await saveDictionary(next, false, version);
     if (problem) { toast(problem, "err"); return; }
     openId = null;
     renderRows();
@@ -531,20 +533,60 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   el("entry-close").addEventListener("click", closeEditor);
   el("entry-cancel").addEventListener("click", closeEditor);
 
-  // The draft is redrawn after every change; focus and the caret return to the same field.
+  // Clicks and structural changes redraw the draft; typing only updates it and refreshes
+  // what depends on the text, so the field being typed in is never replaced (native undo
+  // and input methods keep working).
   function drawEditor() {
     const body = el("entry-body");
     const active = document.activeElement?.dataset?.key;
-    const caret = active && "selectionStart" in document.activeElement ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     body.replaceChildren(...editorParts());
-    if (active) {
-      const field = body.querySelector(`[data-key="${CSS.escape(active)}"]`);
-      field?.focus();
-      if (caret && field?.setSelectionRange) try { field.setSelectionRange(...caret); } catch (e) {}
-    }
+    if (active) body.querySelector(`[data-key="${CSS.escape(active)}"]`)?.focus();
     editorStatus();
   }
   const change = (fn) => { editorError = ""; fn(draft); drawEditor(); };
+  const part = (name, value) => el("entry-body").querySelector(`[data-part="${CSS.escape(`${name}:${value}`)}"]`);
+  const showError = (p, text) => { if (p) { p.textContent = text ?? ""; p.hidden = !text; } };
+  const spellingOf = (mid) => draft.meanings.find((m) => m.id === mid)?.spelling || meanings(dict, draft.model?.id).get(mid)?.spelling || "(no spelling)";
+  const canKeep = (form) => Boolean(words(form.text)) && !draft.meanings.some((m) => literalLink(form, m.id, m));
+  function pillLabel(pill, form, meaning) {
+    const on = form.links.includes(meaning.id);
+    pill.replaceChildren(`${on ? "✓ " : ""}${meaning.spelling || "(no spelling)"}`);
+    if (on && literalLink(form, meaning.id, meaning)) pill.append(node("span", " · as written", "pill-note"));
+  }
+  function refresh() {
+    const d = draft;
+    const problems = editorProblems();
+    for (const meaning of d.meanings) {
+      showError(part("error", `m:${meaning.id}`), problems.meanings.get(meaning.id));
+      part("remove-meaning", meaning.id)?.setAttribute("aria-label", `Remove ${meaning.spelling || "this meaning"} and its links`);
+    }
+    for (const form of d.forms) {
+      showError(part("error", `f:${form.key}`), problems.forms.get(form.key));
+      showError(part("error", `r:${form.key}`), problems.direct.has(form.key) ? "Write a reason. Use this only when the phrase can never mean anything else." : "");
+      for (const meaning of d.meanings) { const pill = part("pill", `${form.key}|${meaning.id}`); if (pill) pillLabel(pill, form, meaning); }
+      const keep = part("keep", form.key);
+      if (keep) { keep.hidden = !canKeep(form); keep.textContent = `+ keep “${words(form.text)}” as written`; }
+      const reason = el("entry-body").querySelector(`[data-key="${CSS.escape(`f:${form.key}:reason`)}"]`);
+      if (reason) reason.placeholder = `Why can “${words(form.text)}” never mean anything else?`;
+      for (const option of part("target", form.key)?.options ?? []) option.textContent = spellingOf(option.value);
+      part("remove-form", form.key)?.setAttribute("aria-label", `Remove ${form.text || "this heard form"}`);
+    }
+    showError(part("error", "none"), problems.none ? "Add a meaning, or link a heard form to another entry's meaning." : "");
+    editorStatus();
+  }
+  // An always-replace approval was given for one heard form and one output; changing
+  // either clears it, and the panel says so.
+  function clearAlways(form, why) {
+    const notice = `“Always” on “${words(form.text)}” was cleared because you changed ${why}. Turn it on again if it still applies.`;
+    form.direct = null; form.direct_reason = "";
+    part("always-box", form.key)?.remove();
+    const always = part("always", form.key);
+    always?.classList.remove("on");
+    always?.setAttribute("aria-pressed", "false");
+    if (draft.notices.includes(notice)) return;
+    draft.notices.push(notice);
+    part("notices", "all")?.append(node("p", notice, "editor-notice"));
+  }
   function segmented(items, current, onPick, label) {
     const group = node("div", "", "segmented small");
     group.setAttribute("role", "radiogroup");
@@ -567,24 +609,15 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     field.dataset.key = key;
     field.setAttribute("aria-label", label);
     if (tag === "textarea") field.rows = 2;
-    field.addEventListener("input", () => { editorError = ""; onInput(field.value); });
+    field.addEventListener("input", () => { editorError = ""; onInput(field.value); refresh(); });
     return field;
   }
-  // Changing a meaning's spelling or capitals clears an always-replace approval that
-  // names it: the approval was given for the old output.
-  function updateMeaning(meaning, patch) {
-    change((d) => {
-      const before = { spelling: meaning.spelling, casing: meaning.casing };
-      Object.assign(meaning, patch);
-      if (before.spelling === meaning.spelling && before.casing === meaning.casing) return;
-      for (const form of d.forms) {
-        if (form.direct !== meaning.id) continue;
-        form.direct = null; form.direct_reason = "";
-        const notice = `“Always” on “${form.text}” was cleared because you changed ${meaning.spelling || "the meaning"}'s ${before.spelling !== meaning.spelling ? "spelling" : "capitals"}. Turn it on again if it still applies.`;
-        if (!d.notices.includes(notice)) d.notices.push(notice);
-      }
-    });
-  }
+  const errorLine = (name, text = "") => {
+    const p = node("p", text, "field-error");
+    p.dataset.part = `error:${name}`;
+    p.hidden = !text;
+    return p;
+  };
 
   // A stored "as written" link stays one while its heard form and meaning are unchanged;
   // otherwise the spelling rule above decides.
@@ -637,7 +670,10 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       parts.push(node("p", d.scope === "pinned" ? "Pinned · used with every speech model." : `Learned · used only with ${speechName(model)}. Pin it from the list to share it.`, "caption editor-scope"));
     }
     if (d.scope === "learned" && !model) parts.push(node("p", "Choose a speech model in the toolbar first.", "field-error"));
-    for (const notice of d.notices) parts.push(node("p", notice, "editor-notice"));
+    const notices = node("div", "", "editor-notices");
+    notices.dataset.part = "notices:all";
+    notices.append(...d.notices.map((notice) => node("p", notice, "editor-notice")));
+    parts.push(notices);
 
     // Written as: the meanings, one card each.
     const written = node("section", "", "editor-section");
@@ -648,21 +684,30 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     for (const meaning of d.meanings) {
       const card = node("div", "", "editor-card");
       const top = node("div", "", "editor-line");
-      const spelling = input(meaning.spelling, `m:${meaning.id}:spelling`, (value) => updateMeaning(meaning, { spelling: value }), { placeholder: "Spelling", cls: "input strong" });
+      // Changing a spelling or capitals clears approvals that name this meaning.
+      const spelling = input(meaning.spelling, `m:${meaning.id}:spelling`, (value) => {
+        meaning.spelling = value;
+        for (const form of d.forms) if (form.direct === meaning.id) clearAlways(form, `${meaning.spelling || "the meaning"}'s spelling`);
+      }, { placeholder: "Spelling", cls: "input strong" });
       top.append(spelling, segmented([["fixed", "Exact capitals", "Always exactly like this: names, acronyms"], ["ordinary", "Normal word", "Capitalised only at a sentence start"]],
-        meaning.casing, (value) => updateMeaning(meaning, { casing: value }), "Capitals"));
+        meaning.casing, (value) => {
+          if (value === meaning.casing) return;
+          meaning.casing = value;
+          for (const form of d.forms) if (form.direct === meaning.id) clearAlways(form, `${meaning.spelling || "the meaning"}'s capitals`);
+          change(() => {});
+        }, "Capitals"));
       if (d.meanings.length > 1 || d.forms.some((f) => f.links.some((mid) => !own.has(mid)))) {
         const remove = button("×", () => change((dd) => {
           dd.meanings = dd.meanings.filter((m) => m.id !== meaning.id);
           for (const f of dd.forms) { f.links = f.links.filter((l) => l !== meaning.id); if (f.direct === meaning.id) { f.direct = null; f.direct_reason = ""; } }
         }), "btn-icon remove");
+        remove.dataset.part = `remove-meaning:${meaning.id}`;
         remove.setAttribute("aria-label", `Remove ${meaning.spelling || "this meaning"} and its links`);
         remove.title = "Remove this meaning and its links";
         top.append(remove);
       }
-      card.append(top);
-      if (problems.meanings.has(meaning.id)) card.append(node("p", problems.meanings.get(meaning.id), "field-error"));
-      const description = input(meaning.meaning, `m:${meaning.id}:meaning`, (value) => { meaning.meaning = value; description.classList.toggle("missing", !words(value)); warn.hidden = Boolean(words(value)); editorStatus(); },
+      card.append(top, errorLine(`m:${meaning.id}`, problems.meanings.get(meaning.id)));
+      const description = input(meaning.meaning, `m:${meaning.id}:meaning`, (value) => { meaning.meaning = value; description.classList.toggle("missing", !words(value)); warn.hidden = Boolean(words(value)); },
         { tag: "textarea", placeholder: "What it is and what it goes with. Jev reads this.", label: "What it is" });
       description.classList.toggle("missing", !words(meaning.meaning));
       const warn = node("p", "Without a description Jev can't choose this meaning. You can save; the entry is flagged.", "field-error");
@@ -679,28 +724,23 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const heardHead = node("div", "", "editor-head");
     heardHead.append(node("h3", "Heard as"), node("span", `what ${model ? shortName(model) : "the speech model"} writes · link the meanings each can stand for`, "caption"));
     heard.append(heardHead);
-    const spellingOf = (mid) => d.meanings.find((m) => m.id === mid)?.spelling || known.get(mid)?.spelling || "(no spelling)";
     for (const form of d.forms) {
       const card = node("div", "", "editor-card");
       const top = node("div", "", "editor-line wrap");
-      top.append(input(form.text, `f:${form.key}:text`, (value) => change((dd) => {
-        // An always-replace approval was given for the old text; the new one needs its own.
-        if (form.direct) {
-          const notice = `“Always” on “${words(form.text)}” was cleared because you changed the heard form. Turn it on again if it still applies.`;
-          if (!dd.notices.includes(notice)) dd.notices.push(notice);
-          form.direct = null; form.direct_reason = "";
-        }
+      top.append(input(form.text, `f:${form.key}:text`, (value) => {
+        if (form.direct) clearAlways(form, "the heard form");
         form.text = value;
-      }), { placeholder: "heard form", cls: "input mono heard-input", label: "Heard as" }), node("span", "→", "arrow"));
+      }, { placeholder: "heard form", cls: "input mono heard-input", label: "Heard as" }), node("span", "→", "arrow"));
       for (const meaning of d.meanings) {
         const on = form.links.includes(meaning.id);
-        const pill = button(on ? `✓ ${meaning.spelling || "(no spelling)"}` : meaning.spelling || "(no spelling)", () => change(() => {
+        const pill = button("", () => change(() => {
           form.links = on ? form.links.filter((l) => l !== meaning.id) : [...form.links, meaning.id];
           if (on && form.direct === meaning.id) { form.direct = null; form.direct_reason = ""; }
         }), on ? "pill on" : "pill");
+        pill.dataset.part = `pill:${form.key}|${meaning.id}`;
         pill.setAttribute("aria-pressed", String(on));
         pill.title = on ? "Click to unlink" : "Click to link";
-        if (on && literalLink(form, meaning.id, meaning)) pill.append(node("span", " · as written", "pill-note"));
+        pillLabel(pill, form, meaning);
         top.append(pill);
       }
       for (const mid of form.links.filter((l) => !own.has(l))) {
@@ -711,15 +751,19 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
         chip.append(remove);
         top.append(chip);
       }
-      if (words(form.text) && !d.meanings.some((m) => literalLink(form, m.id, m))) {
-        const literal = button(`+ keep “${words(form.text)}” as written`, () => change((dd) => {
-          const mid = id("m");
-          dd.meanings.push({ id: mid, spelling: words(form.text), meaning: "", personal_context: "", casing: "ordinary" });
-          form.links.push(mid);
-        }), "pill dashed");
-        literal.title = "Adds a meaning spelled exactly like this, so it's left alone when that sense fits";
-        top.append(literal);
-      }
+      const keep = button(`+ keep “${words(form.text)}” as written`, () => change((dd) => {
+        const mid = id("m");
+        dd.meanings.push({ id: mid, spelling: words(form.text), meaning: "", personal_context: "", casing: "ordinary" });
+        form.links.push(mid);
+      }), "pill dashed");
+      keep.dataset.part = `keep:${form.key}`;
+      keep.hidden = !canKeep(form);
+      keep.title = "Adds a meaning spelled exactly like this, so it's left alone when that sense fits";
+      // The form and its meanings on one line; ways to link more, Always and × beneath.
+      const tools = node("div", "", "editor-line");
+      const links = node("div", "", "editor-line wrap grow");
+      links.append(keep);
+      tools.append(links);
       const others = [...known].filter(([mid]) => !own.has(mid) && !form.links.includes(mid) && !d.original.meanings.some((m) => m.id === mid));
       if (others.length) {
         const pick = document.createElement("select");
@@ -729,38 +773,38 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
         pick.add(new Option("+ other entry…", ""));
         for (const [mid, m] of others) pick.add(new Option(`${m.spelling} (${pinned.has(mid) ? "pinned" : "learned"})`, mid));
         pick.addEventListener("change", () => { if (pick.value) change(() => { form.links.push(pick.value); }); });
-        top.append(pick);
+        links.append(pick);
       }
-      top.append(node("span", "", "spacer"));
       const always = button("Always", () => change(() => {
         form.direct = form.direct ? null : form.links[0];
         if (!form.direct) form.direct_reason = "";
       }), form.direct ? "pill always on" : "pill always");
+      always.dataset.part = `always:${form.key}`;
       always.disabled = !form.links.length;
       always.setAttribute("aria-pressed", String(Boolean(form.direct)));
       always.title = "Replace without reading the sentence. Rare.";
-      top.append(always);
+      tools.append(always);
       if (d.forms.length > 1 || d.meanings.length) {
         const remove = button("×", () => change((dd) => { dd.forms = dd.forms.filter((f) => f !== form); }), "btn-icon remove");
+        remove.dataset.part = `remove-form:${form.key}`;
         remove.setAttribute("aria-label", `Remove ${form.text || "this heard form"}`);
-        top.append(remove);
+        tools.append(remove);
       }
-      card.append(top);
-      if (problems.forms.has(form.key)) card.append(node("p", problems.forms.get(form.key), "field-error"));
+      card.append(top, tools, errorLine(`f:${form.key}`, problems.forms.get(form.key)));
       if (form.direct) {
         const box = node("div", "", "always-box");
+        box.dataset.part = `always-box:${form.key}`;
         const line = node("div", "", "editor-line wrap");
         const target = document.createElement("select");
         target.className = "select";
+        target.dataset.part = `target:${form.key}`;
         target.setAttribute("aria-label", "Always write");
         for (const mid of form.links) target.add(new Option(spellingOf(mid), mid, false, mid === form.direct));
         target.addEventListener("change", () => change(() => { form.direct = target.value; }));
         line.append("Always write ", target, " without reading the sentence.");
-        box.append(line, input(form.direct_reason, `f:${form.key}:reason`, (value) => { form.direct_reason = value; reasonError.hidden = Boolean(words(value)); editorStatus(); },
-          { placeholder: `Why can “${words(form.text)}” never mean anything else?`, cls: "input small", label: "Why this is always right" }));
-        const reasonError = node("p", "Write a reason. Use this only when the phrase can never mean anything else.", "field-error");
-        reasonError.hidden = !problems.direct.has(form.key);
-        box.append(reasonError);
+        box.append(line, input(form.direct_reason, `f:${form.key}:reason`, (value) => { form.direct_reason = value; },
+          { placeholder: `Why can “${words(form.text)}” never mean anything else?`, cls: "input small", label: "Why this is always right" }),
+        errorLine(`r:${form.key}`, problems.direct.has(form.key) ? "Write a reason. Use this only when the phrase can never mean anything else." : ""));
         card.append(box);
       }
       heard.append(card);
@@ -768,7 +812,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     heard.append(button("+ Another heard form", () => change((dd) => {
       dd.forms.push({ key: id("f"), text: "", origText: null, links: dd.meanings.length === 1 ? [dd.meanings[0].id] : [], basis: {}, direct: null, direct_reason: "" });
     }), "btn link add-more"));
-    if (problems.none) heard.append(node("p", "Add a meaning, or link a heard form to another entry's meaning.", "field-error"));
+    heard.append(errorLine("none", problems.none ? "Add a meaning, or link a heard form to another entry's meaning." : ""));
     parts.push(heard);
     return parts;
   }
