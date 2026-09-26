@@ -465,6 +465,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   for (const input of Object.values(addFields)) {
     input.addEventListener("input", () => { addProblem = ""; drawAdd(); });
     input.addEventListener("keydown", (event) => {
+      if (event.isComposing || event.keyCode === 229) return; // Enter confirms an input-method candidate
       if (event.key === "Enter") { event.preventDefault(); quickAdd(); }
       if (event.key === "Escape") showAdd(false);
     });
