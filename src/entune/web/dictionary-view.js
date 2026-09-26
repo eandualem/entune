@@ -15,7 +15,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   let filter = "all";
   let query = "";
   let sortDir = 1;
-  let openId = null; // the one entry shown expanded
+  let openId = null; // the one entry shown expanded, as scope:group (pinning can split a group's ID across both)
   let addPinned = false;
   let draft = null; // the entry open in the editor panel
   let editorError = ""; // a refused save, shown until the draft changes
@@ -275,7 +275,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const model = getModel();
     const item = node("div", "", "dict-entry");
     const line = node("div", "", "dict-row");
-    const open = openId === g.id;
+    const rowKey = `${scope}:${g.id}`;
+    const open = openId === rowKey;
     line.tabIndex = 0;
     line.setAttribute("role", "button");
     line.setAttribute("aria-expanded", String(open));
@@ -293,10 +294,10 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     if (scope === "pinned") where.innerHTML = PIN;
     where.append(scope === "pinned" ? "Pinned" : shortName(model));
     line.append(name, node("span", g.recognized_forms.map((f) => f.text).join(" · "), "cell-heard"), what, where);
-    const toggle = () => { openId = open ? null : g.id; renderRows(); document.querySelector(`[data-entry="${CSS.escape(g.id)}"] .dict-row`)?.focus(); };
+    const toggle = () => { openId = open ? null : rowKey; renderRows(); document.querySelector(`[data-entry="${CSS.escape(rowKey)}"] .dict-row`)?.focus(); };
     line.addEventListener("click", toggle);
     line.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } });
-    item.dataset.entry = g.id;
+    item.dataset.entry = rowKey;
     item.classList.toggle("open", open);
     item.append(line);
     if (open) item.append(entryDetail(g, scope, known, pinned));
@@ -474,23 +475,24 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const meaning = { id: id("m"), spelling, meaning: description, personal_context: null, casing: "fixed" };
     const group = { id: id("g"), needs_review: !description, meanings: [meaning],
       recognized_forms: heard.map((text) => ({ text, associations: [{ meaning_id: meaning.id, basis: isLiteral(meaning, text) ? "literal" : "user", evidence: [] }], direct: null, direct_reason: "" })) };
+    const scope = addPinned || !model ? "pinned" : "learned";
     const next = clone();
-    (addPinned || !model ? next.pinned : (next.learned[model.id] ??= [])).push(group);
+    (scope === "pinned" ? next.pinned : (next.learned[model.id] ??= [])).push(group);
     addProblem = await saveDictionary(next);
     drawAdd();
     if (addProblem) return;
     clearAdd();
     showAdd(false);
-    reveal(group.id);
+    reveal(scope, group.id);
     toast(`Added ${spelling}`);
   }
   // A saved entry opens expanded, whatever filter or search would have hidden it.
-  function reveal(groupId) {
-    openId = groupId;
+  function reveal(scope, groupId) {
+    openId = `${scope}:${groupId}`;
     query = ""; el("dict-search").value = "";
     if (filter !== "all") { filter = "all"; selectFilter("all"); }
     renderRows();
-    document.querySelector(`[data-entry="${CSS.escape(groupId)}"]`)?.scrollIntoView({ block: "nearest" });
+    document.querySelector(`[data-entry="${CSS.escape(openId)}"]`)?.scrollIntoView({ block: "nearest" });
   }
   el("add-advanced").addEventListener("click", () => {
     const model = getModel();
@@ -502,14 +504,13 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   el("empty-suggest").addEventListener("click", () => openSuggestions());
 
   // ---- The full editor, in a side panel ----
-  function openEditor(scope, group, created = false) {
-    const model = getModel();
+  // A learned draft belongs to the speech model it was started for, even if the toolbar
+  // selection changes before it is saved.
+  function openEditor(scope, group, created = false, model = getModel()) {
     editorError = "";
     draft = {
-      id: group.id, created, scope, notices: [],
-      // A learned draft belongs to the speech model it was started for, even if the
-      // toolbar selection changes before it is saved.
-      model,
+      id: group.id, created, scope, notices: [], model,
+      version: dictVersion, // the revision this draft was made from
       original: structuredClone(group),
       meanings: group.meanings.map((m) => ({ ...m, meaning: m.meaning ?? "", personal_context: m.personal_context ?? "" })),
       forms: group.recognized_forms.map((f) => ({
@@ -739,7 +740,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       always.setAttribute("aria-pressed", String(Boolean(form.direct)));
       always.title = "Replace without reading the sentence. Rare.";
       top.append(always);
-      if (d.forms.length > 1) {
+      if (d.forms.length > 1 || d.meanings.length) {
         const remove = button("×", () => change((dd) => { dd.forms = dd.forms.filter((f) => f !== form); }), "btn-icon remove");
         remove.setAttribute("aria-label", `Remove ${form.text || "this heard form"}`);
         top.append(remove);
@@ -772,10 +773,24 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     return parts;
   }
 
+  // A draft is based on its entry as it was when opened. After a reload it can still be
+  // saved if that entry is unchanged; otherwise it reopens on the saved version, so a
+  // save never undoes a change made elsewhere.
+  function rebase(d) {
+    if (d.created || d.version === dictVersion) return true;
+    const fresh = (d.scope === "pinned" ? dict.pinned : dict.learned[d.model.id] ?? []).find((g) => g.id === d.id);
+    if (fresh && JSON.stringify(fresh) === JSON.stringify(d.original)) { d.version = dictVersion; return true; }
+    if (!fresh) { closeEditor(); toast("This entry was removed elsewhere; nothing was saved.", "err"); return false; }
+    openEditor(d.scope, fresh, false, d.model);
+    editorError = "This entry changed while you were editing and now shows the saved version. Redo your change.";
+    editorStatus();
+    return false;
+  }
+
   el("entry-save").addEventListener("click", saveEditor);
   async function saveEditor() {
     const d = draft;
-    if (!d || editorProblems().count || building || saving) return;
+    if (!d || editorProblems().count || building || saving || !rebase(d)) return;
     const known = meanings(dict, d.model?.id);
     const meaningOf = (mid) => d.meanings.find((m) => m.id === mid) ?? known.get(mid);
     const group = {
@@ -827,20 +842,17 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const current = draft === d;
     if (problem) {
       if (!current) { toast(problem, "err"); return; }
-      // After a reload the draft is stale: saving it would undo whatever changed the entry.
-      if (dictVersion !== version && !d.created) {
-        const fresh = (d.scope === "pinned" ? dict.pinned : dict.learned[d.model.id] ?? []).find((g) => g.id === d.id);
-        if (!fresh) { closeEditor(); toast(`${problem} The entry is no longer there.`, "err"); return; }
-        openEditor(d.scope, fresh);
-        draft.model = d.model;
-      }
-      editorError = problem;
+      // A refused save that reloaded the dictionary: keep the draft only if its entry is unchanged.
+      if (dictVersion !== version) {
+        if (!rebase(d)) return;
+        editorError = "The dictionary changed elsewhere and was reloaded. Save again to apply this.";
+      } else editorError = problem;
       editorStatus();
       return;
     }
     if (current) closeEditor();
     if (current && d.created) { clearAdd(); showAdd(false); }
-    reveal(group.id);
+    reveal(d.scope, group.id);
     toast(`${d.created ? "Added" : "Saved"} ${title(group) || "entry"}`);
   }
 
