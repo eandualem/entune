@@ -134,6 +134,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     if (!keyed.length) modelSelect.add(new Option("No key yet", ""));
     modelSelect.disabled = building || !keyed.length;
     gate();
+    onboarding.redraw(); // the audio start names the suggestion model and needs its key
   }
   modelSelect.addEventListener("change", async () => {
     try {
