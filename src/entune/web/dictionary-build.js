@@ -2,7 +2,7 @@ import { api, el, errorText, flash } from "./ui.js";
 
 // Both sources use the same server-owned job. Poll small status records; fetch a
 // potentially large proposal once per job, and name that job on every action.
-export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelected }) {
+export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted, getSelected }) {
   const progress = el("dictionary-build-status");
   const cancel = el("cancel-dictionary-build");
   let state = { phase: "idle" };
@@ -42,7 +42,7 @@ export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelec
       transcribing: `Transcribing recording ${state.completed} of ${state.total}…`,
       building,
       cancelling: "Stopping… a transcription already under way may need to finish.",
-      cleaning: "Finishing…", ready: "Suggestions are ready below.",
+      cleaning: "Finishing…", ready: "Suggestions are ready to review.",
       cancelled: `Stopped after ${state.completedBatches ?? 0} of ${state.steps ?? 0} parts. Retry to continue, or discard.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept for Retry.` : ""}`,
       failed: `Something went wrong: ${state.error} Your dictionary is unchanged.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept for Retry; your audio is kept.` : ""}`,
       accepted: state.applied ? "Applied. Your dictionary is updated." : "Closed without changes.",
@@ -53,7 +53,7 @@ export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelec
       const coverage = `${state.coveredInputs} of ${state.total} ${from === "audio" ? "recordings" : "dictations"} read`;
       message = state.outcome === "stopped" ? `Stopped with ${coverage}. Review what's ready, retry the rest, or discard.`
         : state.outcome === "failed" ? `${state.error} ${coverage}. Review what's ready, retry the rest, or discard.`
-        : `Suggestions are ready below (${coverage}). Review them, then apply or discard to resume dictation.`;
+        : `Suggestions are ready (${coverage}). Review them, then apply or discard to resume dictation.`;
     }
     progress.textContent = message;
     el("build-spinner").hidden = !running();
@@ -77,6 +77,7 @@ export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelec
       proposalId = null;
       onProposal(null);
     }
+    onState(state);
   }
   function poll() {
     if (reading) return reading;
@@ -97,8 +98,7 @@ export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelec
     })();
     return reading;
   }
-  async function action(name) {
-    const id = state.id;
+  async function action(name, id = state.id) {
     version++;
     clearFeedback();
     try {
@@ -113,12 +113,13 @@ export function createDictionaryBuild({ onBusy, onProposal, onAccepted, getSelec
     await poll();
   }
   el("retry-dictionary-build").addEventListener("click", () => action("retry"));
-  el("abandon-dictionary-build").addEventListener("click", () => action("discard"));
   cancel.addEventListener("click", () => action("cancel"));
   el("accept-proposal").addEventListener("click", () => action("accept"));
-  el("discard-proposal").addEventListener("click", () => action("discard"));
   return {
     load: poll,
+    // Discarding asks first; the view names the job it confirmed, so a run that replaced
+    // it meanwhile is refused rather than discarded.
+    discard: (id) => action("discard", id),
     async start(source, selection = {}) {
       version++;
       clearFeedback();
