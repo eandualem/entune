@@ -7,6 +7,7 @@ One operation owns a dictation from recording through delivery.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import CancelledError
@@ -23,7 +24,7 @@ from entune.processing import results
 from entune.processing.jev_client import Client as JevClient
 from entune.processing.pipeline import process_text
 from entune.processing.results import Processed
-from entune.providers.cloud.contracts import Streams, Upload
+from entune.providers.cloud.contracts import Preconnects, Streams, Upload
 from entune.providers.contracts import Clip, Failure, Transcript
 from entune.providers.local.contracts import Downloadable
 from entune.providers.registry import ModelRef
@@ -69,6 +70,27 @@ class Dictation:
             return None
         with self._speech.use(ref):
             return ref.provider.begin_upload(api_key, sample_rate)
+
+    def prepare(self) -> None:
+        """While the user speaks, open the connections this dictation will use: the default
+        model's provider and, when a Jev step is on, TypeSafe. Each gets a HEAD request with
+        no key and no audio, so the handshake (0.5-1 s measured) is not paid after they stop.
+        """
+        threading.Thread(target=self._preconnect, daemon=True, name="entune-preconnect").start()
+
+    def _preconnect(self) -> None:
+        try:
+            status = self._settings.jev_status()
+            if status.key_hint and (status.dictionary or status.formatting or status.cleanup):
+                self._jev.preconnect()
+            ref = self._models.choose_model(None)
+            if isinstance(ref.provider, Preconnects) and self._settings.key(ref.provider.id):
+                with self._speech.use(ref):
+                    ref.provider.preconnect()
+        except (NoDefaultModel, UnknownModel, CancelledError):
+            return  # nothing to connect to, or shutting down; the dictation says so itself
+        except Exception:
+            logging.getLogger(__name__).exception("Could not open connections early")
 
     def store_recording(self, data: bytes, label: str | None) -> Recording:
         """The clip is on disk and in history from this moment, whatever happens next."""

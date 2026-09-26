@@ -5,9 +5,10 @@ from __future__ import annotations
 import httpx
 
 from entune.providers.cloud.http import (
-    DEFAULT_TIMEOUT,
     failure_from_response,
     json_body,
+    new_client,
+    open_connection,
     text_or_failure,
 )
 from entune.providers.contracts import Clip, TranscribeResult
@@ -22,7 +23,10 @@ class ElevenLabs:
 
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._owns_client = client is None
-        self._client = client or httpx.Client(timeout=DEFAULT_TIMEOUT)
+        self._client = client or new_client()
+
+    def preconnect(self) -> None:
+        open_connection(self._client, URL)
 
     def close(self) -> None:
         if self._owns_client:

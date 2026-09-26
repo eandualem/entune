@@ -29,10 +29,11 @@ import httpx
 from entune.audio.formats import wav_bytes
 from entune.providers.cloud.contracts import Upload
 from entune.providers.cloud.http import (
-    DEFAULT_TIMEOUT,
     failure_from_body,
     failure_from_response,
     json_body,
+    new_client,
+    open_connection,
     text_or_failure,
 )
 from entune.providers.contracts import Clip, Failure, TranscribeResult
@@ -55,9 +56,12 @@ class AssemblyAI:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._owns_client = client is None
-        self._client = client or httpx.Client(timeout=DEFAULT_TIMEOUT)
+        self._client = client or new_client()
         self._sleep = sleep
         self._uploads: weakref.WeakSet[StreamingUpload] = weakref.WeakSet()
+
+    def preconnect(self) -> None:
+        open_connection(self._client, SYNC_URL)  # where clips up to two minutes go
 
     def close(self) -> None:
         uploads = list(self._uploads)

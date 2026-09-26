@@ -102,6 +102,31 @@ def test_a_success_status_without_json_fails_with_the_body_verbatim(
     assert str(failed.value) == f"HTTP 200 OK\n{page}"
 
 
+@pytest.mark.parametrize(
+    ("adapter", "host"),
+    [
+        (AssemblyAI, "sync.assemblyai.com"),
+        (Groq, "api.groq.com"),
+        (ElevenLabs, "api.elevenlabs.io"),
+        (XAI, "api.x.ai"),
+        (Soniox, "api.soniox.com"),
+    ],
+)
+def test_preconnect_opens_the_endpoint_without_a_key_or_audio(
+    adapter: type[AssemblyAI | Groq | ElevenLabs | XAI | Soniox], host: str
+) -> None:
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        raise httpx.ConnectError("offline")  # a failure is left to the request itself
+
+    adapter(mock_client(handler)).preconnect()
+    ((request,),) = [sent]
+    assert (request.method, request.url.host) == ("HEAD", host)
+    assert "authorization" not in request.headers and not request.content
+
+
 def test_a_body_without_text_is_a_failure(clip: Clip) -> None:
     client = mock_client(lambda _: httpx.Response(200, json={"words": []}))
     result = AssemblyAI(client).transcribe(clip, "universal-3-5-pro", "k")

@@ -123,6 +123,17 @@ def test_record_fail_retry_and_history(client: TestClient, stub: StubProvider) -
     assert audio.headers["content-type"].startswith("audio/webm")
 
 
+def test_a_page_recording_opens_the_provider_connection(tmp_path: Path) -> None:
+    opened = threading.Event()
+    stub = StubProvider()
+    stub.preconnect = opened.set  # type: ignore[attr-defined]
+    app = Entune(Store(tmp_path), [stub])
+    client = TestClient(create_app(app), base_url="http://localhost")
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    assert client.post("/api/operations").status_code == 201
+    assert opened.wait(2)
+
+
 def test_unknown_routes(client: TestClient) -> None:
     assert (
         client.post("/api/recordings/999/transcriptions", json={"model": "stub/good"}).status_code

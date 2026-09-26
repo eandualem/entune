@@ -1,5 +1,6 @@
-"""HTTP response handling shared by cloud speech adapters."""
+"""HTTP clients and response handling shared by cloud speech adapters."""
 
+import contextlib
 import json
 
 import httpx
@@ -7,6 +8,25 @@ import httpx
 from entune.providers.contracts import Failure, TranscribeResult, Transcript
 
 DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+# An idle connection is kept long enough for one opened when recording starts to carry
+# the clip when it stops, and under the minute after which this network path was seen
+# to cut connections. httpx's default, 5 s, made every dictation open a new one.
+KEEPALIVE_SECONDS = 50.0
+
+
+def new_client() -> httpx.Client:
+    """An adapter's own client."""
+    return httpx.Client(
+        timeout=DEFAULT_TIMEOUT, limits=httpx.Limits(keepalive_expiry=KEEPALIVE_SECONDS)
+    )
+
+
+def open_connection(client: httpx.Client, url: str) -> None:
+    """Open the connection a request to `url` will use, while the user is still speaking,
+    so the handshake is not paid after they stop. A HEAD request with no key and no
+    audio; its answer is ignored, and so is a failure, which the request will report."""
+    with contextlib.suppress(httpx.HTTPError):
+        client.head(url, timeout=5.0)
 
 
 def failure_from_response(response: httpx.Response) -> Failure:

@@ -14,10 +14,11 @@ from collections.abc import Callable
 import httpx
 
 from entune.providers.cloud.http import (
-    DEFAULT_TIMEOUT,
     failure_from_body,
     failure_from_response,
     json_body,
+    new_client,
+    open_connection,
     text_or_failure,
 )
 from entune.providers.contracts import Clip, Failure, TranscribeResult
@@ -38,8 +39,11 @@ class Soniox:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._owns_client = client is None
-        self._client = client or httpx.Client(timeout=DEFAULT_TIMEOUT)
+        self._client = client or new_client()
         self._sleep = sleep
+
+    def preconnect(self) -> None:
+        open_connection(self._client, BASE)
 
     def close(self) -> None:
         if self._owns_client:

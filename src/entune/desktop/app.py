@@ -303,6 +303,7 @@ class EntuneApp:
                 self._finish(operation)
                 return
             self.entune.desktop.report_status(lastRecordingStarted=time.time(), lastError=None)
+            self.entune.dictation.prepare()
             self._quiet_notified = False
             self._recording = True
             self._later(self._refresh_state)
