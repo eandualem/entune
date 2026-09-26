@@ -12,9 +12,10 @@
 
 Entune is a small, local dictation app. Hold a key or press a shortcut,
 speak, and the transcript is pasted where you were typing. You bring your
-own API key for a speech-to-text provider, AssemblyAI, Groq or Soniox, or
-download a model that runs on your own Mac, so you pick the engine that
-transcribes you instead of taking whichever one a dictation product bundles.
+own API key for a speech-to-text provider, AssemblyAI, Groq, Soniox,
+ElevenLabs or xAI, or download a model that runs on your own Mac, so you
+pick the engine that transcribes you instead of taking whichever one a
+dictation product bundles.
 Every recording and transcript is kept in a local history, with the
 provider's exact error and a one-click retry with another model when a
 transcription fails, and a performance table by model built from your own
@@ -24,8 +25,8 @@ It is for people who dictate a meaningful share of what they write and want
 control over the engine, the cost and where their words go.
 
 <p align="center">
-  <img src="docs/demo/6-history-light.jpg" width="49%" alt="History in light mode: recordings with audio, transcript, copy and re-transcribe" />
-  <img src="docs/demo/4-settings-dark.jpg" width="49%" alt="Settings in dark mode: API keys, default model, shortcuts" />
+  <img src="docs/demo/history-light.jpg" width="49%" alt="History in light mode: each recording with its audio and transcript, or the provider's exact error, and transcribe again with another model" />
+  <img src="docs/demo/models-dark.jpg" width="49%" alt="Models in dark mode: API keys for the cloud speech services you use" />
 </p>
 
 <!-- TODO: a short recording of hold the key, speak, release, watch the paste land -->
@@ -150,20 +151,25 @@ reach other apps as a modifier. Pick another key if you need fn elsewhere.
 | Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
 | Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
 
-Enter a provider's API key in Settings and its model appears in the model
-list; pick one as the default. You pay each provider directly, per minute
+Enter a provider's API key on the Models page and its model appears in the
+model list; pick one as the default. You pay each provider directly, per minute
 of audio, at its own published rate:
 [AssemblyAI](https://www.assemblyai.com/pricing),
-[Groq](https://groq.com/pricing),
-[Soniox](https://soniox.com/pricing).
+[Groq](https://console.groq.com/docs/model/whisper-large-v3-turbo),
+[Soniox](https://soniox.com/pricing),
+[ElevenLabs](https://elevenlabs.io/pricing/api),
+[xAI](https://docs.x.ai/developers/models).
 
 Keys live in the local database, are only ever sent to the provider they
 belong to, and are never shown again beyond a masked hint.
 
-**Local models** need no key. Settings lists them with their size and a
+**Local models** need no key. The Models page lists them with their size and a
 Download button; a model is fetched once (resumes if interrupted) and then
 sits in the same model lists as the cloud ones, so you can make it the
 default or retry a cloud failure with it. Runs on the GPU on Apple Silicon.
+Local models read WAV, which is what Entune records; other imported audio
+(MP3, M4A, FLAC, Ogg, WebM) is converted with [ffmpeg](https://ffmpeg.org/),
+which you install yourself, for example `brew install ffmpeg`.
 A local model takes memory only while it is the selected model: it is loaded
 when you pick it, freed when you pick something else, and a model used for a
 single retry is freed right after.

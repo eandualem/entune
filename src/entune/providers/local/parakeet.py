@@ -4,7 +4,7 @@ The engine is not part of Entune: it is the `parakeet-mlx` package and MLX, abou
 480 MB of libraries that only run on Apple Silicon, installed once with
 `uv tool install parakeet-mlx`. Entune finds that installation and runs the model
 in a helper process inside it, so nothing is bundled and Python versions need not
-match. The weights (2.5 GB) are fetched from Settings like the Whisper models.
+match. The weights (2.5 GB) are fetched from the Models page like the Whisper models.
 """
 
 from __future__ import annotations
@@ -143,7 +143,7 @@ class Parakeet:
         if self.engine() is None:
             return Failure(f"Parakeet's engine is not installed. Run: {INSTALL_COMMAND}")
         if not self._ready():
-            return Failure(f"{MODEL} is not downloaded. Settings > Parakeet has the button.")
+            return Failure(f"{MODEL} is not downloaded. Models > Local models has the button.")
         # The engine resamples properly itself; a WAV goes over as recorded.
         try:
             data = (
