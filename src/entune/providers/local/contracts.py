@@ -20,7 +20,7 @@ class LocalModelStatus:
 
 @runtime_checkable
 class Downloadable(Protocol):
-    """A provider whose models are files on this machine, fetched from Settings; no key."""
+    """A provider whose models are files on this machine, fetched from the Models page; no key."""
 
     def catalogue(self) -> list[LocalModelStatus]: ...
     def download(self, name: str) -> None: ...
