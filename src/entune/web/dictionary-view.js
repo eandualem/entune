@@ -365,18 +365,20 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     return detail;
   }
 
-  async function pin(body) {
+  async function pin(body, model = getModel()?.id) {
     const res = await fetch("/api/dictionary/pin", {
       method: "POST", headers: { "content-type": "application/json", "if-match": dictVersion },
-      body: JSON.stringify({ model: getModel()?.id, ...body }),
+      body: JSON.stringify({ model, ...body }),
     });
     if (!res.ok) { toast(await res.text(), "err"); await loadDictionary(); return false; }
     await loadDictionary();
     return true;
   }
-  // The server pins one meaning at a time; the learned group keeps its ID for the rest.
+  // The server pins one meaning at a time; the learned group keeps its ID for the rest, under
+  // the model it was learned for even if the toolbar selection changes meanwhile.
   async function pinMeanings(g, list) {
-    for (const meaning of list) if (!await pin({ group: g.id, meaning: meaning.id })) return;
+    const model = getModel()?.id;
+    for (const meaning of list) if (!await pin({ group: g.id, meaning: meaning.id }, model)) return;
     toast(`Pinned ${list.map((m) => m.spelling).join(" · ")} for every speech model`);
   }
   el("pin-all").addEventListener("click", async () => {
