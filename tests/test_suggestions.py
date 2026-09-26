@@ -610,22 +610,25 @@ def test_environment_headers_never_replace_the_saved_key(
     assert sent == [expected]
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "groq", "openai"])
+@pytest.mark.parametrize("provider", sorted(suggestion_model.LLM_PROVIDERS))
 def test_a_request_waits_five_seconds_to_connect_and_twenty_minutes_to_read(
     monkeypatch: pytest.MonkeyPatch, provider: str
 ) -> None:
     limits: list[dict[str, float]] = []
-    library: Any = httpx if provider == "groq" else httpx2
+    legacy = provider in ("groq", "mistral")
+    library: Any = httpx if legacy else httpx2
+    factory = providers._http if legacy else providers._http2
 
     def respond(outgoing: Any) -> Any:
         limits.append(outgoing.extensions["timeout"])
         return library.Response(500, json={"error": "stop here"})
 
-    monkeypatch.setattr(
-        providers,
-        "_http" if provider == "groq" else "_http2",
-        lambda header, value: library.AsyncClient(transport=library.MockTransport(respond)),
-    )
+    def offline(header: str, value: str) -> Any:
+        client = factory(header, value)  # the real limits and hooks; only the network is fake
+        client._transport = library.MockTransport(respond)
+        return client
+
+    monkeypatch.setattr(providers, "_http" if legacy else "_http2", offline)
     with pytest.raises(ModelHTTPError):
         asyncio.run(
             suggestion_model.call_model(
@@ -633,7 +636,7 @@ def test_a_request_waits_five_seconds_to_connect_and_twenty_minutes_to_read(
             )
         )
     assert limits
-    assert all(t["connect"] == 5 and t["read"] == providers.TIMEOUT for t in limits)
+    assert all(t["connect"] == providers.CONNECT and t["read"] == providers.TIMEOUT for t in limits)
 
 
 def test_a_reply_that_keeps_streaming_past_the_limit_is_cut(

@@ -16,8 +16,7 @@ import httpx2
 from pydantic_ai.models import Model
 
 TIMEOUT = 1200.0  # seconds; a reply at high reasoning effort takes minutes
-# Connecting gets five seconds. An SDK sends its own timeout with every request, over
-# its HTTP client's, so an SDK given a plain number would wait that long to connect too.
+CONNECT = 5.0  # seconds to open a connection
 
 
 def _credential(header: str, value: str) -> dict[str, list[Callable[[Any], Awaitable[None]]]]:
@@ -31,20 +30,31 @@ def _credential(header: str, value: str) -> dict[str, list[Callable[[Any], Await
     return {"request": [set_credential]}
 
 
+async def _connect_limit(request: Any) -> None:
+    """Connecting gets CONNECT seconds on every request. Each SDK sends its own timeout
+    with the request, over its HTTP client's, and some send one number for the whole
+    request (Google's always does), which would let a stalled connection wait TIMEOUT."""
+    request.extensions["timeout"] = {**request.extensions.get("timeout", {}), "connect": CONNECT}
+
+
+def _hooks(header: str, value: str) -> dict[str, list[Callable[[Any], Awaitable[None]]]]:
+    return {"request": [*_credential(header, value)["request"], _connect_limit]}
+
+
 def _http2(header: str, value: str) -> httpx2.AsyncClient:
     return httpx2.AsyncClient(
-        timeout=httpx2.Timeout(TIMEOUT, connect=5),
+        timeout=httpx2.Timeout(TIMEOUT, connect=CONNECT),
         trust_env=False,
-        event_hooks=_credential(header, value),
+        event_hooks=_hooks(header, value),
     )
 
 
 def _http(header: str, value: str) -> httpx.AsyncClient:
-    """For the SDKs still on httpx (Groq)."""
+    """For the SDKs still on httpx (Groq, Mistral)."""
     return httpx.AsyncClient(
-        timeout=httpx.Timeout(TIMEOUT, connect=5),
+        timeout=httpx.Timeout(TIMEOUT, connect=CONNECT),
         trust_env=False,
-        event_hooks=_credential(header, value),
+        event_hooks=_hooks(header, value),
     )
 
 
@@ -59,7 +69,7 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
             api_key=api_key,
             base_url="https://api.anthropic.com",
             max_retries=0,
-            timeout=httpx2.Timeout(TIMEOUT, connect=5),
+            timeout=httpx2.Timeout(TIMEOUT, connect=CONNECT),
             http_client=_http2("x-api-key", api_key),
         ) as anthropic:
             yield AnthropicModel(name, provider=AnthropicProvider(anthropic_client=anthropic))
@@ -73,7 +83,7 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
             api_key=api_key,
             base_url="https://api.openai.com/v1",
             max_retries=0,
-            timeout=httpx2.Timeout(TIMEOUT, connect=5),
+            timeout=httpx2.Timeout(TIMEOUT, connect=CONNECT),
             http_client=_http2("authorization", f"Bearer {api_key}"),
         ) as openai:
             yield OpenAIResponsesModel(
@@ -86,8 +96,8 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
         from pydantic_ai.models.google import GoogleModel
         from pydantic_ai.providers.google import GoogleProvider
 
-        # Our own client, so the timeout is ours and the client is closed when the call ends.
-        async with httpx2.AsyncClient(timeout=httpx2.Timeout(TIMEOUT, connect=5)) as http:
+        # Our own client, so the limits are ours and the client is closed when the call ends.
+        async with _http2("x-goog-api-key", api_key) as http:
             google = GoogleProvider(
                 api_key=api_key,
                 base_url="https://generativelanguage.googleapis.com/",
@@ -104,7 +114,7 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
             api_key=api_key,
             base_url="https://api.groq.com",
             max_retries=0,
-            timeout=httpx.Timeout(TIMEOUT, connect=5),
+            timeout=httpx.Timeout(TIMEOUT, connect=CONNECT),
             http_client=_http("authorization", f"Bearer {api_key}"),
         ) as groq:
             yield GroqModel(name, provider=GroqProvider(groq_client=groq))
@@ -114,9 +124,15 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
         from pydantic_ai.models.mistral import MistralModel
         from pydantic_ai.providers.mistral import MistralProvider
 
-        async with Mistral(
-            api_key=api_key, server_url="https://api.mistral.ai", timeout_ms=int(TIMEOUT * 1000)
-        ) as mistral:
+        async with (
+            _http("authorization", f"Bearer {api_key}") as mistral_http,
+            Mistral(
+                api_key=api_key,
+                server_url="https://api.mistral.ai",
+                timeout_ms=int(TIMEOUT * 1000),
+                async_client=mistral_http,
+            ) as mistral,
+        ):
             yield MistralModel(name, provider=MistralProvider(mistral_client=mistral))
         return
     raise ValueError(f"Unknown dictionary provider: {provider}")
