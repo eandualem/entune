@@ -383,11 +383,17 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     if (await pin({})) toast(`Pinned ${plural(count, "entry", "entries")}`);
   });
 
-  // Removing an entry removes the links other entries made to its meanings; a heard form
-  // left with no meaning, and an entry left empty, go with them.
-  function withoutMeanings(doc, gone) {
+  // Removing an entry removes the links other entries made to its meanings, where no other
+  // entry still defines them: pinned ones for every section, learned ones for their model.
+  // A heard form left with no meaning, and an entry left empty, go with them.
+  function withoutMeanings(doc, removed) {
+    const defined = (groups) => groups.flatMap((g) => g.meanings.map((m) => m.id));
+    const pinned = defined(doc.pinned);
     let touched = 0;
     for (const section of [doc.pinned, ...Object.values(doc.learned)]) {
+      const available = new Set(section === doc.pinned ? pinned : [...pinned, ...defined(section)]);
+      const gone = new Set([...removed].filter((mid) => !available.has(mid)));
+      if (!gone.size) continue;
       for (let i = section.length - 1; i >= 0; i--) {
         const g = section[i];
         let changed = false;
@@ -918,7 +924,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   el("banner-action").addEventListener("click", openSuggestions);
   el("suggest-close").addEventListener("click", () => suggestDrawer.close());
   async function discardRun() {
-    if (await confirmAction("Discard these suggestions?", "Nothing has changed in your dictionary. The transcripts read in this run count as used.", "Discard")) await builds.discard();
+    if (await confirmAction("Discard these suggestions?", `Nothing changes in your dictionary, and a later run can read the same ${run.source === "audio" ? "recordings" : "transcripts"} again.`, "Discard")) await builds.discard();
   }
   el("discard-proposal").addEventListener("click", discardRun);
   el("abandon-dictionary-build").addEventListener("click", discardRun);
