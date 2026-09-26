@@ -99,7 +99,10 @@ class SpeechModels:
         """The model to use: the given one, else the default. Missing configuration is an error."""
         chosen = ref or self.default_model()
         if chosen is None:
-            raise NoDefaultModel("No default model is set. Pick one in Settings.")
+            raise NoDefaultModel(
+                "No default model is set. Pick one next to the Record button, after adding"
+                " a key or downloading a model on the Models page."
+            )
         resolved = self.resolve(chosen)
         if resolved is None:
             raise UnknownModel(chosen)
