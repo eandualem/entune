@@ -229,7 +229,9 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   return {
     load: refresh,
     // Opens on the source the menu named: Entune recordings, another app, or a folder.
-    async open(pick) { if (pick) source = pick; dialog.showModal(); await refresh(); },
+    // The selection switches at once from the recordings already loaded, so Get suggestions
+    // never sends the previous source's audio while the list refreshes.
+    async open(pick) { if (pick && pick !== source) { source = pick; choose(); } dialog.showModal(); await refresh(); },
     // Status polls repeat the same value; redraw only on a change, keeping focus in the list.
     setBuildBusy(value) { if (value !== buildBusy) { buildBusy = value; draw(); } },
     redraw: draw,

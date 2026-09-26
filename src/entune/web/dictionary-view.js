@@ -1060,11 +1060,12 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   // Each suggestion's summary shows what Apply submits, so it follows every edit, including
   // edits to a meaning shared with other suggestions.
   function refreshSummaries() {
+    const known = proposalMeanings();
     for (const change of proposalChanges) {
       if (!change.after) continue;
       const set = (part, text) => { const e = proposalBody.querySelector(`[data-summary="${CSS.escape(`${part}:${change.id}`)}"]`); if (e) e.textContent = text; };
       set("heard", change.after.recognized_forms.map(f => f.text).join(", "));
-      set("to", label(change.after) || title(change.after));
+      set("to", label(change.after) || title(change.after, known));
       set("after", describe(change.after));
       set("desc", change.after.meanings.map(m => m.meaning).filter(Boolean).join(" · ") || "No description yet.");
     }
@@ -1076,9 +1077,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     control.value = value ?? ""; control.addEventListener("change", () => { update(control.value); refreshSummaries(); });
     wrap.append(control); parent.append(wrap); return control;
   }
+  // Meanings a suggestion may name: the saved ones for its model, and those other suggestions add.
+  const proposalMeanings = () => new Map([...dict.pinned, ...(dict.learned[proposalModel] ?? []), ...proposalChanges.flatMap(c => c.after ? [c.after] : [])].flatMap(g => g.meanings).map(m => [m.id, m]));
   function drawProposal() {
     proposalBody.replaceChildren();
-    const known = new Map([...dict.pinned, ...(dict.learned[proposalModel] ?? []), ...proposalChanges.flatMap(c => c.after ? [c.after] : [])].flatMap(g => g.meanings).map(m => [m.id, m]));
+    const known = proposalMeanings();
     const pinned = pinnedIds();
     for (const [kind, heading] of [["add", "New entries"], ["update", "Changes"], ["remove", "Remove"]]) {
       const items = proposalChanges.filter(c => c.kind === kind);
