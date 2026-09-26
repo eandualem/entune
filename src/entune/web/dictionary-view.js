@@ -18,6 +18,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   let openId = null; // the one entry shown expanded
   let addPinned = false;
   let draft = null; // the entry open in the editor panel
+  let editorError = ""; // a refused save, shown until the draft changes
+  let saving = false; // one editor save at a time
   let proposalChanges = [];
   let proposalModel = null;
   let missingKey = false; // the saved dictionary model's provider has no key
@@ -29,7 +31,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const jsonBox = el("dictionary");
   const onboarding = createAudioOnboarding({
     getModel, getSettings, getDictionaryModelName: () => missingKey ? null : languageName(getSettings()?.dictionaryModel),
-    onBuild(selection) { return builds.start("audio", { mode: mode(), ...selection }); },
+    onBuild(selection) { openSuggestions(); return builds.start("audio", { mode: mode(), ...selection }); },
     onBusy(value) { importing = value; gate(); },
   });
 
@@ -249,7 +251,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       .sort((a, b) => title(a.g, known).localeCompare(title(b.g, known)) * sortDir);
     el("sort-mark").textContent = sortDir > 0 ? "↑" : "↓";
     el("dict-count").textContent = shown.length === groups.length ? plural(groups.length, "entry", "entries") : `${shown.length} of ${groups.length}`;
-    el("dict-rows").replaceChildren(...shown.map((v) => entryRow(v, known)));
+    const pinned = pinnedIds();
+    el("dict-rows").replaceChildren(...shown.map((v) => entryRow(v, known, pinned)));
     const empty = !shown.length;
     el("dict-empty").hidden = !empty;
     if (empty) {
@@ -268,7 +271,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
 
   const PIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 1.5h4l-.6 4.5 2.8 2.5H3.8L6.6 6 6 1.5zM8 8.5V14.5"/></svg>';
   // One line per entry; a click shows its heard forms and meanings underneath.
-  function entryRow({ g, scope }, known) {
+  function entryRow({ g, scope }, known, pinned) {
     const model = getModel();
     const item = node("div", "", "dict-entry");
     const line = node("div", "", "dict-row");
@@ -284,7 +287,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       name.append(dot);
     }
     const description = g.meanings.find((m) => m.meaning.trim())?.meaning;
-    const linksPinned = !g.meanings.length && g.recognized_forms.every((f) => f.associations.every((a) => pinnedIds().has(a.meaning_id)));
+    const linksPinned = !g.meanings.length && g.recognized_forms.every((f) => f.associations.every((a) => pinned.has(a.meaning_id)));
     const what = node("span", description ?? (g.meanings.length ? "No description yet" : `Another way ${shortName(model)} hears ${linksPinned ? "a pinned word" : "a word from another entry"}`), description ? "cell-desc" : "cell-desc faint");
     const where = node("span", "", "cell-scope");
     if (scope === "pinned") where.innerHTML = PIN;
@@ -296,16 +299,15 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     item.dataset.entry = g.id;
     item.classList.toggle("open", open);
     item.append(line);
-    if (open) item.append(entryDetail(g, scope, known));
+    if (open) item.append(entryDetail(g, scope, known, pinned));
     return item;
   }
 
-  function entryDetail(g, scope, known) {
+  function entryDetail(g, scope, known, pinned) {
     const model = getModel();
     const detail = node("div", "", "dict-detail");
     const forms = node("div", "", "detail-forms");
     forms.append(node("p", "Heard → written", "detail-label"));
-    const pinned = pinnedIds();
     for (const form of g.recognized_forms) {
       const line = node("div", "", "heard-line");
       line.append(node("code", form.text, "heard"), node("span", "→", "arrow"));
@@ -496,6 +498,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   // ---- The full editor, in a side panel ----
   function openEditor(scope, group, created = false) {
     const model = getModel();
+    editorError = "";
     draft = {
       id: group.id, created, scope, notices: [],
       // A learned draft belongs to the speech model it was started for, even if the
@@ -534,7 +537,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     }
     editorStatus();
   }
-  const change = (fn) => { fn(draft); drawEditor(); };
+  const change = (fn) => { editorError = ""; fn(draft); drawEditor(); };
   function segmented(items, current, onPick, label) {
     const group = node("div", "", "segmented small");
     group.setAttribute("role", "radiogroup");
@@ -557,7 +560,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     field.dataset.key = key;
     field.setAttribute("aria-label", label);
     if (tag === "textarea") field.rows = 2;
-    field.addEventListener("input", () => onInput(field.value));
+    field.addEventListener("input", () => { editorError = ""; onInput(field.value); });
     return field;
   }
   // Changing a meaning's spelling or capitals clears an always-replace approval that
@@ -602,15 +605,15 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       + (d.scope === "learned" && !d.model ? 1 : 0);
     return problems;
   }
-  function editorStatus(message = "", kind = "") {
+  function editorStatus() {
     if (!draft) return;
     const problems = editorProblems();
     const missing = draft.meanings.filter((m) => !words(m.meaning)).length;
     const status = el("entry-status");
-    status.textContent = message || (problems.count ? plural(problems.count, "thing") + " to fix"
+    status.textContent = editorError || (problems.count ? plural(problems.count, "thing") + " to fix"
       : missing ? `${missing} without a description` : "Ready to save");
-    status.classList.toggle("err", kind === "err" || (!message && problems.count > 0));
-    el("entry-save").disabled = building || problems.count > 0;
+    status.classList.toggle("err", Boolean(editorError) || problems.count > 0);
+    el("entry-save").disabled = building || saving || problems.count > 0;
   }
 
   function editorParts() {
@@ -673,7 +676,15 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     for (const form of d.forms) {
       const card = node("div", "", "editor-card");
       const top = node("div", "", "editor-line wrap");
-      top.append(input(form.text, `f:${form.key}:text`, (value) => change(() => { form.text = value; }), { placeholder: "heard form", cls: "input mono heard-input", label: "Heard as" }), node("span", "→", "arrow"));
+      top.append(input(form.text, `f:${form.key}:text`, (value) => change((dd) => {
+        // An always-replace approval was given for the old text; the new one needs its own.
+        if (form.direct) {
+          const notice = `“Always” on “${words(form.text)}” was cleared because you changed the heard form. Turn it on again if it still applies.`;
+          if (!dd.notices.includes(notice)) dd.notices.push(notice);
+          form.direct = null; form.direct_reason = "";
+        }
+        form.text = value;
+      }), { placeholder: "heard form", cls: "input mono heard-input", label: "Heard as" }), node("span", "→", "arrow"));
       for (const meaning of d.meanings) {
         const on = form.links.includes(meaning.id);
         const pill = button(on ? `✓ ${meaning.spelling || "(no spelling)"}` : meaning.spelling || "(no spelling)", () => change(() => {
@@ -758,7 +769,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   el("entry-save").addEventListener("click", saveEditor);
   async function saveEditor() {
     const d = draft;
-    if (!d || editorProblems().count || building) return;
+    if (!d || editorProblems().count || building || saving) return;
     const known = meanings(dict, d.model?.id);
     const meaningOf = (mid) => d.meanings.find((m) => m.id === mid) ?? known.get(mid);
     const group = {
@@ -802,10 +813,27 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     }
     const removed = new Set(d.original.meanings.map((m) => m.id).filter((mid) => !group.meanings.some((m) => m.id === mid)));
     if (removed.size) withoutMeanings(next, removed);
-    const problem = await saveDictionary(next);
-    if (problem) { editorStatus(problem, "err"); return; }
-    closeEditor();
-    if (d.created) { clearAdd(); showAdd(false); }
+    const version = dictVersion;
+    saving = true;
+    editorStatus();
+    const problem = await saveDictionary(next).finally(() => { saving = false; editorStatus(); });
+    // The panel may have been closed, or another entry opened, while this was saving.
+    const current = draft === d;
+    if (problem) {
+      if (!current) { toast(problem, "err"); return; }
+      // After a reload the draft is stale: saving it would undo whatever changed the entry.
+      if (dictVersion !== version && !d.created) {
+        const fresh = (d.scope === "pinned" ? dict.pinned : dict.learned[d.model.id] ?? []).find((g) => g.id === d.id);
+        if (!fresh) { closeEditor(); toast(`${problem} The entry is no longer there.`, "err"); return; }
+        openEditor(d.scope, fresh);
+        draft.model = d.model;
+      }
+      editorError = problem;
+      editorStatus();
+      return;
+    }
+    if (current) closeEditor();
+    if (current && d.created) { clearAdd(); showAdd(false); }
     reveal(group.id);
     toast(`${d.created ? "Added" : "Saved"} ${title(group) || "entry"}`);
   }
