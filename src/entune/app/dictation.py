@@ -6,6 +6,7 @@ One operation owns a dictation from recording through delivery.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from concurrent.futures import CancelledError
@@ -366,4 +367,7 @@ def _finish(upload: Upload | None, ref: ModelRef, clip: Clip) -> str | None:
     if upload.provider_id != ref.provider.id:
         upload.abort()
         return None
-    return upload.finish(clip.seconds or 0.0)
+    url = upload.finish(clip.seconds or 0.0)
+    if url is None and upload.error:
+        logging.getLogger(__name__).warning("Fast mode upload not used: %s", upload.error)
+    return url

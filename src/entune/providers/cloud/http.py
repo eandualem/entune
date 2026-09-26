@@ -14,6 +14,19 @@ def failure_from_response(response: httpx.Response) -> Failure:
     return Failure(f"HTTP {response.status_code} {response.reason_phrase}\n{response.text}".strip())
 
 
+class NotJson(ValueError):
+    """A success status whose body is not JSON; the message is the provider's reply."""
+
+
+def json_body(response: httpx.Response) -> object:
+    """The JSON a provider answered with. Any other body, an HTML page from a proxy for
+    example, fails with that body verbatim rather than with the parser's complaint."""
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise NotJson(failure_from_response(response).error) from exc
+
+
 def failure_from_body(body: object) -> Failure:
     return Failure(f"Response had no transcript text\n{json.dumps(body)}")
 

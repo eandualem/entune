@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import httpx
 
-from entune.providers.cloud.http import DEFAULT_TIMEOUT, failure_from_response, text_or_failure
+from entune.providers.cloud.http import (
+    DEFAULT_TIMEOUT,
+    failure_from_response,
+    json_body,
+    text_or_failure,
+)
 from entune.providers.contracts import Clip, TranscribeResult
 
 URL = "https://api.x.ai/v1/stt"
@@ -33,4 +38,4 @@ class XAI:
         )
         if response.is_error:
             return failure_from_response(response)
-        return text_or_failure(response.json())
+        return text_or_failure(json_body(response))
