@@ -23,7 +23,7 @@ from entune import prompts
 from entune.dictionary.entries import Association, Dictionary, Form, Group, Meaning
 from entune.learning import batches, generate, replies, suggestion_model
 from entune.learning import inputs as learning_inputs
-from entune.learning.suggestion_model import Request, providers
+from entune.learning.suggestion_model import Request, call, providers
 from tests.dictionary_samples import JEV, group, proposed
 
 TEXT = "I use cloud code."
@@ -608,6 +608,46 @@ def test_environment_headers_never_replace_the_saved_key(
             )
         )
     assert sent == [expected]
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "groq", "openai"])
+def test_a_request_waits_five_seconds_to_connect_and_twenty_minutes_to_read(
+    monkeypatch: pytest.MonkeyPatch, provider: str
+) -> None:
+    limits: list[dict[str, float]] = []
+    library: Any = httpx if provider == "groq" else httpx2
+
+    def respond(outgoing: Any) -> Any:
+        limits.append(outgoing.extensions["timeout"])
+        return library.Response(500, json={"error": "stop here"})
+
+    monkeypatch.setattr(
+        providers,
+        "_http" if provider == "groq" else "_http2",
+        lambda header, value: library.AsyncClient(transport=library.MockTransport(respond)),
+    )
+    with pytest.raises(ModelHTTPError):
+        asyncio.run(
+            suggestion_model.call_model(
+                replace(request(), provider=provider, model=f"{provider}:some-model")
+            )
+        )
+    assert limits
+    assert all(t["connect"] == 5 and t["read"] == providers.TIMEOUT for t in limits)
+
+
+def test_a_reply_that_keeps_streaming_past_the_limit_is_cut(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(call, "TIMEOUT", 0.05)
+
+    async def endless(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        while True:
+            await asyncio.sleep(0.01)
+            yield " "
+
+    with pytest.raises(ValueError, match="timed out"):
+        asyncio.run(suggestion_model.call_model(request(), FunctionModel(stream_function=endless)))
 
 
 def test_request_failures_are_not_retried() -> None:

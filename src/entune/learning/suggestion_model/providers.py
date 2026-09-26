@@ -16,6 +16,8 @@ import httpx2
 from pydantic_ai.models import Model
 
 TIMEOUT = 1200.0  # seconds; a reply at high reasoning effort takes minutes
+# Connecting gets five seconds. An SDK sends its own timeout with every request, over
+# its HTTP client's, so an SDK given a plain number would wait that long to connect too.
 
 
 def _credential(header: str, value: str) -> dict[str, list[Callable[[Any], Awaitable[None]]]]:
@@ -57,7 +59,7 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
             api_key=api_key,
             base_url="https://api.anthropic.com",
             max_retries=0,
-            timeout=TIMEOUT,
+            timeout=httpx2.Timeout(TIMEOUT, connect=5),
             http_client=_http2("x-api-key", api_key),
         ) as anthropic:
             yield AnthropicModel(name, provider=AnthropicProvider(anthropic_client=anthropic))
@@ -71,7 +73,7 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
             api_key=api_key,
             base_url="https://api.openai.com/v1",
             max_retries=0,
-            timeout=TIMEOUT,
+            timeout=httpx2.Timeout(TIMEOUT, connect=5),
             http_client=_http2("authorization", f"Bearer {api_key}"),
         ) as openai:
             yield OpenAIResponsesModel(
@@ -81,7 +83,6 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
             )
         return
     if provider == "google":
-        import httpx2
         from pydantic_ai.models.google import GoogleModel
         from pydantic_ai.providers.google import GoogleProvider
 
@@ -103,7 +104,7 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
             api_key=api_key,
             base_url="https://api.groq.com",
             max_retries=0,
-            timeout=TIMEOUT,
+            timeout=httpx.Timeout(TIMEOUT, connect=5),
             http_client=_http("authorization", f"Bearer {api_key}"),
         ) as groq:
             yield GroqModel(name, provider=GroqProvider(groq_client=groq))

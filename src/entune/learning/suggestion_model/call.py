@@ -10,6 +10,8 @@ a refusal or a reply cut at the output limit ends the call at once.
 
 from __future__ import annotations
 
+import asyncio
+
 import pydantic_ai
 from pydantic import BaseModel
 from pydantic_ai import Agent, ModelRetry, NativeOutput, PromptedOutput, RunContext
@@ -47,9 +49,8 @@ async def _run(request: Request, chosen: Model) -> str:
         output_type=NativeOutput(request.shape) if native else PromptedOutput(request.shape),
         instructions=request.system,
         retries={"output": MAX_FIXES},
-        model_settings=ModelSettings(
-            max_tokens=MAX_OUTPUT_TOKENS, thinking="medium", timeout=TIMEOUT
-        ),
+        # No timeout here: it would replace each provider client's five-second connect limit.
+        model_settings=ModelSettings(max_tokens=MAX_OUTPUT_TOKENS, thinking="medium"),
     )
 
     @agent.output_validator
@@ -73,21 +74,28 @@ async def _run(request: Request, chosen: Model) -> str:
                     request.retrying(attempt, _problem(retry[-1]))
                 # Streamed: a connection that carries nothing for a minute is cut on the
                 # way (observed 2026-09-21), and a reasoning reply is silent for minutes.
-                async with node.stream(run.ctx) as stream:
-                    async for _ in stream:
-                        pass
-                    finish = stream.response.finish_reason
-                    if finish == "length":
-                        raise ValueError(
-                            f"The reply reached the {MAX_OUTPUT_TOKENS}-token output limit,"
-                            " which includes reasoning; nothing from this step was used"
-                        )
-                    # Only a reply the provider says it finished is used: a stream that
-                    # was cut, failed or filtered can still carry text that parses.
-                    if finish != "stop":
-                        raise ValueError(
-                            f"The model did not finish its reply (finish reason: {finish})"
-                        )
+                # The HTTP timeout only limits silence between reads, so a stream that
+                # keeps sending is given TIMEOUT in total.
+                try:
+                    async with asyncio.timeout(TIMEOUT), node.stream(run.ctx) as stream:
+                        async for _ in stream:
+                            pass
+                        finish = stream.response.finish_reason
+                except TimeoutError as exc:
+                    raise ValueError(
+                        f"The reply timed out: still streaming after {TIMEOUT / 60:.0f} minutes"
+                    ) from exc
+                if finish == "length":
+                    raise ValueError(
+                        f"The reply reached the {MAX_OUTPUT_TOKENS}-token output limit,"
+                        " which includes reasoning; nothing from this step was used"
+                    )
+                # Only a reply the provider says it finished is used: a stream that
+                # was cut, failed or filtered can still carry text that parses.
+                if finish != "stop":
+                    raise ValueError(
+                        f"The model did not finish its reply (finish reason: {finish})"
+                    )
             assert run.result is not None
             return run.result.output.model_dump_json()
     except UnexpectedModelBehavior as exc:
