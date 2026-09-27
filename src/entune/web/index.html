@@ -227,7 +227,7 @@
                 <ul>
                   <li>With no entries yet for this speech model, it reads your recent transcripts and suggests first entries for the mistakes it finds.</li>
                   <li>Once you have entries, pinned or learned, it also compares what the speech model wrote with what the dictionary changed. It suggests missing entries and fixes: a clearer description, a wider or narrower entry, or removing a learned entry that does more harm than good.</li>
-                  <li><b>Learning from audio</b>, in the <b>⋯</b> menu, transcribes recordings again with your current speech model before suggesting entries. Use it when the recordings were made with another model, or come from another transcription app or a folder. It takes longer and uses more tokens.</li>
+                  <li><b>Learning from audio</b>, in the <b>⋯</b> menu, transcribes recordings again with your current speech model before suggesting entries. Use it when the recordings were made with another model, or come from another dictation app or a folder. It takes longer and uses more tokens.</li>
                 </ul>
                 <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model selected in the toolbar.</p>
                 <p>Each run reads up to 300 of that model's newest transcripts that no earlier run has read, so running it again moves on to newer dictations. To read transcripts again, turn on <b>Include transcripts already used</b> in the suggestions panel or the <b>⋯</b> menu; that costs tokens again and can repeat earlier suggestions.</p>
@@ -448,7 +448,7 @@
                 </form>
                 <div id="laya-setup" hidden>
                   <div class="srow"><span class="caption" id="laya-status" role="status"></span><button type="button" class="btn sm" id="laya-retry" hidden>Start again</button></div>
-                  <div class="srow" id="laya-install" hidden><div class="caption">Install its engine once, in Terminal (about 700 MB, including PyTorch), then press Check again. Entune looks for it where uv installs tools.<pre id="laya-command"></pre></div></div>
+                  <div class="srow" id="laya-install" hidden><div class="caption">Install its engine once, in Terminal (about 750 MB, including PyTorch), then press Check again. Entune looks for it where uv installs tools.<pre id="laya-command"></pre></div></div>
                 </div>
                 <div class="srow foot" id="decision-status-row"><span class="caption save-status" id="decision-status" role="status"></span></div>
               </div>
@@ -523,7 +523,7 @@
               <h2 class="sec-label">What leaves this Mac</h2>
               <div class="scard">
                 <div class="srow summary"><div><div class="name">Speech recognition</div><div class="caption">Audio goes to the cloud service you pick. Models on this Mac keep it here.</div></div></div>
-                <div class="srow summary"><div><div class="name">Corrections &amp; formatting</div><div class="caption">When on, transcript text, the words in question and relevant dictionary meanings go to TypeSafe.</div></div></div>
+                <div class="srow summary"><div><div class="name">Corrections &amp; formatting</div><div class="caption">When on, transcript text, the words in question and relevant dictionary meanings go to TypeSafe if Jev is your decision model. With Laya they stay on this Mac.</div></div></div>
                 <div class="srow summary"><div><div class="name">Dictionary suggestions</div><div class="caption">When you ask, transcripts and your dictionary go to your suggestion model. Transcripts made only for a suggestion run are not saved by Entune.</div></div></div>
                 <div class="srow foot"><span class="caption">Each service's own retention rules apply.</span></div>
               </div>
@@ -562,13 +562,14 @@
                   <h3>The steps</h3>
                   <p>Each transcript goes through the steps you turned on, in this order: your dictionary, repeated fillers, then paragraphs and bullets. The original transcript from the speech model is always kept in History, and you can copy it from there.</p>
                   <h3>Your dictionary</h3>
-                  <p>For each word your speech model often gets wrong, Jev reads the sentence around it and picks the meaning that fits: “Ask cloud to draft it” becomes “Ask Claude to draft it”, while “the backups are in the cloud” stays. Entries set to always apply skip that choice. When Jev is unsure, the words stay as they were.</p>
+                  <p>For each word your speech model often gets wrong, the decision model reads the sentence around it and picks the meaning that fits: “Ask cloud to draft it” becomes “Ask Claude to draft it”, while “the backups are in the cloud” stays. Entries set to always apply skip that choice. When no meaning can be chosen, the words stay as they were.</p>
                   <h3>Fillers and formatting</h3>
-                  <p>Repeated fillers such as “um um” become one when Jev hears hesitation; quoted text and code are left alone. Paragraph breaks and bullets are added only where the dictation clearly has them, and every word is kept.</p>
+                  <p>Repeated fillers such as “um um” become one when the decision model hears hesitation; quoted text and code are left alone. Paragraph breaks and bullets are added only where the dictation clearly has them, and every word is kept.</p>
                   <h3>Waiting and failures</h3>
                   <p>The steps share one time limit, including retries; you can change it under Advanced. If the dictionary step fails, you get the original transcript. If fillers or formatting fail, that step is skipped and the text before it is kept.</p>
-                  <h3>What Jev receives</h3>
-                  <p>Jev is a decision model from TypeSafe. It answers questions about the text and never writes any. For fillers and formatting it receives the whole transcript; for your dictionary, the passage around each word in question with the meanings that could apply, including your personal usage notes. This happens even when speech recognition runs on this Mac. It never receives audio.</p>
+                  <h3>The decision model</h3>
+                  <p>A decision model answers questions about the text and never writes any. For fillers and formatting it receives the whole transcript; for your dictionary, the passage around each word in question with the meanings that could apply, including your personal usage notes. It never receives audio.</p>
+                  <p>Two are available. Jev, from TypeSafe, runs in the cloud on your own TypeSafe key, so the text goes to TypeSafe even when speech recognition runs on this Mac. Laya, an open-weight model from Convai Innovations, runs on this Mac for English, so the text stays here. Its engine is installed once in Terminal, and Entune runs it only while Laya is chosen and a step is on. Laya reads a limited amount of text per question, so in a long dictation its filler and paragraph decisions see only part of it.</p>
                 </article>
               </form>
             </dialog>
@@ -582,12 +583,13 @@
                 <article class="guide">
                   <h3>On this Mac</h3>
                   <p>Entune keeps its data in one folder on this Mac: your recordings, every transcript (the speech model's original and each processed version), your dictionary, settings, and the API keys you enter. Keys are stored in Entune's database, not in the macOS keychain. Entune has no accounts and sends no usage data.</p>
-                  <p>Audio you import from another transcription app or a folder is copied into that folder; your original files are not changed or moved.</p>
+                  <p>Audio you import from another dictation app or a folder is copied into that folder; your original files are not changed or moved.</p>
                   <h3>Speech recognition</h3>
                   <p>With a cloud speech model, such as AssemblyAI, Groq or Soniox, each recording's audio is sent to that service to be transcribed. With fast mode, audio goes to AssemblyAI while you are still speaking. Transcribing again with another model sends the audio to that model's service.</p>
                   <p>With a model on this Mac, such as Whisper or Parakeet, audio stays here. Downloading one fetches the model from Hugging Face.</p>
                   <h3>Corrections and formatting</h3>
-                  <p>When Apply your dictionary, Reduce repeated fillers, or Paragraphs and bullets is on, transcript text goes to TypeSafe for Jev's decisions: the whole transcript for fillers and formatting, and for your dictionary the passage around each word in question with the meanings that could apply. This happens even when speech recognition runs on this Mac. Audio is never sent to TypeSafe.</p>
+                  <p>When Apply your dictionary, Reduce repeated fillers, or Paragraphs and bullets is on, transcript text goes to your decision model: the whole transcript for fillers and formatting, and for your dictionary the passage around each word in question with the meanings that could apply. Audio is never sent.</p>
+                  <p>With Jev, the text goes to TypeSafe, even when speech recognition runs on this Mac. With Laya, it stays on this Mac; its first start fetches the model from Hugging Face.</p>
                   <h3>Dictionary suggestions</h3>
                   <p>Only when you choose Get suggestions, the transcripts it reads and your dictionary are sent to your suggestion model (Anthropic, OpenAI, Google Gemini, Groq or Mistral). With Learn from audio, the chosen audio is first transcribed by your speech model as above. Transcripts made only for a suggestion run are not saved.</p>
                   <h3>Keeping and deleting</h3>
@@ -608,11 +610,11 @@
                   <ul class="reset-list">
                     <li>Recordings and their audio</li>
                     <li>Transcripts: originals, processed versions and every attempt</li>
-                    <li>Audio copied in from other transcription apps or folders</li>
+                    <li>Audio copied in from other dictation apps or folders</li>
                     <li>Your dictionary, its automatic copies and suggestion progress</li>
                     <li>Corrections received from other apps</li>
                     <li>Settings, shortcuts and saved API keys</li>
-                    <li>Downloaded speech models</li>
+                    <li>Downloaded models, for speech and for Laya</li>
                     <li>The backups folder, and the log (emptied)</li>
                   </ul>
                   <p class="caption" id="reset-size" role="status"></p>

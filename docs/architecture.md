@@ -11,7 +11,8 @@ src/entune/
   api/            the HTTP routes, one module per resource (settings, models, recordings,
                   dictionary, learning, data, desktop); common.py: errors and JSON shapes
   app/            what the app does, whoever asks; entune.py builds and wires the parts:
-                  settings.py (keys, fast mode, Jev switches, suggestion model, shortcuts),
+                  settings.py (keys, fast mode, the decision model and its steps, suggestion
+                  model, shortcuts), decision_models.py (which one the steps ask, Laya's lifetime),
                   models.py (providers, local models, the default model), metrics.py,
                   dictation.py (record, transcribe, process), dictionary_file.py (read,
                   versioned save, pin, agent corrections), learning.py and
@@ -28,8 +29,10 @@ src/entune/
                   local/: Whisper.cpp and Parakeet, lifecycle capability, shared
                   downloads; Parakeet's helper runs in its external engine
   processing/     after speech: pipeline.py runs the stages, results.py records them;
-                  jev_client.py calls Jev, jev.py asks the meaning, filler and paragraph
-                  questions; formatting.py, cleanup.py, text_edits.py
+                  jev_client.py calls the decision model, Jev or Laya, over TypeSafe's API;
+                  laya.py runs Laya's server from its external engine; jev.py asks the
+                  meaning, filler and paragraph questions; formatting.py, cleanup.py,
+                  text_edits.py
   dictionary/     entries.py: meanings, forms, groups; document.py: dictionary.json;
                   changes.py: pinning, proposals and review; matching.py: eligible meanings
                   and exact edits; corrections.py: confirmed corrections from other apps
@@ -38,7 +41,8 @@ src/entune/
                   schema, parse and apply), generate.py
   storage/        store.py: SQLite rows + audio files; records.py, schema.py;
                   data_folder.py: what Entune owns in its folder; paths.py: where it is
-  prompts/        packaged generation text and structured Jev questions/criteria/examples;
+  prompts/        packaged generation text and the decision model's structured
+                  questions/criteria/examples;
                   a small resource loader substitutes literal values
   web/            app.js wires navigation and models; dictionary-view.js and settings-view.js
                   own their view state; recording.js owns microphone capture and WAV encoding;
@@ -75,7 +79,7 @@ keeps the exact raw text and skips cleanup/formatting; a failure in either later
 keeps its input and skips remaining enhancements. No model generates text or deletion offsets. Code validates its own
 proposed spans before applying edits; original speech and operation counts remain separate.
 History polling invalidates on processing updates as well as
-new recordings. Entune owns a lazy Jev event loop and HTTP pool: cancellable
+new recordings. Entune owns a lazy decision-model event loop and HTTP pool: cancellable
 requests share one processing deadline, including bounded retries, and the
 desktop owner (or CLI in browser mode) closes the client at shutdown. Speech and
 processing failures are distinct.
@@ -92,7 +96,7 @@ only; applying, discarding, replacing or closing the workflow clears them.
 SpeechResources grants one local operation at a time; waiting dictation precedes background
 clips/warming. Cloud adapters are independent; the user-operation guard prevents overlapping dictation/learning calls. Warm requests coalesce to the latest
 selection. An in-use model stays alive through raw-transcript persistence, then releases
-before Jev processing. A background clip must release resources before proceeding. No
+before decision-model processing. A background clip must release resources before proceeding. No
 proposal is published until generation clients and inference leases exit. Successful temporary
 audio text remains in the workflow for Retry until apply/discard/replacement/close. Failed background cleanup fails the build; foreground cleanup reports a warning
 without erasing already-persisted speech.
@@ -107,7 +111,8 @@ button owns browser memory until Stop/upload; it does not participate in this na
 capture flush. Stop it before quitting or closing a browser tab.
 
 Shutdown rejects new work, cancels generation and owns worker/client/upload/download/helper
-cleanup. Jev has a separate two-second close bound; builds and speech resources share a further
+cleanup. The decision-model client has a separate two-second close bound, and Laya's
+server is stopped; builds and speech resources share a further
 two-second wait. The service returns whether cleanup finished and logs incomplete cleanup.
 Synchronous speech/HTTP/native inference cannot be forcibly interrupted safely: after the
 wait, owned daemon workers may still drain until process exit. No later clip or generation
@@ -127,7 +132,7 @@ thread.
 
 Model-facing instructions live in prompts/; algorithms, thresholds and
 response validation remain in Python. Text templates use named dollar
-placeholders. Structured Jev templates are decoded from JSON before their
+placeholders. Structured decision-model templates are decoded from JSON before their
 string leaves are substituted, so quotes, braces and dollar signs in
 transcript data are never interpreted as template instructions. Resources
 are loaded with importlib.resources, independent of the working directory.

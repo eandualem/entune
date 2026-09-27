@@ -1,6 +1,7 @@
-"""The questions Jev answers: which meaning fits, where paragraphs go, which fillers go.
+"""The questions a decision model answers: which meaning fits, where paragraphs go, which
+fillers go.
 
-Code alone applies what the answers allow; Jev never writes text.
+Code alone applies what the answers allow; the decision model never writes text.
 """
 
 from __future__ import annotations

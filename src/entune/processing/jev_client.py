@@ -38,7 +38,7 @@ JEV = Endpoint("jev", URL, MODEL, "TypeSafe API key")
 
 
 class JevError(Exception):
-    """The request failed or the answer was not usable; the transcript goes on without Jev."""
+    """The request failed or the answer was not usable; the transcript goes on without it."""
 
 
 def terminal_error(response: httpx.Response) -> bool:
@@ -77,9 +77,9 @@ class Policy:
                 or not math.isfinite(value)
                 or not 0.1 <= value <= 30
             ):
-                raise ValueError("Jev time limits must be between 0.1 and 30 seconds")
+                raise ValueError("Processing time limits must be between 0.1 and 30 seconds")
         if type(self.max_attempts) is not int or not 1 <= self.max_attempts <= 3:
-            raise ValueError("Jev max_attempts must be an integer from 1 to 3")
+            raise ValueError("Attempts per step must be an integer from 1 to 3")
 
 
 class Client:

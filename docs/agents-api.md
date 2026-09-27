@@ -39,7 +39,7 @@ silently if Entune is not running.
 
 | Method and path | What |
 |---|---|
-| `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode, `jev` (key hint, `dictionary`, `cleanup` and `formatting` on or off, shared retry policy and separate stage summaries); each provider says whether it `streams` (fast mode) or is `local` |
+| `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode, `decisionModel` (`jev` or `laya`; on read, also Laya's state on this Mac), `jev` (the processing steps: TypeSafe key hint, `dictionary`, `cleanup` and `formatting` on or off, shared retry policy and the chosen decision model's stage summaries); each provider says whether it `streams` (fast mode) or is `local` |
 | `GET /api/models` | the models of every provider that has a key, plus the downloaded local ones |
 | `GET /api/metrics` | the performance table: per model and mode, runs and successes, audio seconds, seconds of wait per minute of audio (with the number of timed runs), and dictionary replacements, words, corrected and checked dictations |
 | `GET /api/local/models` | the local models with size, state (absent, downloading with progress, ready, error, unavailable when the engine is not installed) |
@@ -73,7 +73,9 @@ Learning `ready` can have outcome `complete`, `failed` or `stopped`; completedBa
 steps, coveredInputs and total describe actual coverage. `/retry` (POST) resumes failed
 or stopped learning using successful temporary audio and validated generation batches.
 GET `/api/dictionary/audio` includes retained imports and ordinary recordings, known
-seconds, unknown-duration count and dates where known. Temporary learning text is never
+seconds, unknown-duration count and dates where known, and `apps`: the dictation apps
+whose recordings can be imported. POST `/api/dictionary/audio/apps/{app}` imports one
+app's audio (never its transcripts) and returns added, duplicate and empty counts. Temporary learning text is never
 persisted; per-model learning run/coverage metadata is persisted only on finish/discard.
 
 The browser starts `POST /api/operations` before microphone capture, then sends its

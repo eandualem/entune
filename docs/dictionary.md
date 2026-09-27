@@ -54,15 +54,15 @@ words; it does not infer plurals, fuzzy aliases or word boundaries. Costs includ
 size of the matching bucket: a larger dictionary is not automatically faster.
 
 With contextual correction enabled, one request supplies the original transcript,
-matched meanings, original character spans and surrounding context. Jev selects a
-semantic interpretation. For an isolated span that is one eligible meaning. An overlap
+matched meanings, original character spans and surrounding context. The decision model
+chosen in Settings (Jev at TypeSafe, or Laya on this Mac) selects a semantic interpretation. For an isolated span that is one eligible meaning. An overlap
 can offer the whole multiword name or compatible word-level meanings. Literal meanings
 are ordinary candidates: selecting the computing or weather meaning of cloud outputs
 cloud; selecting Claude outputs Claude. There is no semantic replace/keep choice.
 
 A valid response always selects its highest-scoring eligible interpretation, even
 when probabilities are close. Distinct meanings never pool probability merely because
-they output the same spelling. Exact ties honor Jev's declared choice after validating
+they output the same spelling. Exact ties honor the decision model's declared choice after validating
 that it is tied for highest. There is no generic uncertainty candidate or confidence
 threshold for dictionary choices. Invalid/failed responses fail the stage; missing
 usable definitions or overly complex overlaps remain visibly unresolved without an
@@ -116,7 +116,7 @@ retries, failures, preserved spans and timings. Replacements count edited disjoi
 components, not words proven correct. Old combined counters remain in exports under
 `legacy_processing`, excluded from new summaries.
 
-Settings > Providers exposes the initial retry policy: **5 seconds total**
+Settings › Corrections & formatting › Advanced exposes the initial retry policy: **5 seconds total**
 across correction, cleanup and formatting, **3 seconds per attempt**, and **2 attempts
 per request**. These are configurable defaults, not measured provider
 service guarantees. Transient connection/read failures, timeouts and HTTP
@@ -126,8 +126,9 @@ when encoded as 429. Malformed successful responses fail without an invented dec
 `Retry-After` is respected only when another attempt fits the remaining
 budget; longer waits return the original immediately. Authentication,
 request-validation and malformed-answer failures are not retried.
-[TypeSafe's API](https://docs.typesafe.ai/api) documents the response schema
-and rate-limit/overload errors.
+Both decision models answer over TypeSafe's System One API, Laya through its own
+server on 127.0.0.1; [TypeSafe's API](https://docs.typesafe.ai/api) documents the
+response schema and rate-limit/overload errors.
 
 A reused asynchronous HTTP client runs on an owned event loop so the total
 deadline cancels ongoing I/O, including a response body that keeps dripping
@@ -236,8 +237,8 @@ these edits and the original transcription. Cleanup's removed-word count and for
 changed-span count are operations, not accuracy scores. Older formatting outcomes have
 `changes: null` (not recorded), not an invented zero; aggregate span counts cover recorded
 edits only. Mocked probability tests establish
-these boundaries and failure behavior, not acoustic truth or live Jev classification
-quality. Paid evaluation needs separate authorization.
+these boundaries and failure behavior, not acoustic truth or live decision-model
+classification quality. Paid evaluation needs separate authorization.
 
 ## Generation, editing and migration
 

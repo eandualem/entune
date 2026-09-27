@@ -1,7 +1,7 @@
 """Laya: an open-weight decision model from Convai Innovations, run on this Mac.
 
 The engine is not part of Entune: it is the `laya` package with its server extra, about
-700 MB of libraries including PyTorch, installed once with `uv tool install 'laya[serve]'`.
+750 MB of libraries including PyTorch, installed once with `uv tool install 'laya[serve]'`.
 Entune starts that installation's server only while Laya is the chosen decision model and
 a step that asks it is on, bound to 127.0.0.1, and stops it otherwise. The server answers
 the same questions over the same API as Jev. Its English model (about 850 MB) downloads

@@ -332,13 +332,13 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     }
     if (!g.recognized_forms.length) forms.append(node("p", "No heard forms yet.", "caption"));
     const list = node("div", "", "detail-meanings");
-    list.append(node("p", "Meanings · Jev picks from the sentence", "detail-label"));
+    list.append(node("p", "Meanings · the decision model picks from the sentence", "detail-label"));
     for (const meaning of g.meanings) {
       const row = node("div", "", "meaning-line");
       const head = node("span", "", "meaning-name");
       head.append(node("b", meaning.spelling), node("span", meaning.casing === "fixed" ? "exact capitals" : "normal word", "casing"));
       const text = node("span", "", "meaning-text");
-      text.append(node("span", meaning.meaning || "No description: Jev can't choose it yet.", meaning.meaning ? "definition" : "definition missing"));
+      text.append(node("span", meaning.meaning || "No description: the decision model can't choose it yet.", meaning.meaning ? "definition" : "definition missing"));
       if (meaning.personal_context) text.append(node("span", meaning.personal_context, "personal"));
       // Pinning one meaning of several leaves its competitors learned for this model.
       if (scope === "learned" && g.meanings.length > 1) {
@@ -454,7 +454,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const hint = el("add-hint");
     hint.classList.toggle("err", Boolean(addProblem));
     hint.textContent = addProblem || (heardList().length > 1 ? `${heardList().length} heard forms, separated by commas.`
-      : words(addFields.desc.value) ? "Enter to add." : "A description is optional to save, but Jev can't choose the word without it.");
+      : words(addFields.desc.value) ? "Enter to add." : "A description is optional to save, but the decision model can't choose the word without it.");
   }
   function showAdd(open) {
     addRow.hidden = !open;
@@ -682,7 +682,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     // Written as: the meanings, one card each.
     const written = node("section", "", "editor-section");
     const writtenHead = node("div", "", "editor-head");
-    writtenHead.append(node("h3", "Written as"), node("span", "the meanings · Jev picks one from the sentence", "caption"));
+    writtenHead.append(node("h3", "Written as"), node("span", "the meanings · the decision model picks one from the sentence", "caption"));
     written.append(writtenHead);
     const own = new Set(d.meanings.map((m) => m.id));
     for (const meaning of d.meanings) {
@@ -712,9 +712,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       }
       card.append(top, errorLine(`m:${meaning.id}`, problems.meanings.get(meaning.id)));
       const description = input(meaning.meaning, `m:${meaning.id}:meaning`, (value) => { meaning.meaning = value; description.classList.toggle("missing", !words(value)); warn.hidden = Boolean(words(value)); },
-        { tag: "textarea", placeholder: "What it is and what it goes with. Jev reads this.", label: "What it is" });
+        { tag: "textarea", placeholder: "What it is and what it goes with. The decision model reads this.", label: "What it is" });
       description.classList.toggle("missing", !words(meaning.meaning));
-      const warn = node("p", "Without a description Jev can't choose this meaning. You can save; the entry is flagged.", "field-error");
+      const warn = node("p", "Without a description the decision model can't choose this meaning. You can save; the entry is flagged.", "field-error");
       warn.hidden = Boolean(words(meaning.meaning));
       card.append(description, warn,
         input(meaning.personal_context, `m:${meaning.id}:context`, (value) => { meaning.personal_context = value; }, { placeholder: "How you use it (optional)", cls: "input small" }));

@@ -93,7 +93,7 @@ class Entune:
             listener()
 
     def close(self) -> bool:
-        # Signal both owners before waiting; no new work can race shutdown. Jev
+        # Signal both owners before waiting; no new work can race shutdown. The decision client
         # owns a separate two-second close; builds/resources share two more seconds.
         self.builds.close(0)
         self.speech.close(0)
@@ -106,7 +106,7 @@ class Entune:
             self.jev.close()
         except Exception as exc:
             jev_done = False
-            self._warn(f"Jev cleanup: {type(exc).__name__}: {exc}")
+            self._warn(f"Decision model cleanup: {type(exc).__name__}: {exc}")
         deadline = time.monotonic() + 2.0
         builds_done = self.builds.close(max(0.0, deadline - time.monotonic()))
         resources_done = self.speech.close(max(0.0, deadline - time.monotonic()))

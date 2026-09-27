@@ -11,11 +11,13 @@
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
 
 Entune is a small, local dictation app. Hold a key or press a shortcut,
-speak, and the transcript is pasted where you were typing. You bring your
-own API key for a speech-to-text provider, AssemblyAI, Groq, Soniox,
-ElevenLabs or xAI, or download a model that runs on your own Mac, so you
-pick the engine that transcribes you instead of taking whichever one a
-dictation product bundles.
+speak, and the transcript is pasted where you were typing. You choose the
+**speech model** that transcribes you, instead of taking whichever one a
+dictation product bundles: a cloud service on your own API key (AssemblyAI,
+Groq, Soniox, ElevenLabs or xAI) or a model that runs on your own Mac.
+After recognition, an optional **decision model** applies your personal
+dictionary and tidies the text. It answers questions about the text and
+never writes any: Jev from TypeSafe in the cloud, or Laya on your Mac.
 Every recording and transcript is kept in a local history, with the
 provider's exact error and a one-click retry with another model when a
 transcription fails, and a performance table by model built from your own
@@ -139,7 +141,9 @@ When `fn` is one of your shortcuts, Entune owns that key while it runs: a
 tap no longer opens Emoji & Symbols or Apple's dictation, and fn does not
 reach other apps as a modifier. Pick another key if you need fn elsewhere.
 
-## Providers and cost
+## Speech models and cost
+
+A speech model turns a recording into text. These are the ones Entune can use:
 
 | Provider | Model | How |
 |---|---|---|
@@ -221,9 +225,20 @@ hand: meanings with output spellings and definitions, recognized forms, and whic
 meanings each form may stand for.
 
 **Learn from audio**, in the Dictionary tab, opens a dialog. Choose Entune recordings,
-or import audio from Wispr Flow on this Mac (including its local backups) or from an
-audio folder; imports keep their recording date where the source has one. Other
-applications' transcripts are ignored. Entune keeps a local copy of each distinct
+import recordings from another dictation app on this Mac, or import an audio folder;
+imports keep their recording date where the source has one. Only the audio is copied:
+another app's transcripts are never read. These dictation apps can be imported from:
+
+| Dictation app | Where Entune looks |
+|---|---|
+| Wispr Flow | its database in `~/Library/Application Support/Wispr Flow`, including local backups |
+| Superwhisper | `~/superwhisper/recordings`, or `~/Documents/superwhisper/recordings` for older installs |
+| VoiceInk | `~/Library/Application Support/com.prakashjoshipax.VoiceInk/Recordings` |
+| OpenWhispr | `~/Library/Application Support/open-whispr/audio` (it keeps 30 days by default) |
+| Handy | `~/Library/Application Support/com.pais.handy/recordings` (it keeps the latest five by default) |
+
+Recordings from Superwhisper, VoiceInk, OpenWhispr and Handy are dated by when their
+audio file was written. Reading `~/Documents` needs your permission in macOS. Entune keeps a local copy of each distinct
 audio file in `dictionary-audio/`, separate from recording history, and can reuse
 it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
 up to 199 MB can be uploaded; the chosen provider must support the audio format
@@ -261,14 +276,29 @@ other models' boundaries are unaffected. Pinned definitions can be reviewed and 
 the agent cannot delete pinned meanings or remove any existing pinned variant.
 
 
-### Jev decides each match in context
+### A decision model picks each meaning in context
 
-With a [TypeSafe](https://typesafe.ai) key and contextual correction enabled, **Jev**
-classifies eligible meanings from the words around each occurrence. Jev generates no replacement
-text: Entune applies the selected stored spelling. A literal Jeff or GIF is a meaning in
-its own right. Every valid response selects the highest-scoring eligible meaning, even
-when scores are close. Exact ties use Jev's declared tied winner. Invalid responses
-fail the stage; scores are never invented or pooled by output spelling.
+A decision model answers questions about the text with probabilities and never writes
+any. With contextual correction enabled, it classifies eligible meanings from the words
+around each occurrence; Entune applies the selected stored spelling. Choose the decision
+model in Settings › Corrections & formatting:
+
+| Decision model | Where it runs | Setup |
+|---|---|---|
+| Jev, from [TypeSafe](https://typesafe.ai) | TypeSafe's API | a TypeSafe API key, on your own account |
+| Laya, from [Convai Innovations](https://huggingface.co/convaiinnovations/laya) | on this Mac | its engine, installed once in a terminal with `uv tool install 'laya[serve]'` (about 750 MB, including PyTorch) |
+
+Laya is an open-weight (Apache-2.0) English model. Entune runs its server only while
+Laya is chosen and a step is on, and only for itself (on 127.0.0.1); its first start
+downloads the model, about 850 MB, into Entune's models folder. Laya reads a limited
+amount of text per question, 512 tokens including the question, so in a long dictation
+its filler and paragraph decisions see only part of the transcript. Both answer the same
+questions; History names the decision model each step asked.
+
+A literal Jeff or GIF is a meaning in its own right. Every valid response selects the
+highest-scoring eligible meaning, even when scores are close. Exact ties use the decision
+model's declared choice. Invalid responses fail the stage; scores are never invented or
+pooled by output spelling.
 
 Only explicitly approved, unambiguous direct mappings bypass classification. Pinning or
 having a single recorded candidate is not enough. Turning contextual correction off
@@ -280,7 +310,8 @@ including the first list item, while retaining existing structure and words. Lin
 sentence punctuation stay whole; a single unpunctuated note needs no formatting request.
 
 **Reduce repeated fillers** is a separate opt-in. Code proposes adjacent repeats of
-English `um`, `uh`, `erm` or `like`; Jev classifies hesitation versus meaningful speech.
+English `um`, `uh`, `erm` or `like`; the decision model classifies hesitation versus
+meaningful speech.
 Only confidently classified hesitation runs are reduced to one occurrence. Quoted/code
 spans are excluded, and uncertain answers preserve the words. History shows the exact
 deletions and timing separately from dictionary replacements. This initial policy has
@@ -293,7 +324,7 @@ in that order; final failure stops all remaining stages, retains the last comple
 text and explains which stage failed and which later stages were skipped. Every completed
 stage output and occurrence-selection provenance is saved internally. History shows
 only the final result for each attempt; canceled attempts show an audio-saved notice.
-Settings > Providers controls the processing wait: initially five seconds
+Settings › Corrections & formatting › Advanced controls the processing wait: initially five seconds
 total across correction, cleanup and formatting, three per attempt, and at most two
 attempts per request. Each applicable stage sends one request before retries. Transient
 failures can retry within that shared deadline. Explicit exhausted-credit, authentication
@@ -341,15 +372,15 @@ Enabled features determine what is sent out:
   transcripts (for refinement, beside the dictionary step's recorded result) and the
   pinned/working confusion groups, including definitions and personal context. Each
   chunk sends the current working dictionary again.
-- **Jev correction:** TypeSafe receives up to 160 characters of the original transcript
-  either side of each matched occurrence, and each eligible meaning's spelling,
-  definition and personal context.
-  **Jev filler reduction** sends its input text and code-proposed deletion spans;
-  **Jev formatting** sends the text being formatted and its sentence spans.
-  Turning on any of these features sends text even when speech recognition is local.
-- **Optional model downloads:** Hugging Face serves local model weights; no dictation
-  audio or text is included. Parakeet's separately installed engine has its own
-  package downloads. Export files are generated locally and saved through the
+- **Decision model:** for contextual correction it receives up to 160 characters of the
+  original transcript either side of each matched occurrence, and each eligible
+  meaning's spelling, definition and personal context. Filler reduction sends its input
+  text and code-proposed deletion spans; formatting sends the text being formatted and
+  its sentence spans. With Jev, all of this goes to TypeSafe, even when speech
+  recognition is local. With Laya, it stays on this Mac.
+- **Optional model downloads:** Hugging Face serves local model weights, Laya's
+  included; no dictation audio or text is included. The separately installed engines
+  of Parakeet and Laya have their own package downloads. Export files are generated locally and saved through the
   browser or native Save panel.
 
 There is no Entune account, telemetry or hosted history storage. Local speech alone
@@ -376,7 +407,8 @@ with a custom model field in Settings.
 
 Speech adapters are organized under providers/cloud and providers/local,
 with common contracts separate from HTTP and local lifecycle capabilities.
-Dictionary-generation and Jev instructions, criteria and examples live in
+Dictionary-generation instructions and the decision model's questions, criteria and
+examples live in
 the packaged src/entune/prompts/ resources; thresholds and algorithms stay
 in Python.
 
