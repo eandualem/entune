@@ -47,6 +47,11 @@ def main():
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["content-length"])))
             key = os.environ.get("LAYA_API_KEY")
+            if len(body["questions"]) > 64:  # the real server's limit
+                self.send_response(413)
+                self.send_header("content-length", "0")
+                self.end_headers()
+                return
             if key and self.headers.get("authorization") != "Bearer " + key:
                 self.send_response(401)
                 self.send_header("content-length", "0")
@@ -309,3 +314,33 @@ def test_model_and_step_changes_are_checked_and_applied_together(
             ).json() == {"ok": True}
     finally:
         service.close()
+
+
+def test_more_questions_than_laya_takes_are_asked_in_batches(
+    tmp_path: Path, fake_engine: Path
+) -> None:
+    from entune.dictionary import entries
+    from entune.processing import jev_client
+    from entune.processing.pipeline import process_text
+
+    laya = Laya(tmp_path / "models", find_engine=lambda: fake_engine)
+    laya.start()
+    try:
+        wait_until(lambda: laya.status()[0] == "ready")
+        with closing(jev_client.Client()) as client:
+            result = process_text(
+                " ".join(["Do it."] * 70),
+                entries.Dictionary().effective("s/m"),
+                contextual=False,
+                formatting=True,
+                key=None,
+                client=client,
+                policy=jev_client.Policy(),
+                endpoint=laya.endpoint(),
+            )
+        stage = result.formatting
+        assert stage.status == "succeeded" and stage.decisions == 70 and stage.attempts == 1
+        lines = (tmp_path / "models" / "laya" / "seen.json.requests").read_text().splitlines()
+        assert [len(json.loads(line)["questions"]) for line in lines[1:]] == [64, 6]
+    finally:
+        laya.stop()

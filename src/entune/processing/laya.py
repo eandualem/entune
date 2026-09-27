@@ -27,6 +27,7 @@ from entune.processing.jev_client import Endpoint
 
 INSTALL_COMMAND = "uv tool install 'laya[serve]'"
 MODEL = "laya"  # the English model; the server's alias for it
+MAX_QUESTIONS = 64  # the server refuses more in one request
 # The server ends with Entune: when Entune closes the pipe, or exits for any reason.
 LAUNCH = (
     "import os, sys, threading\n"
@@ -110,7 +111,16 @@ class Laya:
             "failed": error,
         }.get(state)
         url = f"http://127.0.0.1:{self._port}/v1/systemone"
-        return Endpoint("laya", url, MODEL, None, unavailable, short_input=True, token=self._token)
+        return Endpoint(
+            "laya",
+            url,
+            MODEL,
+            None,
+            unavailable,
+            short_input=True,
+            token=self._token,
+            max_questions=MAX_QUESTIONS,
+        )
 
     def start(self, retry: bool = False) -> None:
         """Start the server unless it runs. After a failure only an explicit retry starts it,

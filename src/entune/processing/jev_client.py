@@ -13,7 +13,8 @@ import contextlib
 import math
 import threading
 import time
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -34,6 +35,7 @@ class Endpoint:
     unavailable: str | None = None
     short_input: bool = False  # reads about 512 tokens, so a long shared state is cut off
     token: str | None = None  # a bearer it needs that is not the user's key: Laya's, per launch
+    max_questions: int | None = None  # per request; more are asked in batches
 
 
 JEV = Endpoint("jev", URL, MODEL, "TypeSafe API key")
@@ -266,8 +268,33 @@ class Call:
             raise JevError(self.endpoint.unavailable)
         if self.endpoint.key_name and not self.key:
             raise JevError(f"no {self.endpoint.key_name}")
+        size = self.endpoint.max_questions
+        if size and len(questions) > size:
+            names = list(questions)
+            return self.ask_each(
+                (state, {n: questions[n] for n in names[i : i + size]})
+                for i in range(0, len(names), size)
+            )
         answers = self.client.ask(self, state, questions)
         self.decisions += len(answers)
+        return answers
+
+    def ask_each(
+        self, requests: Iterable[tuple[object, dict[str, Any]]]
+    ) -> dict[str, dict[str, float]]:
+        """Several requests as one step: each has its own attempts, all share the deadline,
+        and the step's attempts stay one request plus every retry, as History reads them."""
+        answers: dict[str, dict[str, float]] = {}
+        retries = 0
+        for state, questions in requests:
+            part = replace(self, attempts=0, decisions=0)
+            try:
+                answers |= part.ask(state, questions)
+            finally:
+                retries += max(0, part.attempts - 1)
+                if part.attempts:
+                    self.attempts = 1 + retries
+                self.decisions += part.decisions
         return answers
 
 
