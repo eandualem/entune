@@ -1,0 +1,229 @@
+from __future__ import annotations
+
+import sys
+import textwrap
+import time
+from contextlib import closing
+from pathlib import Path
+
+import pytest
+from starlette.testclient import TestClient
+
+from entune.app.entune import Entune
+from entune.processing import laya as laya_module
+from entune.processing.laya import Laya
+from entune.server import create_app
+from entune.storage.store import Store
+from tests.conftest import WEBM_HEADER
+from tests.dictionary_samples import group
+from tests.test_server import StubProvider
+
+# Stands in for the `laya` package's server: the same environment, health check and
+# System One answers (the first option of each question), without PyTorch.
+FAKE_SERVE = """
+import json, os, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+def main():
+    if os.environ.get("FAKE_LAYA_BROKEN"):
+        sys.exit("ModuleNotFoundError: No module named 'fastapi'")
+    seen = os.path.join(os.path.dirname(os.environ["HF_HOME"]), "seen.json")
+    with open(seen, "w") as out:
+        json.dump({k: os.environ.get(k) for k in ("LAYA_HOST", "LAYA_MODELS", "LAYA_API_KEY")}, out)
+
+    class Handler(BaseHTTPRequestHandler):
+        def reply(self, body):
+            data = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            self.reply({"status": "ok"})
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+            answers = {}
+            for name, question in body["questions"].items():
+                options = list(question["criteria"])
+                p = {o: (1.0 if i == 0 else 0.0) for i, o in enumerate(options)}
+                answers[name] = {"type": "choice", "choice": options[0], "probabilities": p}
+            with open(seen + ".requests", "a") as out:
+                auth = self.headers.get("authorization")
+                out.write(json.dumps({"model": body["model"], "auth": auth}) + "\\n")
+            self.reply({"model": body["model"], "answers": answers})
+
+        def log_message(self, *args):
+            pass
+
+    HTTPServer((os.environ["LAYA_HOST"], int(os.environ["LAYA_PORT"])), Handler).serve_forever()
+"""
+
+
+@pytest.fixture
+def fake_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    package = tmp_path / "engine" / "laya"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "serve.py").write_text(textwrap.dedent(FAKE_SERVE))
+    monkeypatch.setenv("PYTHONPATH", str(package.parent))
+    monkeypatch.setenv("LAYA_API_KEY", "must-not-reach-the-server")
+    return Path(sys.executable)
+
+
+def wait_until(condition: object, seconds: float = 10.0) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():  # type: ignore[operator]
+            return
+        time.sleep(0.05)
+    pytest.fail("condition not reached")
+
+
+def test_laya_is_reported_missing_without_its_engine(tmp_path: Path) -> None:
+    laya = Laya(tmp_path / "models", find_engine=lambda: None)
+    laya.start()
+    assert laya.status() == ("unavailable", None)
+    endpoint = laya.endpoint()
+    assert endpoint.unavailable == (
+        f"Laya's engine is not installed. Run: {laya_module.INSTALL_COMMAND}"
+    )
+
+
+def test_laya_runs_on_this_mac_while_chosen_and_stops_when_not(
+    tmp_path: Path, fake_engine: Path
+) -> None:
+    store = Store(tmp_path / "data")
+    laya = Laya(store.data_dir / "models", find_engine=lambda: fake_engine)
+    service = Entune(store, [StubProvider()], laya=laya)
+    try:
+        with TestClient(create_app(service), base_url="http://localhost") as client:
+            settings = client.get("/api/settings").json()["decisionModel"]
+            assert settings == {
+                "selected": None,
+                "laya": {
+                    "state": "stopped",
+                    "error": None,
+                    "install": "uv tool install 'laya[serve]'",
+                },
+            }
+            refused = client.put("/api/settings", json={"jev": {"dictionary": True}})
+            assert refused.text == "Choose a decision model first."
+            assert client.put("/api/settings", json={"decisionModel": "laya"}).status_code == 200
+            assert laya.status()[0] == "stopped"  # chosen, but no step asks it yet
+            ok = client.put(
+                "/api/settings",
+                json={"keys": {"stub": "k"}, "defaultModel": "stub/good", "jev": {"cleanup": True}},
+            )
+            assert ok.status_code == 200
+            wait_until(lambda: laya.status()[0] == "ready")
+            seen = (store.data_dir / "models" / "laya" / "seen.json").read_text()
+            assert '"LAYA_HOST": "127.0.0.1"' in seen and '"LAYA_MODELS": "english"' in seen
+            assert '"LAYA_API_KEY": null' in seen
+
+            # A dictation asks Laya, without a key, and records that it did.
+            attempt = client.post(
+                "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}
+            ).json()["transcriptions"][0]
+            assert attempt["cleanup"]["model"] == "laya"
+            assert attempt["cleanup"]["status"] in ("succeeded", "skipped")
+            assert attempt["correction"]["model"] is None  # dictionary step is off
+
+            summary = client.get("/api/settings").json()["jev"]["summary"]
+            assert summary["transcriptions"] == 1
+
+            client.put("/api/settings", json={"jev": {"cleanup": False}})
+            assert laya.status()[0] == "stopped"
+    finally:
+        service.close()
+    assert laya.status()[0] == "stopped"
+
+
+def test_a_failed_laya_start_is_reported_and_restarts_only_when_chosen_again(
+    tmp_path: Path, fake_engine: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_LAYA_BROKEN", "1")
+    store = Store(tmp_path / "data")
+    laya = Laya(store.data_dir / "models", find_engine=lambda: fake_engine)
+    service = Entune(store, [StubProvider()], laya=laya)
+    try:
+        service.settings.set_decision_model("laya")
+        service.settings.set_jev(formatting=True)
+        wait_until(lambda: laya.status()[0] == "failed")
+        error = laya.status()[1]
+        assert error == "Laya stopped: ModuleNotFoundError: No module named 'fastapi'"
+        assert laya.endpoint().unavailable == error
+        service.settings.set_fast_mode(True)  # an unrelated change does not restart it
+        assert laya.status() == ("failed", error)
+        monkeypatch.delenv("FAKE_LAYA_BROKEN")
+        service.decisions.sync(retry=True)
+        wait_until(lambda: laya.status()[0] == "ready")
+    finally:
+        service.close()
+
+
+def test_the_chosen_decision_model_must_be_able_to_run_the_steps(tmp_path: Path) -> None:
+    service = Entune(
+        Store(tmp_path), [StubProvider()], laya=Laya(tmp_path / "models", find_engine=lambda: None)
+    )
+    with TestClient(create_app(service), base_url="http://localhost") as client:
+        assert client.put("/api/settings", json={"decisionModel": "other"}).status_code == 400
+        # Saving a TypeSafe key once chose Jev, the only decision model; it still does.
+        client.put("/api/settings", json={"keys": {"typesafe": "ts-key"}})
+        assert client.get("/api/settings").json()["decisionModel"]["selected"] == "jev"
+        assert client.put("/api/settings", json={"jev": {"dictionary": True}}).status_code == 200
+        refused = client.put("/api/settings", json={"decisionModel": "laya"})
+        assert refused.text == (f"Install Laya's engine first: {laya_module.INSTALL_COMMAND}")
+        assert client.get("/api/settings").json()["decisionModel"]["selected"] == "jev"
+        client.put("/api/settings", json={"jev": {"dictionary": False}})
+        assert client.put("/api/settings", json={"decisionModel": "laya"}).status_code == 200
+        refused = client.put("/api/settings", json={"jev": {"formatting": True}})
+        assert refused.status_code == 400
+
+
+def test_the_summary_counts_only_the_chosen_decision_models_work(tmp_path: Path) -> None:
+    from entune.app.metrics import processing_summary
+    from entune.processing.results import Processed, Stage
+
+    store = Store(tmp_path)
+    recording = store.create_recording(WEBM_HEADER, None)
+    for model in (None, "jev", "laya"):  # None: recorded before the choice existed
+        stage = Stage("succeeded", "cleanup", seconds=1.0, removed_words=1, model=model)
+        disabled = Stage("disabled", "deterministic"), Stage("disabled", "formatting")
+        processed = Processed("text", *disabled, stage)
+        store.add_transcription(
+            recording.id, "stub", "good", "ok", "text", None, processing=processed
+        )
+    assert processing_summary(store, "jev").stages["cleanup"].removed_words == 2
+    assert processing_summary(store, "laya").stages["cleanup"].removed_words == 1
+    assert processing_summary(store).stages["cleanup"].removed_words == 3
+
+
+def test_meaning_questions_go_to_the_chosen_endpoint(tmp_path: Path, fake_engine: Path) -> None:
+    from entune.dictionary import entries
+    from entune.processing import jev_client
+    from entune.processing.pipeline import process_text
+
+    laya = Laya(tmp_path / "models", find_engine=lambda: fake_engine)
+    laya.start()
+    try:
+        wait_until(lambda: laya.status()[0] == "ready")
+        groups = entries.Dictionary(learned={"s/m": (group("Entune", "victim"),)}).effective("s/m")
+        with closing(jev_client.Client()) as client:
+            result = process_text(
+                "Open victim now.",
+                groups,
+                contextual=True,
+                formatting=False,
+                key=None,
+                client=client,
+                policy=jev_client.Policy(),
+                endpoint=laya.endpoint(),
+            )
+        assert result.correction.status == "succeeded" and result.correction.model == "laya"
+        requests = (tmp_path / "models" / "laya" / "seen.json.requests").read_text()
+        assert '"model": "laya", "auth": null' in requests
+    finally:
+        laya.stop()

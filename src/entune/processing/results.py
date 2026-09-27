@@ -28,6 +28,7 @@ class Stage:
     removed_words: int = 0
     output: str | None = None  # completed intermediate text; never another history attempt
     selections: tuple[Selection, ...] = ()
+    model: str | None = None  # the decision model the step asks: "jev" or "laya"; None: none
 
 
 @dataclass(frozen=True)
@@ -47,16 +48,28 @@ class Processed:
 
 
 def pending(
-    raw: str, *, contextual: bool, formatting: bool, cleanup: bool = False, direct: bool = False
+    raw: str,
+    *,
+    contextual: bool,
+    formatting: bool,
+    cleanup: bool = False,
+    direct: bool = False,
+    model: str | None = None,
 ) -> Processed:
+    """Each enabled step, not yet run, with the decision model it will ask, if any."""
     return Processed(
         raw,
         Stage(
             "pending" if contextual or direct else "disabled",
             "contextual" if contextual else "deterministic",
+            model=model if contextual else None,
         ),
-        Stage("pending" if formatting else "disabled", "formatting"),
-        Stage("pending" if cleanup else "disabled", "cleanup"),
+        Stage(
+            "pending" if formatting else "disabled",
+            "formatting",
+            model=model if formatting else None,
+        ),
+        Stage("pending" if cleanup else "disabled", "cleanup", model=model if cleanup else None),
     )
 
 

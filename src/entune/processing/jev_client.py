@@ -1,6 +1,8 @@
-"""Talking to Jev, TypeSafe's decision model: one call, its time limit and retries.
+"""Talking to a decision model: one call, its time limit and retries.
 
-Jev answers questions about the text with probabilities; it never writes text.
+Both decision models speak TypeSafe's System One API: Jev at TypeSafe, and Laya in a
+server on this Mac. A decision model answers questions about the text with
+probabilities; it never writes text.
 """
 
 from __future__ import annotations
@@ -19,6 +21,20 @@ import httpx
 
 MODEL = "jev-1.13.0"
 URL = "https://api.typesafe.ai/v1/systemone"
+
+
+@dataclass(frozen=True)
+class Endpoint:
+    """Where a decision model answers, and why it cannot answer now, if it cannot."""
+
+    id: str
+    url: str
+    model: str
+    key_name: str | None  # the key it needs, as errors name it; None when it needs none
+    unavailable: str | None = None
+
+
+JEV = Endpoint("jev", URL, MODEL, "TypeSafe API key")
 
 
 class JevError(Exception):
@@ -159,9 +175,9 @@ class Client:
             try:
                 async with asyncio.timeout(budget):
                     response = await http.post(
-                        URL,
-                        headers={"Authorization": f"Bearer {call.key}"},
-                        json={"model": MODEL, "state": state, "questions": questions},
+                        call.endpoint.url,
+                        headers={"Authorization": f"Bearer {call.key}"} if call.key else {},
+                        json={"model": call.endpoint.model, "state": state, "questions": questions},
                         timeout=budget,
                     )
                 if response.is_success:
@@ -235,10 +251,13 @@ class Call:
     attempts: int = 0
     decisions: int = 0
     cancel: threading.Event | None = None
+    endpoint: Endpoint = JEV
 
     def ask(self, state: object, questions: dict[str, Any]) -> dict[str, dict[str, float]]:
-        if not self.key:
-            raise JevError("no TypeSafe API key")
+        if self.endpoint.unavailable:
+            raise JevError(self.endpoint.unavailable)
+        if self.endpoint.key_name and not self.key:
+            raise JevError(f"no {self.endpoint.key_name}")
         answers = self.client.ask(self, state, questions)
         self.decisions = len(answers)
         return answers

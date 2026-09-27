@@ -14,6 +14,7 @@ from concurrent.futures import CancelledError
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 
+from entune.app.decision_models import DecisionModels
 from entune.app.dictionary_file import DictionaryFile
 from entune.app.models import NoDefaultModel, SpeechModels, UnknownModel
 from entune.app.operations import Operation, Operations
@@ -50,11 +51,12 @@ class Dictation:
         models: SpeechModels,
         dictionary: DictionaryFile,
         jev: JevClient,
+        decisions: DecisionModels,
         report_error: Callable[[str], None],
     ) -> None:
         self._store, self._speech, self._operations = store, speech, operations
         self._settings, self._models, self._dictionary = settings, models, dictionary
-        self._jev, self._report_error = jev, report_error
+        self._jev, self._decisions, self._report_error = jev, decisions, report_error
 
     def begin_upload(self, sample_rate: int) -> Upload | None:
         """Fast mode's upload for a recording that starts now, when everything for it is
@@ -73,7 +75,7 @@ class Dictation:
 
     def prepare(self) -> None:
         """While the user speaks, open the connections this dictation will use: the default
-        model's provider and, when a Jev step is on, TypeSafe. Each gets a HEAD request with
+        model's provider and, when a step asks Jev, TypeSafe. Each gets a HEAD request with
         no key and no audio, so the handshake (0.5-1 s measured) is not paid after they stop.
         """
         threading.Thread(target=self._preconnect, daemon=True, name="entune-preconnect").start()
@@ -81,7 +83,11 @@ class Dictation:
     def _preconnect(self) -> None:
         try:
             status = self._settings.jev_status()
-            if status.key_hint and (status.dictionary or status.formatting or status.cleanup):
+            if (
+                status.key_hint
+                and (status.dictionary or status.formatting or status.cleanup)
+                and self._settings.decision_model() == "jev"
+            ):
                 self._jev.preconnect()
             ref = self._models.choose_model(None)
             if isinstance(ref.provider, Preconnects) and self._settings.key(ref.provider.id):
@@ -232,6 +238,7 @@ class Dictation:
                         contextual=status.dictionary,
                         formatting=status.formatting,
                         cleanup=status.cleanup,
+                        model=self._settings.decision_model(),
                     )
                     if raw is not None
                     else None
@@ -343,6 +350,7 @@ class Dictation:
             key=self._settings.key(JEV_PROVIDER),
             client=self._jev,
             policy=self._settings.jev_policy(),
+            endpoint=self._decisions.endpoint(),
             checkpoint=checkpoint,
             progress=(
                 (lambda stage: self._operations.stage(operation, stage)) if operation else None

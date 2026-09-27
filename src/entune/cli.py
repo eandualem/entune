@@ -151,6 +151,7 @@ def main(argv: list[str] | None = None) -> None:
         _log_to_file(data_dir)
     entune = Entune(Store(data_dir), default_providers(data_dir / "models"))
     entune.models.warm_default_model()
+    entune.decisions.sync()
     server = uvicorn.Server(
         uvicorn.Config(create_app(entune), host="127.0.0.1", port=args.port, log_level="warning")
     )

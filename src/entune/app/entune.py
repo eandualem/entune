@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 
 from entune.app.capture import ShortcutCapture
+from entune.app.decision_models import DecisionModels
 from entune.app.desktop_bridge import DesktopBridge
 from entune.app.dictation import Dictation
 from entune.app.dictionary_file import DictionaryFile
@@ -23,6 +24,7 @@ from entune.app.settings import Settings
 from entune.app.suggestion_runs import DictionaryBuilds
 from entune.learning import suggestion_model
 from entune.processing.jev_client import Client as JevClient
+from entune.processing.laya import Laya
 from entune.providers.contracts import Provider
 from entune.providers.resources import SpeechResources
 from entune.storage.store import Store
@@ -36,6 +38,7 @@ class Entune:
         llm_call: suggestion_model.Caller = suggestion_model.call_model,
         *,
         jev_client: JevClient | None = None,
+        laya: Laya | None = None,
     ) -> None:
         self.store = store
         self.providers = providers
@@ -47,7 +50,12 @@ class Entune:
             providers, lambda message: self.desktop.report_status(lastError=message)
         )
         self.builds = DictionaryBuilds(self.speech, llm_call, self.operations)
-        self.settings = Settings(store, providers, self._changed)
+        laya = laya or Laya(store.data_dir / "models")
+        self.settings = Settings(
+            store, providers, self._changed, laya_installed=lambda: laya.engine() is not None
+        )
+        self.decisions = DecisionModels(self.settings, laya)
+        self._listeners.append(self.decisions.sync)
         self.models = SpeechModels(store, providers, self.speech, self.settings, self._changed)
         self.dictionary = DictionaryFile(store, self.operations, self._changed)
         self.learning = Learning(
@@ -61,6 +69,7 @@ class Entune:
             self.models,
             self.dictionary,
             self.jev,
+            self.decisions,
             lambda message: self.desktop.report_status(lastError=message),
         )
         self.capture = ShortcutCapture()
@@ -88,6 +97,10 @@ class Entune:
         # owns a separate two-second close; builds/resources share two more seconds.
         self.builds.close(0)
         self.speech.close(0)
+        try:
+            self.decisions.close()
+        except Exception as exc:
+            self._warn(f"Laya shutdown: {type(exc).__name__}: {exc}")
         jev_done = True
         try:
             self.jev.close()

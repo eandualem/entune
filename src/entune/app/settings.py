@@ -1,4 +1,5 @@
-"""Settings kept in the store: API keys, fast mode, Jev, the suggestion model, shortcuts."""
+"""Settings kept in the store: API keys, fast mode, the decision model and its steps, the
+suggestion model, shortcuts."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ from entune.app import shortcuts
 from entune.app.shortcuts import Shortcuts
 from entune.learning import suggestion_model
 from entune.processing.jev_client import Policy
+from entune.processing.laya import INSTALL_COMMAND as LAYA_INSTALL
 from entune.providers.contracts import Provider
 from entune.storage.store import Store
 
@@ -17,6 +19,8 @@ DEFAULT_MODEL_KEY = "default_model"
 DICTIONARY_MODEL_KEY = "dictionary_model"
 FAST_MODE_KEY = "fast_mode"
 JEV_PROVIDER = "typesafe"  # the key is stored like a speech provider's
+DECISION_MODEL_KEY = "decision_model"
+DECISION_MODELS = ("jev", "laya")
 JEV_DICTIONARY_KEY = "jev_dictionary"
 JEV_FORMATTING_KEY = "jev_formatting"
 JEV_CLEANUP_KEY = "jev_cleanup"
@@ -55,8 +59,15 @@ class SuggestionProvider:
 class Settings:
     """Each setting is read from the store when asked for; `changed` runs after a write."""
 
-    def __init__(self, store: Store, providers: list[Provider], changed: Callable[[], None]):
+    def __init__(
+        self,
+        store: Store,
+        providers: list[Provider],
+        changed: Callable[[], None],
+        laya_installed: Callable[[], bool] = lambda: False,
+    ):
         self._store, self._providers, self._changed = store, providers, changed
+        self._laya_installed = laya_installed
 
     def key(self, provider_id: str) -> str | None:
         return self._store.get_setting(key_setting(provider_id))
@@ -82,7 +93,36 @@ class Settings:
         self._store.set_setting(FAST_MODE_KEY, "1" if on else None)
         self._changed()
 
-    # Jev: a TypeSafe key and independently controlled, opt-in processing stages.
+    # The decision model and the independently controlled, opt-in steps that ask it.
+
+    def decision_model(self) -> str | None:
+        """The chosen decision model. Before the choice existed, saving a TypeSafe key chose
+        Jev, the only one, so a saved key without a choice still means Jev."""
+        saved = self._store.get_setting(DECISION_MODEL_KEY)
+        if saved in DECISION_MODELS:
+            return saved
+        return "jev" if self.key(JEV_PROVIDER) is not None else None
+
+    def set_decision_model(self, model: str) -> None:
+        if model not in DECISION_MODELS:
+            raise ValueError(f"Unknown decision model: {model}")
+        status = self.jev_status()
+        if status.dictionary or status.formatting or status.cleanup:
+            self.check_decision_model(model)
+        self._store.set_setting(DECISION_MODEL_KEY, model)
+        self._changed()
+
+    def check_decision_model(self, model: str | None, key_saved: bool | None = None) -> None:
+        """Refuse a step that the decision model cannot run, so the setting never promises
+        what a dictation cannot do."""
+        if model is None:
+            raise ValueError("Choose a decision model first.")
+        if model == "jev" and not (
+            self.key(JEV_PROVIDER) is not None if key_saved is None else key_saved
+        ):
+            raise ValueError("Save a TypeSafe API key first.")
+        if model == "laya" and not self._laya_installed():
+            raise ValueError(f"Install Laya's engine first: {LAYA_INSTALL}")
 
     def jev_status(self) -> JevStatus:
         key = self.key(JEV_PROVIDER)
@@ -99,10 +139,9 @@ class Settings:
         formatting: bool | None = None,
         cleanup: bool | None = None,
     ) -> None:
-        """Turn a Jev use on or off; turning one on needs the key, so the setting never
-        promises what a dictation cannot do."""
-        if (dictionary or formatting or cleanup) and self.key(JEV_PROVIDER) is None:
-            raise ValueError("Save a TypeSafe API key first.")
+        """Turn a step on or off; turning one on needs a decision model that can run it."""
+        if dictionary or formatting or cleanup:
+            self.check_decision_model(self.decision_model())
         if dictionary is not None:
             self._store.set_setting(JEV_DICTIONARY_KEY, "1" if dictionary else None)
         if formatting is not None:
