@@ -144,7 +144,7 @@
               <div class="menu" id="dict-menu" role="menu" aria-label="More" hidden>
                 <p class="menu-label">Build from other sources</p>
                 <button type="button" role="menuitem" data-audio="entune"><span class="menu-text">Learn from your other models' recordings<span class="menu-sub">Transcribe Entune recordings again with this speech model</span></span><span class="menu-go" aria-hidden="true">›</span></button>
-                <button type="button" role="menuitem" data-audio="provider"><span class="menu-text">Learn from another dictation app…<span class="menu-sub">The audio Wispr Flow keeps on this Mac</span></span><span class="menu-go" aria-hidden="true">›</span></button>
+                <button type="button" role="menuitem" data-audio="provider"><span class="menu-text">Learn from another dictation app…<span class="menu-sub">The audio another dictation app keeps on this Mac</span></span><span class="menu-go" aria-hidden="true">›</span></button>
                 <button type="button" role="menuitem" data-audio="folder"><span class="menu-text">Learn from an audio folder…<span class="menu-sub">WAV, MP3, M4A, FLAC, OGG or WebM files</span></span><span class="menu-go" aria-hidden="true">›</span></button>
                 <button type="button" role="menuitem" id="menu-agents"><span class="menu-text">Corrections sent by agents<span class="menu-sub">Local API · Settings › Integrations</span></span><span class="menu-go" aria-hidden="true">›</span></button>
                 <hr />
@@ -276,12 +276,10 @@
                 </div>
                 <div class="suggest-audio" id="suggest-audio" hidden>
                   <p id="audio-intro"></p>
-                  <div class="app-list" id="audio-provider-pick" role="radiogroup" aria-label="Dictation app" hidden>
-                    <label class="app-option"><input type="radio" name="audio-provider" value="wispr" checked /><span><span class="app-name">Wispr Flow</span><span class="caption">Its recordings on this Mac, including backups</span></span></label>
-                  </div>
+                  <div class="app-list" id="audio-provider-pick" role="radiogroup" aria-label="Dictation app" hidden></div>
                   <div class="source-note">
                     <p class="caption" id="audio-source-note"></p>
-                    <button type="button" class="btn sm" id="import-wispr" hidden>Import from Wispr Flow</button>
+                    <button type="button" class="btn sm" id="import-app" hidden>Import</button>
                     <button type="button" class="btn sm" id="choose-audio-folder" hidden>Choose folder…</button>
                     <input type="file" id="audio-folder" webkitdirectory multiple hidden />
                   </div>

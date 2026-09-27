@@ -90,8 +90,8 @@ def routes(app: Entune) -> list[Route]:
         # Which speech models already transcribed each recording, so the page can offer
         # recordings the selected model has not heard. Imported audio has none.
         models = {f"recording:{r}": names for r, names in app.store.recording_models().items()}
-        # Sources are chosen separately in the page: this app's recordings, Wispr Flow
-        # imports, or files imported from a folder.
+        # Sources are chosen separately in the page: this app's recordings, another
+        # dictation app's imports, or files imported from a folder.
         items = [
             {
                 **asdict(item),
@@ -105,6 +105,7 @@ def routes(app: Entune) -> list[Route]:
         ]
         return JSONResponse(
             {
+                "apps": [{"id": a.id, "name": a.name, "note": a.note} for a in audio_import.APPS],
                 "count": len(items),
                 "items": items,
                 "seconds": sum(item["seconds"] or 0 for item in items),
@@ -140,9 +141,11 @@ def routes(app: Entune) -> list[Route]:
                 return bad(str(exc))
         return JSONResponse({"added": added})
 
-    async def import_wispr(_: Request) -> Response:
+    async def import_app(request: Request) -> Response:
         try:
-            result = await run_in_threadpool(imported, audio_import.import_wispr, app.store)
+            result = await run_in_threadpool(
+                imported, audio_import.import_app, app.store, request.path_params["app"]
+            )
         except (ValueError, OSError) as exc:
             return bad(str(exc))
         return JSONResponse(result)
@@ -170,6 +173,6 @@ def routes(app: Entune) -> list[Route]:
         Route("/api/dictionary/build/{job_id}/{action}", act_on_build, methods=["POST"]),
         Route("/api/dictionary/audio", dictionary_audio, methods=["GET"]),
         Route("/api/dictionary/audio", import_dictionary_audio, methods=["POST"]),
-        Route("/api/dictionary/audio/wispr", import_wispr, methods=["POST"]),
+        Route("/api/dictionary/audio/apps/{app:str}", import_app, methods=["POST"]),
         Route("/api/dictionary/audio/{id:str}/file", imported_audio, methods=["GET"]),
     ]
