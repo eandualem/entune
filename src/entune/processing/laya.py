@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import secrets
 import shutil
 import socket
 import subprocess
@@ -80,6 +81,7 @@ class Laya:
         self._lock = threading.Lock()
         self._process: subprocess.Popen[bytes] | None = None
         self._port = 0
+        self._token = ""  # the server answers only requests that carry it
         self._ready = False
         self._error: str | None = None
 
@@ -108,7 +110,7 @@ class Laya:
             "failed": error,
         }.get(state)
         url = f"http://127.0.0.1:{self._port}/v1/systemone"
-        return Endpoint("laya", url, MODEL, None, unavailable, short_input=True)
+        return Endpoint("laya", url, MODEL, None, unavailable, short_input=True, token=self._token)
 
     def start(self, retry: bool = False) -> None:
         """Start the server unless it runs. After a failure only an explicit retry starts it,
@@ -126,7 +128,7 @@ class Laya:
     def _launch(self, python: Path) -> None:
         """Start the server; the caller holds the lock."""
         self._dir.mkdir(parents=True, exist_ok=True)
-        port = _free_port()
+        port, token = _free_port(), secrets.token_urlsafe(32)
         env = {
             **os.environ,
             "LAYA_HOST": "127.0.0.1",
@@ -136,8 +138,9 @@ class Laya:
             "LAYA_LOG_LEVEL": "warning",
             "HF_HOME": str(self._dir / "huggingface"),
             "HF_HUB_DISABLE_TELEMETRY": "1",
+            # Without it, any page in a browser on this Mac could post to the server.
+            "LAYA_API_KEY": token,
         }
-        env.pop("LAYA_API_KEY", None)
         with (self._dir / "server.log").open("wb") as log:
             self._process = subprocess.Popen(
                 [str(python), "-c", LAUNCH],
@@ -146,9 +149,12 @@ class Laya:
                 stderr=subprocess.STDOUT,
                 env=env,
             )
-        self._port, self._ready, self._error = port, False, None
+        self._port, self._token, self._ready, self._error = port, token, False, None
         threading.Thread(
-            target=self._wait_ready, args=(self._process, port), daemon=True, name="entune-laya"
+            target=self._wait_ready,
+            args=(self._process, port, token),
+            daemon=True,
+            name="entune-laya",
         ).start()
 
     def stop(self) -> None:
@@ -159,9 +165,10 @@ class Laya:
         if process is not None:
             _end(process)
 
-    def _wait_ready(self, process: subprocess.Popen[bytes], port: int) -> None:
+    def _wait_ready(self, process: subprocess.Popen[bytes], port: int, token: str) -> None:
         url = f"http://127.0.0.1:{port}"
-        with httpx.Client(transport=self._transport, timeout=5.0) as http:
+        # Directly, never through a proxy configured in the environment.
+        with httpx.Client(transport=self._transport, timeout=5.0, trust_env=False) as http:
             while process.poll() is None:
                 try:
                     health = http.get(f"{url}/health").json()
@@ -169,7 +176,12 @@ class Laya:
                     health = None
                 if isinstance(health, dict) and health.get("status") == "ok":
                     with contextlib.suppress(httpx.HTTPError):
-                        http.post(f"{url}/v1/systemone", json=WARM_UP, timeout=60.0)
+                        http.post(
+                            f"{url}/v1/systemone",
+                            json=WARM_UP,
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout=60.0,
+                        )
                     break
                 time.sleep(0.5)
         with self._lock:

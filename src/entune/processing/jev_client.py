@@ -33,6 +33,7 @@ class Endpoint:
     key_name: str | None  # the key it needs, as errors name it; None when it needs none
     unavailable: str | None = None
     short_input: bool = False  # reads about 512 tokens, so a long shared state is cut off
+    token: str | None = None  # a bearer it needs that is not the user's key: Laya's, per launch
 
 
 JEV = Endpoint("jev", URL, MODEL, "TypeSafe API key")
@@ -151,9 +152,15 @@ class Client:
     def _pool(self) -> httpx.AsyncClient:
         """The HTTP pool, made on the client's loop the first time it is needed."""
         if self._http is None:
+            limits = httpx.Limits(max_keepalive_connections=1, keepalive_expiry=60.0)
             self._http = httpx.AsyncClient(
                 transport=self._transport,
-                limits=httpx.Limits(max_keepalive_connections=1, keepalive_expiry=60.0),
+                limits=limits,
+                # A decision model on this Mac is reached directly, never through a proxy
+                # configured in the environment; Jev still goes through one.
+                mounts=None
+                if self._transport
+                else {"all://127.0.0.1": httpx.AsyncHTTPTransport(limits=limits)},
             )
         return self._http
 
@@ -177,11 +184,7 @@ class Client:
                 async with asyncio.timeout(budget):
                     response = await http.post(
                         call.endpoint.url,
-                        headers=(
-                            {"Authorization": f"Bearer {call.key}"}
-                            if call.key and call.endpoint.key_name
-                            else {}
-                        ),
+                        headers=_authorization(call),
                         json={"model": call.endpoint.model, "state": state, "questions": questions},
                         timeout=budget,
                     )
@@ -266,6 +269,12 @@ class Call:
         answers = self.client.ask(self, state, questions)
         self.decisions += len(answers)
         return answers
+
+
+def _authorization(call: Call) -> dict[str, str]:
+    """The endpoint's own token, else the user's key when the endpoint needs one."""
+    bearer = call.endpoint.token or (call.key if call.endpoint.key_name else None)
+    return {"Authorization": f"Bearer {bearer}"} if bearer else {}
 
 
 def _retry_after(value: str | None) -> float:

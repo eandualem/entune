@@ -161,14 +161,18 @@ def _ask_meanings(request: MeaningRequest, call: Call) -> dict[str, dict[str, fl
         return call.ask(request.state, request.questions)
     # A short-input model would cut a shared state off, and later occurrences with it:
     # each occurrence is asked alone, with its own attempts, within the same deadline.
+    # The stage's attempts stay one request plus every retry, as History reads them.
     answers: dict[str, dict[str, float]] = {}
+    retries = 0
     for name, question in request.questions.items():
         part = replace(call, attempts=0, decisions=0)
         occurrence = {"occurrences": {name: request.state["occurrences"][name]}}
         try:
             answers |= part.ask({**request.state, **occurrence}, {name: question})
         finally:
-            call.attempts += part.attempts
+            retries += max(0, part.attempts - 1)
+            if part.attempts:
+                call.attempts = 1 + retries
             call.decisions += part.decisions
     return answers
 

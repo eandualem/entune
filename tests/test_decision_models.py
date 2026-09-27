@@ -46,6 +46,12 @@ def main():
 
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+            key = os.environ.get("LAYA_API_KEY")
+            if key and self.headers.get("authorization") != "Bearer " + key:
+                self.send_response(401)
+                self.send_header("content-length", "0")
+                self.end_headers()
+                return
             answers = {}
             for name, question in body["questions"].items():
                 options = list(question["criteria"])
@@ -124,7 +130,8 @@ def test_laya_runs_on_this_mac_while_chosen_and_stops_when_not(
             wait_until(lambda: laya.status()[0] == "ready")
             seen = (store.data_dir / "models" / "laya" / "seen.json").read_text()
             assert '"LAYA_HOST": "127.0.0.1"' in seen and '"LAYA_MODELS": "english"' in seen
-            assert '"LAYA_API_KEY": null' in seen
+            key = json.loads(seen)["LAYA_API_KEY"]  # a token of its own, not the environment's
+            assert key and key != "must-not-reach-the-server"
 
             # A dictation asks Laya, without a key, and records that it did.
             attempt = client.post(
@@ -204,11 +211,16 @@ def test_the_summary_counts_only_the_chosen_decision_models_work(tmp_path: Path)
     assert processing_summary(store).stages["cleanup"].removed_words == 3
 
 
-def test_meaning_questions_go_to_the_chosen_endpoint(tmp_path: Path, fake_engine: Path) -> None:
+def test_meaning_questions_go_to_the_chosen_endpoint(
+    tmp_path: Path, fake_engine: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from entune.dictionary import entries
     from entune.processing import jev_client
     from entune.processing.pipeline import process_text
 
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):  # never used for this Mac's server
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    monkeypatch.delenv("NO_PROXY", raising=False)
     laya = Laya(tmp_path / "models", find_engine=lambda: fake_engine)
     laya.start()
     try:
@@ -228,13 +240,14 @@ def test_meaning_questions_go_to_the_chosen_endpoint(tmp_path: Path, fake_engine
             )
         correction = result.correction
         assert correction.status == "succeeded" and correction.model == "laya"
-        assert correction.decisions == 2 and correction.attempts == 2
+        assert correction.decisions == 2 and correction.attempts == 1  # two requests, no retry
         # Laya reads a short input, so each occurrence is asked alone, with only its passage.
         lines = (tmp_path / "models" / "laya" / "seen.json.requests").read_text().splitlines()
         asked = [json.loads(line) for line in lines][1:]  # after the warm-up
         assert [a["questions"] for a in asked] == [["o0"], ["o1"]]
         assert [list(a["state"]["occurrences"]) for a in asked] == [["o0"], ["o1"]]
-        assert all(a["auth"] is None for a in asked)
+        seen = json.loads((tmp_path / "models" / "laya" / "seen.json").read_text())
+        assert all(a["auth"] == "Bearer " + seen["LAYA_API_KEY"] for a in asked)
     finally:
         laya.stop()
 
