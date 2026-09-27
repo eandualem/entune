@@ -120,11 +120,17 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     ready: "Running on this Mac.",
   };
   let layaPoll = null;
+  // The option shown is the saved one, unless a switch was refused: then the picked option
+  // stays shown with its setup (Jev's key, Laya's install command) until it can be saved.
+  let picked = null, refusal = "";
   function renderDecisionModel() {
     const { selected, laya } = settings.decisionModel;
-    for (const input of document.querySelectorAll('input[name="decision-model"]')) input.checked = input.value === selected;
-    el("jev-key-form").hidden = selected !== "jev";
-    el("laya-setup").hidden = selected !== "laya";
+    const shown = picked ?? selected;
+    for (const input of document.querySelectorAll('input[name="decision-model"]')) input.checked = input.value === shown;
+    el("jev-key-form").hidden = shown !== "jev";
+    el("laya-setup").hidden = shown !== "laya";
+    const names = { jev: "Jev", laya: "Laya" };
+    el("decision-note").textContent = picked ? `Not switched yet: ${refusal}${selected ? ` The steps still use ${names[selected]}.` : ""}` : "";
     el("laya-status").textContent = laya.state === "failed" ? laya.error : LAYA[laya.state];
     el("laya-status").classList.toggle("err", laya.state === "failed");
     el("laya-retry").hidden = !["failed", "unavailable"].includes(laya.state);
@@ -133,20 +139,31 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     el("laya-command").textContent = laya.install;
     // Follow Laya while it starts; the first start can take minutes.
     clearTimeout(layaPoll);
-    if (selected === "laya" && laya.state === "starting") {
+    if (shown === "laya" && laya.state === "starting") {
       layaPoll = setTimeout(async () => {
         try { settings.decisionModel = (await api("/api/settings")).decisionModel; renderDecisionModel(); } catch { /* the next load shows it */ }
       }, 2000);
     }
   }
   async function chooseDecisionModel(value) {
-    if (await saveSetting({ decisionModel: value }, el("decision-status"))) await loadSettings();
-    else renderDecisionModel();
+    try {
+      await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: {}, decisionModel: value }) });
+      picked = null;
+      flash(el("decision-status"), "Saved", "ok");
+      await loadSettings();
+    } catch (err) {
+      picked = value === settings.decisionModel.selected ? null : value;
+      refusal = errorText(err);
+      if (!picked) flash(el("decision-status"), refusal, "err");
+      renderDecisionModel();
+    }
   }
   for (const input of document.querySelectorAll('input[name="decision-model"]')) {
     input.addEventListener("change", () => chooseDecisionModel(input.value));
   }
-  el("laya-retry").addEventListener("click", () => (settings.decisionModel.laya.state === "failed" ? chooseDecisionModel("laya") : loadSettings()));
+  // Start again after a failure; after installing, Check again finds the engine and, if
+  // Laya was picked but refused for lack of it, saves the choice.
+  el("laya-retry").addEventListener("click", () => (settings.decisionModel.laya.state === "failed" || picked === "laya" ? chooseDecisionModel("laya") : loadSettings()));
   function renderJev() {
     const j = settings.jev;
     renderDecisionModel();
@@ -212,7 +229,9 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     e.preventDefault();
     const key = jev.key.value.trim();
     if (!key) { flash(el("jev-key-status"), "Nothing to save", "ok"); return; }
-    if (await saveSetting({ keys: { typesafe: key } }, el("jev-key-status"))) await loadSettings();
+    // A key saved while Jev is picked but not yet chosen completes the switch.
+    const choice = picked === "jev" ? { decisionModel: "jev" } : {};
+    if (await saveSetting({ keys: { typesafe: key }, ...choice }, el("jev-key-status"))) { picked = null; await loadSettings(); }
   });
   for (const name of ["dictionary", "formatting", "cleanup"]) {
     jev[name].addEventListener("change", async () => {
