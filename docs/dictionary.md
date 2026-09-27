@@ -93,7 +93,8 @@ Editing an output spelling or casing clears its approvals; save that edit before
 approving the revised mapping.
 
 Direct-only dictation needs no contextual request (cleanup/formatting may make their own).
-Mixed dictation still makes one request, with one focused Choice per occurrence. The
+Mixed dictation still makes one request, with one focused Choice per occurrence;
+with Laya, which reads a short input, each occurrence is its own request. The
 state holds only an excerpt of up to 160 characters either side, the span marked; each
 option states its span, output spelling, definition and personal usage directly; for
 overlapping spans it also states how the marked words read with that choice.

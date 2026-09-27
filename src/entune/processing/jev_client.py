@@ -32,6 +32,7 @@ class Endpoint:
     model: str
     key_name: str | None  # the key it needs, as errors name it; None when it needs none
     unavailable: str | None = None
+    short_input: bool = False  # reads about 512 tokens, so a long shared state is cut off
 
 
 JEV = Endpoint("jev", URL, MODEL, "TypeSafe API key")
@@ -176,7 +177,11 @@ class Client:
                 async with asyncio.timeout(budget):
                     response = await http.post(
                         call.endpoint.url,
-                        headers={"Authorization": f"Bearer {call.key}"} if call.key else {},
+                        headers=(
+                            {"Authorization": f"Bearer {call.key}"}
+                            if call.key and call.endpoint.key_name
+                            else {}
+                        ),
                         json={"model": call.endpoint.model, "state": state, "questions": questions},
                         timeout=budget,
                     )
@@ -259,7 +264,7 @@ class Call:
         if self.endpoint.key_name and not self.key:
             raise JevError(f"no {self.endpoint.key_name}")
         answers = self.client.ask(self, state, questions)
-        self.decisions = len(answers)
+        self.decisions += len(answers)
         return answers
 
 

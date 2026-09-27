@@ -6,7 +6,7 @@ Code alone applies what the answers allow; the decision model never writes text.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from entune import prompts
@@ -142,7 +142,7 @@ def decide(
     request = meaning_request(text, components, variant)
     decisions = dict(request.decisions)
     if request.questions:
-        answers = call.ask(request.state, request.questions)
+        answers = _ask_meanings(request, call)
         for i, values in request.outputs.items():
             probabilities = answers[f"o{i}"]
             option = max(probabilities, key=lambda name: probabilities[name])
@@ -154,6 +154,23 @@ def decide(
                 request.support[i][option],
             )
     return [decisions[i] for i in range(len(components))]
+
+
+def _ask_meanings(request: MeaningRequest, call: Call) -> dict[str, dict[str, float]]:
+    if not call.endpoint.short_input:
+        return call.ask(request.state, request.questions)
+    # A short-input model would cut a shared state off, and later occurrences with it:
+    # each occurrence is asked alone, with its own attempts, within the same deadline.
+    answers: dict[str, dict[str, float]] = {}
+    for name, question in request.questions.items():
+        part = replace(call, attempts=0, decisions=0)
+        occurrence = {"occurrences": {name: request.state["occurrences"][name]}}
+        try:
+            answers |= part.ask({**request.state, **occurrence}, {name: question})
+        finally:
+            call.attempts += part.attempts
+            call.decisions += part.decisions
+    return answers
 
 
 # ---- formatting

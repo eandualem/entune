@@ -130,18 +130,18 @@ def routes(app: Entune) -> list[Route]:
                         "jev.policy needs total_seconds, attempt_seconds and max_attempts"
                     )
                 policy = jev_client.Policy(**value)
-            # A step turned on, or a new decision model for steps that stay on, needs a
-            # decision model that can run them, counting a key saved by this same request.
-            current = asdict(app.settings.jev_status())
-            steps = ("dictionary", "formatting", "cleanup")
-            key_saved = JEV_PROVIDER in keys or current["key_hint"] is not None
-            decision_model = body.get("decisionModel", app.settings.decision_model())
-            if any(jev_settings.get(step) for step in steps) or (
-                "decisionModel" in body and any(jev_settings.get(s, current[s]) for s in steps)
-            ):
-                app.settings.check_decision_model(
-                    decision_model or ("jev" if key_saved else None), key_saved
-                )
+            # The same check the change itself makes, counting a key saved by this request,
+            # so a refusal comes before any field is stored.
+            processing = (
+                body.get("decisionModel"),
+                jev_settings.get("dictionary"),
+                jev_settings.get("formatting"),
+                jev_settings.get("cleanup"),
+            )
+            app.settings.check_processing(
+                *processing,
+                key_saved=JEV_PROVIDER in keys or app.settings.key(JEV_PROVIDER) is not None,
+            )
             shortcut_settings = body.get("shortcuts", {})
             if not isinstance(shortcut_settings, dict):
                 raise ValueError("shortcuts must be an object")
@@ -162,14 +162,9 @@ def routes(app: Entune) -> list[Route]:
                 app.settings.set_dictionary_model(dictionary_model or None)
             if "fastMode" in body:
                 app.settings.set_fast_mode(body["fastMode"])
-            if "decisionModel" in body:
-                app.settings.set_decision_model(body["decisionModel"])
-            if jev_settings:
-                app.settings.set_jev(
-                    jev_settings.get("dictionary"),
-                    jev_settings.get("formatting"),
-                    jev_settings.get("cleanup"),
-                )
+
+            if any(value is not None for value in processing):
+                app.settings.set_processing(*processing)
             if policy is not None:
                 app.settings.set_jev_policy(policy)
             if "shortcuts" in body:

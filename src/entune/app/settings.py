@@ -104,25 +104,57 @@ class Settings:
         return "jev" if self.key(JEV_PROVIDER) is not None else None
 
     def set_decision_model(self, model: str) -> None:
-        if model not in DECISION_MODELS:
+        self.set_processing(model)
+
+    def check_processing(
+        self,
+        model: str | None = None,
+        dictionary: bool | None = None,
+        formatting: bool | None = None,
+        cleanup: bool | None = None,
+        key_saved: bool | None = None,
+    ) -> None:
+        """Refuse a change whose final state has a step on that the decision model cannot run,
+        so the setting never promises what a dictation cannot do. Turning steps off is always
+        allowed. `key_saved` counts a TypeSafe key saved by the same request."""
+        if model is not None and model not in DECISION_MODELS:
             raise ValueError(f"Unknown decision model: {model}")
         status = self.jev_status()
-        if status.dictionary or status.formatting or status.cleanup:
-            self.check_decision_model(model)
-        self._store.set_setting(DECISION_MODEL_KEY, model)
-        self._changed()
-
-    def check_decision_model(self, model: str | None, key_saved: bool | None = None) -> None:
-        """Refuse a step that the decision model cannot run, so the setting never promises
-        what a dictation cannot do."""
-        if model is None:
+        on = [
+            status.dictionary if dictionary is None else dictionary,
+            status.formatting if formatting is None else formatting,
+            status.cleanup if cleanup is None else cleanup,
+        ]
+        if not any(on) or not (model is not None or dictionary or formatting or cleanup):
+            return
+        key = self.key(JEV_PROVIDER) is not None if key_saved is None else key_saved
+        chosen = model or self.decision_model() or ("jev" if key else None)
+        if chosen is None:
             raise ValueError("Choose a decision model first.")
-        if model == "jev" and not (
-            self.key(JEV_PROVIDER) is not None if key_saved is None else key_saved
-        ):
+        if chosen == "jev" and not key:
             raise ValueError("Save a TypeSafe API key first.")
-        if model == "laya" and not self._laya_installed():
+        if chosen == "laya" and not self._laya_installed():
             raise ValueError(f"Install Laya's engine first: {LAYA_INSTALL}")
+
+    def set_processing(
+        self,
+        model: str | None = None,
+        dictionary: bool | None = None,
+        formatting: bool | None = None,
+        cleanup: bool | None = None,
+    ) -> None:
+        """Choose the decision model and turn steps on or off together, checked as one."""
+        self.check_processing(model, dictionary, formatting, cleanup)
+        if model is not None:
+            self._store.set_setting(DECISION_MODEL_KEY, model)
+        for name, value in (
+            (JEV_DICTIONARY_KEY, dictionary),
+            (JEV_FORMATTING_KEY, formatting),
+            (JEV_CLEANUP_KEY, cleanup),
+        ):
+            if value is not None:
+                self._store.set_setting(name, "1" if value else None)
+        self._changed()
 
     def jev_status(self) -> JevStatus:
         key = self.key(JEV_PROVIDER)
@@ -140,15 +172,7 @@ class Settings:
         cleanup: bool | None = None,
     ) -> None:
         """Turn a step on or off; turning one on needs a decision model that can run it."""
-        if dictionary or formatting or cleanup:
-            self.check_decision_model(self.decision_model())
-        if dictionary is not None:
-            self._store.set_setting(JEV_DICTIONARY_KEY, "1" if dictionary else None)
-        if formatting is not None:
-            self._store.set_setting(JEV_FORMATTING_KEY, "1" if formatting else None)
-        if cleanup is not None:
-            self._store.set_setting(JEV_CLEANUP_KEY, "1" if cleanup else None)
-        self._changed()
+        self.set_processing(None, dictionary, formatting, cleanup)
 
     def jev_policy(self) -> Policy:
         saved = self._store.get_setting(JEV_POLICY_KEY)

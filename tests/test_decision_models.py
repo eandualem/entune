@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import textwrap
 import time
@@ -52,7 +53,9 @@ def main():
                 answers[name] = {"type": "choice", "choice": options[0], "probabilities": p}
             with open(seen + ".requests", "a") as out:
                 auth = self.headers.get("authorization")
-                out.write(json.dumps({"model": body["model"], "auth": auth}) + "\\n")
+                questions = sorted(body["questions"])
+                asked = {"auth": auth, "questions": questions, "state": body["state"]}
+                out.write(json.dumps(asked) + "\\n")
             self.reply({"model": body["model"], "answers": answers})
 
         def log_message(self, *args):
@@ -210,20 +213,86 @@ def test_meaning_questions_go_to_the_chosen_endpoint(tmp_path: Path, fake_engine
     laya.start()
     try:
         wait_until(lambda: laya.status()[0] == "ready")
-        groups = entries.Dictionary(learned={"s/m": (group("Entune", "victim"),)}).effective("s/m")
+        found = (group("Entune", "victim"), group("Jev", "Jeff"))
+        groups = entries.Dictionary(learned={"s/m": found}).effective("s/m")
         with closing(jev_client.Client()) as client:
             result = process_text(
-                "Open victim now.",
+                "Open victim now. Then ask Jeff.",
                 groups,
                 contextual=True,
                 formatting=False,
-                key=None,
+                key="ts-key",  # a saved TypeSafe key never goes to Laya
                 client=client,
                 policy=jev_client.Policy(),
                 endpoint=laya.endpoint(),
             )
-        assert result.correction.status == "succeeded" and result.correction.model == "laya"
-        requests = (tmp_path / "models" / "laya" / "seen.json.requests").read_text()
-        assert '"model": "laya", "auth": null' in requests
+        correction = result.correction
+        assert correction.status == "succeeded" and correction.model == "laya"
+        assert correction.decisions == 2 and correction.attempts == 2
+        # Laya reads a short input, so each occurrence is asked alone, with only its passage.
+        lines = (tmp_path / "models" / "laya" / "seen.json.requests").read_text().splitlines()
+        asked = [json.loads(line) for line in lines][1:]  # after the warm-up
+        assert [a["questions"] for a in asked] == [["o0"], ["o1"]]
+        assert [list(a["state"]["occurrences"]) for a in asked] == [["o0"], ["o1"]]
+        assert all(a["auth"] is None for a in asked)
     finally:
         laya.stop()
+
+
+def test_a_laya_that_cannot_launch_is_reported_not_raised(tmp_path: Path) -> None:
+    laya = Laya(tmp_path / "models", find_engine=lambda: tmp_path / "gone" / "python")
+    service = Entune(Store(tmp_path / "data"), [StubProvider()], laya=laya)
+    try:
+        service.settings.set_processing("laya", cleanup=True)  # no exception reaches here
+        state, error = laya.status()
+        assert state == "failed" and error is not None
+        assert error.startswith("Laya could not start: [Errno 2] No such file or directory")
+    finally:
+        service.close()
+
+
+def test_deleting_all_data_stops_laya_first(tmp_path: Path, fake_engine: Path) -> None:
+    store = Store(tmp_path / "data")
+    laya = Laya(store.data_dir / "models", find_engine=lambda: fake_engine)
+    service = Entune(store, [StubProvider()], laya=laya)
+    try:
+        service.settings.set_processing("laya", formatting=True)
+        wait_until(lambda: laya.status()[0] == "ready")
+        reset = store.reset
+        seen: list[str] = []
+
+        def reset_after_stop() -> tuple[list[str], list[str]]:
+            seen.append(laya.status()[0])  # nothing writes into the folders being deleted
+            return reset()
+
+        store.reset = reset_after_stop  # type: ignore[method-assign]
+        service.data.reset_data()
+        assert seen == ["stopped"] and not (store.data_dir / "models").exists()
+        assert laya.status()[0] == "stopped" and service.settings.decision_model() is None
+    finally:
+        service.close()
+
+
+def test_model_and_step_changes_are_checked_and_applied_together(
+    tmp_path: Path, fake_engine: Path
+) -> None:
+    laya = Laya(tmp_path / "models", find_engine=lambda: fake_engine)
+    service = Entune(Store(tmp_path / "data"), [StubProvider()], laya=laya)
+    try:
+        with TestClient(create_app(service), base_url="http://localhost") as client:
+            client.put("/api/settings", json={"decisionModel": "laya", "jev": {"cleanup": True}})
+            # Switching to Jev while turning its only step off needs no key.
+            both = {"decisionModel": "jev", "jev": {"cleanup": False}, "fastMode": True}
+            assert client.put("/api/settings", json=both).status_code == 200
+            assert service.settings.decision_model() == "jev"
+            # A refused change stores none of its fields.
+            refused = client.put(
+                "/api/settings", json={"fastMode": False, "jev": {"cleanup": True}}
+            )
+            assert refused.text == "Save a TypeSafe API key first."
+            assert service.settings.fast_mode() is True
+            assert client.put(
+                "/api/settings", json={"keys": {"typesafe": "ts-key"}, "jev": {"cleanup": True}}
+            ).json() == {"ok": True}
+    finally:
+        service.close()

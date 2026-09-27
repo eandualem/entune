@@ -108,7 +108,7 @@ class Laya:
             "failed": error,
         }.get(state)
         url = f"http://127.0.0.1:{self._port}/v1/systemone"
-        return Endpoint("laya", url, MODEL, None, unavailable)
+        return Endpoint("laya", url, MODEL, None, unavailable, short_input=True)
 
     def start(self, retry: bool = False) -> None:
         """Start the server unless it runs. After a failure only an explicit retry starts it,
@@ -118,31 +118,38 @@ class Laya:
             self._check_exit()
             if python is None or self._process is not None or (self._error and not retry):
                 return
-            self._dir.mkdir(parents=True, exist_ok=True)
-            port = _free_port()
-            env = {
-                **os.environ,
-                "LAYA_HOST": "127.0.0.1",
-                "LAYA_PORT": str(port),
-                "LAYA_MODELS": "english",
-                "LAYA_PRELOAD": "1",
-                "LAYA_LOG_LEVEL": "warning",
-                "HF_HOME": str(self._dir / "huggingface"),
-                "HF_HUB_DISABLE_TELEMETRY": "1",
-            }
-            env.pop("LAYA_API_KEY", None)
-            with (self._dir / "server.log").open("wb") as log:
-                self._process = subprocess.Popen(
-                    [str(python), "-c", LAUNCH],
-                    stdin=subprocess.PIPE,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    env=env,
-                )
-            self._port, self._ready, self._error = port, False, None
-            threading.Thread(
-                target=self._wait_ready, args=(self._process, port), daemon=True, name="entune-laya"
-            ).start()
+            try:
+                self._launch(python)
+            except OSError as exc:
+                self._process, self._error = None, f"Laya could not start: {exc}"
+
+    def _launch(self, python: Path) -> None:
+        """Start the server; the caller holds the lock."""
+        self._dir.mkdir(parents=True, exist_ok=True)
+        port = _free_port()
+        env = {
+            **os.environ,
+            "LAYA_HOST": "127.0.0.1",
+            "LAYA_PORT": str(port),
+            "LAYA_MODELS": "english",
+            "LAYA_PRELOAD": "1",
+            "LAYA_LOG_LEVEL": "warning",
+            "HF_HOME": str(self._dir / "huggingface"),
+            "HF_HUB_DISABLE_TELEMETRY": "1",
+        }
+        env.pop("LAYA_API_KEY", None)
+        with (self._dir / "server.log").open("wb") as log:
+            self._process = subprocess.Popen(
+                [str(python), "-c", LAUNCH],
+                stdin=subprocess.PIPE,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+        self._port, self._ready, self._error = port, False, None
+        threading.Thread(
+            target=self._wait_ready, args=(self._process, port), daemon=True, name="entune-laya"
+        ).start()
 
     def stop(self) -> None:
         """Stop the server and forget a failure; its memory goes with the process."""

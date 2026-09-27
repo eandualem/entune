@@ -82,6 +82,7 @@ class Entune:
             self.dictionary,
             self.models,
             self._changed,
+            stop_laya=laya.stop,
         )
 
     def on_change(self, listener: Callable[[], None]) -> None:
