@@ -110,10 +110,63 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     }
   });
 
-  // Jev: its key, independent processing controls, and what it has done.
+  // The decision model: the choice, Jev's key or Laya's state on this Mac, independent
+  // processing controls, and what the chosen model has done.
   const jev = { dictionary: el("jev-dictionary"), formatting: el("jev-formatting"), cleanup: el("jev-cleanup"), key: el("key-typesafe") };
+  const LAYA = {
+    unavailable: "Its engine is not installed on this Mac.",
+    stopped: "Installed. It starts when a step below is on.",
+    starting: "Starting on this Mac. The first start downloads the model, about 850 MB.",
+    ready: "Running on this Mac.",
+  };
+  let layaPoll = null;
+  // The option shown is the saved one, unless a switch was refused: then the picked option
+  // stays shown with its setup (Jev's key, Laya's install command) until it can be saved.
+  let picked = null, refusal = "";
+  function renderDecisionModel() {
+    const { selected, laya } = settings.decisionModel;
+    const shown = picked ?? selected;
+    for (const input of document.querySelectorAll('input[name="decision-model"]')) input.checked = input.value === shown;
+    el("jev-key-form").hidden = shown !== "jev";
+    el("laya-setup").hidden = shown !== "laya";
+    const names = { jev: "Jev", laya: "Laya" };
+    el("decision-note").textContent = picked ? `Not switched yet: ${refusal}${selected ? ` The steps still use ${names[selected]}.` : ""}` : "";
+    el("laya-status").textContent = laya.state === "failed" ? laya.error : LAYA[laya.state];
+    el("laya-status").classList.toggle("err", laya.state === "failed");
+    el("laya-retry").hidden = !["failed", "unavailable"].includes(laya.state);
+    el("laya-retry").textContent = laya.state === "failed" ? "Start again" : "Check again";
+    el("laya-install").hidden = laya.state !== "unavailable";
+    el("laya-command").textContent = laya.install;
+    // Follow Laya while it starts; the first start can take minutes.
+    clearTimeout(layaPoll);
+    if (shown === "laya" && laya.state === "starting") {
+      layaPoll = setTimeout(async () => {
+        try { settings.decisionModel = (await api("/api/settings")).decisionModel; renderDecisionModel(); } catch { /* the next load shows it */ }
+      }, 2000);
+    }
+  }
+  async function chooseDecisionModel(value) {
+    try {
+      await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: {}, decisionModel: value }) });
+      picked = null;
+      flash(el("decision-status"), "Saved", "ok");
+      await loadSettings();
+    } catch (err) {
+      picked = value === settings.decisionModel.selected ? null : value;
+      refusal = errorText(err);
+      if (!picked) flash(el("decision-status"), refusal, "err");
+      renderDecisionModel();
+    }
+  }
+  for (const input of document.querySelectorAll('input[name="decision-model"]')) {
+    input.addEventListener("change", () => chooseDecisionModel(input.value));
+  }
+  // Start again after a failure; after installing, Check again finds the engine and, if
+  // Laya was picked but refused for lack of it, saves the choice.
+  el("laya-retry").addEventListener("click", () => (settings.decisionModel.laya.state === "failed" || picked === "laya" ? chooseDecisionModel("laya") : loadSettings()));
   function renderJev() {
     const j = settings.jev;
+    renderDecisionModel();
     jev.key.value = "";
     jev.key.placeholder = j.key_hint ? `saved ${j.key_hint} · type to replace` : "Not set";
     jev.dictionary.checked = j.dictionary;
@@ -132,7 +185,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const seconds = (value) => (value === null || value === undefined ? "–" : `+${value.toFixed(1)} s`);
     el("activity-total").textContent = s.transcriptions
       ? `${s.transcriptions} processed dictation${s.transcriptions === 1 ? "" : "s"} · median ${seconds(s.median_seconds)} added per dictation.`
-      : j.key_hint ? "No processed dictations yet." : "Add a TypeSafe key in Settings › Corrections & formatting to enable processing.";
+      : settings.decisionModel.selected ? "No processed dictations yet." : "Choose a decision model in Settings › Corrections & formatting to enable processing.";
     const steps = [["contextual", "Dictionary, read in context"], ["deterministic", "Dictionary, always-apply entries"], ["cleanup", "Repeated fillers"], ["formatting", "Paragraphs and bullets"]];
     const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
     const rows = [];
@@ -176,11 +229,14 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     e.preventDefault();
     const key = jev.key.value.trim();
     if (!key) { flash(el("jev-key-status"), "Nothing to save", "ok"); return; }
-    if (await saveSetting({ keys: { typesafe: key } }, el("jev-key-status"))) await loadSettings();
+    // A key saved while Jev is picked but not yet chosen completes the switch.
+    const choice = picked === "jev" ? { decisionModel: "jev" } : {};
+    if (await saveSetting({ keys: { typesafe: key }, ...choice }, el("jev-key-status"))) { picked = null; await loadSettings(); }
   });
   for (const name of ["dictionary", "formatting", "cleanup"]) {
     jev[name].addEventListener("change", async () => {
-      if (!(await saveSetting({ jev: { [name]: jev[name].checked } }, el("jev-key-status")))) jev[name].checked = !jev[name].checked;
+      if (await saveSetting({ jev: { [name]: jev[name].checked } }, el("decision-status"))) await loadSettings();
+      else jev[name].checked = !jev[name].checked;
     });
   }
 

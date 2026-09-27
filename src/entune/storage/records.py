@@ -63,7 +63,7 @@ class DictionaryAudio:
     mime: str
     seconds: float | None = None
     created_at: str | None = None
-    source: str | None = None  # "wispr" or "folder"; None for imports made before it was kept
+    source: str | None = None  # a dictation app's id or "folder"; None: imported before it was kept
 
 
 def now() -> str:

@@ -1,6 +1,7 @@
-"""The questions Jev answers: which meaning fits, where paragraphs go, which fillers go.
+"""The questions a decision model answers: which meaning fits, where paragraphs go, which
+fillers go.
 
-Code alone applies what the answers allow; Jev never writes text.
+Code alone applies what the answers allow; the decision model never writes text.
 """
 
 from __future__ import annotations
@@ -141,7 +142,7 @@ def decide(
     request = meaning_request(text, components, variant)
     decisions = dict(request.decisions)
     if request.questions:
-        answers = call.ask(request.state, request.questions)
+        answers = _ask_meanings(request, call)
         for i, values in request.outputs.items():
             probabilities = answers[f"o{i}"]
             option = max(probabilities, key=lambda name: probabilities[name])
@@ -153,6 +154,17 @@ def decide(
                 request.support[i][option],
             )
     return [decisions[i] for i in range(len(components))]
+
+
+def _ask_meanings(request: MeaningRequest, call: Call) -> dict[str, dict[str, float]]:
+    if not call.endpoint.short_input:
+        return call.ask(request.state, request.questions)
+    # A short-input model would cut a shared state off, and later occurrences with it:
+    # each occurrence is asked alone, within the same deadline.
+    return call.ask_each(
+        ({**request.state, "occurrences": {name: request.state["occurrences"][name]}}, {name: q})
+        for name, q in request.questions.items()
+    )
 
 
 # ---- formatting

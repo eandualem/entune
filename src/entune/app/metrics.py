@@ -110,8 +110,20 @@ def model_metrics(store: Store, providers: list[Provider]) -> list[ModelMetrics]
     return table
 
 
-def processing_summary(store: Store) -> ProcessingSummary:
-    attempts = store.processed_transcriptions()
+def processing_summary(store: Store, model: str | None = None) -> ProcessingSummary:
+    """What the steps did, counting only the given decision model's work when one is given.
+    A step without a recorded model ran before the choice existed, when Jev was the only one."""
+
+    def counted(stage: Stage) -> bool:
+        if model is None or stage.status == "disabled" or stage.method == "deterministic":
+            return True  # the step asks no decision model
+        return (stage.model or "jev") == model
+
+    attempts = [
+        a
+        for a in store.processed_transcriptions()
+        if all(counted(s) for s in (a.correction, a.cleanup, a.formatting) if s is not None)
+    ]
     stages: list[Stage] = [
         stage
         for a in attempts

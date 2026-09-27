@@ -274,7 +274,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .cell-scope { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; font-size: var(--fs-11-5); color: var(--text-faint); white-space: nowrap; overflow: hidden; }
 .cell-scope svg { width: 0.5625rem; height: 0.5625rem; }
 
-/* An open row: how each heard form is written, beside the meanings Jev chooses from. */
+/* An open row: how each heard form is written, beside the meanings the decision model chooses from. */
 .dict-detail { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: var(--sp-12) var(--sp-24); padding: var(--sp-12) var(--sp-14) var(--sp-14); background: var(--well); border-top: 1px solid var(--line-faint); -webkit-user-select: text; user-select: text; }
 .detail-forms, .detail-meanings { display: flex; flex-direction: column; gap: var(--sp-6); min-width: 0; }
 .detail-label { margin: 0; font-size: var(--fs-11); letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-faint); }
@@ -383,6 +383,10 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 .app-option:has(input:checked) { background: var(--card); box-shadow: var(--shadow-card); }
 .app-option input { margin: 0; accent-color: var(--accent); }
 .app-option .caption { display: block; }
+.decision-list { flex: 1; }
+#decision-status-row:has(#decision-note:empty):not(:has(.show)) { display: none; }
+#laya-status.err { color: var(--error); overflow-wrap: anywhere; }
+#laya-command { margin: var(--sp-6) 0 0; padding: var(--sp-8) var(--sp-10); border-radius: var(--r-7); background: var(--well); font: var(--fs-12)/1.5 var(--mono); color: var(--text); -webkit-user-select: all; user-select: all; white-space: pre-wrap; }
 .drawer-foot .audio-models { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
 #learn-source { color: var(--text-secondary); }
 .suggest-model { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); padding-top: var(--sp-12); border-top: 1px solid var(--line); font-size: var(--fs-12-5); color: var(--text-dim); }

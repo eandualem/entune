@@ -25,6 +25,7 @@ def process_text(
     key: str | None,
     client: jev_client.Client,
     policy: jev_client.Policy,
+    endpoint: jev_client.Endpoint = jev_client.JEV,
     direct: bool = False,
     checkpoint: Callable[[Processed], None] | None = None,
     progress: Callable[[str], None] | None = None,
@@ -35,9 +36,14 @@ def process_text(
     started = time.monotonic()
     deadline = started + policy.total_seconds
     initial = pending(
-        raw, contextual=contextual, formatting=formatting, cleanup=cleanup, direct=direct
+        raw,
+        contextual=contextual,
+        formatting=formatting,
+        cleanup=cleanup,
+        direct=direct,
+        model=endpoint.id,
     )
-    call = jev_client.Call(client, key or "", policy, deadline, cancel=cancel)
+    call = jev_client.Call(client, key or "", policy, deadline, cancel=cancel, endpoint=endpoint)
     if check:
         check()
     if progress and (contextual or direct):
@@ -93,6 +99,7 @@ def process_text(
                 for d in decisions
             ),
             output=text if contextual or direct else None,
+            model=endpoint.id if contextual else None,
         )
     except CancelledError:
         raise
@@ -101,7 +108,10 @@ def process_text(
         result = replace(
             result,
             correction=replace(
-                result.correction, attempts=call.attempts, seconds=time.monotonic() - started
+                result.correction,
+                attempts=call.attempts,
+                seconds=time.monotonic() - started,
+                model=endpoint.id if contextual else None,
             ),
         )
         if checkpoint:
@@ -123,7 +133,9 @@ def process_text(
         if progress:
             progress(method)
         started = time.monotonic()
-        call = jev_client.Call(client, key or "", policy, deadline, cancel=cancel)
+        call = jev_client.Call(
+            client, key or "", policy, deadline, cancel=cancel, endpoint=endpoint
+        )
         try:
             classified = classify(text, call)
             if check:
@@ -139,13 +151,18 @@ def process_text(
                 preserved=classified.preserved,
                 abstained=classified.abstained,
                 output=updated,
+                model=endpoint.id,
             )
             text = updated
         except CancelledError:
             raise
         except Exception as exc:
             outcome = Stage(
-                "failed", outcomes[method].method, attempts=call.attempts, error=_error(exc, key)
+                "failed",
+                outcomes[method].method,
+                attempts=call.attempts,
+                error=_error(exc, key),
+                model=endpoint.id,
             )
         outcomes[method] = replace(outcome, seconds=time.monotonic() - started)
         if outcome.status == "failed":

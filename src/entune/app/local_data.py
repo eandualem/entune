@@ -29,10 +29,11 @@ class LocalData:
         dictionary: DictionaryFile,
         models: SpeechModels,
         changed: Callable[[], None],
+        stop_laya: Callable[[], None] = lambda: None,
     ) -> None:
         self._store, self._providers, self._speech = store, providers, speech
         self._operations, self._builds, self._dictionary = operations, builds, dictionary
-        self._models, self._changed = models, changed
+        self._models, self._changed, self._stop_laya = models, changed, stop_laya
         self._lock = threading.Lock()
         self._using: list[str] = []  # imports and exports in progress; a reset waits for none
         self._resetting = False
@@ -97,6 +98,9 @@ class LocalData:
         for provider in self._providers:
             if isinstance(provider, Downloadable):
                 provider.unload()
+        # Laya's server may still be writing its model into the models folder; stopping it
+        # first means nothing writes there while it is deleted. Its setting goes too.
+        self._stop_laya()
         try:
             with self._dictionary.lock:
                 deleted, kept = self._store.reset()

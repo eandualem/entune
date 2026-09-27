@@ -72,8 +72,8 @@ provider, pick the model, dictate) that ticks itself off.
 
 **Dictionary.** An entry is a term as the person spells it, what it means
 to them, and the phrases speech models write instead; every heard phrase
-is fixed in every transcript, and with Jev on each match is decided in
-context from the description. Two sections: *Pinned by you*, entered
+is fixed in every transcript, and with a decision model on each match is
+decided in context from the description. Two sections: *Pinned by you*, entered
 by hand or pinned from a proposal, shared by every model, never changed by
 a machine; and *Learned for <the current model>*, what a language model
 proposed from that model's own transcripts and the person accepted. A
@@ -96,9 +96,10 @@ recording, offered only for the provider that supports it; two shortcuts,
 hold-to-talk (one key, records while held) and hands-free (a combination,
 press to start and again to stop), each set by pressing the keys, with
 Clear. *Dictionary model*: Anthropic and OpenAI keys and a model field
-with suggestions, used only for the Build button. *Jev*: a TypeSafe key
-and two switches, contextual dictionary and formatting, each saying what
-it adds in time, and a line summing up what Jev has done. *Appearance*: theme
+with suggestions, used only for the Build button. *Corrections &
+formatting*: the decision model, Jev by TypeSafe on a key or Laya on this
+Mac, and switches for the steps that ask it, each saying what it adds in
+time, and a line summing up what the decision model has done. *Appearance*: theme
 (system, light, dark) and text size (four steps, also cmd+ cmd− cmd0).
 Everything applies as soon as it is changed, except keys.
 
@@ -107,4 +108,6 @@ Everything applies as soon as it is changed, except keys.
 Provider (a company or engine), model (one of its speech models), default
 model (the one dictation uses), transcript, raw text (what the model
 returned before the dictionary), pinned, learned, entry (spelling,
-description, heard), proposal, Jev, fast mode, hold-to-talk, hands-free.
+description, heard), proposal, decision model (it answers questions about
+the text and never writes any: Jev or Laya), fast mode, hold-to-talk,
+hands-free.

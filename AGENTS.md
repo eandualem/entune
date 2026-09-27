@@ -94,19 +94,24 @@ Also in scope since 2026-09-17 (issue #22): a personal dictionary, and a
 language model that builds it from the history on request. That model
 never touches a transcript on its way to the user; that stays out.
 
-In scope since 2026-09-21, the owner's decision after a measured trial:
-Jev, TypeSafe's decision model, on every transcript, as the feature that
-sets Entune apart. Since 2026-09-22 (issue #114), the dictionary uses confusion
-groups with stable meanings and explicit recognized-form associations. Jev
-selects eligible meanings in context; pinned knowledge is shared and protected
-without semantic priority. A second switch places paragraph breaks and bullets.
-Since issue #117, another opt-in reduces code-proposed repeated English fillers
-to one occurrence after Jev classifies hesitation, preserving uncertain/meaningful uses.
-Jev generates nothing, so no generated text ever reaches the user. Nothing
-from the dictionary goes to the speech provider any more: the provider
+In scope since 2026-09-21, the owner's decision after a measured trial with
+Jev: a decision model on every transcript, as the feature that sets Entune
+apart. A decision model answers questions about the text with probabilities
+and generates nothing, so no generated text ever reaches the user. The user
+chooses it (issue #165): Jev, TypeSafe's, in the cloud on their key, or Laya,
+Convai Innovations' open-weight model, on this Mac through a user-installed
+engine, running only while chosen and asked. Since 2026-09-22 (issue #114), the
+dictionary uses confusion groups with stable meanings and explicit
+recognized-form associations. The decision model selects eligible meanings in
+context; pinned knowledge is shared and protected without semantic priority. A
+second switch places paragraph breaks and bullets. Since issue #117, another
+opt-in reduces code-proposed repeated English fillers to one occurrence after
+the decision model classifies hesitation, preserving uncertain/meaningful uses.
+Nothing from the dictionary goes to the speech provider any more: the provider
 transcribes the raw speech and the dictionary is applied afterwards. All
-Jev uses are settings, each with its measured cost in time shown, and the
-numbers that show the improvement are kept (`docs/dictionary.md`).
+decision-model uses are settings, each with its measured cost in time shown,
+and the numbers that show the improvement, measured with Jev, are kept
+(`docs/dictionary.md`).
 
 In scope since 2026-09-18 (issue #20): fast mode as an opt-in setting that
 streams the recording to the provider while it is made, never changing the
