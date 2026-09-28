@@ -6,9 +6,12 @@ from dataclasses import dataclass
 
 # Providers we route to, with a reasonably priced model suggested first. Each is keyed by
 # the same ID as its saved API key, so Groq shares the key already saved for speech.
+# CHATGPT runs OpenAI's models on a ChatGPT plan through a sign-in instead of a key.
+CHATGPT = "chatgpt"
 LLM_PROVIDERS: dict[str, tuple[str, str]] = {
     "anthropic": ("Anthropic", "anthropic:claude-sonnet-5"),
     "openai": ("OpenAI", "openai:gpt-5.4-mini"),
+    CHATGPT: ("ChatGPT subscription", "chatgpt:gpt-6-sol"),
     "google": ("Google Gemini", "google:gemini-3.5-flash"),
     "groq": ("Groq", "groq:openai/gpt-oss-120b"),
     "mistral": ("Mistral", "mistral:mistral-large-latest"),
@@ -40,6 +43,13 @@ _MODELS = {
         ("gpt-5.6-luna", "GPT-5.6 Luna"),
         ("gpt-5.4", "GPT-5.4"),
         ("gpt-5.4-pro", "GPT-5.4 Pro"),
+    ),
+    # The plan decides which of these it allows; per-token price does not apply.
+    CHATGPT: (
+        ("gpt-6-sol", "GPT-6 Sol"),
+        ("gpt-6-astra", "GPT-6 Astra"),
+        ("gpt-6-luna", "GPT-6 Luna"),
+        ("gpt-5.4-mini", "GPT-5.4 mini"),
     ),
     "google": (
         ("gemini-3.5-flash", "Gemini 3.5 Flash"),

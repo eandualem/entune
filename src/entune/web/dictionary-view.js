@@ -128,9 +128,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const note = el("dictionary-model-note");
     missingKey = Boolean(owner && !owner.keyHint);
     note.hidden = keyed.length > 0 && !missingKey;
-    note.textContent = missingKey
-      ? `${languageName(current)} needs an API key for ${owner.name}: add it in Settings › Dictionary setup, or choose another model.`
-      : "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral in Settings › Dictionary setup to choose a suggestion model.";
+    note.textContent = !missingKey
+      ? "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral, or sign in with ChatGPT, in Settings › Dictionary setup to choose a suggestion model."
+      : owner.id === "chatgpt"
+        ? `${languageName(current)} needs you signed in with ChatGPT: sign in under Settings › Dictionary setup, or choose another model.`
+        : `${languageName(current)} needs an API key for ${owner.name}: add it in Settings › Dictionary setup, or choose another model.`;
     if (!keyed.length) modelSelect.add(new Option("No key yet", ""));
     modelSelect.disabled = building || !keyed.length;
     gate();

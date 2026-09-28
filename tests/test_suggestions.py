@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import subprocess
 import sys
@@ -8,6 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import Any
+from urllib.parse import parse_qs
 
 import httpx
 import httpx2
@@ -23,7 +25,7 @@ from entune import prompts
 from entune.dictionary.entries import Association, Dictionary, Form, Group, Meaning
 from entune.learning import batches, generate, replies, suggestion_model
 from entune.learning import inputs as learning_inputs
-from entune.learning.suggestion_model import Request, call, providers
+from entune.learning.suggestion_model import Request, call, chatgpt, providers
 from tests.dictionary_samples import JEV, group, proposed
 
 TEXT = "I use cloud code."
@@ -337,6 +339,7 @@ def test_new_providers_are_offered_with_their_own_defaults() -> None:
     assert set(suggestion_model.LLM_PROVIDERS) == {
         "anthropic",
         "openai",
+        "chatgpt",
         "google",
         "groq",
         "mistral",
@@ -744,3 +747,99 @@ def test_starting_entune_loads_no_suggestion_sdk() -> None:
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert loaded.stdout.strip() == "[]"
+
+
+def jwt(claims: dict[str, Any]) -> str:
+    """An unsigned token carrying `claims`, as Entune reads them."""
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+    return f"e30.{payload}.signature"
+
+
+ACCOUNT = {"https://api.openai.com/auth": {"chatgpt_account_id": "acct-1"}}
+
+
+def test_chatgpt_sign_in_waits_for_approval_then_exchanges_the_code() -> None:
+    sent: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        if request.url.path.endswith("/usercode"):
+            code = {"device_auth_id": "d1", "user_code": "ABCD-1234", "interval": "7"}
+            return httpx.Response(200, json={**code, "expires_at": "2030-03-17T17:46:40+00:00"})
+        if request.url.path.endswith("/deviceauth/token"):
+            approved = {"authorization_code": "c1", "code_verifier": "v1"}
+            return httpx.Response(403 if len(sent) == 2 else 200, json=approved)
+        tokens = {
+            "access_token": jwt({**ACCOUNT, "exp": 2_000_000_000}),
+            "refresh_token": "r1",
+            "id_token": jwt({"email": "a@example.com"}),
+        }
+        return httpx.Response(200, json=tokens)
+
+    transport = httpx.MockTransport(respond)
+    code = chatgpt.start(transport)
+    assert code == chatgpt.DeviceCode("d1", "ABCD-1234", 7, 1_900_000_000.0)
+    assert chatgpt.check(code, transport, now=code.expires_at - 60) is None  # not yet approved
+    login = chatgpt.check(code, transport, now=code.expires_at - 55)
+    assert login == chatgpt.Login(
+        jwt({**ACCOUNT, "exp": 2_000_000_000}), "r1", "a@example.com", 2e9
+    )
+    assert chatgpt.account_id(login.access_token) == "acct-1"
+    exchange = parse_qs(sent[-1].content.decode())
+    assert exchange["code"] == ["c1"] and exchange["code_verifier"] == ["v1"]
+    with pytest.raises(ValueError, match="code expired"):  # never asks OpenAI again
+        chatgpt.check(code, transport, now=code.expires_at + 1)
+    assert len(sent) == 4
+
+
+def test_a_chatgpt_login_is_renewed_only_when_due_and_failures_read_as_openais() -> None:
+    login = chatgpt.Login("old", "r1", "a@example.com", 100_000.0)
+
+    def renew(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content)["refresh_token"] == "r1"
+        return httpx.Response(200, json={"access_token": "new", "refresh_token": "r2"})
+
+    transport = httpx.MockTransport(renew)
+    assert chatgpt.renewed(login, transport, now=100_000.0 - 2 * chatgpt.RENEW_WITHIN) is None
+    fresh = chatgpt.renewed(login, transport, now=99_000.0)
+    assert fresh is not None and (fresh.access_token, fresh.refresh_token) == ("new", "r2")
+    assert fresh.email == "a@example.com"  # kept when the renewal names no account
+
+    refused = httpx.MockTransport(lambda _: httpx.Response(401, text="refresh_token_reused"))
+    with pytest.raises(ValueError, match=r"\(401\): refresh_token_reused"):
+        chatgpt.renewed(login, refused, now=99_000.0)
+
+    def offline(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("offline", request=request)
+
+    with pytest.raises(ValueError, match="Could not reach OpenAI"):
+        chatgpt.start(httpx.MockTransport(offline))
+
+
+def test_a_chatgpt_plan_is_asked_at_its_endpoint_for_its_account_without_an_output_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[httpx2.Request] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request)
+        return openai_stream("completed")
+
+    monkeypatch.setattr(
+        providers,
+        "_http2",
+        lambda header, value: httpx2.AsyncClient(
+            transport=httpx2.MockTransport(respond),
+            event_hooks=providers._credential(header, value),
+        ),
+    )
+    token = jwt(ACCOUNT)
+    plan = replace(request(), provider="chatgpt", api_key=token, model="chatgpt:gpt-6-sol")
+    assert json.loads(asyncio.run(suggestion_model.call_model(plan))) == {"additions": []}
+    [outgoing] = sent
+    assert str(outgoing.url) == f"{chatgpt.BACKEND}/responses"
+    assert outgoing.headers["authorization"] == f"Bearer {token}"
+    assert outgoing.headers["chatgpt-account-id"] == "acct-1"
+    body = json.loads(outgoing.content)
+    assert body["store"] is False and body["stream"] is True
+    assert "max_output_tokens" not in body

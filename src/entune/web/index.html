@@ -488,7 +488,8 @@
                 </div>
                 <form id="dm-edit" hidden>
                   <div class="srow"><span class="name">Provider</span><select class="select field" id="dm-provider"></select></div>
-                  <div class="srow"><span class="name">API key</span><input class="input field" id="dm-key" type="password" autocomplete="off" placeholder="Not set" /></div>
+                  <div class="srow" id="dm-key-row"><span class="name">API key</span><input class="input field" id="dm-key" type="password" autocomplete="off" placeholder="Not set" /></div>
+                  <div class="srow" id="dm-signin" hidden><span class="name">ChatGPT</span><div class="field"><span class="caption" id="dm-signin-state" role="status"></span> <button type="button" class="btn" id="dm-signin-start">Sign in with ChatGPT</button><button type="button" class="btn ghost" id="dm-signout" hidden>Sign out</button></div></div>
                   <div class="srow"><span class="name">Model</span><div class="field"><select class="select" id="dm-model"></select><input class="input mono" id="dm-model-custom" type="text" placeholder="model id, as the provider names it" spellcheck="false" autocomplete="off" hidden /></div></div>
                   <div class="srow foot"><button type="submit" class="btn accent">Save</button><button type="button" class="btn ghost" id="dm-cancel">Cancel</button><span class="caption save-status" id="dm-status" role="status"></span></div>
                 </form>
@@ -591,7 +592,7 @@
                   <p>When Apply your dictionary, Reduce repeated fillers, or Paragraphs and bullets is on, transcript text goes to your decision model: the whole transcript for fillers and formatting, and for your dictionary the passage around each word in question with the meanings that could apply. Audio is never sent.</p>
                   <p>With Jev, the text goes to TypeSafe, even when speech recognition runs on this Mac. With Laya, it stays on this Mac; its first start fetches the model from Hugging Face.</p>
                   <h3>Dictionary suggestions</h3>
-                  <p>Only when you choose Get suggestions, the transcripts it reads and your dictionary are sent to your suggestion model (Anthropic, OpenAI, Google Gemini, Groq or Mistral). With Learn from audio, the chosen audio is first transcribed by your speech model as above. Transcripts made only for a suggestion run are not saved.</p>
+                  <p>Only when you choose Get suggestions, the transcripts it reads and your dictionary are sent to your suggestion model (Anthropic, OpenAI through an API key or a ChatGPT subscription, Google Gemini, Groq or Mistral). With Learn from audio, the chosen audio is first transcribed by your speech model as above. Transcripts made only for a suggestion run are not saved.</p>
                   <h3>Keeping and deleting</h3>
                   <p>Entune never deletes recordings or transcripts on its own. Exports are created on this Mac and leave out your keys and settings.</p>
                   <p>What a cloud service keeps, and for how long, is up to that service and your account with it. Deleting data in Entune can't remove copies a service kept, exports you saved, or copies in Time Machine or other backups of this Mac.</p>

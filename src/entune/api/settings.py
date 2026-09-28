@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import asdict
 
 from starlette.concurrency import run_in_threadpool
@@ -14,8 +15,10 @@ from entune.app import shortcuts
 from entune.app.entune import Entune
 from entune.app.metrics import processing_summary
 from entune.app.models import UnknownModel
+from entune.app.operations import Busy
 from entune.app.settings import DECISION_MODELS, JEV_PROVIDER
 from entune.learning import suggestion_model
+from entune.learning.suggestion_model import chatgpt
 from entune.processing import jev_client, laya
 
 
@@ -78,7 +81,7 @@ def routes(app: Entune) -> list[Route]:
                 raise ValueError("keys must be an object")
             known = (
                 {p.id for p in app.providers}
-                | suggestion_model.LLM_PROVIDERS.keys()
+                | (suggestion_model.LLM_PROVIDERS.keys() - {suggestion_model.CHATGPT})
                 | {JEV_PROVIDER}
             )
             for provider_id, key in keys.items():
@@ -99,7 +102,7 @@ def routes(app: Entune) -> list[Route]:
                 ):
                     raise ValueError(
                         "dictionaryModel must be provider:model for Anthropic, OpenAI,"
-                        " Google Gemini, Groq or Mistral"
+                        " ChatGPT subscription, Google Gemini, Groq or Mistral"
                     )
             if "fastMode" in body and not isinstance(body["fastMode"], bool):
                 raise ValueError("fastMode must be a boolean")
@@ -177,7 +180,69 @@ def routes(app: Entune) -> list[Route]:
             return bad(str(exc))
         return JSONResponse({"ok": True})
 
+    # Signing in with ChatGPT: start gives the code to enter at OpenAI, the page then
+    # checks until the person has approved it. The waiting code is kept with the
+    # settings, so a newer start replaces it and deleting all data forgets it; each step
+    # counts as work on the data, so that deletion waits for a check in progress.
+    lock = threading.Lock()  # a sign-out waits for a check, so neither undoes the other
+
+    def start_sign_in() -> Response:
+        try:
+            with app.data.using_data("ChatGPT sign-in"):
+                code = chatgpt.start()
+                with lock:
+                    app.settings.set_chatgpt_sign_in(code)
+        except ValueError as exc:
+            return bad(str(exc), 409 if isinstance(exc, Busy) else 400)
+        return JSONResponse(
+            {
+                "userCode": code.user_code,
+                "verificationUrl": chatgpt.VERIFICATION_URL,
+                "interval": code.interval,
+            }
+        )
+
+    def check_sign_in(user_code: object) -> Response:
+        try:
+            with app.data.using_data("ChatGPT sign-in"), lock:
+                code = app.settings.chatgpt_sign_in()
+                # The page names the code it shows: a newer start replaced any other.
+                if code is None or code.user_code != user_code:
+                    return bad("This ChatGPT sign-in is no longer waiting; sign in again", 409)
+                try:
+                    login = chatgpt.check(code)
+                except ValueError as exc:
+                    app.settings.set_chatgpt_sign_in(None)
+                    return bad(str(exc))
+                if login is None:
+                    return JSONResponse({"state": "waiting"})
+                app.settings.set_chatgpt_sign_in(None)
+                app.settings.set_chatgpt_login(login)
+        except Busy as exc:
+            return bad(str(exc), 409)
+        return JSONResponse({"state": "signed-in", "account": login.email})
+
+    def sign_out() -> Response:
+        with lock:
+            app.settings.set_chatgpt_sign_in(None)
+            app.settings.set_chatgpt_login(None)
+        return JSONResponse({"state": "signed-out"})
+
+    async def chatgpt_sign_in(request: Request) -> Response:
+        action = {"POST": start_sign_in, "DELETE": sign_out}[request.method]
+        return await run_in_threadpool(action)
+
+    async def chatgpt_sign_in_check(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except ValueError as exc:
+            return bad(str(exc))
+        user_code = body.get("userCode") if isinstance(body, dict) else None
+        return await run_in_threadpool(check_sign_in, user_code)
+
     return [
         Route("/api/settings", get_settings, methods=["GET"]),
         Route("/api/settings", put_settings, methods=["PUT"]),
+        Route("/api/chatgpt/sign-in", chatgpt_sign_in, methods=["POST", "DELETE"]),
+        Route("/api/chatgpt/sign-in/check", chatgpt_sign_in_check, methods=["POST"]),
     ]

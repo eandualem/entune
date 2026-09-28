@@ -15,6 +15,9 @@ import httpx
 import httpx2
 from pydantic_ai.models import Model
 
+from entune.learning.suggestion_model import chatgpt
+from entune.learning.suggestion_model.catalog import CHATGPT
+
 TIMEOUT = 1200.0  # seconds; a reply at high reasoning effort takes minutes
 CONNECT = 5.0  # seconds to open a connection
 
@@ -74,16 +77,21 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
         ) as anthropic:
             yield AnthropicModel(name, provider=AnthropicProvider(anthropic_client=anthropic))
         return
-    if provider == "openai":
+    if provider in ("openai", CHATGPT):
         from openai import AsyncOpenAI
         from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
         from pydantic_ai.providers.openai import OpenAIProvider
 
+        # A ChatGPT plan answers at its own endpoint, for the account its sign-in names;
+        # `api_key` is then the sign-in's access token.
+        plan = provider == CHATGPT
+        account = chatgpt.account_id(api_key) if plan else None
         async with AsyncOpenAI(
             api_key=api_key,
-            base_url="https://api.openai.com/v1",
+            base_url=chatgpt.BACKEND if plan else "https://api.openai.com/v1",
             max_retries=0,
             timeout=httpx2.Timeout(TIMEOUT, connect=CONNECT),
+            default_headers={"ChatGPT-Account-Id": account} if account else None,
             http_client=_http2("authorization", f"Bearer {api_key}"),
         ) as openai:
             yield OpenAIResponsesModel(
