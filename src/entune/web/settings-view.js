@@ -54,12 +54,15 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const [providerId, , modelId] = splitRef(settings.dictionaryModel);
     const provider = settings.llmProviders.find((p) => p.id === providerId);
     const anyKey = settings.llmProviders.find((p) => p.keyHint);
-    if (provider) {
+    if (provider?.id === "chatgpt") {
+      el("dm-title").textContent = `${provider.name} · ${modelId}`;
+      el("dm-caption").textContent = provider.keyHint ? `signed in as ${provider.keyHint}` : "not signed in yet: sign in with ChatGPT to build the dictionary";
+    } else if (provider) {
       el("dm-title").textContent = `${provider.name} · ${modelId}`;
       el("dm-caption").textContent = provider.keyHint ? `key saved ${provider.keyHint}` : `no key for ${provider.name} yet: add one to build the dictionary`;
     } else {
       el("dm-title").textContent = "No model";
-      el("dm-caption").textContent = anyKey ? "" : "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral to build the dictionary from your history.";
+      el("dm-caption").textContent = anyKey ? "" : "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral, or sign in with ChatGPT, to build the dictionary from your history.";
     }
   }
   function splitRef(ref) {
@@ -75,6 +78,10 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   function fillDictionaryModelChoices(chosen) {
     const provider = settings.llmProviders.find((p) => p.id === dm.provider.value);
     if (!provider) return;
+    // A ChatGPT plan is signed in to instead of given a key.
+    el("dm-key-row").hidden = provider.id === "chatgpt";
+    el("dm-signin").hidden = provider.id !== "chatgpt";
+    renderSignIn();
     dm.key.value = "";
     dm.key.placeholder = provider.keyHint ? `saved ${provider.keyHint} · type to replace` : "Not set";
     const known = provider.models.map((m) => m.id);
@@ -97,7 +104,65 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     el("dm-summary").hidden = true;
     dm.edit.hidden = false;
   });
-  el("dm-cancel").addEventListener("click", () => { dm.edit.hidden = true; el("dm-summary").hidden = false; });
+  el("dm-cancel").addEventListener("click", () => { stopSignIn(); dm.edit.hidden = true; el("dm-summary").hidden = false; });
+
+  // Signing in with ChatGPT: OpenAI gives a code to enter on its page; Entune checks, at
+  // the pace OpenAI asks, until the person approves it there.
+  let signInTimer = null, signInRun = 0;
+  function stopSignIn() { clearTimeout(signInTimer); signInRun += 1; }
+  function renderSignIn() {
+    stopSignIn();
+    const account = settings.llmProviders.find((p) => p.id === "chatgpt")?.keyHint;
+    el("dm-signin-state").textContent = account ? `Signed in as ${account}` : "Not signed in";
+    el("dm-signin-start").hidden = Boolean(account);
+    el("dm-signout").hidden = !account;
+  }
+  async function signInChanged(message) {
+    await loadSettings();
+    renderSignIn();
+    flash(el("dm-status"), message, "ok");
+  }
+  el("dm-signin-start").addEventListener("click", async () => {
+    stopSignIn();
+    const run = signInRun;
+    try {
+      const start = await api("/api/chatgpt/sign-in", { method: "POST" });
+      const code = document.createElement("strong");
+      code.className = "mono";
+      code.textContent = start.userCode;
+      const page = document.createElement("a");
+      page.href = start.verificationUrl;
+      page.target = "_blank";
+      page.rel = "noopener";
+      page.textContent = "OpenAI's sign-in page";
+      el("dm-signin-state").replaceChildren("Enter ", code, " on ", page, " and approve it. Waiting…");
+      el("dm-signin-start").hidden = true;
+      const check = async () => {
+        if (run !== signInRun) return;
+        try {
+          const result = await api("/api/chatgpt/sign-in/check", { method: "POST" });
+          if (run !== signInRun) return;
+          if (result.state === "waiting") signInTimer = setTimeout(check, start.interval * 1000);
+          else await signInChanged("Signed in");
+        } catch (err) {
+          if (run !== signInRun) return;
+          renderSignIn();
+          flash(el("dm-status"), errorText(err), "err");
+        }
+      };
+      signInTimer = setTimeout(check, start.interval * 1000);
+    } catch (err) {
+      flash(el("dm-status"), errorText(err), "err");
+    }
+  });
+  el("dm-signout").addEventListener("click", async () => {
+    try {
+      await api("/api/chatgpt/sign-in", { method: "DELETE" });
+      await signInChanged("Signed out");
+    } catch (err) {
+      flash(el("dm-status"), errorText(err), "err");
+    }
+  });
   dm.edit.addEventListener("submit", async (e) => {
     e.preventDefault();
     const modelId = dm.model.value === "__custom__" ? dm.custom.value.trim() : dm.model.value;

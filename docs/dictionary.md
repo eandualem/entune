@@ -271,7 +271,8 @@ Sequential steps contain about 24,000 transcript characters; the full growing di
 adds to that request size. A long transcript split across steps carries only its own
 span of the dictionary result. Step numbers stay in the app for progress and resume. Each
 reply may use up to 32,000 output tokens, including the model's thinking; a reply cut at
-that limit fails its step visibly. Unmentioned knowledge remains. New temporary IDs are assigned
+that limit fails its step visibly. On a ChatGPT subscription the plan's own limit applies
+instead, and a reply it cuts fails the same way. Unmentioned knowledge remains. New temporary IDs are assigned
 persistent IDs once; subsequent steps and editor changes retain them. Pinned definitions
 and usage can be proposed for review, but existing pinned variants/meanings cannot be
 removed. Separate editing and dictation are blocked from generation through review;

@@ -165,7 +165,8 @@ of audio, at its own published rate:
 [xAI](https://docs.x.ai/developers/models).
 
 Keys live in the local database, are only ever sent to the provider they
-belong to, and are never shown again beyond a masked hint.
+belong to, and are never shown again beyond a masked hint. A ChatGPT sign-in is kept
+the same way and renewed by Entune; only the account's email is shown.
 
 **Local models** need no key. The Models page lists them with their size and a
 Download button; a model is fetched once (resumes if interrupted) and then
@@ -219,7 +220,9 @@ Existing dictionaries are backed up before conversion and retained for review. C
 agent corrections still use the existing local API. The dictionary model is chosen on
 the Dictionary page and serves every learning run; keys are added in Settings.
 The dictionary model can come from Anthropic, OpenAI, Google Gemini, Groq or Mistral;
-Groq uses the same key as Groq speech. Generation suggestions are Sonnet 5 and GPT-5.4
+Groq uses the same key as Groq speech. OpenAI's models can also run on a ChatGPT plan
+instead of an API key: choose **ChatGPT subscription**, then **Sign in with ChatGPT** and
+enter the code it shows on OpenAI's page. The plan decides which models it allows. Generation suggestions are Sonnet 5 and GPT-5.4
 mini. **Add an entry** creates a group by
 hand: meanings with output spellings and definitions, recognized forms, and which
 meanings each form may stand for.

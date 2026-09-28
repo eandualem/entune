@@ -20,6 +20,7 @@ from pydantic_ai.messages import RetryPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
+from entune.learning.suggestion_model.catalog import CHATGPT
 from entune.learning.suggestion_model.providers import TIMEOUT, provider_model
 from entune.learning.suggestion_model.request import MAX_FIXES, BrokenReply, Request
 
@@ -44,13 +45,19 @@ async def run(request: Request, model: Model | None = None) -> str:
 
 async def _run(request: Request, chosen: Model) -> str:
     native = chosen.profile.get("supports_json_schema_output", False)
+    plan = request.provider == CHATGPT
     agent = Agent(
         chosen,
         output_type=NativeOutput(request.shape) if native else PromptedOutput(request.shape),
         instructions=request.system,
         retries={"output": MAX_FIXES},
         # No timeout here: it would replace each provider client's five-second connect limit.
-        model_settings=ModelSettings(max_tokens=MAX_OUTPUT_TOKENS, thinking="medium"),
+        # A ChatGPT plan's endpoint takes no output limit; the plan applies its own.
+        model_settings=(
+            ModelSettings(thinking="medium")
+            if plan
+            else ModelSettings(max_tokens=MAX_OUTPUT_TOKENS, thinking="medium")
+        ),
     )
 
     @agent.output_validator
@@ -86,8 +93,9 @@ async def _run(request: Request, chosen: Model) -> str:
                         f"The reply timed out: still streaming after {TIMEOUT / 60:.0f} minutes"
                     ) from exc
                 if finish == "length":
+                    limit = "plan's" if plan else f"{MAX_OUTPUT_TOKENS}-token"
                     raise ValueError(
-                        f"The reply reached the {MAX_OUTPUT_TOKENS}-token output limit,"
+                        f"The reply reached the {limit} output limit,"
                         " which includes reasoning; nothing from this step was used"
                     )
                 # Only a reply the provider says it finished is used: a stream that

@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from entune.app import shortcuts
 from entune.app.shortcuts import Shortcuts
 from entune.learning import suggestion_model
+from entune.learning.suggestion_model import CHATGPT, chatgpt
 from entune.processing.jev_client import Policy
 from entune.processing.laya import INSTALL_COMMAND as LAYA_INSTALL
 from entune.providers.contracts import Provider
@@ -17,6 +18,7 @@ from entune.storage.store import Store
 
 DEFAULT_MODEL_KEY = "default_model"
 DICTIONARY_MODEL_KEY = "dictionary_model"
+CHATGPT_LOGIN_KEY = "chatgpt_login"
 FAST_MODE_KEY = "fast_mode"
 JEV_PROVIDER = "typesafe"  # the key is stored like a speech provider's
 DECISION_MODEL_KEY = "decision_model"
@@ -75,7 +77,7 @@ class Settings:
     def set_key(self, provider_id: str, key: str) -> None:
         known = (
             any(p.id == provider_id for p in self._providers)
-            or provider_id in suggestion_model.LLM_PROVIDERS
+            or (provider_id in suggestion_model.LLM_PROVIDERS and provider_id != CHATGPT)
             or provider_id == JEV_PROVIDER
         )
         if not known:
@@ -189,12 +191,39 @@ class Settings:
             SuggestionProvider(
                 provider_id,
                 name,
-                None if (key := self.key(provider_id)) is None else mask_key(key),
+                self._credential_hint(provider_id),
                 default_model,
                 tuple(suggestion_model.catalog(provider_id)),
             )
             for provider_id, (name, default_model) in suggestion_model.LLM_PROVIDERS.items()
         ]
+
+    def _credential_hint(self, provider_id: str) -> str | None:
+        """A masked key, or for a ChatGPT plan the signed-in account; None when neither."""
+        if provider_id == CHATGPT:
+            login = self.chatgpt_login()
+            return None if login is None else login.email or "signed in"
+        key = self.key(provider_id)
+        return None if key is None else mask_key(key)
+
+    def chatgpt_login(self) -> chatgpt.Login | None:
+        saved = self._store.get_setting(CHATGPT_LOGIN_KEY)
+        return None if saved is None else chatgpt.Login.from_json(saved)
+
+    def set_chatgpt_login(self, login: chatgpt.Login | None) -> None:
+        self._store.set_setting(CHATGPT_LOGIN_KEY, None if login is None else login.to_json())
+        self._changed()
+
+    def chatgpt_access_token(self) -> str | None:
+        """The signed-in plan's access token, renewed first when it runs out soon."""
+        login = self.chatgpt_login()
+        if login is None:
+            return None
+        fresh = chatgpt.renewed(login)
+        if fresh is not None:
+            self.set_chatgpt_login(fresh)  # the old refresh token no longer works
+            return fresh.access_token
+        return login.access_token
 
     def dictionary_model(self) -> str | None:
         """The saved `provider:model`, else the suggested model of the first language-model
@@ -203,7 +232,7 @@ class Settings:
         if saved is not None:
             return saved
         for provider_id, (_, default_model) in suggestion_model.LLM_PROVIDERS.items():
-            if self.key(provider_id) is not None:
+            if self._credential_hint(provider_id) is not None:
                 return default_model
         return None
 

@@ -20,7 +20,7 @@ from entune.api import data as data_api
 from entune.app.entune import Entune
 from entune.app.metrics import model_metrics
 from entune.audio.formats import wav_bytes
-from entune.learning.suggestion_model import Request
+from entune.learning.suggestion_model import Request, chatgpt
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from entune.server import create_app
 from entune.storage.store import Store
@@ -364,6 +364,7 @@ def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     assert [p["id"] for p in settings["llmProviders"]] == [
         "anthropic",
         "openai",
+        "chatgpt",
         "google",
         "groq",
         "mistral",
@@ -389,6 +390,66 @@ def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     client.put("/api/settings", json={"keys": {"groq": "gsk-5678"}})
     groq = next(p for p in client.get("/api/settings").json()["llmProviders"] if p["id"] == "groq")
     assert groq["keyHint"] == "••••5678"
+
+
+def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
+    tmp_path: Path, stub: StubProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    async def fake(request: Request) -> str:
+        calls.append((request.model, request.api_key))
+        return json.dumps(proposed("hello there, I use cloud code"))
+
+    login = chatgpt.Login("access", "refresh", "a@example.com", time.time() + 7 * 86400)
+    checks = iter([None, login])
+    monkeypatch.setattr(chatgpt, "start", lambda: chatgpt.DeviceCode("d1", "ABCD-1234", 5))
+    monkeypatch.setattr(chatgpt, "check", lambda code: next(checks))
+    client = TestClient(
+        create_app(Entune(Store(tmp_path), [stub], llm_call=fake)), base_url="http://localhost"
+    )
+
+    assert client.post("/api/chatgpt/sign-in/check").status_code == 409  # none started
+    assert client.post("/api/chatgpt/sign-in").json() == {
+        "userCode": "ABCD-1234",
+        "verificationUrl": chatgpt.VERIFICATION_URL,
+        "interval": 5,
+    }
+    assert client.post("/api/chatgpt/sign-in/check").json() == {"state": "waiting"}
+    signed_in = client.post("/api/chatgpt/sign-in/check").json()
+    assert signed_in == {"state": "signed-in", "account": "a@example.com"}
+    settings = client.get("/api/settings").json()
+    plan = next(p for p in settings["llmProviders"] if p["id"] == "chatgpt")
+    assert plan["keyHint"] == "a@example.com" and "refresh" not in json.dumps(settings)
+    assert settings["dictionaryModel"] == "chatgpt:gpt-6-sol"  # the sign-in is enough
+    assert client.put("/api/settings", json={"keys": {"chatgpt": "sk-1"}}).status_code == 400
+
+    chosen = {"dictionaryModel": "chatgpt:gpt-6-sol", "defaultModel": "stub/good"}
+    client.put("/api/settings", json={"keys": {"stub": "k"}, **chosen})
+    client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
+    build = {"mode": "generate", "source": "history"}
+    assert client.post("/api/dictionary/build", json=build).status_code == 202
+    first = wait_for_build(client)
+    assert first["proposal"] and calls == [("chatgpt:gpt-6-sol", "access")]
+    client.delete(f"/api/dictionary/build/{first['id']}")
+
+    assert client.delete("/api/chatgpt/sign-in").json() == {"state": "signed-out"}
+    res = client.post("/api/dictionary/build", json=build)
+    assert res.status_code == 400 and "Sign in with ChatGPT" in res.text
+
+
+def test_a_chatgpt_login_due_to_run_out_is_renewed_and_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = Entune(Store(tmp_path), []).settings
+    settings.set_chatgpt_login(chatgpt.Login("old", "r1", "a@example.com", time.time() + 60))
+    renewed = chatgpt.Login("new", "r2", "a@example.com", time.time() + 7 * 86400)
+    monkeypatch.setattr(
+        chatgpt, "renewed", lambda login: renewed if login.access_token == "old" else None
+    )
+    assert settings.chatgpt_access_token() == "new"
+    assert settings.chatgpt_login() == renewed  # the used refresh token is not kept
+    assert settings.chatgpt_access_token() == "new"
 
 
 def test_learning_needs_an_explicit_mode(client: TestClient) -> None:
