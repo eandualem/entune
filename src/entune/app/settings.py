@@ -20,6 +20,7 @@ from entune.storage.store import Store
 DEFAULT_MODEL_KEY = "default_model"
 DICTIONARY_MODEL_KEY = "dictionary_model"
 CHATGPT_LOGIN_KEY = "chatgpt_login"
+CHATGPT_SIGN_IN_KEY = "chatgpt_sign_in"  # the code waiting for approval, if any
 FAST_MODE_KEY = "fast_mode"
 JEV_PROVIDER = "typesafe"  # the key is stored like a speech provider's
 DECISION_MODEL_KEY = "decision_model"
@@ -216,6 +217,14 @@ class Settings:
         with self._login_lock:
             self._store.set_setting(CHATGPT_LOGIN_KEY, None if login is None else login.to_json())
         self._changed()
+
+    def chatgpt_sign_in(self) -> chatgpt.DeviceCode | None:
+        saved = self._store.get_setting(CHATGPT_SIGN_IN_KEY)
+        return None if saved is None else chatgpt.DeviceCode(**json.loads(saved))
+
+    def set_chatgpt_sign_in(self, code: chatgpt.DeviceCode | None) -> None:
+        saved = None if code is None else json.dumps(asdict(code))
+        self._store.set_setting(CHATGPT_SIGN_IN_KEY, saved)
 
     def chatgpt_access_token(self) -> str | None:
         """The signed-in plan's access token, renewed first when it runs out soon."""

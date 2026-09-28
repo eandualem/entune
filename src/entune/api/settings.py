@@ -15,6 +15,7 @@ from entune.app import shortcuts
 from entune.app.entune import Entune
 from entune.app.metrics import processing_summary
 from entune.app.models import UnknownModel
+from entune.app.operations import Busy
 from entune.app.settings import DECISION_MODELS, JEV_PROVIDER
 from entune.learning import suggestion_model
 from entune.learning.suggestion_model import chatgpt
@@ -180,17 +181,18 @@ def routes(app: Entune) -> list[Route]:
         return JSONResponse({"ok": True})
 
     # Signing in with ChatGPT: start gives the code to enter at OpenAI, the page then
-    # checks until the person has approved it. One sign-in is pending at a time.
-    pending: list[chatgpt.DeviceCode] = []
-    lock = threading.Lock()
+    # checks until the person has approved it. The waiting code is kept with the
+    # settings, so a newer start replaces it and deleting all data forgets it; each step
+    # counts as work on the data, so that deletion waits for a check in progress.
+    lock = threading.Lock()  # a sign-out waits for a check, so neither undoes the other
 
     def start_sign_in() -> Response:
         try:
             code = chatgpt.start()
+            with app.data.using_data("ChatGPT sign-in"), lock:
+                app.settings.set_chatgpt_sign_in(code)
         except ValueError as exc:
-            return bad(str(exc))
-        with lock:
-            pending[:] = [code]
+            return bad(str(exc), 409 if isinstance(exc, Busy) else 400)
         return JSONResponse(
             {
                 "userCode": code.user_code,
@@ -200,26 +202,28 @@ def routes(app: Entune) -> list[Route]:
         )
 
     def check_sign_in(user_code: object) -> Response:
-        # A code is exchanged once, and a sign-out waits for a check in progress, so
-        # neither undoes the other. The page names the code it shows: a newer start
-        # replaced any other.
-        with lock:
-            if not pending or pending[0].user_code != user_code:
-                return bad("This ChatGPT sign-in is no longer waiting; sign in again", 409)
-            try:
-                login = chatgpt.check(pending[0])
-            except ValueError as exc:
-                pending.clear()
-                return bad(str(exc))
-            if login is None:
-                return JSONResponse({"state": "waiting"})
-            pending.clear()
-            app.settings.set_chatgpt_login(login)
+        try:
+            with app.data.using_data("ChatGPT sign-in"), lock:
+                code = app.settings.chatgpt_sign_in()
+                # The page names the code it shows: a newer start replaced any other.
+                if code is None or code.user_code != user_code:
+                    return bad("This ChatGPT sign-in is no longer waiting; sign in again", 409)
+                try:
+                    login = chatgpt.check(code)
+                except ValueError as exc:
+                    app.settings.set_chatgpt_sign_in(None)
+                    return bad(str(exc))
+                if login is None:
+                    return JSONResponse({"state": "waiting"})
+                app.settings.set_chatgpt_sign_in(None)
+                app.settings.set_chatgpt_login(login)
+        except Busy as exc:
+            return bad(str(exc), 409)
         return JSONResponse({"state": "signed-in", "account": login.email})
 
     def sign_out() -> Response:
         with lock:
-            pending.clear()
+            app.settings.set_chatgpt_sign_in(None)
             app.settings.set_chatgpt_login(None)
         return JSONResponse({"state": "signed-out"})
 

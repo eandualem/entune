@@ -441,6 +441,13 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
     res = client.post("/api/dictionary/build", json=build)
     assert res.status_code == 400 and "Sign in with ChatGPT" in res.text
 
+    # Deleting all data forgets a sign-in still waiting for approval.
+    client.post("/api/chatgpt/sign-in")
+    assert (
+        client.post("/api/data/reset", json={"confirm": data_api.RESET_PHRASE}).status_code == 200
+    )
+    assert client.post("/api/chatgpt/sign-in/check", json=shown).status_code == 409
+
 
 def test_a_chatgpt_login_due_to_run_out_is_renewed_and_kept_unless_signed_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
