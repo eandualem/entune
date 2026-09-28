@@ -48,15 +48,21 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     if (await saveSetting({ keys }, el("keys-status"))) await loadSettings();
   });
 
-  // The dictionary model: a summary line with Change, then provider, key and model.
-  const dm = { edit: el("dm-edit"), provider: el("dm-provider"), key: el("dm-key"), model: el("dm-model"), custom: el("dm-model-custom") };
+  // The dictionary model: a summary line with Change, then provider, key and model. OpenAI
+  // is reached with an API key or on a ChatGPT subscription (PLAN, its own provider id).
+  const dm = { edit: el("dm-edit"), provider: el("dm-provider"), key: el("dm-key"), model: el("dm-model"), custom: el("dm-model-custom"), access: document.querySelectorAll('input[name="dm-access"]') };
+  const PLAN = "chatgpt";
+  function chosenProvider() {
+    const plan = dm.provider.value === "openai" && document.querySelector('input[name="dm-access"]:checked')?.value === PLAN;
+    return settings.llmProviders.find((p) => p.id === (plan ? PLAN : dm.provider.value));
+  }
   function renderDictionaryModel() {
     const [providerId, , modelId] = splitRef(settings.dictionaryModel);
     const provider = settings.llmProviders.find((p) => p.id === providerId);
     const anyKey = settings.llmProviders.find((p) => p.keyHint);
-    if (provider?.id === "chatgpt") {
-      el("dm-title").textContent = `${provider.name} · ${modelId}`;
-      el("dm-caption").textContent = provider.keyHint ? `signed in as ${provider.keyHint}` : "not signed in yet: sign in with ChatGPT to build the dictionary";
+    if (provider?.id === PLAN) {
+      el("dm-title").textContent = `OpenAI · ${modelId}`;
+      el("dm-caption").textContent = provider.keyHint ? `ChatGPT subscription, signed in as ${provider.keyHint}` : "ChatGPT subscription, not signed in yet: sign in to build the dictionary";
     } else if (provider) {
       el("dm-title").textContent = `${provider.name} · ${modelId}`;
       el("dm-caption").textContent = provider.keyHint ? `key saved ${provider.keyHint}` : `no key for ${provider.name} yet: add one to build the dictionary`;
@@ -70,17 +76,23 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     return i < 0 ? [ref ?? "", "", ""] : [ref.slice(0, i), ":", ref.slice(i + 1)];
   }
   function fillDictionaryModelForm() {
-    const [providerId, , modelId] = splitRef(settings.dictionaryModel);
-    dm.provider.replaceChildren(...settings.llmProviders.map((p) => new Option(p.name, p.id, false, p.id === providerId)));
-    if (!providerId) dm.provider.value = settings.llmProviders.find((p) => p.keyHint)?.id ?? settings.llmProviders[0]?.id ?? "";
+    const [savedId, , modelId] = splitRef(settings.dictionaryModel);
+    const shown = (id) => (id === PLAN ? "openai" : id);
+    dm.provider.replaceChildren(...settings.llmProviders.filter((p) => p.id !== PLAN).map((p) => new Option(p.name, p.id, false, p.id === shown(savedId))));
+    if (!savedId) dm.provider.value = shown(settings.llmProviders.find((p) => p.keyHint)?.id ?? settings.llmProviders[0]?.id ?? "");
+    // OpenAI's access: as saved; with nothing saved for OpenAI, a signed-in plan without a key.
+    const key = (id) => settings.llmProviders.find((p) => p.id === id)?.keyHint;
+    const plan = savedId === PLAN || (savedId !== "openai" && !key("openai") && Boolean(key(PLAN)));
+    for (const input of dm.access) input.checked = input.value === (plan ? PLAN : "openai");
     fillDictionaryModelChoices(modelId);
   }
   function fillDictionaryModelChoices(chosen) {
-    const provider = settings.llmProviders.find((p) => p.id === dm.provider.value);
+    el("dm-access-row").hidden = dm.provider.value !== "openai";
+    const provider = chosenProvider();
     if (!provider) return;
     // A ChatGPT plan is signed in to instead of given a key.
-    el("dm-key-row").hidden = provider.id === "chatgpt";
-    el("dm-signin").hidden = provider.id !== "chatgpt";
+    el("dm-key-row").hidden = provider.id === PLAN;
+    el("dm-signin").hidden = provider.id !== PLAN;
     renderSignIn();
     dm.key.value = "";
     dm.key.placeholder = provider.keyHint ? `saved ${provider.keyHint} · type to replace` : "Not set";
@@ -95,6 +107,8 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     dm.custom.value = "";
   }
   dm.provider.addEventListener("change", () => fillDictionaryModelChoices(null));
+  // Switching how OpenAI is reached keeps the model picked, where both offer it.
+  for (const input of dm.access) input.addEventListener("change", () => fillDictionaryModelChoices(dm.model.value === "__custom__" ? null : dm.model.value));
   dm.model.addEventListener("change", () => {
     dm.custom.hidden = dm.model.value !== "__custom__";
     if (!dm.custom.hidden) dm.custom.focus();
@@ -112,7 +126,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   function stopSignIn() { clearTimeout(signInTimer); signInRun += 1; }
   function renderSignIn() {
     stopSignIn();
-    const account = settings.llmProviders.find((p) => p.id === "chatgpt")?.keyHint;
+    const account = settings.llmProviders.find((p) => p.id === PLAN)?.keyHint;
     el("dm-signin-state").textContent = account ? `Signed in as ${account}` : "Not signed in";
     el("dm-signin-start").hidden = Boolean(account);
     el("dm-signout").hidden = !account;
@@ -175,8 +189,9 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     e.preventDefault();
     const modelId = dm.model.value === "__custom__" ? dm.custom.value.trim() : dm.model.value;
     if (!modelId) { flash(el("dm-status"), "Give the model's id", "err"); return; }
-    const keys = dm.key.value.trim() ? { [dm.provider.value]: dm.key.value.trim() } : {};
-    if (await saveSetting({ keys, dictionaryModel: `${dm.provider.value}:${modelId}` }, el("dm-status"))) {
+    const provider = chosenProvider().id;
+    const keys = provider !== PLAN && dm.key.value.trim() ? { [provider]: dm.key.value.trim() } : {};
+    if (await saveSetting({ keys, dictionaryModel: `${provider}:${modelId}` }, el("dm-status"))) {
       dm.edit.hidden = true;
       el("dm-summary").hidden = false;
       await loadSettings();
