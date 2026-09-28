@@ -188,9 +188,10 @@ def routes(app: Entune) -> list[Route]:
 
     def start_sign_in() -> Response:
         try:
-            code = chatgpt.start()
-            with app.data.using_data("ChatGPT sign-in"), lock:
-                app.settings.set_chatgpt_sign_in(code)
+            with app.data.using_data("ChatGPT sign-in"):
+                code = chatgpt.start()
+                with lock:
+                    app.settings.set_chatgpt_sign_in(code)
         except ValueError as exc:
             return bad(str(exc), 409 if isinstance(exc, Busy) else 400)
         return JSONResponse(
