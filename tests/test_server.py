@@ -410,14 +410,17 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
         create_app(Entune(Store(tmp_path), [stub], llm_call=fake)), base_url="http://localhost"
     )
 
-    assert client.post("/api/chatgpt/sign-in/check").status_code == 409  # none started
+    shown = {"userCode": "ABCD-1234"}
+    assert client.post("/api/chatgpt/sign-in/check", json=shown).status_code == 409  # none
     assert client.post("/api/chatgpt/sign-in").json() == {
-        "userCode": "ABCD-1234",
+        **shown,
         "verificationUrl": chatgpt.VERIFICATION_URL,
         "interval": 5,
     }
-    assert client.post("/api/chatgpt/sign-in/check").json() == {"state": "waiting"}
-    signed_in = client.post("/api/chatgpt/sign-in/check").json()
+    replaced = {"userCode": "WXYZ-0000"}  # a code a newer start replaced
+    assert client.post("/api/chatgpt/sign-in/check", json=replaced).status_code == 409
+    assert client.post("/api/chatgpt/sign-in/check", json=shown).json() == {"state": "waiting"}
+    signed_in = client.post("/api/chatgpt/sign-in/check", json=shown).json()
     assert signed_in == {"state": "signed-in", "account": "a@example.com"}
     settings = client.get("/api/settings").json()
     plan = next(p for p in settings["llmProviders"] if p["id"] == "chatgpt")

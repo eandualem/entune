@@ -199,12 +199,13 @@ def routes(app: Entune) -> list[Route]:
             }
         )
 
-    def check_sign_in() -> Response:
+    def check_sign_in(user_code: object) -> Response:
         # A code is exchanged once, and a sign-out waits for a check in progress, so
-        # neither undoes the other.
+        # neither undoes the other. The page names the code it shows: a newer start
+        # replaced any other.
         with lock:
-            if not pending:
-                return bad("No ChatGPT sign-in is waiting; start again", 409)
+            if not pending or pending[0].user_code != user_code:
+                return bad("This ChatGPT sign-in is no longer waiting; sign in again", 409)
             try:
                 login = chatgpt.check(pending[0])
             except ValueError as exc:
@@ -226,8 +227,13 @@ def routes(app: Entune) -> list[Route]:
         action = {"POST": start_sign_in, "DELETE": sign_out}[request.method]
         return await run_in_threadpool(action)
 
-    async def chatgpt_sign_in_check(_: Request) -> Response:
-        return await run_in_threadpool(check_sign_in)
+    async def chatgpt_sign_in_check(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except ValueError as exc:
+            return bad(str(exc))
+        user_code = body.get("userCode") if isinstance(body, dict) else None
+        return await run_in_threadpool(check_sign_in, user_code)
 
     return [
         Route("/api/settings", get_settings, methods=["GET"]),

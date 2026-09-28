@@ -141,7 +141,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       const check = async () => {
         if (run !== signInRun) return;
         try {
-          const result = await api("/api/chatgpt/sign-in/check", { method: "POST" });
+          const result = await api("/api/chatgpt/sign-in/check", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userCode: start.userCode }) });
           if (run !== signInRun) return;
           if (result.state === "waiting") signInTimer = setTimeout(check, start.interval * 1000);
           else await signInChanged("Signed in");
