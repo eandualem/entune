@@ -4,6 +4,7 @@ suggestion model, shortcuts."""
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 
@@ -70,6 +71,7 @@ class Settings:
     ):
         self._store, self._providers, self._changed = store, providers, changed
         self._laya_installed = laya_installed
+        self._login_lock = threading.Lock()  # a renewal never undoes a sign-out
 
     def key(self, provider_id: str) -> str | None:
         return self._store.get_setting(key_setting(provider_id))
@@ -211,7 +213,8 @@ class Settings:
         return None if saved is None else chatgpt.Login.from_json(saved)
 
     def set_chatgpt_login(self, login: chatgpt.Login | None) -> None:
-        self._store.set_setting(CHATGPT_LOGIN_KEY, None if login is None else login.to_json())
+        with self._login_lock:
+            self._store.set_setting(CHATGPT_LOGIN_KEY, None if login is None else login.to_json())
         self._changed()
 
     def chatgpt_access_token(self) -> str | None:
@@ -220,10 +223,16 @@ class Settings:
         if login is None:
             return None
         fresh = chatgpt.renewed(login)
-        if fresh is not None:
-            self.set_chatgpt_login(fresh)  # the old refresh token no longer works
-            return fresh.access_token
-        return login.access_token
+        if fresh is None:
+            return login.access_token
+        with self._login_lock:
+            current = self.chatgpt_login()
+            if current != login:  # signed out, or in again, while renewing: that stands
+                return None if current is None else current.access_token
+            # Kept at once: the refresh token just used no longer works.
+            self._store.set_setting(CHATGPT_LOGIN_KEY, fresh.to_json())
+        self._changed()
+        return fresh.access_token
 
     def dictionary_model(self) -> str | None:
         """The saved `provider:model`, else the suggested model of the first language-model

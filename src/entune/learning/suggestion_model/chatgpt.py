@@ -16,6 +16,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -34,6 +35,7 @@ class DeviceCode:
     device_auth_id: str
     user_code: str
     interval: int  # seconds between checks, as OpenAI asks
+    expires_at: float  # epoch seconds; after it the code cannot be approved
 
 
 @dataclass(frozen=True)
@@ -58,15 +60,24 @@ def start(transport: httpx.BaseTransport | None = None) -> DeviceCode:
             http.post(f"{AUTH}/api/accounts/deviceauth/usercode", json={"client_id": CLIENT_ID})
         ).json()
         interval = data.get("interval")  # sometimes sent as a string
+        try:
+            expires = datetime.fromisoformat(data["expires_at"]).timestamp()
+        except (KeyError, TypeError, ValueError):
+            expires = time.time() + 15 * 60  # OpenAI's codes last 15 minutes
         return DeviceCode(
             data["device_auth_id"],
             data["user_code"],
             int(interval) if str(interval).strip().isdigit() else 5,
+            expires,
         )
 
 
-def check(code: DeviceCode, transport: httpx.BaseTransport | None = None) -> Login | None:
+def check(
+    code: DeviceCode, transport: httpx.BaseTransport | None = None, now: float | None = None
+) -> Login | None:
     """The login once the person has approved `code`; None while OpenAI still waits."""
+    if (time.time() if now is None else now) > code.expires_at:
+        raise ValueError("The sign-in code expired before it was approved; sign in again")
     with _session(transport) as http:
         reply = http.post(
             f"{AUTH}/api/accounts/deviceauth/token",

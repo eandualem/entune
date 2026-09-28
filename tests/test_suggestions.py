@@ -764,9 +764,8 @@ def test_chatgpt_sign_in_waits_for_approval_then_exchanges_the_code() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         sent.append(request)
         if request.url.path.endswith("/usercode"):
-            return httpx.Response(
-                200, json={"device_auth_id": "d1", "user_code": "ABCD-1234", "interval": "7"}
-            )
+            code = {"device_auth_id": "d1", "user_code": "ABCD-1234", "interval": "7"}
+            return httpx.Response(200, json={**code, "expires_at": "2030-03-17T17:46:40+00:00"})
         if request.url.path.endswith("/deviceauth/token"):
             approved = {"authorization_code": "c1", "code_verifier": "v1"}
             return httpx.Response(403 if len(sent) == 2 else 200, json=approved)
@@ -779,15 +778,18 @@ def test_chatgpt_sign_in_waits_for_approval_then_exchanges_the_code() -> None:
 
     transport = httpx.MockTransport(respond)
     code = chatgpt.start(transport)
-    assert code == chatgpt.DeviceCode("d1", "ABCD-1234", 7)
-    assert chatgpt.check(code, transport) is None  # not approved yet
-    login = chatgpt.check(code, transport)
+    assert code == chatgpt.DeviceCode("d1", "ABCD-1234", 7, 1_900_000_000.0)
+    assert chatgpt.check(code, transport, now=code.expires_at - 60) is None  # not yet approved
+    login = chatgpt.check(code, transport, now=code.expires_at - 55)
     assert login == chatgpt.Login(
         jwt({**ACCOUNT, "exp": 2_000_000_000}), "r1", "a@example.com", 2e9
     )
     assert chatgpt.account_id(login.access_token) == "acct-1"
     exchange = parse_qs(sent[-1].content.decode())
     assert exchange["code"] == ["c1"] and exchange["code_verifier"] == ["v1"]
+    with pytest.raises(ValueError, match="code expired"):  # never asks OpenAI again
+        chatgpt.check(code, transport, now=code.expires_at + 1)
+    assert len(sent) == 4
 
 
 def test_a_chatgpt_login_is_renewed_only_when_due_and_failures_read_as_openais() -> None:

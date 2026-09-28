@@ -403,7 +403,8 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
 
     login = chatgpt.Login("access", "refresh", "a@example.com", time.time() + 7 * 86400)
     checks = iter([None, login])
-    monkeypatch.setattr(chatgpt, "start", lambda: chatgpt.DeviceCode("d1", "ABCD-1234", 5))
+    code = chatgpt.DeviceCode("d1", "ABCD-1234", 5, time.time() + 900)
+    monkeypatch.setattr(chatgpt, "start", lambda: code)
     monkeypatch.setattr(chatgpt, "check", lambda code: next(checks))
     client = TestClient(
         create_app(Entune(Store(tmp_path), [stub], llm_call=fake)), base_url="http://localhost"
@@ -438,7 +439,7 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
     assert res.status_code == 400 and "Sign in with ChatGPT" in res.text
 
 
-def test_a_chatgpt_login_due_to_run_out_is_renewed_and_kept(
+def test_a_chatgpt_login_due_to_run_out_is_renewed_and_kept_unless_signed_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings = Entune(Store(tmp_path), []).settings
@@ -450,6 +451,17 @@ def test_a_chatgpt_login_due_to_run_out_is_renewed_and_kept(
     assert settings.chatgpt_access_token() == "new"
     assert settings.chatgpt_login() == renewed  # the used refresh token is not kept
     assert settings.chatgpt_access_token() == "new"
+
+    # Signing out while a renewal is on its way stands: the renewal is not kept.
+    settings.set_chatgpt_login(chatgpt.Login("old", "r1", "a@example.com", time.time() + 60))
+
+    def signed_out_meanwhile(login: chatgpt.Login) -> chatgpt.Login:
+        settings.set_chatgpt_login(None)
+        return renewed
+
+    monkeypatch.setattr(chatgpt, "renewed", signed_out_meanwhile)
+    assert settings.chatgpt_access_token() is None
+    assert settings.chatgpt_login() is None
 
 
 def test_learning_needs_an_explicit_mode(client: TestClient) -> None:
