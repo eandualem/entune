@@ -122,7 +122,11 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     renderSignIn();
     flash(el("dm-status"), message, "ok");
   }
+  let starting = false; // one start at a time, so the code shown is the one the server has
   el("dm-signin-start").addEventListener("click", async () => {
+    if (starting) return;
+    starting = true;
+    el("dm-signin-start").disabled = true;
     stopSignIn();
     const run = signInRun;
     try {
@@ -154,6 +158,9 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       signInTimer = setTimeout(check, start.interval * 1000);
     } catch (err) {
       if (run === signInRun) flash(el("dm-status"), errorText(err), "err");
+    } finally {
+      starting = false;
+      el("dm-signin-start").disabled = false;
     }
   });
   el("dm-signout").addEventListener("click", async () => {
