@@ -386,6 +386,7 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 .decision-list { flex: 1; }
 #decision-status-row:has(#decision-note:empty):not(:has(.show)) { display: none; }
 #laya-status.err { color: var(--error); overflow-wrap: anywhere; }
+#dm-signin-state strong { -webkit-user-select: all; user-select: all; }
 #laya-command { margin: var(--sp-6) 0 0; padding: var(--sp-8) var(--sp-10); border-radius: var(--r-7); background: var(--well); font: var(--fs-12)/1.5 var(--mono); color: var(--text); -webkit-user-select: all; user-select: all; white-space: pre-wrap; }
 .drawer-foot .audio-models { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
 #learn-source { color: var(--text-secondary); }

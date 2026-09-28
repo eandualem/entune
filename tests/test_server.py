@@ -406,6 +406,13 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
     code = chatgpt.DeviceCode("d1", "ABCD-1234", 5, time.time() + 900)
     monkeypatch.setattr(chatgpt, "start", lambda: code)
     monkeypatch.setattr(chatgpt, "check", lambda code: next(checks))
+    opened: list[str] = []
+
+    def open_page(url: str) -> bool:
+        opened.append(url)
+        return True
+
+    monkeypatch.setattr("webbrowser.open", open_page)
     client = TestClient(
         create_app(Entune(Store(tmp_path), [stub], llm_call=fake)), base_url="http://localhost"
     )
@@ -416,7 +423,9 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
         **shown,
         "verificationUrl": chatgpt.VERIFICATION_URL,
         "interval": 5,
+        "opened": True,
     }
+    assert opened == [chatgpt.VERIFICATION_URL]  # OpenAI's page opens in the browser
     replaced = {"userCode": "WXYZ-0000"}  # a code a newer start replaced
     assert client.post("/api/chatgpt/sign-in/check", json=replaced).status_code == 409
     assert client.post("/api/chatgpt/sign-in/check", json=shown).json() == {"state": "waiting"}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import webbrowser
 from dataclasses import asdict
 
 from starlette.concurrency import run_in_threadpool
@@ -194,11 +195,14 @@ def routes(app: Entune) -> list[Route]:
                     app.settings.set_chatgpt_sign_in(code)
         except ValueError as exc:
             return bad(str(exc), 409 if isinstance(exc, Busy) else 400)
+        # OpenAI's page opens where the person is signed in to ChatGPT: their own browser.
+        opened = webbrowser.open(chatgpt.VERIFICATION_URL)
         return JSONResponse(
             {
                 "userCode": code.user_code,
                 "verificationUrl": chatgpt.VERIFICATION_URL,
                 "interval": code.interval,
+                "opened": opened,
             }
         )
 

@@ -130,6 +130,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     el("dm-signin-state").textContent = account ? `Signed in as ${account}` : "Not signed in";
     el("dm-signin-start").hidden = Boolean(account);
     el("dm-signout").hidden = !account;
+    el("dm-signin-note").hidden = Boolean(account);
   }
   async function signInChanged(message) {
     await loadSettings();
@@ -144,7 +145,13 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     stopSignIn();
     const run = signInRun;
     try {
-      const start = await api("/api/chatgpt/sign-in", { method: "POST" });
+      const request = api("/api/chatgpt/sign-in", { method: "POST" });
+      // The code goes to the clipboard. WebKit only allows a clipboard write that starts in
+      // the click, so hand it the pending code.
+      const copied = navigator.clipboard
+        .write([new ClipboardItem({ "text/plain": request.then((s) => new Blob([s.userCode], { type: "text/plain" })) })])
+        .then(() => true, () => false);
+      const start = await request;
       if (run !== signInRun) return; // the form changed while OpenAI answered
       const code = document.createElement("strong");
       code.className = "mono";
@@ -154,7 +161,11 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       page.target = "_blank";
       page.rel = "noopener";
       page.textContent = "OpenAI's sign-in page";
-      el("dm-signin-state").replaceChildren("Enter ", code, " on ", page, " and approve it. Waiting…");
+      const opened = start.opened ? " (open in your browser)" : "";
+      el("dm-signin-state").replaceChildren(
+        ...((await copied) ? ["Copied ", code, ": paste it on "] : ["Enter ", code, " on "]),
+        page, `${opened} and approve it. Waiting…`,
+      );
       el("dm-signin-start").hidden = true;
       const check = async () => {
         if (run !== signInRun) return;
