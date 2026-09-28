@@ -221,8 +221,9 @@ agent corrections still use the existing local API. The dictionary model is chos
 the Dictionary page and serves every learning run; keys are added in Settings.
 The dictionary model can come from Anthropic, OpenAI, Google Gemini, Groq or Mistral;
 Groq uses the same key as Groq speech. OpenAI's models can also run on a ChatGPT plan
-instead of an API key: choose **ChatGPT subscription**, then **Sign in with ChatGPT** and
-enter the code it shows on OpenAI's page. The plan decides which models it allows. Generation suggestions are Sonnet 5 and GPT-5.4
+instead of an API key: choose OpenAI, then **ChatGPT subscription** under Access, then
+**Sign in with ChatGPT** and enter the code it shows on OpenAI's page. The plan decides
+which models it allows. Generation suggestions are Sonnet 5 and GPT-5.4
 mini. **Add an entry** creates a group by
 hand: meanings with output spellings and definitions, recognized forms, and which
 meanings each form may stand for.
