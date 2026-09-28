@@ -200,7 +200,9 @@ def routes(app: Entune) -> list[Route]:
         )
 
     def check_sign_in() -> Response:
-        with lock:  # a code is exchanged once, so checks do not overlap
+        # A code is exchanged once, and a sign-out waits for a check in progress, so
+        # neither undoes the other.
+        with lock:
             if not pending:
                 return bad("No ChatGPT sign-in is waiting; start again", 409)
             try:
@@ -211,13 +213,13 @@ def routes(app: Entune) -> list[Route]:
             if login is None:
                 return JSONResponse({"state": "waiting"})
             pending.clear()
-        app.settings.set_chatgpt_login(login)
+            app.settings.set_chatgpt_login(login)
         return JSONResponse({"state": "signed-in", "account": login.email})
 
     def sign_out() -> Response:
         with lock:
             pending.clear()
-        app.settings.set_chatgpt_login(None)
+            app.settings.set_chatgpt_login(None)
         return JSONResponse({"state": "signed-out"})
 
     async def chatgpt_sign_in(request: Request) -> Response:

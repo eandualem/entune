@@ -127,6 +127,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const run = signInRun;
     try {
       const start = await api("/api/chatgpt/sign-in", { method: "POST" });
+      if (run !== signInRun) return; // the form changed while OpenAI answered
       const code = document.createElement("strong");
       code.className = "mono";
       code.textContent = start.userCode;
@@ -152,7 +153,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       };
       signInTimer = setTimeout(check, start.interval * 1000);
     } catch (err) {
-      flash(el("dm-status"), errorText(err), "err");
+      if (run === signInRun) flash(el("dm-status"), errorText(err), "err");
     }
   });
   el("dm-signout").addEventListener("click", async () => {
