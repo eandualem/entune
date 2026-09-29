@@ -403,7 +403,7 @@ def main() -> None:
                     "icns",
                     str(iconset),
                     "-o",
-                    str(ROOT / "packaging" / "Entune.icns"),
+                    str(assets / "Entune.icns"),
                 ],
                 check=True,
             )
