@@ -4,7 +4,8 @@ and the Dock, without PyInstaller.
 macOS names a process and picks its Dock icon from the application bundle it was
 launched from. A plain `entune` process has none, so it shows as "python3".
 `entune install-app` writes a bundle whose executable is a two-line script running the
-current Python with the same arguments; nothing is copied.
+current Python with the same arguments and a copy of the packaged icon.
+Reinstall the launcher to update that icon after a package upgrade.
 
 Known limit: macOS's permission panels were not willing to list the first version of
 this bundle (a script executable, unsigned). It is now signed ad hoc, which may be
