@@ -31,8 +31,6 @@ control over the engine, the cost and where their words go.
   <img src="docs/demo/models-dark.jpg" width="49%" alt="Models in dark mode: API keys for the cloud speech services you use" />
 </p>
 
-<!-- TODO: a short recording of hold the key, speak, release, watch the paste land -->
-
 ## Install
 
 Requires Python 3.12 or newer. With [uv](https://docs.astral.sh/uv/):
@@ -216,8 +214,7 @@ then apply the remainder once. Dismissing a proposal does not delete active know
 
 Learned associations stay specific to the speech model. Pinning shares and protects a
 meaning and its associations across models, without giving it priority over competitors.
-Existing dictionaries are backed up before conversion and retained for review. Confirmed
-agent corrections still use the existing local API. The dictionary model is chosen on
+Confirmed agent corrections still use the existing local API. The dictionary model is chosen on
 the Dictionary page and serves every learning run; keys are added in Settings.
 The dictionary model can come from Anthropic, OpenAI, Google Gemini, Groq or Mistral;
 Groq uses the same key as Groq speech. OpenAI's models can also run on a ChatGPT plan

@@ -154,7 +154,4 @@ each attempt is shown. HTTP errors, refusals and incomplete replies remain
 visible; a proposed dictionary still needs the user's acceptance.
 
 Branches: pull requests go into `develop`; `main` moves by a release pull
-request after a deep review of everything on `develop`. Five Codex review
-rounds at ultra effort ran on 2026-09-18 over the whole codebase (37
-findings, all fixed, PRs #69, #70, #72, #73, #74, #75); their evidence is
-under the ignored `.backbone/reviews/`.
+request after a deep review of everything on `develop`.
