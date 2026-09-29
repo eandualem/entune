@@ -19,7 +19,7 @@ from entune.app.entune import Entune
 from entune.desktop.platform import create_platform
 from entune.providers.registry import default_providers
 from entune.server import create_app
-from entune.storage.paths import default_data_dir
+from entune.storage.paths import default_data_dir, private_data_dir
 from entune.storage.store import Store
 
 DEFAULT_PORT = 4187
@@ -106,8 +106,11 @@ def _show_running_window(port: int) -> bool:
 
 def _log_to_file(data_dir: Path) -> None:
     """Launched from the Dock there is no terminal; keep what would have been printed."""
-    data_dir.mkdir(parents=True, exist_ok=True)
-    log = (data_dir / "entune.log").open("a", encoding="utf-8", buffering=1)
+    private_data_dir(data_dir)
+    path = data_dir / "entune.log"
+    path.touch(mode=0o600, exist_ok=True)
+    path.chmod(0o600)
+    log = path.open("a", encoding="utf-8", buffering=1)
     sys.stdout = log
     sys.stderr = log
     print(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} entune {__version__} starting", flush=True)

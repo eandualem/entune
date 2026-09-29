@@ -7,6 +7,12 @@ import sys
 from pathlib import Path
 
 
+def private_data_dir(path: Path) -> None:
+    """Entune's selected data folder contains credentials and private recordings."""
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.chmod(0o700)
+
+
 def _default_location(name: str) -> Path:
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / name
