@@ -265,8 +265,14 @@ retry the completed portion. No changes are applied automatically.
 The dictionary model's reply must match the dictionary's format, which the provider
 enforces where it can. When a reply still breaks one of the dictionary's rules, the
 model is shown the rule and asked for a corrected reply, at most twice per part. The
-progress line says so and names the rule, and **Stop** ends it. Failed requests,
-refused keys and replies cut at the output limit are never retried.
+progress line says so and names the rule, and **Stop** ends it. A part is tried again
+from the same point, three attempts in all, when its reply ran into empty output (more
+than 2,000 whitespace characters in a row, stopped at once), ran past the time limit for
+one reply (20 minutes; 14.5 on a ChatGPT plan, which cuts a request at about 15), lost
+its connection or met a server error (5xx), and once more when a reply still broke a
+rule. The progress line says why and which attempt, and the run's record keeps each
+one. Refused keys, limits and quotas (401, 403, 429), other failed requests and replies
+cut at the output limit are never retried.
 
 Default history refinement uses up to 300 recent, unprocessed attempts for the selected
 speech model; “All history” deliberately includes older/previously examined data.

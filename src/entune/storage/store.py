@@ -331,6 +331,7 @@ class Store:
                 "steps",
                 "coveredInputIds",
                 "outcome",
+                "retries",
             }
         }
         with self._lock, self._db:

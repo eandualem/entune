@@ -15,7 +15,7 @@ import httpx
 import httpx2
 import pytest
 from mistralai.client.utils import RetryConfig
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -642,18 +642,30 @@ def test_a_request_waits_five_seconds_to_connect_and_twenty_minutes_to_read(
     assert all(t["connect"] == providers.CONNECT and t["read"] == providers.TIMEOUT for t in limits)
 
 
+@pytest.mark.parametrize("plan", [False, True])
 def test_a_reply_that_keeps_streaming_past_the_limit_is_cut(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, plan: bool
 ) -> None:
-    monkeypatch.setattr(call, "TIMEOUT", 0.05)
+    # A ChatGPT plan cuts a request at about 900 seconds; Entune stops its reply just before.
+    assert providers.PLAN_TIMEOUT < 900 < providers.TIMEOUT
+    monkeypatch.setattr(call, "TIMEOUT", 0.03)
+    monkeypatch.setattr(call, "PLAN_TIMEOUT", 0.06)
+    chosen = (
+        replace(request(), provider=suggestion_model.CHATGPT, model="chatgpt:gpt-6-sol")
+        if plan
+        else request()
+    )
 
     async def endless(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         while True:
             await asyncio.sleep(0.01)
             yield " "
 
-    with pytest.raises(ValueError, match="timed out"):
-        asyncio.run(suggestion_model.call_model(request(), FunctionModel(stream_function=endless)))
+    with pytest.raises(suggestion_model.ReplyStopped, match="timed out") as stopped:
+        asyncio.run(suggestion_model.call_model(chosen, FunctionModel(stream_function=endless)))
+    limit = 0.06 if plan else 0.03
+    assert stopped.value.reason == f"the reply ran past its {limit / 60:g}-minute limit"
+    assert ("ChatGPT plan" in str(stopped.value)) == plan
 
 
 def test_request_failures_are_not_retried() -> None:
@@ -670,7 +682,10 @@ def test_request_failures_are_not_retried() -> None:
 
 
 def test_a_step_whose_fixes_all_break_rules_fails_plainly() -> None:
+    calls: list[int] = []
+
     async def broken(_: Request) -> str:
+        calls.append(1)
         raise suggestion_model.BrokenReply("basis: literal needs no evidence")
 
     with pytest.raises(
@@ -689,6 +704,220 @@ def test_a_step_whose_fixes_all_break_rules_fails_plainly() -> None:
             )
         )
     assert failed.value.detail == "BrokenReply: basis: literal needs no evidence"
+    assert len(calls) == 2  # one fresh attempt of the part, then it stops
+
+
+def test_a_part_whose_reply_still_broke_the_rules_gets_one_fresh_attempt() -> None:
+    calls: list[int] = []
+    heard: list[tuple[int, int, str]] = []
+
+    async def broken_once(_: Request) -> str:
+        calls.append(1)
+        if len(calls) == 1:
+            raise suggestion_model.BrokenReply("basis: literal needs no evidence")
+        return REPLY
+
+    learned = asyncio.run(
+        generate.propose_learned(
+            "openai",
+            "k",
+            "openai:gpt-6-luna",
+            Dictionary(),
+            [TEXT],
+            "s/m",
+            call=broken_once,
+            mode="generate",
+            retrying_part=lambda part, attempt, reason, seconds: heard.append(
+                (part, attempt, reason)
+            ),
+        )
+    )
+    assert learned[0].meanings[0].spelling == "Claude Code" and len(calls) == 2
+    assert heard == [(1, 2, "the reply still broke a rule after its corrections")]
+
+
+def test_a_reply_that_runs_into_empty_output_is_stopped_and_its_part_retried() -> None:
+    good = strict_reply(REPLY)
+    blank: list[int] = []  # whitespace characters each request streamed after its JSON
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        blank.append(0)
+        yield good
+        # The first reply runs away; bounded only so that a missing stop fails, not hangs.
+        while len(blank) == 1 and blank[-1] < 10 * call.RUNAWAY:
+            blank[-1] += 100
+            yield " " * 100
+
+    model = Finished(stream_function=stream)
+
+    async def caller(request: Request) -> str:
+        return await suggestion_model.call_model(request, model)
+
+    heard: list[tuple[int, int, str]] = []
+    learned = asyncio.run(
+        generate.propose_learned(
+            "openai",
+            "k",
+            "openai:gpt-6-luna",
+            Dictionary(),
+            [TEXT],
+            "s/m",
+            call=caller,
+            mode="generate",
+            retrying_part=lambda part, attempt, reason, seconds: heard.append(
+                (part, attempt, reason)
+            ),
+        )
+    )
+    assert learned[0].meanings[0].spelling == "Claude Code"
+    assert blank == [call.RUNAWAY + 100, 0]  # stopped at the first chunk past the threshold
+    assert heard == [(1, 2, "the reply ran into empty output")]
+
+
+@pytest.mark.parametrize(
+    "error,reason",
+    [
+        (ModelAPIError("gpt-6-luna", "Connection error."), "the connection failed"),
+        (httpx2.RemoteProtocolError("peer closed connection"), "the connection failed"),
+        (ModelHTTPError(500, "gpt-6-luna", {"error": "boom"}), "the service returned error 500"),
+        (
+            suggestion_model.ReplyStopped(
+                "the reply ran into empty output", "The reply ran into empty output"
+            ),
+            "the reply ran into empty output",
+        ),
+        (
+            suggestion_model.ReplyStopped(
+                "the reply ran past its 14.5-minute limit",
+                "The reply timed out: still streaming after 14.5 minutes",
+            ),
+            "the reply ran past its 14.5-minute limit",
+        ),
+    ],
+)
+def test_a_part_that_failed_in_a_way_that_may_pass_is_tried_twice_more_and_announced(
+    error: Exception, reason: str
+) -> None:
+    events: list[object] = []
+
+    async def failing(_: Request) -> str:
+        events.append("call")
+        raise error
+
+    with pytest.raises(generate.StepFailed, match=r"^Part 1 of 1, attempt 3 of 3: "):
+        asyncio.run(
+            generate.propose_learned(
+                "openai",
+                "k",
+                "openai:gpt-6-luna",
+                Dictionary(),
+                ["x"],
+                "s/m",
+                call=failing,
+                mode="generate",
+                progress=lambda part, total, size: events.append(("progress", part)),
+                retrying_part=lambda part, attempt, why, seconds: events.append(
+                    (part, attempt, why)
+                ),
+            )
+        )
+    assert events == [
+        ("progress", 1),
+        "call",
+        ("progress", 1),
+        (1, 2, reason),
+        "call",
+        ("progress", 1),
+        (1, 3, reason),
+        "call",
+    ]
+
+
+@pytest.mark.parametrize(
+    "status,problem", [(401, "refused the key"), (403, "refused the key"), (429, "quota")]
+)
+def test_a_refused_key_or_a_limit_is_never_retried(status: int, problem: str) -> None:
+    calls: list[int] = []
+    heard: list[object] = []
+
+    async def refused(_: Request) -> str:
+        calls.append(1)
+        raise ModelHTTPError(status, "gpt-6-luna", {"error": "no"})
+
+    with pytest.raises(generate.StepFailed, match=rf"^Part 1 of 1: .*{problem}"):
+        asyncio.run(
+            generate.propose_learned(
+                "openai",
+                "k",
+                "openai:gpt-6-luna",
+                Dictionary(),
+                ["x"],
+                "s/m",
+                call=refused,
+                mode="generate",
+                retrying_part=lambda *told: heard.append(told),
+            )
+        )
+    assert calls == [1] and heard == []
+
+
+def test_a_busy_service_whose_words_mention_a_timeout_is_reported_as_busy() -> None:
+    async def busy(_: Request) -> str:
+        raise ModelHTTPError(
+            503,
+            "gpt-6-sol",
+            "upstream connect error or disconnect/reset before headers."
+            " reset reason: connection timeout",
+        )
+
+    with pytest.raises(generate.StepFailed, match="busy or down") as failed:
+        asyncio.run(
+            generate.propose_learned(
+                "chatgpt",
+                "k",
+                "chatgpt:gpt-6-sol",
+                Dictionary(),
+                ["x"],
+                "s/m",
+                call=busy,
+                mode="generate",
+            )
+        )
+    assert "reset reason: connection timeout" in failed.value.detail
+
+
+def test_a_retried_part_starts_from_the_working_dictionary_and_repeats_no_finished_part(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
+    prompts: list[str] = []
+    saved: list[int] = []
+
+    async def flaky(request: Request) -> str:
+        prompts.append(request.user)
+        if len(prompts) == 1:
+            return json.dumps(proposed("cloud code"))
+        if len(prompts) == 2:
+            raise ModelHTTPError(502, "gpt-6-luna", "bad gateway")
+        return '{"additions": []}'
+
+    learned = asyncio.run(
+        generate.propose_learned(
+            "openai",
+            "k",
+            "openai:gpt-6-luna",
+            Dictionary(),
+            ["cloud code", "second one", "third item"],
+            "s/m",
+            call=flaky,
+            mode="generate",
+            checkpoint=lambda groups, number, total, covered: saved.append(number),
+        )
+    )
+    assert saved == [1, 2, 3] and len(prompts) == 4
+    assert prompts[1] == prompts[2] and "Claude Code" in prompts[2]  # part 1's dictionary
+    assert len({prompts[0], prompts[2], prompts[3]}) == 3  # part 1 was not asked again
+    assert learned[0].meanings[0].spelling == "Claude Code"
 
 
 def test_refinement_names_each_group_once_and_only_existing_ones() -> None:

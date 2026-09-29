@@ -9,8 +9,10 @@ from entune.learning.suggestion_model.request import (
     MAX_FIXES,
     BrokenReply,
     Caller,
+    ReplyStopped,
     Request,
     call_model,
+    passing,
 )
 
 __all__ = [
@@ -20,7 +22,9 @@ __all__ = [
     "BrokenReply",
     "Caller",
     "ModelChoice",
+    "ReplyStopped",
     "Request",
     "call_model",
     "catalog",
+    "passing",
 ]

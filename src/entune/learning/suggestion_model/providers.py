@@ -19,6 +19,8 @@ from entune.learning.suggestion_model import chatgpt
 from entune.learning.suggestion_model.catalog import CHATGPT
 
 TIMEOUT = 1200.0  # seconds; a reply at high reasoning effort takes minutes
+# A ChatGPT plan cuts any request at about 900 seconds; stopping just before says why.
+PLAN_TIMEOUT = 870.0
 CONNECT = 5.0  # seconds to open a connection
 
 
