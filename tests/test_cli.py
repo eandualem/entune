@@ -1,11 +1,21 @@
 import plistlib
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from entune.cli import _log_to_file, applications_folder, build_parser, main, port_is_free
+from entune import cli
+from entune.cli import (
+    _log_to_file,
+    _own_data,
+    applications_folder,
+    build_parser,
+    main,
+    port_is_free,
+)
+from entune.storage.store import Store
 
 
 def test_port_probe_sees_a_listener(tmp_path: Path) -> None:
@@ -22,6 +32,70 @@ def test_port_probe_sees_a_listener(tmp_path: Path) -> None:
 def test_parser_defaults() -> None:
     args = build_parser().parse_args([])
     assert args.port == 4187 and args.data is None and not args.no_menu
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX directory locks")
+def test_cli_owns_data_through_reset_and_releases_after_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path / "data"
+    monkeypatch.setattr(cli, "_log_to_file", lambda path: None)
+    monkeypatch.setattr(cli, "port_is_free", lambda port: True)
+
+    def run(args: object, path: Path, store: Store) -> None:
+        def second_process() -> None:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "entune",
+                    "--no-menu",
+                    "--no-open",
+                    "--port",
+                    "0",
+                    "--data",
+                    str(path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            assert result.returncode != 0 and "already using" in result.stderr
+
+        try:
+            second_process()
+            store.reset()
+            second_process()  # reset must not discard the ownership lock
+            with _own_data(tmp_path / "other"):
+                pass  # independent data remains independently runnable
+        finally:
+            store.close()
+        raise RuntimeError("startup failed")
+
+    monkeypatch.setattr(cli, "_run", run)
+    with pytest.raises(RuntimeError, match="startup failed"):
+        main(["--no-menu", "--no-open", "--data", str(data)])
+    with _own_data(data):
+        pass  # failure released the descriptor
+
+
+def test_same_port_window_activation_precedes_data_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "port_is_free", lambda port: False)
+    monkeypatch.setattr(cli, "_show_running_window", lambda port: True)
+    monkeypatch.setattr(cli, "_own_data", lambda path: pytest.fail("must show the existing window"))
+    main(["--data", str(tmp_path)])
+
+
+def test_data_directory_failure_keeps_the_startup_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "file"
+    path.touch()
+    monkeypatch.setattr(cli, "_log_to_file", lambda path: None)
+    with pytest.raises(SystemExit, match="Cannot open Entune data"):
+        main(["--no-menu", "--no-open", "--port", "0", "--data", str(path)])
 
 
 def test_install_app_writes_a_launchable_bundle(tmp_path: Path) -> None:

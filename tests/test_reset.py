@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import pytest
 from starlette.testclient import TestClient
@@ -227,9 +229,40 @@ def test_imports_exports_and_a_reset_never_overlap(
     res = client.post("/api/dictionary/audio", files={"audio": ("a.wav", audio, "audio/wav")})
     assert res.status_code == 400 and "deleting all data" in res.text
     assert client.get("/api/exports/audio").status_code == 409
+    assert client.get("/api/dictionary/audio").status_code == 409
     app.data._resetting = False
     assert client.get("/api/dictionary/audio").json()["items"] == []
     assert client.post("/api/data/reset", json=confirm).status_code == 200
+
+
+def test_audio_listing_keeps_its_files_until_the_read_finishes(
+    setup: tuple[TestClient, Entune, Path, LocalStub], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, app, _, _ = setup
+    recording = app.store.create_recording(wav_bytes(b"\0\0" * 160, 16000))
+    audio = app.store.audio_path(recording)
+    reached, release = Event(), Event()
+    original = Path.is_file
+
+    def pause(path: Path) -> bool:
+        exists = original(path)
+        if path == audio:
+            reached.set()
+            assert release.wait(5)
+        return exists
+
+    monkeypatch.setattr(Path, "is_file", pause)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        listing = executor.submit(client.get, "/api/dictionary/audio")
+        try:
+            assert reached.wait(5)
+            result = client.post("/api/data/reset", json={"confirm": RESET_PHRASE})
+            assert result.status_code == 409 and "audio listing" in result.text
+        finally:
+            release.set()
+        assert listing.result().json()["count"] == 1
+    assert client.post("/api/data/reset", json={"confirm": RESET_PHRASE}).status_code == 200
+    assert client.get("/api/dictionary/audio").json()["count"] == 0
 
 
 def test_an_unreadable_folder_changes_nothing(

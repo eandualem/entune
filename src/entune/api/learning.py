@@ -87,22 +87,23 @@ def routes(app: Entune) -> list[Route]:
         return JSONResponse(app.learning.dictionary_build_status())
 
     def dictionary_audio(_: Request) -> Response:
-        # Which speech models already transcribed each recording, so the page can offer
-        # recordings the selected model has not heard. Imported audio has none.
-        models = {f"recording:{r}": names for r, names in app.store.recording_models().items()}
-        # Sources are chosen separately in the page: this app's recordings, another
-        # dictation app's imports, or files imported from a folder.
-        items = [
-            {
-                **asdict(item),
-                "models": models.get(item.id, []),
-                # Imports made before the source was kept fall back to the Wispr file name.
-                "source": "entune"
-                if item.id.startswith("recording:")
-                else item.source or ("wispr" if item.name.startswith("wispr-") else "folder"),
-            }
-            for item, _ in app.store.learning_audio()
-        ]
+        with app.data.using_data("audio listing"):
+            # Which speech models already transcribed each recording, so the page can offer
+            # recordings the selected model has not heard. Imported audio has none.
+            models = {f"recording:{r}": names for r, names in app.store.recording_models().items()}
+            # Sources are chosen separately in the page: this app's recordings, another
+            # dictation app's imports, or files imported from a folder.
+            items = [
+                {
+                    **asdict(item),
+                    "models": models.get(item.id, []),
+                    # Imports made before the source was kept fall back to the Wispr file name.
+                    "source": "entune"
+                    if item.id.startswith("recording:")
+                    else item.source or ("wispr" if item.name.startswith("wispr-") else "folder"),
+                }
+                for item, _ in app.store.learning_audio()
+            ]
         return JSONResponse(
             {
                 "apps": [{"id": a.id, "name": a.name, "note": a.note} for a in audio_import.APPS],
