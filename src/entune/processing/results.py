@@ -30,6 +30,12 @@ class Stage:
     selections: tuple[Selection, ...] = ()
     model: str | None = None  # the decision model the step asks: "jev" or "laya"; None: none
 
+    def recorded_changes(self) -> tuple[Change, ...] | None:
+        """The edits this step made (possibly none) when it ran and recorded them; None
+        when it failed, was blocked or disabled, or is an older record without edits."""
+        ran = self.status == "succeeded" or (self.status == "skipped" and not self.error)
+        return self.changes if ran else None
+
 
 @dataclass(frozen=True)
 class Selection:
@@ -85,7 +91,7 @@ def interrupted(result: Processed, error: str) -> Processed:
     return replace(result, **updates)
 
 
-def failed(raw: str, initial: Processed, error: str, seconds: float = 0.0) -> Processed:
+def failed(initial: Processed, error: str, seconds: float = 0.0) -> Processed:
     result = interrupted(initial, error)
     if result == initial:
         return replace(

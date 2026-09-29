@@ -67,7 +67,7 @@ or the prompt loader.
 Data flow for a dictation: the hotkey listener's thread feeds the engine;
 the engine starts and stops the recorder; on stop, a persist worker writes
 the clip to disk and history at once, and one transcription worker takes
-clips in the order they were spoken: provider call, raw success persisted,
+it (a new recording is refused until the previous one is delivered): provider call, raw success persisted,
 eligible meanings/spans retrieved and decided in original context when enabled, opt-in filler reduction then formatting, independent stage
 outcomes and exact changes stored. The transcript is copied and
 pasted on the main thread, because HIToolbox insists on it. With fast mode
@@ -144,11 +144,13 @@ and media permission callbacks. `desktop/create_platform()` picks the
 implementation for the running system. Cross-platform work is tracked in
 the issues (Windows, #36).
 
-The dictionary uses the existing httpx dependency for one request to the
-selected provider's official API, with the saved key passed explicitly.
+Dictionary suggestions go through Pydantic AI and the selected provider's
+official SDK and endpoint (`learning/suggestion_model/`), loaded on the first
+suggestion rather than at startup, with the saved key passed explicitly.
 Its suggested catalog is local and custom model IDs remain available.
-There is no assistant framework, process-wide credential mutation, retry
-loop or model fallback. HTTP errors, refusals and incomplete replies remain
+The SDKs' own retries are off and there is no model fallback; a reply that
+breaks a dictionary rule is sent back for a correction at most twice, and
+each attempt is shown. HTTP errors, refusals and incomplete replies remain
 visible; a proposed dictionary still needs the user's acceptance.
 
 Branches: pull requests go into `develop`; `main` moves by a release pull

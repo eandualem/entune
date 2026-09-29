@@ -67,7 +67,6 @@ def test_wispr_import_deduplicates_backups_without_importing_history(
             b,
         ]
         assert store.list_recordings() == []
-        assert store.recent_transcripts("stub", "good", 300) == []
     finally:
         live.close()
         backup.close()

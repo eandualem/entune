@@ -1,6 +1,6 @@
 """Suggestion runs the person starts: prepare the input, then retry, apply or discard.
 
-The run itself (batches, the model, checkpoints) belongs to learning/builds.py; this
+The run itself (batches, the model, checkpoints) belongs to app/suggestion_runs.py; this
 part decides what a run reads and what applying its proposal writes.
 """
 

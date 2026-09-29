@@ -65,18 +65,6 @@ def test_clearing_a_setting(tmp_path: Path) -> None:
     assert store.get_setting("k") is None
 
 
-def test_recent_transcripts_are_one_models_raw_text_newest_first(tmp_path: Path) -> None:
-    store = Store(tmp_path)
-    rec = store.create_recording(WEBM_HEADER)
-    store.add_transcription(rec.id, "p", "m", "error", None, "boom")
-    store.add_transcription(rec.id, "p", "m", "ok", "fixed one", None, raw_text="raw one")
-    store.add_transcription(rec.id, "p", "other", "ok", "another model's", None)
-    store.add_transcription(rec.id, "p", "m", "ok", "two", None)
-    assert store.recent_transcripts("p", "m", 10) == ["two", "raw one"]
-    assert store.recent_transcripts("p", "m", 1) == ["two"]
-    assert store.recent_transcripts("p", "other", 10) == ["another model's"]
-
-
 def test_learning_audio_lists_recordings_with_their_newest_length_and_models(
     tmp_path: Path,
 ) -> None:

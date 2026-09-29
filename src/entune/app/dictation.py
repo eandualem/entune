@@ -286,7 +286,6 @@ class Dictation:
                     raise
                 except Exception as exc:
                     processed = results.failed(
-                        latest.text,
                         latest,
                         f"{type(exc).__name__}: {exc}",
                         time.monotonic() - started,

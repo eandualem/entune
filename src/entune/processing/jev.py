@@ -80,6 +80,24 @@ def _option(text: str, component: Component, interpretation: Interpretation) -> 
     return " ".join(parts)
 
 
+def settle(text: str, component: Component) -> Decision | None:
+    """The decision an occurrence needs no question for: one direct mapping, or every
+    reading leaving the text as it is. None when only context can decide."""
+    direct = component.direct_choice(text)
+    if direct is not None:
+        return Decision(
+            component,
+            Edit(component.start, component.end, component.output(text, direct)),
+            "direct",
+            tuple(c.meaning.id for c in direct.choices),
+        )
+    raw = text[component.start : component.end]
+    plans = component.interpretations
+    if plans and all(component.output(text, p) == raw for p in plans):
+        return Decision(component, None, "unchanged")
+    return None
+
+
 def meaning_request(
     text: str, components: list[Component], variant: Variant = DEFAULT
 ) -> MeaningRequest:
@@ -91,20 +109,10 @@ def meaning_request(
     support: dict[int, dict[str, tuple[str, ...]]] = {}
     for i, component in enumerate(components):
         raw = text[component.start : component.end]
-        direct = component.direct_choice(text)
-        if direct is not None:
-            output = component.output(text, direct)
-            decisions[i] = Decision(
-                component,
-                Edit(component.start, component.end, output),
-                "direct",
-                tuple(c.meaning.id for c in direct.choices),
-            )
+        if (settled := settle(text, component)) is not None:
+            decisions[i] = settled
             continue
         plans = component.interpretations
-        if plans and all(component.output(text, p) == raw for p in plans):
-            decisions[i] = Decision(component, None, "unchanged")
-            continue
         # Retain imported undefined meanings in storage, but never fabricate a
         # definition to turn them into eligible semantic claims.
         eligible = [p for p in plans if all(c.meaning.meaning for c in p.choices)]

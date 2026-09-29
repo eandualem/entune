@@ -55,27 +55,9 @@ def process_text(
         if contextual:
             decisions = jev.decide(raw, components, call)
         else:
-            decisions = []
-            for component in components:
-                choice = component.direct_choice(raw)
-                if choice:
-                    decisions.append(
-                        jev.Decision(
-                            component,
-                            matching.Edit(
-                                component.start, component.end, component.output(raw, choice)
-                            ),
-                            "direct",
-                        )
-                    )
-                else:
-                    unchanged = component.interpretations and all(
-                        component.output(raw, p) == raw[component.start : component.end]
-                        for p in component.interpretations
-                    )
-                    decisions.append(
-                        jev.Decision(component, None, "unchanged" if unchanged else "uncertain")
-                    )
+            decisions = [
+                jev.settle(raw, c) or jev.Decision(c, None, "uncertain") for c in components
+            ]
         if check:
             check()
         edits = tuple(
@@ -104,7 +86,7 @@ def process_text(
     except CancelledError:
         raise
     except Exception as exc:
-        result = failed(raw, initial, _error(exc, key), time.monotonic() - started)
+        result = failed(initial, _error(exc, key), time.monotonic() - started)
         result = replace(
             result,
             correction=replace(
