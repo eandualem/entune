@@ -20,7 +20,7 @@ from entune.dictionary.corrections import Correction as SubmittedCorrection
 from entune.learning.inputs import DictionaryResult, LearningText
 from entune.processing.results import Processed, Stage, interrupted
 from entune.storage import data_folder
-from entune.storage.paths import private_data_dir
+from entune.storage.paths import protect_data
 from entune.storage.records import (
     Correction,
     DictionaryAudio,
@@ -66,7 +66,7 @@ class Store:
 
     def _open(self) -> None:
         """Create the audio folder and database if needed; the caller holds the lock."""
-        private_data_dir(self.data_dir)
+        protect_data(self.data_dir)
         self.audio_dir.mkdir(exist_ok=True, mode=0o700)
         database = self.data_dir / "entune.db"
         database.touch(mode=0o600, exist_ok=True)
@@ -134,7 +134,9 @@ class Store:
         created_at = now()
         # The file and its row are written together, so a reset never splits them.
         with self._lock, self._db:
-            (self.audio_dir / file).write_bytes(data)
+            path = self.audio_dir / file
+            path.touch(mode=0o600)
+            path.write_bytes(data)
             cursor = self._db.execute(
                 "INSERT INTO recordings (created_at, file, mime) VALUES (?, ?, ?)",
                 (created_at, file, mime),

@@ -6,11 +6,16 @@ import os
 import sys
 from pathlib import Path
 
+from entune.storage import data_folder
 
-def private_data_dir(path: Path) -> None:
-    """Entune's selected data folder contains credentials and private recordings."""
+
+def protect_data(path: Path) -> None:
+    """Protect Entune-owned items, preserving the containing folder and unrelated files."""
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path.chmod(0o700)
+    ours, _ = data_folder.inventory(path)
+    for item in ours:
+        if not item.is_symlink():
+            item.chmod(0o700 if item.is_dir() else 0o600)
 
 
 def _default_location(name: str) -> Path:

@@ -16,16 +16,19 @@ def test_custom_data_is_private_on_creation_reopen_and_reset(tmp_path: Path) -> 
     with closing(Store(data)) as store:
         store.set_setting("credential", "synthetic-test-key")
         recording = store.create_recording(WEBM_HEADER)
+        assert S_IMODE(store.audio_path(recording).stat().st_mode) == 0o600
         assert S_IMODE(data.stat().st_mode) == 0o700
         assert S_IMODE((data / "entune.db").stat().st_mode) == 0o600
         assert S_IMODE((data / "entune.db-wal").stat().st_mode) == 0o600
         assert S_IMODE((data / "entune.db-shm").stat().st_mode) == 0o600
     data.chmod(0o755)
     (data / "entune.db").chmod(0o644)
+    (data / "audio").chmod(0o755)
     unrelated = data / "unrelated.txt"
     unrelated.write_text("keep me")
     with closing(Store(data)) as reopened:
-        assert S_IMODE(data.stat().st_mode) == 0o700
+        assert S_IMODE(data.stat().st_mode) == 0o755  # shared parent is unchanged
+        assert S_IMODE((data / "audio").stat().st_mode) == 0o700
         assert S_IMODE((data / "entune.db").stat().st_mode) == 0o600
         assert reopened.get_setting("credential") == "synthetic-test-key"
         assert reopened.audio_path(recording).read_bytes() == WEBM_HEADER
