@@ -9,9 +9,9 @@ Writes `/Applications/Entune.app` when that folder is writable, else
 `~/Applications/Entune.app` (or `--into DIR`): an Info.plist with
 Entune's name, bundle id `dev.elias.dictum` (macOS ties the granted permissions to
 it; see below), `LSUIElement`, the microphone
-usage string and an icns built from the shipped PNG with `sips` and
-`iconutil`; and an executable that is a two-line shell script running the
-current Python with `-m entune`. Nothing is copied, so the app follows the
+usage string and the packaged `assets/Entune.icns`; and an executable that
+is a two-line shell script running the current Python with `-m entune`.
+The app follows the
 installation it was created from: upgrade `entune` and the app is upgraded.
 Observed on macOS 26: the unsigned first version was not accepted by the
 Input Monitoring and Accessibility panels; if that happens, use the

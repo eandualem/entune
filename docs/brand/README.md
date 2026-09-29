@@ -8,7 +8,8 @@ icons, come from one generator:
 uv run python tools/brand.py
 ```
 
-Edit `tools/brand.py`, not the exported files, then run it again.
+Edit `tools/brand.py`, not the exported files, then run it again on macOS
+(the `.icns` export requires `iconutil`).
 
 | File | Use |
 |---|---|
@@ -18,7 +19,7 @@ Edit `tools/brand.py`, not the exported files, then run it again.
 | `entune-logo-light.svg` | Mark and "Entune" wordmark for light backgrounds |
 | `entune-logo-dark.svg` | Mark and wordmark for dark backgrounds |
 
-The generator also writes the app's own copies: `packaging/Entune.icns`,
+The generator also writes the app's own copies: `src/entune/assets/Entune.icns`,
 `src/entune/assets/icon.png` and `icon-512.png` (Dock and launcher),
 `src/entune/assets/menubar-template.png` (a black template image that macOS tints for a
 light or dark menu bar), `src/entune/web/favicon.svg` and `docs/demo/icon-256.png`.

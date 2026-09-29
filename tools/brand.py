@@ -375,6 +375,8 @@ def template_png(points: int = 22, scale: int = 3, glyph: float = 17.0) -> Image
 
 
 def main() -> None:
+    if sys.platform != "darwin":
+        raise SystemExit("Regenerate the complete brand assets on macOS: iconutil is required.")
     brand = ROOT / "docs" / "brand"
     brand.mkdir(parents=True, exist_ok=True)
     (brand / "entune-mark-light.svg").write_text(mark_file(VIOLET))
