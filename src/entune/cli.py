@@ -10,6 +10,8 @@ import sys
 import threading
 import time
 import webbrowser
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import uvicorn
@@ -116,6 +118,30 @@ def _log_to_file(data_dir: Path) -> None:
     print(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} entune {__version__} starting", flush=True)
 
 
+@contextmanager
+def _own_data(data_dir: Path) -> Iterator[None]:
+    """Keep another process from recovering or resetting this process's active data."""
+    if sys.platform == "win32":
+        # Directory locks are POSIX-only; Windows desktop support is not implemented yet.
+        yield
+        return
+    import fcntl
+
+    data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(data_dir, os.O_RDONLY)
+    try:
+        try:
+            # The directory survives a data reset; a lock on the database would not.
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.exit(
+                f"Entune is already using {data_dir}. Quit it, or choose another --data folder."
+            )
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def main(argv: list[str] | None = None) -> None:
     if argv is None:
         argv = sys.argv[1:]
@@ -150,17 +176,23 @@ def main(argv: list[str] | None = None) -> None:
 
             notify("Entune is already running", message)
         sys.exit(message)
-    try:
-        if not sys.stderr.isatty():
-            _log_to_file(data_dir)
-        store = Store(data_dir)
-    except OSError as exc:
-        message = f"Cannot open Entune data in {data_dir}: {exc}"
-        if sys.platform == "darwin" and not args.no_menu:
-            from entune.desktop.macos.actions import notify
+    with ExitStack() as ownership:
+        try:
+            ownership.enter_context(_own_data(data_dir))
+            if not sys.stderr.isatty():
+                _log_to_file(data_dir)
+            store = Store(data_dir)
+        except OSError as exc:
+            message = f"Cannot open Entune data in {data_dir}: {exc}"
+            if sys.platform == "darwin" and not args.no_menu:
+                from entune.desktop.macos.actions import notify
 
-            notify("Entune could not open its data", message)
-        sys.exit(message)
+                notify("Entune could not open its data", message)
+            sys.exit(message)
+        _run(args, data_dir, store)
+
+
+def _run(args: argparse.Namespace, data_dir: Path, store: Store) -> None:
     entune = Entune(store, default_providers(data_dir / "models"))
     entune.models.warm_default_model()
     entune.decisions.sync()
