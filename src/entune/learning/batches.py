@@ -91,16 +91,6 @@ def learning_batches(inputs: Sequence[LearningText]) -> list[Batch]:
     return result
 
 
-def batches(transcripts: Sequence[str]) -> list[list[str]]:
-    """Text batching helper; runtime learning retains source identities separately."""
-    return [
-        [s.text for s in b.snippets]
-        for b in learning_batches(
-            [LearningText(str(i), text) for i, text in enumerate(transcripts)]
-        )
-    ]
-
-
 def _dictation(snippet: Snippet, known: set[str]) -> dict[str, object]:
     """A raw transcript beside the dictionary step's own result, never later stages."""
     entry: dict[str, object] = {"id": snippet.source, "kind": snippet.kind, "raw": snippet.text}

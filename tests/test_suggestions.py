@@ -62,13 +62,19 @@ def test_user_prompt_carries_only_this_models_working_groups_and_literal_data() 
 def test_all_supplied_text_is_processed_in_bounded_steps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
     transcripts = [" first second third\nfourth fifth ", "", "x" * 15, *["tail"] * 301]
-    steps = batches.batches(transcripts)
+    steps = [
+        [s.text for s in step.snippets]
+        for step in batches.learning_batches(
+            [learning_inputs.LearningText(str(i), text) for i, text in enumerate(transcripts)]
+        )
+    ]
     assert all(sum(map(len, step)) <= 10 for step in steps)
     assert "".join("".join(t.split()) for step in steps for t in step) == "".join(
         "".join(t.split()) for t in transcripts
     )
     assert steps[:2] == [["first"], ["second"]]  # whole words when they fit
-    assert batches.batches([]) == [] and batches.batches(["", " "]) == []
+    assert batches.learning_batches([]) == []
+    assert batches.learning_batches([learning_inputs.LearningText("empty", " ")]) == []
 
 
 @pytest.mark.parametrize("reply", [REPLY, f"```json\n{REPLY}\n```"])

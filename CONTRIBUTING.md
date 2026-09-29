@@ -26,7 +26,7 @@ from `main` after each release.
 
 - `src/entune/providers/`: one module per speech-to-text provider behind one
   contract. See [adding a provider](docs/providers.md).
-- `src/entune/service.py`: what the app does, independent of HTTP or UI.
+- `src/entune/app/`: what the app does, independent of HTTP or UI.
 - `src/entune/server.py`: the local HTTP API and the page under `web/`.
 - `src/entune/desktop/`: the desktop app; `app.py` is the behaviour, `platform.py` the
   protocols it needs, `macos/` the macOS implementation.

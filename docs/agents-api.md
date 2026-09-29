@@ -53,7 +53,7 @@ silently if Entune is not running.
 | `POST /api/dictionary/pin` | `{"model", "group", "meaning"}` IDs plus `If-Match`: share one meaning and its associations; `{"model"}` explicitly pins all learned knowledge for that model |
 | `POST /api/recordings/{id}/transcriptions/{attempt}/safe-copy` | derive text from original using only approved direct mappings for the original speech model; returns text, replacements and unresolved count, without saving or pasting |
 | `GET /api/dictionary/corrections` | what agents sent and Entune pinned, newest first, with the `source` each gave |
-| `POST /api/dictionary/build` | `{"source": "history", "scope": "new" or "all"}` or `{"source": "audio", "audio_ids": [IDs from audio listing]}`: start one exclusive frozen-model/revision workflow; 202 returns its `id` and status; 409 if a job or unreviewed proposal is already active |
+| `POST /api/dictionary/build` | `{"source": "history", "mode": "generate", "scope": "new" or "all"}` or `{"source": "audio", "mode": "generate", "audio_ids": [IDs from audio listing]}` (use `"mode": "refine"` to revise existing groups): start one exclusive frozen-model/revision workflow; 202 returns its `id` and status; 409 if a job or unreviewed proposal is already active |
 | `GET /api/dictionary/build` | lightweight current job progress (no transcript or proposal contents) |
 | `GET /api/dictionary/build/{id}` | named job status, including its proposal when ready; 409 if no longer current |
 | `POST /api/dictionary/build/{id}/cancel` | request cancellation; in-flight synchronous speech may finish before cleanup; no new clips/chunks; validated completed proposals remain reviewable |

@@ -164,8 +164,8 @@ def test_a_failed_laya_start_is_reported_and_restarts_only_when_chosen_again(
     laya = Laya(store.data_dir / "models", find_engine=lambda: fake_engine)
     service = Entune(store, [StubProvider()], laya=laya)
     try:
-        service.settings.set_decision_model("laya")
-        service.settings.set_jev(formatting=True)
+        service.settings.set_processing("laya")
+        service.settings.set_processing(formatting=True)
         wait_until(lambda: laya.status()[0] == "failed")
         error = laya.status()[1]
         assert error == "Laya stopped: ModuleNotFoundError: No module named 'fastapi'"
