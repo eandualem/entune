@@ -108,9 +108,6 @@ class Settings:
             return saved
         return "jev" if self.key(JEV_PROVIDER) is not None else None
 
-    def set_decision_model(self, model: str) -> None:
-        self.set_processing(model)
-
     def check_processing(
         self,
         model: str | None = None,
@@ -169,15 +166,6 @@ class Settings:
             self._store.get_setting(JEV_FORMATTING_KEY) == "1",
             self._store.get_setting(JEV_CLEANUP_KEY) == "1",
         )
-
-    def set_jev(
-        self,
-        dictionary: bool | None = None,
-        formatting: bool | None = None,
-        cleanup: bool | None = None,
-    ) -> None:
-        """Turn a step on or off; turning one on needs a decision model that can run it."""
-        self.set_processing(None, dictionary, formatting, cleanup)
 
     def jev_policy(self) -> Policy:
         saved = self._store.get_setting(JEV_POLICY_KEY)
