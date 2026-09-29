@@ -8,8 +8,7 @@ icons, come from one generator:
 uv run python tools/brand.py
 ```
 
-Edit `tools/brand.py`, not the exported files, then run it again on macOS
-(the `.icns` export requires `iconutil`).
+Edit `tools/brand.py`, not the exported files, then run it again.
 
 | File | Use |
 |---|---|

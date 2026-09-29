@@ -11,9 +11,8 @@ Entune's name, bundle id `dev.elias.dictum` (macOS ties the granted permissions 
 it; see below), `LSUIElement`, the microphone
 usage string and the packaged `assets/Entune.icns`; and an executable that
 is a two-line shell script running the current Python with `-m entune`.
-The app follows the
-installation it was created from: upgrade `entune` to update the code. Run
-`entune install-app` again to refresh the copied icon.
+The launcher follows its Python installation, so upgrading `entune` upgrades
+the app; run `entune install-app` again to refresh the copied icon.
 Observed on macOS 26: the unsigned first version was not accepted by the
 Input Monitoring and Accessibility panels; if that happens, use the
 standalone bundle below and `entune install-app --from dist/Entune.app` to
