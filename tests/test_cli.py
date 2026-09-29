@@ -1,10 +1,11 @@
 import plistlib
 import socket
+import sys
 from pathlib import Path
 
 import pytest
 
-from entune.cli import applications_folder, build_parser, main, port_is_free
+from entune.cli import _log_to_file, applications_folder, build_parser, main, port_is_free
 
 
 def test_port_probe_sees_a_listener(tmp_path: Path) -> None:
@@ -162,3 +163,23 @@ def test_install_app_falls_back_to_ad_hoc_when_the_certificate_cannot_sign(
     assert bundle.sign(tmp_path) == "-"
     assert [c[4] for c in calls if c[0] == "codesign"] == ["Dictum Developer", "-"]
     assert "errSecInternalComponent" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file permissions")
+def test_log_tightens_existing_file_without_changing_shared_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from stat import S_IMODE
+
+    tmp_path.chmod(0o755)
+    path = tmp_path / "entune.log"
+    path.write_text("existing log\n")
+    path.chmod(0o644)
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "stdout", sys.stdout)
+        patch.setattr(sys, "stderr", sys.stderr)
+        _log_to_file(tmp_path)
+        sys.stdout.close()
+    assert S_IMODE(tmp_path.stat().st_mode) == 0o755
+    assert S_IMODE(path.stat().st_mode) == 0o600
+    assert path.read_text().startswith("existing log\n")
