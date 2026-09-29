@@ -33,9 +33,12 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
     const partElapsed = state.stepStartedAt ? clock(Math.max(0, Date.now() / 1000 - state.stepStartedAt)) : null;
     // A reply that broke a rule goes back to the model for a fix; say so, never silently.
     const fixing = state.phase === "building" && state.attempt > 1 && state.brokenRule;
+    // A part that failed in a way that may pass starts over; say why and which attempt.
+    const again = state.phase === "building" && state.partAttempt > 1 && state.retryReason;
     const building = (state.steps > 1
       ? `${task} · part ${state.step} of ${state.steps} · ${state.completedBatches ?? 0} done${partElapsed ? ` · this part ${partElapsed}` : ""}`
       : `${task}${partElapsed ? ` · ${partElapsed}` : ""}`)
+      + (again ? `. Retrying this part (${state.retryReason}), attempt ${state.partAttempt} of ${state.partAttempts}` : "")
       + (fixing ? `. The model's reply broke a dictionary rule, so it is asked to fix it: attempt ${state.attempt} of ${state.attempts}. Stop if you'd rather not wait.` : "");
     const messages = {
       idle: "", queued: `Getting ready to read your ${from === "audio" ? "audio" : "transcripts"}…`,
