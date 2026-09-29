@@ -38,6 +38,9 @@ def test_app_icon_is_white_artwork_on_a_flat_lavender_tile() -> None:
         assert rgba(point)[:3] == (0xA9, 0x9C, 0xF2)
     assert rgba((512 - 300, 505))[:3] == (0xFF, 0xFF, 0xFF)  # the white ring
     assert Image.open(ASSETS / "icon-512.png").size == (512, 512)
+    bundled = Image.open(ASSETS / "Entune.icns").convert("RGBA")
+    assert bundled.size == icon.size
+    assert bundled.tobytes() == icon.tobytes()
 
 
 def test_menu_bar_glyph_is_a_black_template_image() -> None:

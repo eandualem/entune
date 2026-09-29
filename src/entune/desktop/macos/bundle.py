@@ -4,7 +4,8 @@ and the Dock, without PyInstaller.
 macOS names a process and picks its Dock icon from the application bundle it was
 launched from. A plain `entune` process has none, so it shows as "python3".
 `entune install-app` writes a bundle whose executable is a two-line script running the
-current Python with the same arguments; nothing is copied.
+current Python with the same arguments and a copy of the packaged icon.
+Reinstall the launcher to update that icon after a package upgrade.
 
 Known limit: macOS's permission panels were not willing to list the first version of
 this bundle (a script executable, unsigned). It is now signed ad hoc, which may be
@@ -31,7 +32,6 @@ from entune import __version__
 BUNDLE_ID = "dev.elias.dictum"
 SIGNING_IDENTITIES = ("Entune Developer", "Dictum Developer")
 ASSETS = Path(__file__).resolve().parents[2] / "assets"
-ICON_SIZES = (16, 32, 64, 128, 256, 512)
 
 
 def install_app(directory: Path, source: Path | None = None) -> Path:
@@ -89,7 +89,7 @@ def _write_launcher(app: Path) -> None:
     )
     launcher.chmod(0o755)
 
-    icon_file = _write_icns(contents / "Resources")
+    shutil.copyfile(ASSETS / "Entune.icns", contents / "Resources" / "Entune.icns")
     info: dict[str, object] = {
         "CFBundleName": "Entune",
         "CFBundleDisplayName": "Entune",
@@ -98,14 +98,13 @@ def _write_launcher(app: Path) -> None:
         "CFBundleShortVersionString": __version__,
         "CFBundleExecutable": "Entune",
         "CFBundlePackageType": "APPL",
+        "CFBundleIconFile": "Entune.icns",
         "LSUIElement": True,
         "NSMicrophoneUsageDescription": (
             "Entune records your voice while you hold the dictation shortcut."
         ),
         "NSHighResolutionCapable": True,
     }
-    if icon_file is not None:
-        info["CFBundleIconFile"] = icon_file
     with (contents / "Info.plist").open("wb") as f:
         plistlib.dump(info, f)
 
@@ -158,35 +157,6 @@ def _codesign(app: Path, identity: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
-
-
-def _write_icns(resources: Path) -> str | None:
-    """Build Entune.icns from the shipped PNG with the system's sips and iconutil."""
-    source = ASSETS / "icon.png"
-    iconset = resources / "Entune.iconset"
-    iconset.mkdir()
-    try:
-        for size in ICON_SIZES:
-            for scale, suffix in ((1, ""), (2, "@2x")):
-                px = size * scale
-                if px > 1024:
-                    continue
-                target = iconset / f"icon_{size}x{size}{suffix}.png"
-                subprocess.run(
-                    ["sips", "-z", str(px), str(px), str(source), "--out", str(target)],
-                    check=True,
-                    capture_output=True,
-                )
-        subprocess.run(
-            ["iconutil", "-c", "icns", str(iconset), "-o", str(resources / "Entune.icns")],
-            check=True,
-            capture_output=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    finally:
-        shutil.rmtree(iconset, ignore_errors=True)
-    return "Entune.icns"
 
 
 def name_this_process() -> None:
