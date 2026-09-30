@@ -1,7 +1,7 @@
 [project]
 name = "entune"
 version = "0.1.0"
-description = "Personal dictation workbench: record, transcribe with the speech-to-text model you pick, keep the history, retry with another model, copy."
+description = "Dictation with your choice of speech model and a personal dictionary that selects corrections in context."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -24,6 +24,11 @@ dependencies = [
   "starlette>=0.41",
   "uvicorn>=0.30",
 ]
+
+[project.urls]
+Homepage = "https://github.com/eandualem/entune"
+Documentation = "https://github.com/eandualem/entune#readme"
+Issues = "https://github.com/eandualem/entune/issues"
 
 [project.scripts]
 entune = "entune.cli:main"

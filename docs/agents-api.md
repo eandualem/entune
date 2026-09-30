@@ -1,5 +1,11 @@
 # The agents' API
 
+The API is available on the local loopback interface and currently has **no
+authentication**. Other local processes can read transcripts/audio and make
+changes through it. File permissions do not isolate the running server from
+other local users. Use Entune on a trusted single-user machine; do not expose
+this port through a network proxy or tunnel.
+
 Entune serves a local HTTP API on `http://localhost:4187` (change with
 `--port`). Anything on the machine can call it; nothing outside can. A
 request must be addressed to `localhost` (or `127.0.0.1`), and a state
