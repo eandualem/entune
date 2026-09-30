@@ -1,5 +1,9 @@
 # Meaning-based dictionary
 
+For setup, start with [Choosing models](models.md) and [Using Entune](guide.md#personal-dictionary).
+The [fresh decision-model comparison](decision-model-results.md) measures actual
+replacements with Jev and Laya; this page describes the dictionary format and behavior.
+
 `dictionary.json` uses version 2. The primary record is a confusion group with
 stable meaning IDs and explicit recognized-form associations. `pinned` is shared;
 `learned` is keyed by the unchanged speech model identifier (`provider/model`).
@@ -263,8 +267,10 @@ of any age. Temporary target-model transcripts stay in memory and are reused on 
 they never enter the database or ordinary history. Applying, discarding, replacing the
 workflow or closing the app clears them, while source audio remains. The generation
 provider receives the selected inputs, pinned knowledge and this model's working groups.
-The configured model is honored; suggestions remain Sonnet 5 and GPT-5.4 mini with
-medium reasoning where supported. No generation or classification model rewrites dictation.
+The configured model is honored, including a custom model ID. The
+[model guide](models.md#dictionary-generation) gives our current recommendation;
+the built-in suggested list can contain older models. Medium reasoning is requested
+where supported. No generation or classification model rewrites dictation.
 
 Sequential steps contain about 24,000 transcript characters; the full growing dictionary
 adds to that request size. A long transcript split across steps carries only its own

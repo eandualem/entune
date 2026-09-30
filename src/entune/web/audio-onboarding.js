@@ -15,6 +15,19 @@ export function duration(seconds) {
   if (minutes < 60) return `${minutes} min`;
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
 }
+// Planning allowance, not a measured confidence interval: a 12.3-hour sample
+// took 135 minutes with GPT-6.1 Sol, medium effort, 24k-character requests.
+// See docs/models.md. Transcription is additional; other models are uncalibrated.
+export function generationEstimate(seconds, unknown, model) {
+  if (unknown) return "Time estimate unavailable: some selected recordings have no known duration. Dictionary generation can take minutes to hours, plus transcription.";
+  if (!(seconds > 0)) return "Select audio to see an estimated generation time.";
+  const hours = seconds / 3600;
+  const low = Math.max(1, Math.ceil(hours * 10));
+  const high = Math.max(low + 1, Math.ceil(hours * 20));
+  const interval = `${duration(low * 60)}–${duration(high * 60)}`;
+  const calibrated = ["chatgpt:gpt-6.1-sol", "openai:gpt-6.1-sol"].includes(model);
+  return `${calibrated ? "Estimated dictionary generation" : "GPT-6.1 Sol reference estimate"}: ${interval}, plus audio transcription. Based on a small Sol benchmark at medium effort; ${calibrated ? "large dictionaries and retries can take longer" : "the selected model has not been timed and may differ"}.`;
+}
 const day = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "Undated";
 const moment = (iso) => iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "Undated";
 
@@ -110,6 +123,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     if (el("audio-detail").open) drawList(chosen);
     const speech = getModel();
     const language = getDictionaryModelName();
+    el("audio-generation-estimate").textContent = generationEstimate(seconds(chosen), unknown, getSettings()?.dictionaryModel);
     el("audio-models").textContent = !speech
       ? "Choose a speech model in the toolbar first."
       : !language

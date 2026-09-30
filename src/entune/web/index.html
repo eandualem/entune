@@ -271,6 +271,7 @@
               <div class="drawer-body">
                 <div class="suggest-setup" id="suggest-setup">
                   <p id="learn-source">Suggestions from your recent transcripts. Nothing changes until you review them.</p>
+                  <p class="caption">Dictionary generation can take minutes to hours for a large history. It processes batches in sequence; the model and size of the growing dictionary affect the time.</p>
                   <label class="check"><input type="checkbox" id="learning-reuse" /> Include transcripts already used</label>
                   <p class="caption">Reads transcripts an earlier run already read. It costs tokens again and can repeat earlier suggestions.</p>
                 </div>
@@ -297,7 +298,8 @@
                     <p class="caption range-note">Drag the handles to choose a stretch of recorded time, oldest to newest.</p>
                     <details class="audio-detail" id="audio-detail"><summary id="audio-detail-summary">Show included recordings</summary><div class="audio-list" id="learning-audio-list"></div><button type="button" class="btn ghost sm" id="audio-more" hidden>Show more</button></details>
                   </div>
-                  <p class="caption">This can take a while, and cloud providers may charge for both steps: transcribing, then suggestions.</p>
+                  <p id="audio-generation-estimate" role="status"></p>
+                  <p class="caption">Cloud providers may charge for both steps: transcribing, then suggestions.</p>
                   <button type="button" class="btn link" id="audio-help" aria-haspopup="dialog" aria-controls="help-dialog">How learning from audio works</button>
                 </div>
                 <div class="suggest-shared" id="suggest-shared">
