@@ -1,13 +1,13 @@
 """Soniox, asynchronous endpoint: upload, create a job, poll, fetch the text.
 
-Soniox has no synchronous endpoint. The uploaded file and the job are deleted
-afterwards so the clip does not stay on Soniox's servers.
+Soniox has no synchronous endpoint. Deletion of the uploaded file and job is
+attempted afterwards; failures are logged without hiding the transcription result.
 """
 
 from __future__ import annotations
 
-import contextlib
 import json
+import logging
 import time
 from collections.abc import Callable
 
@@ -98,8 +98,19 @@ class Soniox:
 
     def _delete(self, url: str, headers: dict[str, str]) -> None:
         """Best-effort cleanup; a failure here must not hide the transcription result."""
-        with contextlib.suppress(httpx.HTTPError):
-            self._client.delete(url, headers=headers)
+        try:
+            response = self._client.delete(url, headers=headers)
+        except httpx.HTTPError as exc:
+            failure = type(exc).__name__
+        else:
+            if response.is_success:
+                return
+            failure = f"HTTP {response.status_code}"
+        logging.getLogger(__name__).warning(
+            "Soniox cleanup failed (%s); the remote file or transcription may remain. "
+            "Deletion is not retried automatically.",
+            failure,
+        )
 
 
 def _id_of(body: object) -> str | None:

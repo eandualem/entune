@@ -57,8 +57,9 @@ The contract, from AGENTS.md: audio in, either a transcript or the
 provider's error verbatim. `failure_from_response()` formats an HTTP error
 as its status line plus body. No adapter falls back to another provider,
 retries silently, or guesses a model. Use the provider's synchronous or file
-endpoint, never its streaming socket. If the provider keeps uploads, delete
-them afterwards, as the Soniox and AssemblyAI long-form paths do.
+endpoint, never its streaming socket. If the provider keeps uploads, attempt
+deletion afterwards, as the Soniox and AssemblyAI long-form paths do. Cleanup
+can fail; a deletion request does not establish the provider's retention policy.
 
 Tests use `httpx.MockTransport` to assert the request shape and the
 verbatim error; see `tests/test_providers.py`.
