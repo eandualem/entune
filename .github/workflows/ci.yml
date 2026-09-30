@@ -31,4 +31,6 @@ jobs:
       - name: Types
         run: uv run mypy
       - name: Tests
-        run: uv run pytest -q
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then export PYSTRAY_BACKEND=dummy; fi
+          uv run pytest -q
