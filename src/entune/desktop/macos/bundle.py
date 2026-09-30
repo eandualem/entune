@@ -54,6 +54,7 @@ def install_app(directory: Path, source: Path | None = None) -> Path:
             _write_launcher(prepared)
         sign(prepared)
         if app.exists():
+            _preserve_signing_identity(app, prepared)
             app.rename(previous)
         try:
             prepared.rename(app)
@@ -75,6 +76,36 @@ def _validate_bundle(app: Path) -> None:
     executable = app / "Contents" / "MacOS" / "Entune"
     if info.get("CFBundleExecutable") != "Entune" or not executable.is_file():
         raise ValueError(f"Not a Entune application bundle: {app}")
+
+
+def _preserve_signing_identity(installed: Path, prepared: Path) -> None:
+    """A certificate-signed installation must keep its macOS permission identity."""
+    current = subprocess.run(
+        ["codesign", "-d", "-r-", str(installed)], capture_output=True, text=True, check=True
+    )
+    requirement = next(
+        (
+            line.removeprefix("designated => ")
+            for line in (current.stdout + current.stderr).splitlines()
+            if line.startswith("designated => ")
+        ),
+        None,
+    )
+    # Ad-hoc signatures have a different cdhash on each build and cannot preserve grants.
+    if requirement is None or "certificate " not in requirement:
+        return
+    verified = subprocess.run(
+        ["codesign", "--verify", "--strict", "-R", "=" + requirement, str(prepared)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if verified.returncode:
+        raise RuntimeError(
+            "Update stopped: the new app does not match the installed signing certificate. "
+            "The existing app is unchanged. Restore access to its code-signing identity "
+            f"and retry. codesign: {verified.stderr.strip()}"
+        )
 
 
 def _write_launcher(app: Path) -> None:
@@ -118,33 +149,31 @@ def signing_identity() -> str | None:
     Certificate Assistant > Create a Certificate, name "Entune Developer", type Code
     Signing) gives every build the same identity.
     """
-    try:
-        found = subprocess.run(
-            ["security", "find-identity", "-v", "-p", "codesigning"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except OSError:
-        return None
+    found = subprocess.run(
+        ["security", "find-identity", "-v", "-p", "codesigning"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     return next((name for name in SIGNING_IDENTITIES if f'"{name}"' in found.stdout), None)
 
 
 def sign(app: Path) -> str:
     """Sign the bundle with the stable identity when there is one, ad hoc otherwise.
 
-    Without any signature, System Settings would not list the bundle under Input
-    Monitoring or Accessibility when Elias tried. Returns the identity used; when
-    signing with the certificate fails (typically macOS refusing the private key to a
-    process that cannot show its "allow" prompt) the bundle is signed ad hoc instead
-    and the error is printed, so a half-signed bundle is never left behind.
+    Returns the identity used. Certificate signing failures stop the installation:
+    falling back to ad hoc would discard the existing macOS permission identity.
     """
     identity = signing_identity()
     if identity is not None:
         done = _codesign(app, identity)
         if done.returncode == 0:
             return identity
-        print(f"Could not sign with {identity}: {done.stderr.strip()}", file=sys.stderr)
+        raise RuntimeError(
+            f"Could not sign with {identity}: {done.stderr.strip()}. "
+            "The existing app is unchanged. Check access to the signing key in "
+            "Keychain Access, then retry."
+        )
     fallback = _codesign(app, "-")
     fallback.check_returncode()
     return "-"

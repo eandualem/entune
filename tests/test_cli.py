@@ -151,6 +151,7 @@ def test_failed_install_preserves_the_previous_app(
         raise OSError("injected failure")
 
     monkeypatch.setattr(bundle, "sign", lambda app: "-")
+    monkeypatch.setattr(bundle, "_preserve_signing_identity", lambda installed, prepared: None)
     if failure == "source":
         (built / "Contents" / "Info.plist").unlink()
     elif failure == "copy":
@@ -217,8 +218,8 @@ def test_install_app_signs_with_the_stable_identity_when_present(
     assert bundle.sign(tmp_path) == "-"
 
 
-def test_install_app_falls_back_to_ad_hoc_when_the_certificate_cannot_sign(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_install_app_stops_when_the_certificate_cannot_sign(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import subprocess
 
@@ -234,9 +235,40 @@ def test_install_app_falls_back_to_ad_hoc_when_the_certificate_cannot_sign(
         return subprocess.CompletedProcess(cmd, int(failed), "", "errSecInternalComponent")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    assert bundle.sign(tmp_path) == "-"
-    assert [c[4] for c in calls if c[0] == "codesign"] == ["Dictum Developer", "-"]
-    assert "errSecInternalComponent" in capsys.readouterr().err
+    with pytest.raises(RuntimeError, match="errSecInternalComponent"):
+        bundle.sign(tmp_path)
+    assert [c[4] for c in calls if c[0] == "codesign"] == ["Dictum Developer"]
+
+
+@pytest.mark.parametrize("matches", [True, False])
+def test_update_preserves_the_installed_certificate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, matches: bool
+) -> None:
+    import subprocess
+
+    from entune.desktop.macos import bundle
+
+    installed = tmp_path / "Entune.app"
+    installed.mkdir()
+    (installed / "original").write_text("working app")
+    requirement = 'identifier "dev.elias.dictum" and certificate leaf = H"abcd"'
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "-d" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "", f"designated => {requirement}\n")
+        assert cmd[1:5] == ["--verify", "--strict", "-R", "=" + requirement]
+        return subprocess.CompletedProcess(cmd, int(not matches), "", "identity mismatch")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(bundle, "sign", lambda app: "-")
+    if matches:
+        bundle.install_app(tmp_path)
+        assert (installed / "Contents/MacOS/Entune").is_file()
+    else:
+        with pytest.raises(RuntimeError, match="does not match the installed signing certificate"):
+            bundle.install_app(tmp_path)
+        assert (installed / "original").read_text() == "working app"
+    assert list(tmp_path.iterdir()) == [installed]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file permissions")

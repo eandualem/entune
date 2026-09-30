@@ -33,13 +33,32 @@ control over the engine, the cost and where their words go.
 
 ## Install
 
-Requires Python 3.12 or newer. With [uv](https://docs.astral.sh/uv/):
+For macOS dictation with global shortcuts, install the standalone app from
+source. You need [uv](https://docs.astral.sh/uv/getting-started/installation/)
+and Git; uv can install the required Python 3.12 or newer. Entune is not yet
+published on PyPI, so `uvx entune` is not an available installation route.
 
 ```sh
-uvx entune
+git clone https://github.com/eandualem/entune.git
+cd entune
+uv sync --group build
+uv run --group build python packaging/build_app.py
+uv run entune install-app --from dist/Entune.app
 ```
 
-or, from a checkout:
+Open **Entune** from the Applications folder printed by the installer. Complete
+the [permission setup](#permissions-macos), then:
+
+1. Open **Models**, enter a speech provider's API key, or download a local model.
+   Parakeet additionally needs its separately installed engine; see
+   [Speech models and cost](#speech-models-and-cost).
+2. Pick that speech model as the default. Optional dictionary and formatting
+   features are not needed for your first dictation.
+3. Set a recording shortcut in **Settings**, focus a text field in another app,
+   and hold the shortcut while speaking. Release it to transcribe and paste.
+   The recording and result also appear in History.
+
+To try the app directly from the checkout instead:
 
 ```sh
 uv run entune
@@ -68,15 +87,24 @@ to **System Settings › Privacy & Security** to enable Entune:
 | Input Monitoring | to see the shortcut while another app has focus |
 | Accessibility | to paste the transcript into that app |
 
-With `uvx entune` they are granted to whatever runs it, your terminal or
-Python, and asked again if that changes. Building `Entune.app` (below) gives
-macOS a stable app to attach them to.
+With `uv run entune` they are granted to whatever runs it, your terminal or
+Python, and asked again if that changes. The standalone `Entune.app` gives
+macOS a named app to attach them to. Keeping permissions across app updates
+also requires the same signing certificate; see [Updating Entune.app](#updating-entuneapp).
 
 Microphone access can be requested from setup without making a recording.
 Each row updates when its permission is granted. If access was denied,
 **Open Settings…** takes you to the relevant pane. If macOS asks you to quit,
 reopen Entune to continue; missing permissions bring setup back on launch.
 The Fn key needs Accessibility as well as Input Monitoring.
+
+If setup remains at **1 of 3 allowed**, check Input Monitoring and Accessibility
+in System Settings. Enable the entry for the installed Entune app, then quit
+Entune from its menu-bar menu and reopen it. For an app updated without a stable
+signing certificate, an old enabled entry can belong to the previous build:
+remove that Entune entry and add the current app from Applications, then enable
+it. Do not reset permissions for unrelated apps. Microphone has no add button;
+use **Allow…** in Entune to request it.
 
 ## Dictating
 
@@ -356,11 +384,25 @@ uv run --group build python packaging/build_app.py     # writes dist/Entune.app
 uv run entune install-app --from dist/Entune.app        # copies it to /Applications
 ```
 
-Open it from Applications and grant the three permissions once to
+Open it from Applications and grant the three permissions to
 "Entune". It shares the data and settings of `entune`. There is also a
 lighter `entune install-app` without `--from`, a launcher bundle that runs
 this installation; macOS may refuse to list it in the permission panels,
 so prefer the standalone one. See [packaging](docs/packaging.md).
+
+### Updating Entune.app
+
+Quit Entune from its menu-bar menu before replacing it. Update your checkout
+with `git pull --ff-only`, then repeat the three build/install commands above.
+Your recordings, models, keys and settings are stored separately and are kept.
+
+By default, local builds are signed ad hoc: macOS permissions may need granting
+again after every rebuild. To retain them, set up a local signing certificate
+once using [Signing, and keeping the permissions](docs/packaging.md#signing-and-keeping-the-permissions).
+This is optional for a first installation; a developer account is not required.
+The installer stops if certificate signing fails or an update would change an
+existing certificate identity, leaving the installed app in place. Restore
+access to that same certificate in Keychain Access, then retry the install.
 
 ## Data and privacy
 
