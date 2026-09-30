@@ -51,9 +51,9 @@ Choose **OpenAI** in dictionary setup, then choose how to access it:
   separately from a ChatGPT subscription.
 
 Then choose the dictionary model on the Dictionary page. If it is missing from
-the suggested list, use the custom model field with `chatgpt:gpt-6.1-sol` for
-subscription access or `openai:gpt-6.1-sol` for API-key access. The selected
-account must have access to the model. Entune requests medium thinking where
+the suggested list, open **Settings → Dictionary setup → Custom** and enter
+just `gpt-6.1-sol`, for either access option. Entune adds the provider prefix
+automatically. The selected account must have access to the model. Entune requests medium thinking where
 supported and automatically splits inputs into approximately 24,000-character
 batches; these are not additional UI settings.
 
