@@ -175,7 +175,7 @@ A speech model turns a recording into text. These are the ones Entune can use:
 |---|---|---|
 | AssemblyAI | universal-3-5-pro | sync endpoint; clips over two minutes use the long-form endpoint |
 | Groq | whisper-large-v3-turbo | OpenAI-style transcriptions endpoint |
-| Soniox | stt-async-v5 | upload, poll, fetch; the upload is deleted afterwards |
+| Soniox | stt-async-v5 | upload, poll, fetch; deletion of the upload and job is attempted afterwards |
 | ElevenLabs | scribe_v2 | synchronous speech-to-text endpoint |
 | xAI Grok | grok-voice-transcribe-2.0 | synchronous speech-to-text endpoint |
 | Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
@@ -189,6 +189,14 @@ of audio, at its own published rate:
 [Soniox](https://soniox.com/pricing),
 [ElevenLabs](https://elevenlabs.io/pricing/api),
 [xAI](https://docs.x.ai/developers/models).
+
+Soniox cleanup is best effort: a failed deletion does not discard a successful
+transcript or replace a transcription error. The app logs a warning in `entune.log`
+in its [data folder](#data-and-privacy), or in the terminal when launched there.
+It does not retry deletion or show a cleanup warning in History.
+Uploaded audio or the transcription job may remain with Soniox
+when cleanup fails; a successful deletion request is not a guarantee about the
+provider's backups or retention policy.
 
 Keys live in the local database, are only ever sent to the provider they
 belong to, and are never shown again beyond a masked hint. A ChatGPT sign-in is kept
