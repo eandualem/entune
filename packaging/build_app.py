@@ -30,7 +30,11 @@ def main() -> None:
         check=True,
     )  # fmt: skip
     shutil.rmtree(DIST / "Entune", ignore_errors=True)  # the unbundled copy, not needed
-    print(f"\nBuilt {DIST / 'Entune.app'}. Drag it to /Applications and open it.")
+    print(
+        f"\nBuilt {DIST / 'Entune.app'}.\n"
+        "Install from the project directory with: "
+        "uv run entune install-app --from dist/Entune.app"
+    )
 
 
 if __name__ == "__main__":

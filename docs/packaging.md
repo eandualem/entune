@@ -25,7 +25,7 @@ enough for the permission panels but ties the grants to the exact binary:
 after every rebuild macOS forgets Microphone, Input Monitoring and
 Accessibility and asks again (seen 2026-09-18, issue #51).
 
-To keep them across rebuilds, create a certificate once. Three steps in
+To keep them across rebuilds, create a certificate once. Four steps in
 Keychain Access, as it took on macOS 26 (2026-09-18):
 
 1. Certificate Assistant › Create a Certificate…: name **Entune Developer**
@@ -59,8 +59,19 @@ build has the same identity (`codesign -d -r- Entune.app` shows
 Nothing else changes; this is not Developer ID and does not help other
 Macs.
 
-If signing with the certificate fails, `install-app` prints codesign's
-error and signs ad hoc instead, rather than leave a half-signed bundle.
+If signing with the certificate fails, `install-app` stops with codesign's
+error and leaves the installed app unchanged. It also refuses an update that
+does not satisfy the installed app's certificate identity, including when the
+certificate is missing or inaccessible and only ad-hoc signing is available.
+Restore access to the same certificate and private key in Keychain Access,
+then retry. Do not create another certificate with the same name: its identity
+would still be different.
+
+Quit Entune before installing an update. Use `install-app --from` rather than
+dragging a freshly built bundle over the existing app: the installer signs it
+and checks that a certificate-backed permission identity is preserved.
+The build output alone is signed ad hoc. Local signing does not provide
+Developer ID signing or notarisation for distribution to other Macs.
 
 ## A standalone bundle with PyInstaller
 
