@@ -312,8 +312,8 @@ def test_native_listener_reads_keyboard_layout_on_the_creating_thread(
     import threading
     from collections.abc import Iterator
 
-    import pynput.keyboard._darwin as pynput_keyboard
-    from pynput._util.darwin import ListenerMixin
+    import pynput.keyboard._darwin as pynput_keyboard  # type: ignore[import-not-found]
+    from pynput._util.darwin import ListenerMixin  # type: ignore[import-not-found]
 
     from entune.desktop.macos import hotkeys
 
