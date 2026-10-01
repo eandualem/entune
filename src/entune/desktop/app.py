@@ -135,10 +135,12 @@ class EntuneApp:
         if not self._server_answers() and time.monotonic() - started < SERVER_WAIT_SECONDS:
             self.platform.call_later(0.2, lambda: self._show_window_when_served(started))
             return
+        # A first run lands on Get started (model, permissions, shortcut), in History.
+        first_run = not self.entune.store.list_recordings(limit=1)
         needs_setup = not self.entune.settings.shortcuts() or any(
             state != "granted" for state in self._permission_status().values()
         )
-        self.platform.window.show("#settings" if needs_setup else "")
+        self.platform.window.show("#settings" if needs_setup and not first_run else "")
 
     def _probe_server(self) -> bool:
         host, _, port = self.url.removeprefix("http://").rstrip("/").partition(":")

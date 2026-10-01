@@ -13,6 +13,7 @@ from entune.cli import (
     applications_folder,
     build_parser,
     main,
+    opens_as_app,
     port_is_free,
 )
 from entune.storage.store import Store
@@ -98,20 +99,81 @@ def test_data_directory_failure_keeps_the_startup_error(
         main(["--no-menu", "--no-open", "--port", "0", "--data", str(path)])
 
 
-def test_install_app_writes_a_launchable_bundle(tmp_path: Path) -> None:
+def test_install_app_writes_the_same_launcher_every_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     pytest.importorskip("Foundation", reason="macOS only")
-    import plistlib
+    from entune.desktop.macos import bundle
 
-    from entune.desktop.macos.bundle import install_app
-
-    app = install_app(tmp_path)
-    info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+    remembered: list[bool] = []
+    monkeypatch.setattr(bundle, "remember_launch_command", lambda: remembered.append(True))
+    first, second = bundle.install_app(tmp_path / "a"), bundle.install_app(tmp_path / "b")
+    info = plistlib.loads((first / "Contents" / "Info.plist").read_bytes())
     assert info["CFBundleName"] == "Entune" and info["LSUIElement"] is True
-    launcher = app / "Contents" / "MacOS" / "Entune"
+    launcher = first / "Contents" / "MacOS" / "Entune"
     assert launcher.stat().st_mode & 0o111
-    assert "-m entune" in launcher.read_text()
-    assert (app / "Contents" / "Resources" / info["CFBundleIconFile"]).exists()
-    install_app(tmp_path)  # replacing an existing bundle is fine
+    assert launcher.read_bytes()[:4] == bundle.LAUNCHER.read_bytes()[:4]
+    assert bundle.is_launcher(first)
+    assert (first / "Contents" / "Resources" / info["CFBundleIconFile"]).exists()
+    assert remembered == [True, True]
+
+    # One ad hoc identity for every install and upgrade: macOS keeps the permissions.
+    def identity(app: Path) -> str:
+        shown = subprocess.run(["codesign", "-d", "-r-", str(app)], capture_output=True, text=True)
+        return next(line for line in shown.stdout.splitlines() if "designated" in line)
+
+    assert identity(first) == identity(second) and "cdhash" in identity(first)
+    bundle.install_app(tmp_path / "a")  # replacing an existing bundle is fine
+
+
+def test_packaged_launcher_runs_on_apple_silicon_and_intel() -> None:
+    import struct
+
+    from entune.desktop.macos.bundle import LAUNCHER
+
+    data = LAUNCHER.read_bytes()
+    magic, count = struct.unpack(">II", data[:8])
+    assert magic == 0xCAFEBABE  # a universal binary
+    cpus = {struct.unpack(">I", data[8 + 20 * i : 12 + 20 * i])[0] for i in range(count)}
+    assert cpus == {0x01000007, 0x0100000C}  # x86_64, arm64
+
+
+def test_only_launchers_are_replaced(tmp_path: Path) -> None:
+    from entune.desktop.macos.bundle import is_launcher
+
+    app = tmp_path / "Entune.app"
+    assert is_launcher(app)  # nothing installed yet
+    executable = app / "Contents" / "MacOS" / "Entune"
+    executable.parent.mkdir(parents=True)
+    info = app / "Contents" / "Info.plist"
+    info.write_bytes(plistlib.dumps({"CFBundleExecutable": "Entune", "EntuneLauncher": True}))
+    executable.write_bytes(b"\xca\xfe\xba\xbe")
+    assert is_launcher(app)
+    info.write_bytes(plistlib.dumps({"CFBundleExecutable": "Entune"}))
+    executable.write_text('#!/bin/sh\nexec python -m entune "$@"\n')
+    assert is_launcher(app)  # the earlier script launcher
+    executable.write_bytes(b"\xcf\xfa\xed\xfe a standalone build")
+    assert not is_launcher(app)
+
+
+def test_plain_entune_on_macos_opens_the_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.delenv("ENTUNE_APP", raising=False)
+    assert opens_as_app([])
+    assert not opens_as_app(["--no-app"]) and not opens_as_app(["--data", "x"])
+    monkeypatch.setenv("ENTUNE_APP", "/Applications/Entune.app")
+    assert not opens_as_app([])  # started by the app: run
+    monkeypatch.delenv("ENTUNE_APP")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert not opens_as_app([])  # the standalone build is the app
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "frozen", False)
+    assert not opens_as_app([])
+    opened: list[bool] = []
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(cli, "open_as_app", lambda: opened.append(True))
+    main([])
+    assert opened == [True]
 
 
 def test_install_app_can_copy_a_built_bundle(
@@ -248,9 +310,10 @@ def test_update_of_unsigned_launcher_preserves_other_inspection_errors(
 
     from entune.desktop.macos import bundle
 
-    installed = tmp_path / "Entune.app"
-    installed.mkdir()
+    installed = tmp_path / "apps" / "Entune.app"
+    installed.mkdir(parents=True)
     (installed / "original").write_text("old launcher")
+    built = _built_bundle(tmp_path)
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         assert cmd == ["codesign", "-d", "-r-", str(installed)]
@@ -259,14 +322,14 @@ def test_update_of_unsigned_launcher_preserves_other_inspection_errors(
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(bundle, "sign", lambda app: "-")
     if diagnostic == "code object is not signed at all":
-        bundle.install_app(tmp_path)
+        bundle.install_app(installed.parent, source=built)
         assert (installed / "Contents/MacOS/Entune").is_file()
         assert not (installed / "original").exists()
     else:
         with pytest.raises(subprocess.CalledProcessError):
-            bundle.install_app(tmp_path)
+            bundle.install_app(installed.parent, source=built)
         assert (installed / "original").read_text() == "old launcher"
-    assert list(tmp_path.iterdir()) == [installed]
+    assert list(installed.parent.iterdir()) == [installed]
 
 
 @pytest.mark.parametrize("matches", [True, False])
@@ -277,9 +340,10 @@ def test_update_preserves_the_installed_certificate(
 
     from entune.desktop.macos import bundle
 
-    installed = tmp_path / "Entune.app"
-    installed.mkdir()
+    installed = tmp_path / "apps" / "Entune.app"
+    installed.mkdir(parents=True)
     (installed / "original").write_text("working app")
+    built = _built_bundle(tmp_path)
     requirement = 'identifier "dev.elias.dictum" and certificate leaf = H"abcd"'
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -291,13 +355,23 @@ def test_update_preserves_the_installed_certificate(
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(bundle, "sign", lambda app: "-")
     if matches:
-        bundle.install_app(tmp_path)
+        bundle.install_app(installed.parent, source=built)
         assert (installed / "Contents/MacOS/Entune").is_file()
     else:
         with pytest.raises(RuntimeError, match="does not match the installed signing certificate"):
-            bundle.install_app(tmp_path)
+            bundle.install_app(installed.parent, source=built)
         assert (installed / "original").read_text() == "working app"
-    assert list(tmp_path.iterdir()) == [installed]
+    assert list(installed.parent.iterdir()) == [installed]
+
+
+def _built_bundle(tmp_path: Path) -> Path:
+    built = tmp_path / "built" / "Entune.app"
+    (built / "Contents" / "MacOS").mkdir(parents=True)
+    (built / "Contents" / "MacOS" / "Entune").write_bytes(b"binary")
+    (built / "Contents" / "Info.plist").write_bytes(
+        plistlib.dumps({"CFBundleExecutable": "Entune"})
+    )
+    return built
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file permissions")

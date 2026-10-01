@@ -31,7 +31,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="entune",
         description=__doc__,
-        epilog="`entune install-app` writes a Entune.app (macOS) that runs this installation.",
+        epilog=(
+            "On macOS, `entune` without options installs Entune.app into Applications and"
+            " opens it; with any option it runs in this terminal."
+        ),
     )
     parser.add_argument("--version", action="version", version=f"entune {__version__}")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", DEFAULT_PORT)))
@@ -41,6 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--no-menu", action="store_true", help="web page only, no menu-bar or tray app"
+    )
+    parser.add_argument(
+        "--no-app",
+        action="store_true",
+        help="macOS: run in this terminal instead of installing and opening Entune.app",
     )
     return parser
 
@@ -76,18 +84,49 @@ def install_app(directory: Path, source: Path | None) -> None:
     app = write_bundle(directory, source)
     what = "a copy of the standalone bundle" if source else "a launcher for this same Entune"
     print(f"Installed {app}: {what}. Open it from there.", flush=True)
-    if signing_identity() is None:
+    if source is not None and signing_identity() is None:
         print(
             "Signed ad hoc: macOS will ask for its permissions again after every rebuild."
             " An 'Entune Developer' certificate avoids that: see docs/packaging.md.",
             flush=True,
         )
-    if source is None:
-        print(
-            "If System Settings will not list Entune under Input Monitoring or Accessibility,"
-            " build the standalone bundle and install that: see docs/packaging.md.",
-            flush=True,
+
+
+def opens_as_app(argv: list[str]) -> bool:
+    """Plain `entune` on macOS opens Entune.app. Any option (--data, --port, --no-app…)
+    runs here instead, as do Entune.app's own start and the standalone build."""
+    return (
+        sys.platform == "darwin"
+        and not argv
+        and not getattr(sys, "frozen", False)
+        and "ENTUNE_APP" not in os.environ
+    )
+
+
+def open_as_app() -> None:
+    """Install or update Entune.app for this installation, open it, and leave the terminal.
+
+    Started from the app, Entune's permissions belong to Entune; started from here they
+    would belong to the terminal.
+    """
+    import subprocess
+
+    from entune.desktop.macos.bundle import install_app as write_bundle
+    from entune.desktop.macos.bundle import is_launcher
+
+    app = applications_folder() / "Entune.app"
+    if not is_launcher(app):
+        sys.exit(
+            f"{app} is a separately built Entune and was left unchanged. Open it from"
+            " Applications, or move it to the Trash and run `entune` again."
         )
+    write_bundle(app.parent)
+    subprocess.run(["open", str(app)], check=True)
+    print(
+        f"Entune is installed in {app.parent} and is opening.\n"
+        "From now on, open it like any app: from Applications, Spotlight or Launchpad.",
+        flush=True,
+    )
 
 
 def _show_running_window(port: int) -> bool:
@@ -164,6 +203,9 @@ def main(argv: list[str] | None = None) -> None:
         install_app(opts.into or applications_folder(), opts.source)
         return
     args = build_parser().parse_args(argv)
+    if opens_as_app(argv):
+        open_as_app()
+        return
     data_dir = args.data or default_data_dir()
     if not port_is_free(args.port):
         # Most likely another Entune: two would both answer the shortcut and paste twice.

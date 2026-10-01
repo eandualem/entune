@@ -1,24 +1,29 @@
 import { api, el, errorText } from "./ui.js";
 
-// macOS owns the grants. Recheck while General is visible; never store a guessed
-// "setup complete" flag that becomes stale after a permission is revoked.
-export function createPermissions() {
+// macOS owns the grants. Recheck while General or Get started is visible; never store
+// a guessed "setup complete" flag that becomes stale after a permission is revoked.
+// `onChange` hears every new answer: {desktop, permissions}.
+export function createPermissions({ onChange } = {}) {
   const panel = el("permissions");
   const status = el("permissions-status");
   const buttons = [...panel.querySelectorAll("button[data-permission]")];
   let states = {};
-  let active = false;
+  const showing = new Set(); // the views that need fresh answers
   let polling = null;
   let loading = false;
   let lastStatus = "";
 
   async function refresh() {
-    if (!active || document.hidden || loading) return;
+    if (showing.size === 0 || document.hidden || loading) return;
     loading = true;
     try {
       const result = await api("/api/status");
       panel.hidden = !result.desktop;
-      if (!result.desktop) { clearInterval(polling); polling = null; return; }
+      if (!result.desktop) {
+        clearInterval(polling); polling = null;
+        if (lastStatus !== "browser") { lastStatus = "browser"; onChange?.({ desktop: false, permissions: {} }); }
+        return;
+      }
       const nextStatus = JSON.stringify(result.permissions);
       if (nextStatus === lastStatus) return;
       lastStatus = nextStatus;
@@ -40,8 +45,9 @@ export function createPermissions() {
         ? "Entune has access to the microphone, your shortcuts and pasting."
         : "Allow these three permissions so you can dictate in any app. macOS asks for each one separately.";
       status.textContent = ready
-        ? "Choose your shortcuts below, then add a provider key or download a local model."
+        ? "Choose your shortcuts below."
         : `${allowed} of 3 allowed. Enable Entune in System Settings when asked. If macOS asks you to quit, reopen Entune to continue here.`;
+      onChange?.({ desktop: true, permissions: states });
     } catch (err) {
       lastStatus = "";
       panel.hidden = false;
@@ -49,31 +55,39 @@ export function createPermissions() {
     } finally { loading = false; }
   }
 
+  // Ask macOS, or open its settings once it has asked; either way, show the result.
+  async function request(name) {
+    await api(`/api/permissions/${name}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ openSettings: ["requested", "denied", "restricted"].includes(states[name]) }),
+    });
+    await refresh();
+  }
+
   for (const button of buttons) {
     button.addEventListener("click", async () => {
       button.disabled = true;
-      try {
-        const name = button.dataset.permission;
-        await api(`/api/permissions/${name}`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ openSettings: ["requested", "denied", "restricted"].includes(states[name]) }),
-        });
-        await refresh();
-      } catch (err) { status.textContent = errorText(err); }
+      try { await request(button.dataset.permission); }
+      catch (err) { status.textContent = errorText(err); }
       finally { button.disabled = false; }
     });
   }
 
-  function setActive(value) {
-    active = value;
+  function poll() {
     clearInterval(polling);
     polling = null;
-    if (active && !document.hidden) {
+    if (showing.size > 0 && !document.hidden) {
       polling = setInterval(refresh, 2000);
       refresh();
     }
   }
-  document.addEventListener("visibilitychange", () => setActive(active));
+  // `view` is "settings" or "start"; polling runs while either is visible.
+  function setActive(value, view = "settings") {
+    if (showing.has(view) === value) return;
+    if (value) showing.add(view); else showing.delete(view);
+    poll();
+  }
+  document.addEventListener("visibilitychange", poll);
   window.addEventListener("focus", refresh);
-  return { setActive };
+  return { setActive, request };
 }

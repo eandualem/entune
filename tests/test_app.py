@@ -452,6 +452,7 @@ def test_the_window_opens_on_settings_only_until_a_shortcut_exists(
     tmp_path: Path, configured: bool
 ) -> None:
     entune = Entune(Store(tmp_path), [StubProvider()])
+    entune.store.create_recording(Capture(b"\x00\x00" * 16_000, 16_000).wav())
     if configured:
         entune.settings.set_shortcuts("alt_r", None)
     platform = FakePlatform()
@@ -469,11 +470,28 @@ def test_the_window_opens_on_settings_only_until_a_shortcut_exists(
     assert app.engine is not None if configured else app.engine is None
 
 
+def test_a_first_run_opens_get_started(tmp_path: Path) -> None:
+    entune = Entune(Store(tmp_path), [StubProvider()])
+    platform = FakePlatform()
+    EntuneApp(
+        entune,
+        platform,
+        "http://localhost:0/",
+        show_window=True,
+        recorder=FakeRecorder(Capture(b"", 16_000)),
+        server_answers=lambda: True,
+    )
+    _delay, action = platform.timers[-1]
+    action()
+    assert platform.window.shown == [""]  # History, whose Get started leads the setup
+
+
 def test_missing_permissions_reopen_setup_and_recover_without_recording(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path, listen=False, post=False)
     platform.permissions.microphone = "not_requested"
     entune.settings.set_shortcuts("fn", "cmd+fn")
     app._server_answers = lambda: True
+    entune.store.create_recording(Capture(b"\x00\x00" * 16_000, 16_000).wav())
     app._show_window_when_served(time.monotonic())
     assert platform.window.shown == ["#settings"]
     assert entune.desktop.request_permission("microphone", False)
@@ -490,7 +508,7 @@ def test_missing_permissions_reopen_setup_and_recover_without_recording(tmp_path
         "accessibility": "granted",
     }
     assert platform.hotkeys.running
-    assert not app._recording and not entune.store.list_recordings()
+    assert not app._recording and len(entune.store.list_recordings()) == 1
     app._show_window_when_served(time.monotonic())
     assert platform.window.shown[-1] == ""
 

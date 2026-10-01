@@ -203,6 +203,8 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .step.done .what { color: var(--text-dim); text-decoration: line-through; }
 .step .what { flex: 1; min-width: 0; }
 .step .how { display: block; font-size: var(--fs-12); color: var(--text-dim); line-height: var(--lh-caption); margin-top: 2px; }
+.permission-steps { display: flex; flex-direction: column; gap: var(--sp-4); margin-top: var(--sp-8); }
+.permission-step { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); font-size: var(--fs-12-5); }
 .step.done .how { display: none; }
 
 /* Dictionary */
