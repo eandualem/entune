@@ -36,7 +36,11 @@ def windowless_python() -> Path:
     """pythonw.exe beside the Python running now: the same installation, no console."""
     executable = Path(sys.executable)
     windowless = executable.with_name("pythonw.exe")
-    return windowless if windowless.is_file() else executable
+    if not windowless.is_file():
+        # python.exe from the Start menu would look like a terminal run and reopen
+        # the entry instead of starting Entune.
+        raise RuntimeError(f"Could not add Entune to the Start menu: {windowless} is missing")
+    return windowless
 
 
 def is_windowless() -> bool:

@@ -58,6 +58,17 @@ def test_start_menu_entry_runs_this_installation_without_a_console(tmp_path: Pat
     install_shortcut(tmp_path)  # replacing it is fine
 
 
+def test_start_menu_entry_needs_windowless_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # python.exe in the entry would reopen the entry instead of starting Entune.
+    from entune.desktop.windows.install import windowless_python
+
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python.exe"))
+    with pytest.raises(RuntimeError, match=r"pythonw\.exe is missing"):
+        windowless_python()
+
+
 @windows_only
 def test_the_pill_shows_without_taking_focus() -> None:
     if sys.platform == "win32":
