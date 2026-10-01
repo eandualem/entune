@@ -96,11 +96,13 @@ def install_app(directory: Path, source: Path | None) -> None:
 def opens_as_app(argv: list[str]) -> bool:
     """Plain `entune` from a terminal installs and opens the app (macOS, Windows).
 
-    Any option (--data, --port, --no-app…) runs here instead, as does the app itself:
-    Entune.app's child (ENTUNE_APP), the Start menu's windowless Python, and the
-    standalone build.
+    Any option (--data, --port, --no-app…) or a PORT setting runs here instead, since
+    the app would not see them, as does the app itself: Entune.app's child
+    (ENTUNE_APP), the Start menu's windowless Python, and the standalone build.
     """
-    if argv or getattr(sys, "frozen", False) or "ENTUNE_APP" in os.environ:
+    if argv or "PORT" in os.environ or "ENTUNE_APP" in os.environ:
+        return False
+    if getattr(sys, "frozen", False):
         return False
     if sys.platform == "win32":
         from entune.desktop.windows.install import is_windowless

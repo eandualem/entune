@@ -161,6 +161,9 @@ def test_plain_entune_on_macos_opens_the_app(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.delenv("ENTUNE_APP", raising=False)
     assert opens_as_app([])
     assert not opens_as_app(["--no-app"]) and not opens_as_app(["--data", "x"])
+    monkeypatch.setenv("PORT", "5000")
+    assert not opens_as_app([])  # the app would not see PORT: run here
+    monkeypatch.delenv("PORT")
     monkeypatch.setenv("ENTUNE_APP", "/Applications/Entune.app")
     assert not opens_as_app([])  # started by the app: run
     monkeypatch.delenv("ENTUNE_APP")

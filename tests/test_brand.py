@@ -53,6 +53,7 @@ def test_menu_bar_glyph_is_a_black_template_image() -> None:
 
 
 def test_the_page_names_its_icon() -> None:
-    page = (ROOT / "src" / "entune" / "web" / "index.html").read_text()
+    page = (ROOT / "src" / "entune" / "web" / "index.html").read_text(encoding="utf-8")
     assert '<link rel="icon" href="/static/favicon.svg"' in page
-    assert (ROOT / "src" / "entune" / "web" / "favicon.svg").read_text().startswith("<svg")
+    favicon = ROOT / "src" / "entune" / "web" / "favicon.svg"
+    assert favicon.read_text(encoding="utf-8").startswith("<svg")

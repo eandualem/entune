@@ -8,7 +8,7 @@ import { createDictionary } from "./dictionary-view.js";
 import { createSettings } from "./settings-view.js";
 import { createPermissions } from "./permissions-view.js";
 import { initRecording } from "./recording.js";
-import { ICON, api, el, errorText, figure, fillModels, segmentedGroup } from "./ui.js";
+import { ICON, THIS_DEVICE, api, el, errorText, figure, fillModels, segmentedGroup } from "./ui.js";
 
 const status = el("status");
 const modelSelect = el("model");
@@ -44,29 +44,19 @@ window.addEventListener("pywebviewready", alignWindowButtons);
 alignWindowButtons();
 
 // ---- Words for this computer: the page is written for a Mac ----
-// Elsewhere (Windows, or a browser on another system) "this Mac" reads "this computer",
-// including text the views write later.
-if (!/Macintosh/.test(navigator.userAgent)) {
-  const fix = (text) => text.replaceAll("this Mac", "this computer");
-  const fixTree = (root) => {
-    if (root.nodeType === Node.TEXT_NODE) { if (root.nodeValue.includes("this Mac")) root.nodeValue = fix(root.nodeValue); return; }
-    if (root.nodeType !== Node.ELEMENT_NODE) return;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.nodeValue.includes("this Mac")) node.nodeValue = fix(node.nodeValue);
-    for (const element of [root, ...root.querySelectorAll("[placeholder], [aria-label], [title]")]) {
-      for (const name of ["placeholder", "aria-label", "title"]) {
-        const value = element.getAttribute(name);
-        if (value?.includes("this Mac")) element.setAttribute(name, fix(value));
-      }
+// Relabel the page's own text once, before any transcript, dictionary entry or provider
+// error is shown: those stay verbatim. Text the views write later uses THIS_DEVICE.
+if (THIS_DEVICE !== "this Mac") {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.nodeValue.includes("this Mac")) node.nodeValue = node.nodeValue.replaceAll("this Mac", THIS_DEVICE);
+  }
+  for (const element of document.querySelectorAll("[placeholder], [aria-label], [title]")) {
+    for (const name of ["placeholder", "aria-label", "title"]) {
+      const value = element.getAttribute(name);
+      if (value?.includes("this Mac")) element.setAttribute(name, value.replaceAll("this Mac", THIS_DEVICE));
     }
-  };
-  fixTree(document.body);
-  new MutationObserver((changes) => {
-    for (const change of changes) {
-      if (change.type === "characterData") fixTree(change.target);
-      else for (const node of change.addedNodes) fixTree(node);
-    }
-  }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  }
 }
 
 // ---- Preferences kept in this window: theme and text size ----

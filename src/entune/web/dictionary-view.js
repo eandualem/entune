@@ -1,4 +1,4 @@
-import { api, el, errorText, flash, modelName, segmentedGroup } from "./ui.js";
+import { THIS_DEVICE, api, el, errorText, flash, modelName, segmentedGroup } from "./ui.js";
 import { createAudioOnboarding } from "./audio-onboarding.js";
 import { createDictionaryBuild } from "./dictionary-build.js";
 
@@ -990,7 +990,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const speech = speechName(getModel());
     return {
       entune: `Your Entune recordings transcribed with other speech models. Transcribing them again with ${speech} teaches it your words without dictating them again.`,
-      provider: `Recordings another dictation app keeps on this Mac, transcribed with ${speech} so it learns from all of them at once.`,
+      provider: `Recordings another dictation app keeps on ${THIS_DEVICE}, transcribed with ${speech} so it learns from all of them at once.`,
       folder: `Any folder of audio of you talking, such as meetings, voice notes or exports, transcribed with ${speech} and then turned into suggestions.`,
     }[source];
   }

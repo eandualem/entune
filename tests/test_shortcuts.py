@@ -35,7 +35,7 @@ def test_rejects_unusable_shortcuts(hold: str | None, toggle: str | None, reason
 def test_cancel_can_be_changed_or_disabled_without_conflicting_with_record() -> None:
     assert shortcuts.parse("alt_r", "cmd+d", "Ctrl+Esc").cancel == ("ctrl", "esc")
     assert shortcuts.parse(None, "fn+esc", None).cancel is None
-    assert shortcuts.parse("alt_r", None).uses_fn  # the default cancel chord also owns Fn
+    assert shortcuts.parse("alt_r", None, "fn+ctrl").uses_fn  # a cancel chord with Fn owns it
     assert not shortcuts.parse("alt_r", None, "ctrl+esc").uses_fn
     with pytest.raises(ValueError, match="different keys"):
         shortcuts.parse("fn", None, "fn")

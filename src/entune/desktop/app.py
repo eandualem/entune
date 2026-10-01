@@ -511,8 +511,10 @@ class EntuneApp:
                         f"to paste. {PASTE_KEYS} for now."
                     )
                 elif outcome == "sent":
-                    self.entune.desktop.report_status(delivery="Pasted into the app in front")
-                    self.platform.tray.complete("Pasted into the app in front")
+                    # Windows cannot confirm arrival (an administrator window refuses it).
+                    sent = f"{PASTE_KEYS} sent to the app in front · also copied"
+                    self.entune.desktop.report_status(delivery=sent)
+                    self.platform.tray.complete(sent)
                 elif outcome == "unverified":
                     completion = (
                         "Copied to clipboard. Paste was sent, but insertion could not be verified."

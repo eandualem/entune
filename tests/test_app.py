@@ -606,7 +606,7 @@ def test_cancelling_retains_capture_aborts_upload_and_prevents_transcription_or_
     entune.settings.set_key("stub", "k")
     entune.models.set_default_model("stub/good")
     entune.settings.set_fast_mode(True)
-    entune.settings.set_shortcuts("fn", "cmd+fn")
+    entune.settings.set_shortcuts("fn", "cmd+fn", "fn+ctrl")
     engine = app.engine
     assert engine is not None
     engine.press("cmd")
