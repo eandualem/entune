@@ -13,6 +13,10 @@ from entune.providers.contracts import Clip, Failure
 from entune.providers.local.parakeet import FILES, MODEL, Parakeet
 from tests.conftest import mock_client
 
+# Parakeet runs on Apple Silicon only; its helper's pipe is read with select(), which
+# Windows supports for sockets alone.
+posix_helper = pytest.mark.skipif(sys.platform == "win32", reason="Parakeet helper is POSIX")
+
 
 def wait_until(condition: Any, seconds: float = 3.0) -> None:
     deadline = time.monotonic() + seconds
@@ -47,6 +51,7 @@ def test_download_fetches_both_files_and_remove_deletes_them(tmp_path: Path) -> 
     assert not parakeet.models and not (tmp_path / MODEL).exists()
 
 
+@posix_helper
 def test_the_helper_answers_over_the_pipe_and_reports_a_missing_engine(tmp_path: Path) -> None:
     # This interpreter has no parakeet_mlx: the helper starts, answers the load with an
     # error, and the provider turns it into a Failure instead of hanging or raising.
@@ -105,6 +110,7 @@ def test_switching_models_cannot_unload_between_load_and_transcription(
     assert not parakeet._loaded
 
 
+@posix_helper
 def test_stalled_helper_is_stopped_and_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -126,6 +132,7 @@ def test_stalled_helper_is_stopped_and_reported(
     assert helper.poll() is not None and parakeet._helper is None
 
 
+@posix_helper
 def test_partial_helper_answer_has_a_deadline_and_releases_the_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -154,6 +161,7 @@ def test_partial_helper_answer_has_a_deadline_and_releases_the_process(
         parakeet.unload()
 
 
+@posix_helper
 def test_invalid_helper_answer_is_reported_and_does_not_leave_a_loaded_process(
     tmp_path: Path,
 ) -> None:

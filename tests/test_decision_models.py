@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import textwrap
 import time
@@ -268,7 +269,7 @@ def test_a_laya_that_cannot_launch_is_reported_not_raised(tmp_path: Path) -> Non
         service.settings.set_processing("laya", cleanup=True)  # no exception reaches here
         state, error = laya.status()
         assert state == "failed" and error is not None
-        assert error.startswith("Laya could not start: [Errno 2] No such file or directory")
+        assert re.match(r"Laya could not start: \[(Errno|WinError) 2\]", error)  # not found
     finally:
         service.close()
 

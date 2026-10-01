@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import asdict
 
 from starlette.requests import Request
@@ -30,6 +31,7 @@ def routes(app: Entune) -> list[Route]:
         return JSONResponse(
             {
                 "version": __version__,
+                "system": {"darwin": "macos", "win32": "windows"}.get(sys.platform, "other"),
                 "shortcuts": shortcuts_json(app),
                 "defaultModel": app.models.default_model(),
                 **app.desktop.desktop_status(),

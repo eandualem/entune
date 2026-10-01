@@ -8,7 +8,7 @@ import { createDictionary } from "./dictionary-view.js";
 import { createSettings } from "./settings-view.js";
 import { createPermissions } from "./permissions-view.js";
 import { initRecording } from "./recording.js";
-import { ICON, api, el, errorText, figure, fillModels, segmentedGroup } from "./ui.js";
+import { ICON, THIS_DEVICE, api, el, errorText, figure, fillModels, segmentedGroup } from "./ui.js";
 
 const status = el("status");
 const modelSelect = el("model");
@@ -23,6 +23,9 @@ let defaultModel = null; // {id, label} from /api/models, or null
 let settings = null; // the last /api/settings answer
 let shortcuts = { hold: null, toggle: null };
 let recordingsCount = 0;
+let desktop = null; // the desktop app (true) or a browser page (false), once /api/status answers
+let system = null; // "macos", "windows" or "other"
+let permissionStates = {};
 
 // The Mac's real window controls share the toolbar. Browser windows keep their
 // own chrome; only the native bridge adds the space and follows text scaling.
@@ -39,6 +42,22 @@ function alignWindowButtons() {
 }
 window.addEventListener("pywebviewready", alignWindowButtons);
 alignWindowButtons();
+
+// ---- Words for this computer: the page is written for a Mac ----
+// Relabel the page's own text once, before any transcript, dictionary entry or provider
+// error is shown: those stay verbatim. Text the views write later uses THIS_DEVICE.
+if (THIS_DEVICE !== "this Mac") {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.nodeValue.includes("this Mac")) node.nodeValue = node.nodeValue.replaceAll("this Mac", THIS_DEVICE);
+  }
+  for (const element of document.querySelectorAll("[placeholder], [aria-label], [title]")) {
+    for (const name of ["placeholder", "aria-label", "title"]) {
+      const value = element.getAttribute(name);
+      if (value?.includes("this Mac")) element.setAttribute(name, value.replaceAll("this Mac", THIS_DEVICE));
+    }
+  }
+}
 
 // ---- Preferences kept in this window: theme and text size ----
 function applyTheme(theme) {
@@ -88,6 +107,7 @@ function showView(name) {
   if (name === "models") settingsView.refreshJev().catch((err) => { status.textContent = errorText(err); });
   if (name === "settings" && sections.integrations.hasAttribute("data-active")) settingsView.refreshCorrections();
   permissionsView.setActive(name === "settings" && sections.general.hasAttribute("data-active"));
+  permissionsView.setActive(name === "history" && !emptyState.hidden, "start");
 }
 function show(name) { selectTab(name); showView(name); }
 
@@ -126,8 +146,15 @@ function openSettings(section) { show("settings"); selectSection(section); showS
 
 // ---- Models: one default, picked in the toolbar; it applies at once ----
 async function loadModels() {
+  const hadDefault = Boolean(defaultModel);
   models = await api("/api/models");
   defaultModel = models.find((m) => m.default) ?? null;
+  // The only model someone has set up is the one they mean to use.
+  if (!defaultModel && models.length === 1) {
+    await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ defaultModel: models[0].id }) });
+    models = await api("/api/models");
+    defaultModel = models.find((m) => m.default) ?? null;
+  }
   fillModels(models, modelSelect, defaultModel?.id ?? null, "No models: add a key or download one");
   if (!defaultModel && models.length > 0) modelSelect.prepend(new Option("Pick a model", "", true, true));
   const provider = defaultModel?.id.split("/")[0];
@@ -140,6 +167,8 @@ async function loadModels() {
   if (!status.textContent || status.textContent === "Ready") status.textContent = defaultModel ? "Ready" : "";
   await dictionary.load();
   renderStart();
+  // That was step one of Get started: go back for the next step.
+  if (!hadDefault && defaultModel && !emptyState.hidden && views.models.hasAttribute("data-active")) show("history");
   // A model change only changes the pickers, never the cards or their audio.
   for (const select of historyList.querySelectorAll(".retry-model")) {
     fillModels(models, select, defaultModel?.id ?? select.value, "No models");
@@ -210,20 +239,11 @@ async function loadMetrics() {
 }
 
 // ---- Getting started: the empty history, as steps that tick themselves off ----
+// In order: a speech model, then (in the Mac app) the permissions, then a shortcut.
+const PERMISSIONS = { microphone: "Microphone", inputMonitoring: "Input Monitoring", accessibility: "Accessibility" };
 function renderStart() {
   const kbd = (keys) => Object.assign(document.createElement("kbd"), { textContent: keys });
-  const haveModel = models.length > 0;
-  const haveDefault = Boolean(defaultModel);
-  const dictate = [];
-  if (shortcuts.hold || shortcuts.toggle) {
-    dictate.push("Anywhere, ");
-    if (shortcuts.hold) dictate.push("hold ", kbd(shortcuts.hold));
-    if (shortcuts.hold && shortcuts.toggle) dictate.push(" or ");
-    if (shortcuts.toggle) dictate.push("press ", kbd(shortcuts.toggle));
-    dictate.push(" and speak; the text is typed where you are and copied. Or press Record above.");
-  } else {
-    dictate.push("Press Record above and speak. A shortcut in Settings lets you dictate into any app.");
-  }
+  const haveShortcut = Boolean(shortcuts.hold || shortcuts.toggle);
   const step = (done, what, how, action) => {
     const li = document.createElement("li");
     li.className = done ? "step done" : "step";
@@ -248,11 +268,62 @@ function renderStart() {
     }
     return li;
   };
-  stepsList.replaceChildren(
-    step(haveModel, "Add a speech model", ["A cloud service's key, or a model downloaded to this Mac."], { label: "Models", go: () => openModels("cloud") }),
-    step(haveDefault, "Pick the default model", ["The picker in the toolbar; it applies at once."], null),
-    step(recordingsCount > 0, "Dictate", dictate, shortcuts.hold || shortcuts.toggle ? null : { label: "Set a shortcut", go: () => openSettings("general") }),
-  );
+  const steps = [
+    step(Boolean(defaultModel), "Set up a speech model", ["A cloud service's key, or a model that runs on your computer. The first one becomes your default."], { label: "Models", go: () => openModels("cloud") }),
+  ];
+  if (desktop) {
+    const allowed = Object.keys(permissionStates).every((name) => permissionStates[name] === "granted");
+    const li = system === "macos"
+      ? step(allowed, "Allow Entune on this Mac", ["The microphone to record; Input Monitoring and Accessibility so your shortcut works in any app and the text is typed there."], null)
+      : step(allowed, "Allow the microphone", ["Windows lets desktop apps use the microphone unless it is turned off in Privacy settings."], null);
+    if (!allowed) li.querySelector(".what").append(permissionRows());
+    steps.push(li);
+  }
+  const dictate = [];
+  if (desktop && haveShortcut) {
+    dictate.push("Anywhere, ");
+    if (shortcuts.hold) dictate.push("hold ", kbd(shortcuts.hold));
+    if (shortcuts.hold && shortcuts.toggle) dictate.push(" or ");
+    if (shortcuts.toggle) dictate.push("press ", kbd(shortcuts.toggle));
+    dictate.push(" and speak; the text is typed where you are and copied. Or press Record above.");
+  } else if (desktop) {
+    dictate.push("Choose the key you hold while you speak, in any app. Or press Record above.");
+  } else {
+    dictate.push("Press Record above and speak.");
+  }
+  const needsShortcut = desktop && !haveShortcut;
+  steps.push(step(recordingsCount > 0, needsShortcut ? "Set a shortcut and dictate" : "Dictate", dictate, needsShortcut ? { label: "Set a shortcut", go: () => openSettings("general") } : null));
+  stepsList.replaceChildren(...steps);
+}
+
+// One row per macOS permission, each asking for itself.
+function permissionRows() {
+  const rows = document.createElement("span");
+  rows.className = "permission-steps";
+  for (const [name, label] of Object.entries(PERMISSIONS)) {
+    if (!(name in permissionStates)) continue; // not something this system asks for
+    const row = document.createElement("span");
+    row.className = "permission-step";
+    row.append(label);
+    const state = permissionStates[name];
+    if (state === "granted") {
+      row.append(Object.assign(document.createElement("span"), { className: "caption", textContent: "Allowed" }));
+    } else {
+      const button = Object.assign(document.createElement("button"), {
+        type: "button", className: "btn ghost sm",
+        textContent: ["requested", "denied", "restricted"].includes(state) || system !== "macos" ? "Open Settings…" : "Allow…",
+      });
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try { await permissionsView.request(name); }
+        catch (err) { status.textContent = errorText(err); }
+        finally { button.disabled = false; }
+      });
+      row.append(button);
+    }
+    rows.append(row);
+  }
+  return rows;
 }
 
 // Poll only the visible History page. The controller keeps one bounded page and
@@ -265,6 +336,7 @@ const history = createHistory({
     recordingsCount = recordings.length;
     emptyState.hidden = recordings.length > 0;
     if (recordings.length === 0) renderStart();
+    permissionsView.setActive(recordings.length === 0 && views.history.hasAttribute("data-active"), "start");
   },
   onError(err) { status.textContent = errorText(err); },
 });
@@ -340,7 +412,9 @@ historyList.addEventListener("click", async (e) => {
 
 // ---- Wire the views, then load the saved configuration ----
 const dictionary = createDictionary({ getModel: () => defaultModel, getSettings: () => settings, onSettingsChanged: () => settingsView.load(), openSettings });
-const permissionsView = createPermissions();
+const permissionsView = createPermissions({
+  onChange(answer) { desktop = answer.desktop; system = answer.system; permissionStates = answer.permissions; renderStart(); },
+});
 const settingsView = createSettings({
   async onLoaded(next) {
     settings = next;
@@ -348,7 +422,13 @@ const settingsView = createSettings({
     await loadModels();
   },
   onModelsChanged: loadModels,
-  onShortcutsChanged(next) { shortcuts = next; renderStart(); },
+  onShortcutsChanged(next) {
+    const had = Boolean(shortcuts.hold || shortcuts.toggle);
+    shortcuts = next;
+    renderStart();
+    // The first shortcut was the last setup step: go back to Get started to dictate.
+    if (!had && (next.hold || next.toggle) && !emptyState.hidden && views.settings.hasAttribute("data-active")) show("history");
+  },
   onError(message) { status.textContent = message; },
 });
 initRecording({

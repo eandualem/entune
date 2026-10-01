@@ -119,10 +119,14 @@ plain path; local models (whisper.cpp, and Parakeet through a user-installed
 engine) with a Download button, taking memory only while selected; and the
 performance table built from every transcription's timing.
 
+In scope since 2026-10-01 (issue #36): the same desktop experience on Windows,
+and one install for both systems: `uv tool install entune`, then `entune`
+installs the app (Applications, or the Start menu) and opens it, with no
+certificate or terminal permissions needed.
+
 Out of scope for now: streaming endpoints, generative cleanup or rewriting passes,
-multi-user, authentication, cloud storage, platforms other than macOS
-(Windows is the last step before sharing, issue #36). Simplicity is a
-requirement, not a preference.
+multi-user, authentication, cloud storage, platforms other than macOS and
+Windows. Simplicity is a requirement, not a preference.
 
 ## Where the work stands
 

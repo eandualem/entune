@@ -5,52 +5,52 @@ permissions, everyday dictation, imports, learning, updates and data controls.
 
 ## Install
 
-For macOS dictation with global shortcuts, install the standalone app from
-source. You need [uv](https://docs.astral.sh/uv/getting-started/installation/)
-and Git; uv can install the required Python 3.12 or newer. For the Python package, see the [quick installation guide](../README.md#install).
-The source build below gives macOS a standalone app for its permission settings.
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/); it can
+install the required Python 3.12 or newer for you.
 
 ```sh
-git clone https://github.com/eandualem/entune.git
-cd entune
-uv sync --group build
-uv run --group build python packaging/build_app.py
-uv run entune install-app --from dist/Entune.app
+uv tool install entune && entune
 ```
 
-Open **Entune** from the Applications folder printed by the installer. Complete
-the [permission setup](#permissions-macos), then:
+In Windows PowerShell, use `uv tool install entune; entune`. If the terminal
+cannot find `entune`, open a new one and run `entune` again.
 
-1. Open **Models**, enter a speech provider's API key, or download a local model.
-   Parakeet additionally needs its separately installed engine; see
-   [Speech models and cost](#speech-models-and-cost).
-2. Pick that speech model as the default. Optional dictionary and formatting
-   features are not needed for your first dictation.
-3. Set a recording shortcut in **Settings**, focus a text field in another app,
-   and hold the shortcut while speaking. Release it to transcribe and paste.
-   The recording and result also appear in History.
+On macOS, `entune` puts **Entune** in your Applications folder and opens it. On
+Windows, it adds **Entune** to the Start menu and opens it. On macOS, the first
+time, it prepares Entune for up to a minute before opening it. You can close the
+terminal: from now on, open Entune like any other app, from Applications,
+Spotlight or Launchpad, or from the Start menu and Windows search.
 
-To try the app directly from the checkout instead:
+To upgrade, quit Entune and run `uv tool upgrade entune && entune` (in Windows
+PowerShell, `;` instead of `&&`). The same app then runs the new version.
 
-```sh
-uv run entune
-```
+Entune opens on **Get started**, three steps in order:
 
-On macOS this opens Entune's window (history, dictionary, settings) and
-puts a microphone icon in the menu bar; closing the window leaves it running
-there. Elsewhere, or with `--no-menu`, it is the page alone, opened in your
-browser at `http://localhost:4187`. The page provides recording, history, retry
-and dictionary controls. Native
-shortcuts, paste, the recording indicator and permission setup are implemented
-for macOS only. Windows and Linux browser-mode installation and audio/provider
-availability are not verified end to end; portable dependencies are not a
-promise of native parity.
-`entune --help` lists `--port`, `--data DIR`, `--no-open` and `--no-menu`.
+1. **Set up a speech model.** Open **Models**, enter a speech provider's API key,
+   or download a local model. The first model you set up becomes your default,
+   and Entune returns to Get started. Parakeet additionally needs its separately
+   installed engine; see [Speech models and cost](#speech-models-and-cost).
+2. **Allow permissions.** On macOS: Microphone, Input Monitoring and
+   Accessibility, each with its own button; see [Permissions (macOS)](#permissions-macos).
+   On Windows only the microphone matters; see [Windows](#windows).
+3. **Set a shortcut and dictate.** Choose the key you hold while speaking, then
+   hold it in any app and speak. Release it to transcribe and paste. The
+   recording and result also appear in History.
+
+On Linux, and with `entune --no-menu`, Entune is the page alone, opened in your
+browser at `http://localhost:4187`. It provides recording, history, retry and
+dictionary controls; shortcuts and paste are not available there. Any option,
+for example `entune --no-app`, runs Entune in the terminal instead of installing
+and opening the app. `entune --help` lists `--port`, `--data DIR`, `--no-open`,
+`--no-menu` and `--no-app`.
+
+To try development changes from a checkout, run `uv run entune --no-app`, or
+install the checkout with `uv tool install --force .` and run `entune`.
 
 ## Permissions (macOS)
 
-On first opening the installed app, Settings guides you through the three
-permissions Entune needs. Click **Allow…** beside each; macOS may send you
+On first opening Entune, Get started guides you through the three
+permissions Entune needs (they are also in Settings › General). Click **Allow…** beside each; macOS may send you
 to **System Settings › Privacy & Security** to enable Entune:
 
 | Permission | Why Entune needs it |
@@ -59,10 +59,11 @@ to **System Settings › Privacy & Security** to enable Entune:
 | Input Monitoring | to see the shortcut while another app has focus |
 | Accessibility | to paste the transcript into that app |
 
-With `uv run entune` they are granted to whatever runs it, your terminal or
-Python, and asked again if that changes. The standalone `Entune.app` gives
-macOS a named app to attach them to. Keeping permissions across app updates
-also requires the same signing certificate; see [Updating Entune.app](#updating-entuneapp).
+They are granted to **Entune** in Applications, the app `entune` installs. It is
+a small launcher that runs your installation; it is signed on your Mac without
+any certificate and is the same for every version, so the permissions stay
+granted when you upgrade. Run from a terminal with `entune --no-app`, Entune
+would instead need them granted to the terminal.
 
 Microphone access can be requested from setup without making a recording.
 Each row updates when its permission is granted. If access was denied,
@@ -78,12 +79,25 @@ remove that Entune entry and add the current app from Applications, then enable
 it. Do not reset permissions for unrelated apps. Microphone has no add button;
 use **Allow…** in Entune to request it.
 
+## Windows
+
+Windows asks no permission for shortcuts or pasting. Desktop apps may use the
+microphone unless it is turned off in **Settings › Privacy & security ›
+Microphone** (for the device, for your account, or for desktop apps); Get started
+shows whether it is, and **Open Settings…** goes there.
+
+The final text is copied and Entune presses Ctrl+V for the app in front. Windows
+offers no general way to confirm the text arrived, so completion says the paste
+was sent. Windows does not let an ordinary app type into a window running as
+administrator; paste there yourself with Ctrl+V. The recording pill sits in the
+bottom-left corner and never takes the keyboard focus.
+
 ## Dictating
 
 In the browser, click **Record**, allow microphone access, then stop recording
 to transcribe. Copy the result from History into another app.
 
-On macOS, you can also dictate with global shortcuts. Set a shortcut once in Settings; Entune opens there on first run. Click
+In the desktop app on macOS and Windows, you can also dictate with global shortcuts. Set a shortcut once in Settings, or from Get started. Click
 "Set…", press the key or combination, let go. Two recording shortcuts, and both
 can be set:
 
@@ -92,8 +106,8 @@ can be set:
 - **Hands-free**: a combination, for example `cmd+fn`. Press to start;
   press again, or press the hold key, to stop (on release if that key is also part of Cancel).
 
-**Cancel:** press `fn+ctrl` during recording, transcription, processing, or pending
-delivery. Cancellation saves usable captured audio for later transcription and prevents
+**Cancel:** press `fn+ctrl` (Windows: `ctrl+alt+shift`) during recording, transcription,
+processing, or pending delivery. Cancellation saves usable captured audio for later transcription and prevents
 pasting. A tap shorter than 0.25 seconds contains no usable capture and is not saved.
 Synchronous speech calls may need to drain; the app remains busy until they release
 resources. Existing Fn+Escape cancellation settings use Fn+Control on load because
@@ -358,9 +372,18 @@ Details: [the dictionary file](dictionary.md) and
 
 ## Entune.app
 
-A plain `entune` process shows up as "python3" in the menu bar, the Dock
-and the permission prompts. To have it be Entune, with its icon, build the
-standalone app once and install it (macOS only):
+`entune` (or `entune install-app`) writes `Entune.app` to /Applications, or to
+~/Applications when /Applications is not writable. It is a small native
+launcher that starts your installation's Python as its child, so macOS shows
+Entune, with its icon, in the menu bar, the Dock and the permission panels.
+Opening it while Entune runs brings the window forward; quitting it quits
+Entune. Uninstalling with `uv tool uninstall entune` leaves the app, which then
+explains how to reinstall; move it to the Trash to remove it.
+
+### A standalone build
+
+Developers can also build a self-contained app with PyInstaller from a checkout
+(macOS only). `entune` leaves such an app in place instead of replacing it:
 
 ```sh
 uv sync --group build
@@ -368,19 +391,15 @@ uv run --group build python packaging/build_app.py     # writes dist/Entune.app
 uv run entune install-app --from dist/Entune.app        # copies it to /Applications
 ```
 
-Open it from Applications and grant the three permissions to
-"Entune". It shares the data and settings of `entune`. There is also a
-lighter `entune install-app` without `--from`, a launcher bundle that runs
-this installation; macOS may refuse to list it in the permission panels,
-so prefer the standalone one. See [packaging](packaging.md).
+It shares the data and settings of `entune`. See [packaging](packaging.md).
 
-### Updating Entune.app
+### Updating a standalone build
 
 Quit Entune from its menu-bar menu before replacing it. Update your checkout
 with `git pull --ff-only`, then repeat the three build/install commands above.
 Your recordings, models, keys and settings are stored separately and are kept.
 
-By default, local builds are signed ad hoc: macOS permissions may need granting
+Standalone builds are signed ad hoc by default: macOS permissions may need granting
 again after every rebuild. To retain them, set up a local signing certificate
 once using [Signing, and keeping the permissions](packaging.md#signing-and-keeping-the-permissions).
 This is optional for a first installation; a developer account is not required.

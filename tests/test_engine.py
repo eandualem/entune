@@ -301,3 +301,38 @@ def test_native_control_fn_filter_swallows_combo_without_forwarding_escape() -> 
     # Real Escape is untouched; it is not Entune's cancellation shortcut.
     escape = Quartz.CGEventCreateKeyboardEvent(None, 53, True)
     assert listener._intercept(Quartz.kCGEventKeyDown, escape) is escape
+
+
+def test_native_listener_reads_keyboard_layout_on_the_creating_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # macOS 26 kills the process when the layout is read off the main thread.
+    pytest.importorskip("Quartz")
+    import contextlib
+    import threading
+    from collections.abc import Iterator
+
+    import pynput.keyboard._darwin as pynput_keyboard  # type: ignore[import-not-found]
+    from pynput._util.darwin import ListenerMixin  # type: ignore[import-not-found]
+
+    from entune.desktop.macos import hotkeys
+
+    reads: list[threading.Thread] = []
+
+    @contextlib.contextmanager
+    def layout() -> Iterator[tuple[str, bytes]]:
+        reads.append(threading.current_thread())
+        yield ("type", b"layout")
+
+    monkeypatch.setattr(hotkeys, "keycode_context", layout)
+    monkeypatch.setattr(pynput_keyboard, "keycode_context", layout)
+    contexts: list[object] = []
+    monkeypatch.setattr(ListenerMixin, "_run", lambda self: contexts.append(self._context))
+
+    listener = hotkeys.FnAwareListener()
+    thread = threading.Thread(target=listener._run)
+    thread.start()
+    thread.join()
+
+    assert reads == [threading.current_thread()]
+    assert contexts == [("type", b"layout")]

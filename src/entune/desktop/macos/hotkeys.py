@@ -15,6 +15,7 @@ from typing import Any
 
 import Quartz
 from pynput import keyboard
+from pynput._util.darwin import keycode_context  # type: ignore[import-not-found]
 from pynput.keyboard import Key, KeyCode
 
 from entune.desktop.engine import ShortcutEngine
@@ -51,10 +52,11 @@ class FnAwareListener(_ListenerBase):  # type: ignore[misc]
     """pynput's listener, plus press/release for the Fn key from its flag bit, and the
     option to own that key.
 
-    Relies on pynput's macOS internals (`_handle_message`, `_event_to_key`, `_flags`,
-    `_create_event_tap`); the dependency is pinned below 2.0 for that reason. With
-    `owns_fn` the tap is active rather than listen-only, so a tap macOS disables for
-    being slow is re-enabled here, which pynput does not do itself.
+    Relies on pynput's macOS internals (`_run`, `_context`, `_handle_message`,
+    `_event_to_key`, `_flags`, `_create_event_tap`); the dependency is pinned below
+    2.0 for that reason. With `owns_fn` the tap is active rather than listen-only, so
+    a tap macOS disables for being slow is re-enabled here, which pynput does not do
+    itself.
     """
 
     def __init__(
@@ -67,6 +69,18 @@ class FnAwareListener(_ListenerBase):  # type: ignore[misc]
         if owns_fn:
             kwargs["darwin_intercept"] = self._intercept
         super().__init__(*args, **kwargs)
+        # pynput reads the keyboard layout on its listener thread, and macOS 26 traps
+        # that HIToolbox call off the main queue (SIGTRAP, the whole app dies). Read it
+        # here, on the main thread that creates the listener, and hand it to `_run`.
+        with keycode_context() as layout:
+            self._layout = layout
+
+    def _run(self) -> None:
+        self._context = self._layout
+        try:
+            super(_ListenerBase, self)._run()  # pynput's run loop, minus its layout read
+        finally:
+            self._context = None
 
     def _create_event_tap(self) -> Any:
         self._tap = super()._create_event_tap()

@@ -236,7 +236,7 @@ def test_native_quit_saves_capture_and_closes_processing_before_termination(
     from tests.test_app import FakeActions, FakeHotkeys, FakePermissions, FakeRecorder
 
     monkeypatch.setattr(shell, "_hotkeys", FakeHotkeys)
-    monkeypatch.setattr(shell, "_actions", FakeActions)
+    monkeypatch.setattr(shell, "_actions", lambda tray: FakeActions())
     monkeypatch.setattr(shell, "_permissions", FakePermissions)
     monkeypatch.setattr(shell, "_on_ui_thread", lambda action: action())
     monkeypatch.setattr(shell.WebviewPlatform, "every", lambda *args: None)

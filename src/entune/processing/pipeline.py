@@ -33,8 +33,8 @@ def process_text(
     cancel: threading.Event | None = None,
 ) -> Processed:
     """Use one wall-clock budget across processing stages, including retries and backoff."""
-    started = time.monotonic()
-    deadline = started + policy.total_seconds
+    deadline = time.monotonic() + policy.total_seconds
+    started = time.perf_counter()  # durations: Windows' monotonic clock ticks every ~16 ms
     initial = pending(
         raw,
         contextual=contextual,
@@ -86,20 +86,20 @@ def process_text(
     except CancelledError:
         raise
     except Exception as exc:
-        result = failed(initial, _error(exc, key), time.monotonic() - started)
+        result = failed(initial, _error(exc, key), time.perf_counter() - started)
         result = replace(
             result,
             correction=replace(
                 result.correction,
                 attempts=call.attempts,
-                seconds=time.monotonic() - started,
+                seconds=time.perf_counter() - started,
                 model=endpoint.id if contextual else None,
             ),
         )
         if checkpoint:
             checkpoint(result)
         return result
-    correction = replace(correction, seconds=time.monotonic() - started)
+    correction = replace(correction, seconds=time.perf_counter() - started)
     outcomes = {"cleanup": initial.cleanup, "formatting": initial.formatting}
     result = Processed(text, correction, outcomes["formatting"], outcomes["cleanup"])
     if checkpoint:
@@ -114,7 +114,7 @@ def process_text(
             check()
         if progress:
             progress(method)
-        started = time.monotonic()
+        started = time.perf_counter()
         call = jev_client.Call(
             client, key or "", policy, deadline, cancel=cancel, endpoint=endpoint
         )
@@ -146,7 +146,7 @@ def process_text(
                 error=_error(exc, key),
                 model=endpoint.id,
             )
-        outcomes[method] = replace(outcome, seconds=time.monotonic() - started)
+        outcomes[method] = replace(outcome, seconds=time.perf_counter() - started)
         if outcome.status == "failed":
             for later, stage in outcomes.items():
                 if stage.status == "pending":

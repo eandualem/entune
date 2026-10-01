@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 
 from entune.app import shortcuts
-from entune.app.shortcuts import Shortcuts
+from entune.app.shortcuts import DEFAULT_CANCEL, Shortcuts
 from entune.learning import suggestion_model
 from entune.learning.suggestion_model import CHATGPT, chatgpt
 from entune.processing.jev_client import Policy
@@ -255,16 +255,16 @@ class Settings:
     # Shortcuts
 
     def shortcuts(self) -> Shortcuts:
-        """The configured shortcuts; empty until the user sets one, cancel Fn+Control."""
+        """The configured shortcuts; empty until the user sets one, cancel the default."""
         cancel = self._store.get_setting(SHORTCUT_CANCEL_KEY)
         return shortcuts.parse(
             self._store.get_setting(SHORTCUT_HOLD_KEY),
             self._store.get_setting(SHORTCUT_TOGGLE_KEY),
-            "fn+ctrl" if cancel is None else cancel,
+            DEFAULT_CANCEL if cancel is None else cancel,
         )
 
     def set_shortcuts(
-        self, hold: str | None, toggle: str | None, cancel: str | None = "fn+ctrl"
+        self, hold: str | None, toggle: str | None, cancel: str | None = DEFAULT_CANCEL
     ) -> Shortcuts:
         """Validate and store shortcuts; blank clears one. ValueError says what is wrong."""
         parsed = shortcuts.parse(hold, toggle, cancel)
