@@ -17,22 +17,24 @@ when a dictionary replacement actually fits the sentence.
 
 ## Install
 
-With [uv](https://docs.astral.sh/uv/getting-started/installation/):
+With [uv](https://docs.astral.sh/uv/getting-started/installation/), one command
+installs Entune and opens it:
 
 ```sh
-uv tool install entune
-entune
+uv tool install entune && entune
 ```
 
-On **macOS**, `entune` puts **Entune** in your Applications folder and opens it.
-On **Windows**, it adds **Entune** to the Start menu and opens it. From then on,
-open it like any other app; the terminal is no longer needed.
+In Windows PowerShell, use `uv tool install entune; entune`.
+
+On **macOS**, this puts **Entune** in your Applications folder, preparing it for
+up to a minute the first time; on **Windows**, in the Start menu. Then it opens
+Entune. From then on, open it like any other app; the terminal is no longer needed.
+If the terminal cannot find `entune`, open a new one and run `entune` again.
 
 Or use pip in a Python 3.12+ environment:
 
 ```sh
-python -m pip install entune
-entune
+python -m pip install entune && entune
 ```
 
 <details>
@@ -41,8 +43,7 @@ entune
 This option requires [Git](https://git-scm.com/downloads):
 
 ```sh
-uv tool install "git+https://github.com/eandualem/entune.git@develop"
-entune
+uv tool install "git+https://github.com/eandualem/entune.git@develop" && entune
 ```
 
 With pip, use `python -m pip install "git+https://github.com/eandualem/entune.git@develop"`.
@@ -70,8 +71,10 @@ granted when you upgrade. The
 covers missing shortcuts and “1 of 3 allowed.”
 
 On Linux, Entune opens in your browser; shortcuts and automatic paste are not
-available there. **Windows desktop support is new and Windows and Linux have not
-yet been tested end to end.** See [Windows](https://github.com/eandualem/entune/blob/develop/docs/guide.md#windows).
+available there, and Linux has not yet been tested end to end. The full setup and
+dictation have been tested on macOS and Windows; see
+[Windows](https://github.com/eandualem/entune/blob/develop/docs/guide.md#windows)
+for what differs there.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/eandualem/entune/main/docs/demo/history-light.jpg" width="49%" alt="Entune history: recordings, transcripts, audio playback and retry" />

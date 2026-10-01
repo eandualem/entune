@@ -173,8 +173,8 @@ private audio; run real engine/inference tests only with an explicit test corpus
 Windows has its own shortcut, paste, indicator and permission code under
 `src/entune/desktop/windows/`, and `entune` installs a Start menu entry rather than
 a package. The Windows CI job runs the clipboard, Start menu, indicator and
-microphone checks for real; verification on a Windows machine by hand is tracked
-in #36.
+microphone checks for real. Installation, setup and dictation have also been
+checked by hand on a Windows machine.
 
 ## Bundle identity
 

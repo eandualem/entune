@@ -9,15 +9,20 @@ You need [uv](https://docs.astral.sh/uv/getting-started/installation/); it can
 install the required Python 3.12 or newer for you.
 
 ```sh
-uv tool install entune
-entune
+uv tool install entune && entune
 ```
 
+In Windows PowerShell, use `uv tool install entune; entune`. If the terminal
+cannot find `entune`, open a new one and run `entune` again.
+
 On macOS, `entune` puts **Entune** in your Applications folder and opens it. On
-Windows, it adds **Entune** to the Start menu and opens it. You can close the
+Windows, it adds **Entune** to the Start menu and opens it. On macOS, the first
+time, it prepares Entune for up to a minute before opening it. You can close the
 terminal: from now on, open Entune like any other app, from Applications,
-Spotlight or Launchpad, or from the Start menu and Windows search. After
-`uv tool upgrade entune`, the same app runs the new version.
+Spotlight or Launchpad, or from the Start menu and Windows search.
+
+To upgrade, quit Entune and run `uv tool upgrade entune && entune` (in Windows
+PowerShell, `;` instead of `&&`). The same app then runs the new version.
 
 Entune opens on **Get started**, three steps in order:
 
@@ -86,9 +91,6 @@ offers no general way to confirm the text arrived, so completion says the paste
 was sent. Windows does not let an ordinary app type into a window running as
 administrator; paste there yourself with Ctrl+V. The recording pill sits in the
 bottom-left corner and never takes the keyboard focus.
-
-Windows support is new and has not yet been tested end to end on a real Windows
-machine; please report what does not work.
 
 ## Dictating
 
