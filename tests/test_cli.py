@@ -395,3 +395,12 @@ def test_log_tightens_existing_file_without_changing_shared_parent(
     assert S_IMODE(tmp_path.stat().st_mode) == 0o755
     assert S_IMODE(path.stat().st_mode) == 0o600
     assert path.read_text().startswith("existing log\n")
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="the Mac app's launch modules")
+def test_first_start_modules_exist() -> None:
+    # A renamed one would not fail the install, only bring back the slow first launch.
+    import importlib
+
+    for name in cli.FIRST_START_MODULES:
+        importlib.import_module(name)

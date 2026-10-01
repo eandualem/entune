@@ -111,6 +111,32 @@ def opens_as_app(argv: list[str]) -> bool:
     return sys.platform == "darwin"
 
 
+# What the Mac app loads at launch beyond this module's own imports. After an install,
+# the first load of each is slow: Python compiles it and macOS checks every new native
+# library, about half a minute in all, while the app has no window yet to show.
+FIRST_START_MODULES = (
+    "entune.desktop.app",
+    "entune.desktop.macos.adapters",
+    "webview.platforms.cocoa",
+    "pystray",
+    "PIL.Image",
+    "PIL.ImageChops",
+)
+
+
+def prepare_first_start() -> None:
+    """Pay that first-load cost here, where the terminal says so, before the app opens."""
+    import compileall
+    import importlib
+    from contextlib import suppress
+
+    compileall.compile_dir(Path(__file__).parent, quiet=1)
+    for name in FIRST_START_MODULES:
+        # A renamed dependency module only makes the first launch slower.
+        with suppress(ImportError):
+            importlib.import_module(name)
+
+
 def open_as_app() -> None:
     """Install or update the app for this installation, open it, and leave the terminal.
 
@@ -139,6 +165,8 @@ def open_as_app() -> None:
             f"{app} is a separately built Entune and was left unchanged. Open it from"
             " Applications, or move it to the Trash and run `entune` again."
         )
+    print("Preparing Entune. The first time after installing takes up to a minute…", flush=True)
+    prepare_first_start()
     write_bundle(app.parent)
     subprocess.run(["open", str(app)], check=True)
     print(
