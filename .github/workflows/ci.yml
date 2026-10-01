@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-latest, windows-latest]
         python: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +30,7 @@ jobs:
       - name: Types
         run: uv run mypy
       - name: Tests
+        shell: bash
         run: |
           if [ "$RUNNER_OS" = Linux ]; then export PYSTRAY_BACKEND=dummy; fi
           uv run pytest -q

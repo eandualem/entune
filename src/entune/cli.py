@@ -32,8 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="entune",
         description=__doc__,
         epilog=(
-            "On macOS, `entune` without options installs Entune.app into Applications and"
-            " opens it; with any option it runs in this terminal."
+            "On macOS and Windows, `entune` without options installs Entune as an app"
+            " (Applications, or the Start menu) and opens it; with any option it runs in"
+            " this terminal."
         ),
     )
     parser.add_argument("--version", action="version", version=f"entune {__version__}")
@@ -48,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-app",
         action="store_true",
-        help="macOS: run in this terminal instead of installing and opening Entune.app",
+        help="run in this terminal instead of installing and opening the Entune app",
     )
     return parser
 
@@ -93,22 +94,38 @@ def install_app(directory: Path, source: Path | None) -> None:
 
 
 def opens_as_app(argv: list[str]) -> bool:
-    """Plain `entune` on macOS opens Entune.app. Any option (--data, --port, --no-app…)
-    runs here instead, as do Entune.app's own start and the standalone build."""
-    return (
-        sys.platform == "darwin"
-        and not argv
-        and not getattr(sys, "frozen", False)
-        and "ENTUNE_APP" not in os.environ
-    )
+    """Plain `entune` from a terminal installs and opens the app (macOS, Windows).
+
+    Any option (--data, --port, --no-app…) runs here instead, as does the app itself:
+    Entune.app's child (ENTUNE_APP), the Start menu's windowless Python, and the
+    standalone build.
+    """
+    if argv or getattr(sys, "frozen", False) or "ENTUNE_APP" in os.environ:
+        return False
+    if sys.platform == "win32":
+        from entune.desktop.windows.install import is_windowless
+
+        return not is_windowless()
+    return sys.platform == "darwin"
 
 
 def open_as_app() -> None:
-    """Install or update Entune.app for this installation, open it, and leave the terminal.
+    """Install or update the app for this installation, open it, and leave the terminal.
 
     Started from the app, Entune's permissions belong to Entune; started from here they
-    would belong to the terminal.
+    would belong to the terminal, and closing the terminal would stop it.
     """
+    if sys.platform == "win32":
+        from entune.desktop.windows.install import install_shortcut, open_app
+
+        link = install_shortcut()
+        open_app(link)
+        print(
+            "Entune is in your Start menu and is opening.\n"
+            "From now on, open it from the Start menu or by searching for Entune.",
+            flush=True,
+        )
+        return
     import subprocess
 
     from entune.desktop.macos.bundle import install_app as write_bundle
@@ -221,7 +238,7 @@ def main(argv: list[str] | None = None) -> None:
     with ExitStack() as ownership:
         try:
             ownership.enter_context(_own_data(data_dir))
-            if not sys.stderr.isatty():
+            if sys.stderr is None or not sys.stderr.isatty():  # None: started windowless
                 _log_to_file(data_dir)
             store = Store(data_dir)
         except OSError as exc:

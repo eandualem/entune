@@ -166,7 +166,7 @@ def test_plain_entune_on_macos_opens_the_app(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.delenv("ENTUNE_APP")
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     assert not opens_as_app([])  # the standalone build is the app
-    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "platform", "linux")  # no desktop app there
     monkeypatch.setattr(sys, "frozen", False)
     assert not opens_as_app([])
     opened: list[bool] = []

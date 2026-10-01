@@ -100,6 +100,7 @@ class FakeActions:
 
 class FakePermissions:
     settings_hint = "Settings"
+    names: tuple[str, ...] = ("microphone", "inputMonitoring", "accessibility")
 
     def __init__(self, listen: bool = True, post: bool = True) -> None:
         self.listen, self.post = listen, post

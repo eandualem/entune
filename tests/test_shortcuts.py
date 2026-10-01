@@ -1,6 +1,7 @@
 import pytest
 
 from entune.app import shortcuts
+from entune.app.shortcuts import DEFAULT_CANCEL
 
 
 def test_parse_hold_and_toggle_together() -> None:
@@ -23,7 +24,7 @@ def test_parse_hold_and_toggle_together() -> None:
         ("banana", None, "Unknown key"),
         (None, "cmd+", "Empty key"),
         (None, "cmd+cmd", "given twice"),
-        (None, "fn+ctrl", "distinct combinations"),
+        (None, DEFAULT_CANCEL, "distinct combinations"),
     ],
 )
 def test_rejects_unusable_shortcuts(hold: str | None, toggle: str | None, reason: str) -> None:

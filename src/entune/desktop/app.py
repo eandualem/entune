@@ -9,6 +9,7 @@ import contextlib
 import logging
 import queue
 import socket
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -26,6 +27,7 @@ from entune.storage.records import Recording
 
 MIN_CLIP_SECONDS = 0.25  # a tap on the hold key is not a dictation
 KEYS_UP_WAIT_SECONDS = 1.0  # let chord keys come up before pasting so Cmd+V is just Cmd+V
+PASTE_KEYS = "Cmd+V" if sys.platform == "darwin" else "Ctrl+V"
 QUIT_FLUSH_SECONDS = 3.0  # bound on waiting for a just-stopped clip to reach disk at quit
 PERMISSION_POLL_SECONDS = 5.0  # permissions are granted in System Settings; notice when they are
 SERVER_WAIT_SECONDS = 10.0  # the page is served from a thread that may still be starting
@@ -213,7 +215,7 @@ class EntuneApp:
         microphone = permissions.microphone_status()
         if microphone == "not_requested" and "microphone" in self._requested_permissions:
             microphone = "requested"
-        return {
+        states = {
             "microphone": microphone,
             **{
                 name: "granted"
@@ -225,10 +227,13 @@ class EntuneApp:
                 )
             },
         }
+        return {name: state for name, state in states.items() if name in permissions.names}
 
     def _request_permission(self, name: str, open_settings: bool = False) -> None:
         permissions = self.platform.permissions
-        state = self._permission_status()[name]
+        state = self._permission_status().get(name)
+        if state is None:
+            return  # not something this system asks for
         if state == "granted":
             return
         self._requested_permissions.add(name)
@@ -490,7 +495,7 @@ class EntuneApp:
             actions.copy_to_clipboard(text)
             title, completion = "Entune: copied", ""
             if self.engine is not None and self.engine.pressed:
-                completion = "Copied to clipboard — release shortcut keys and press Cmd+V."
+                completion = f"Copied to clipboard — release shortcut keys and press {PASTE_KEYS}."
             elif permissions.can_post():
                 operation.check()
                 outcome = actions.paste_into_focused_app(text, operation.check)
@@ -503,8 +508,11 @@ class EntuneApp:
                     title = "Entune: copied, not pasted"
                     completion = (
                         f"Copied to clipboard. Allow Accessibility in {permissions.settings_hint} "
-                        "to paste. Cmd+V for now."
+                        f"to paste. {PASTE_KEYS} for now."
                     )
+                elif outcome == "sent":
+                    self.entune.desktop.report_status(delivery="Pasted into the app in front")
+                    self.platform.tray.complete("Pasted into the app in front")
                 elif outcome == "unverified":
                     completion = (
                         "Copied to clipboard. Paste was sent, but insertion could not be verified."
@@ -517,7 +525,7 @@ class EntuneApp:
                 title = "Entune: copied, not pasted"
                 completion = (
                     f"Copied to clipboard. Allow Accessibility in {permissions.settings_hint} "
-                    "to paste. Cmd+V for now."
+                    f"to paste. {PASTE_KEYS} for now."
                 )
             if message:
                 completion = f"{completion or 'Dictation delivered.'} {message}"

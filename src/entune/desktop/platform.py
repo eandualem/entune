@@ -16,7 +16,8 @@ from entune.audio.recorder import Capture, SinkFactory
 from entune.desktop.engine import ShortcutEngine
 
 State = str  # operation stage, plus idle/quiet
-Delivery = Literal["inserted", "no_target", "unverified", "focus_moving", "no_permission"]
+# "sent": the paste keystroke went to the app in front, which cannot be checked there.
+Delivery = Literal["inserted", "sent", "no_target", "unverified", "focus_moving", "no_permission"]
 
 
 class Tray(Protocol):
@@ -54,6 +55,7 @@ class Actions(Protocol):
 
 class Permissions(Protocol):
     settings_hint: str
+    names: tuple[str, ...]  # what this system asks for: microphone, inputMonitoring, accessibility
 
     def can_listen(self) -> bool: ...
     def can_post(self) -> bool: ...
@@ -113,5 +115,9 @@ def create_platform(url: str) -> Platform | None:
         from entune.desktop.webview.shell import WebviewPlatform
 
         name_this_process()
+        return WebviewPlatform(url)
+    if sys.platform == "win32":
+        from entune.desktop.webview.shell import WebviewPlatform
+
         return WebviewPlatform(url)
     return None

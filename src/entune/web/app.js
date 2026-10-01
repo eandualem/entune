@@ -23,7 +23,8 @@ let defaultModel = null; // {id, label} from /api/models, or null
 let settings = null; // the last /api/settings answer
 let shortcuts = { hold: null, toggle: null };
 let recordingsCount = 0;
-let desktop = null; // the Mac app (true) or a browser page (false), once /api/status answers
+let desktop = null; // the desktop app (true) or a browser page (false), once /api/status answers
+let system = null; // "macos", "windows" or "other"
 let permissionStates = {};
 
 // The Mac's real window controls share the toolbar. Browser windows keep their
@@ -41,6 +42,32 @@ function alignWindowButtons() {
 }
 window.addEventListener("pywebviewready", alignWindowButtons);
 alignWindowButtons();
+
+// ---- Words for this computer: the page is written for a Mac ----
+// Elsewhere (Windows, or a browser on another system) "this Mac" reads "this computer",
+// including text the views write later.
+if (!/Macintosh/.test(navigator.userAgent)) {
+  const fix = (text) => text.replaceAll("this Mac", "this computer");
+  const fixTree = (root) => {
+    if (root.nodeType === Node.TEXT_NODE) { if (root.nodeValue.includes("this Mac")) root.nodeValue = fix(root.nodeValue); return; }
+    if (root.nodeType !== Node.ELEMENT_NODE) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.nodeValue.includes("this Mac")) node.nodeValue = fix(node.nodeValue);
+    for (const element of [root, ...root.querySelectorAll("[placeholder], [aria-label], [title]")]) {
+      for (const name of ["placeholder", "aria-label", "title"]) {
+        const value = element.getAttribute(name);
+        if (value?.includes("this Mac")) element.setAttribute(name, fix(value));
+      }
+    }
+  };
+  fixTree(document.body);
+  new MutationObserver((changes) => {
+    for (const change of changes) {
+      if (change.type === "characterData") fixTree(change.target);
+      else for (const node of change.addedNodes) fixTree(node);
+    }
+  }).observe(document.body, { childList: true, subtree: true, characterData: true });
+}
 
 // ---- Preferences kept in this window: theme and text size ----
 function applyTheme(theme) {
@@ -255,8 +282,10 @@ function renderStart() {
     step(Boolean(defaultModel), "Set up a speech model", ["A cloud service's key, or a model that runs on your computer. The first one becomes your default."], { label: "Models", go: () => openModels("cloud") }),
   ];
   if (desktop) {
-    const allowed = Object.keys(PERMISSIONS).every((name) => permissionStates[name] === "granted");
-    const li = step(allowed, "Allow Entune on this Mac", ["The microphone to record; Input Monitoring and Accessibility so your shortcut works in any app and the text is typed there."], null);
+    const allowed = Object.keys(permissionStates).every((name) => permissionStates[name] === "granted");
+    const li = system === "macos"
+      ? step(allowed, "Allow Entune on this Mac", ["The microphone to record; Input Monitoring and Accessibility so your shortcut works in any app and the text is typed there."], null)
+      : step(allowed, "Allow the microphone", ["Windows lets desktop apps use the microphone unless it is turned off in Privacy settings."], null);
     if (!allowed) li.querySelector(".what").append(permissionRows());
     steps.push(li);
   }
@@ -282,6 +311,7 @@ function permissionRows() {
   const rows = document.createElement("span");
   rows.className = "permission-steps";
   for (const [name, label] of Object.entries(PERMISSIONS)) {
+    if (!(name in permissionStates)) continue; // not something this system asks for
     const row = document.createElement("span");
     row.className = "permission-step";
     row.append(label);
@@ -291,7 +321,7 @@ function permissionRows() {
     } else {
       const button = Object.assign(document.createElement("button"), {
         type: "button", className: "btn ghost sm",
-        textContent: ["requested", "denied", "restricted"].includes(state) ? "Open Settings…" : "Allow…",
+        textContent: ["requested", "denied", "restricted"].includes(state) || system !== "macos" ? "Open Settings…" : "Allow…",
       });
       button.addEventListener("click", async () => {
         button.disabled = true;
@@ -393,7 +423,7 @@ historyList.addEventListener("click", async (e) => {
 // ---- Wire the views, then load the saved configuration ----
 const dictionary = createDictionary({ getModel: () => defaultModel, getSettings: () => settings, onSettingsChanged: () => settingsView.load(), openSettings });
 const permissionsView = createPermissions({
-  onChange(answer) { desktop = answer.desktop; permissionStates = answer.permissions; renderStart(); },
+  onChange(answer) { desktop = answer.desktop; system = answer.system; permissionStates = answer.permissions; renderStart(); },
 });
 const settingsView = createSettings({
   async onLoaded(next) {

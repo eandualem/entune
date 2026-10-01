@@ -1,29 +1,43 @@
 # Packaging Entune.app
 
-Two ways. The standalone bundle is the sure one; the launcher bundle is
-lighter but macOS's permission panels may refuse to list it.
+Two ways. The launcher bundle is what every installation uses; the standalone
+bundle is a self-contained build for developers.
 
-## `entune install-app`
+## The launcher: `entune` and `entune install-app`
 
-Writes `/Applications/Entune.app` when that folder is writable, else
-`~/Applications/Entune.app` (or `--into DIR`): an Info.plist with
-Entune's name, bundle id `dev.elias.dictum` (macOS ties the granted permissions to
-it; see below), `LSUIElement`, the microphone
-usage string and the packaged `assets/Entune.icns`; and an executable that
-is a two-line shell script running the current Python with `-m entune`.
-The launcher follows its Python installation, so upgrading `entune` upgrades
-the app; run `entune install-app` again to refresh the copied icon.
-Observed on macOS 26: the unsigned first version was not accepted by the
-Input Monitoring and Accessibility panels; if that happens, use the
-standalone bundle below and `entune install-app --from dist/Entune.app` to
-put it in place.
+Plain `entune` on macOS, and `entune install-app`, write
+`/Applications/Entune.app` when that folder is writable, else
+`~/Applications/Entune.app` (or `--into DIR`): an Info.plist with Entune's
+name, bundle id `dev.elias.dictum` (macOS ties the granted permissions to it),
+`LSUIElement`, the microphone usage string and the packaged `assets/Entune.icns`;
+and as its executable the native launcher `assets/EntuneLauncher`.
 
-## Signing, and keeping the permissions
+The launcher reads the command to run from its preferences (`LaunchCommand`,
+written by `entune`: this installation's Python with `-m entune`), starts it as
+its child and stays its parent. macOS charges a child's Microphone, Input
+Monitoring and Accessibility use to the app it came from, so the permissions
+belong to Entune rather than Python or a terminal. A second open brings the
+window forward (`POST /api/window`); quitting the launcher asks Entune to quit
+first, so audio is saved.
 
-`install-app` signs whatever it installs. Ad hoc by default, which is
-enough for the permission panels but ties the grants to the exact binary:
-after every rebuild macOS forgets Microphone, Input Monitoring and
-Accessibility and asks again (seen 2026-09-18, issue #51).
+The bundle is signed ad hoc on every Mac, and none of its files depend on the
+Entune version, so every installation and upgrade has the same code identity
+and the permissions stay granted without any certificate.
+
+The launcher's source is `packaging/app-launcher/launcher.m`; build it with
+`packaging/app-launcher/build.sh` (Xcode command line tools, Apple Silicon and
+Intel in one binary). Rebuild only when the source changes: a different binary
+is a new identity, and every user would grant the permissions once more.
+
+On Windows, `entune` adds an Entune entry to the Start menu instead, running
+this installation with `pythonw.exe` (no console) and `assets/Entune.ico`.
+
+## Signing a standalone build, and keeping the permissions
+
+`install-app --from` signs the standalone bundle it installs. Ad hoc by default,
+which ties the grants to the exact binary: after every rebuild macOS forgets
+Microphone, Input Monitoring and Accessibility and asks again (seen 2026-09-18,
+issue #51).
 
 To keep them across rebuilds, create a certificate once. Four steps in
 Keychain Access, as it took on macOS 26 (2026-09-18):
@@ -53,7 +67,7 @@ Keychain Access, as it took on macOS 26 (2026-09-18):
    never take, however often they are toggled; the Microphone check is
    per user and works. Seen 2026-09-18 on macOS 26.
 
-When that certificate exists, `install-app` signs with it instead, every
+When that certificate exists, `install-app --from` signs with it instead, every
 build has the same identity (`codesign -d -r- Entune.app` shows
 `certificate leaf = H"…"` rather than `cdhash`), and the grants stay.
 Nothing else changes; this is not Developer ID and does not help other

@@ -21,33 +21,40 @@ export function createPermissions({ onChange } = {}) {
       panel.hidden = !result.desktop;
       if (!result.desktop) {
         clearInterval(polling); polling = null;
-        if (lastStatus !== "browser") { lastStatus = "browser"; onChange?.({ desktop: false, permissions: {} }); }
+        if (lastStatus !== "browser") { lastStatus = "browser"; onChange?.({ desktop: false, system: result.system, permissions: {} }); }
         return;
       }
       const nextStatus = JSON.stringify(result.permissions);
       if (nextStatus === lastStatus) return;
       lastStatus = nextStatus;
       states = result.permissions ?? {};
+      const mac = result.system === "macos";
+      const asked = buttons.filter((button) => button.dataset.permission in states);
       let allowed = 0;
       for (const button of buttons) {
         const name = button.dataset.permission;
+        button.closest(".srow").hidden = !(name in states); // Windows asks only for the microphone
         const state = states[name];
         const granted = state === "granted";
         const label = panel.querySelector(`[data-permission-status="${name}"]`);
-        label.textContent = granted ? "Allowed" : state === "restricted" ? "Restricted by this Mac" : state === "denied" ? "Not allowed" : "Not yet allowed";
+        label.textContent = granted ? "Allowed" : state === "restricted" ? "Restricted on this computer" : state === "denied" ? "Not allowed" : "Not yet allowed";
         button.hidden = granted;
-        button.textContent = ["requested", "denied", "restricted"].includes(state) ? "Open Settings…" : "Allow…";
-        if (granted) allowed++;
+        button.textContent = ["requested", "denied", "restricted"].includes(state) || !mac ? "Open Settings…" : "Allow…";
+        if (granted && name in states) allowed++;
       }
-      const ready = allowed === buttons.length;
-      el("permissions-summary").textContent = ready ? "Permissions ready" : "Set up Entune on this Mac";
+      const ready = allowed === asked.length;
+      el("permissions-summary").textContent = ready ? "Permissions ready" : mac ? "Set up Entune on this Mac" : "Allow the microphone";
       el("permissions-help").textContent = ready
-        ? "Entune has access to the microphone, your shortcuts and pasting."
-        : "Allow these three permissions so you can dictate in any app. macOS asks for each one separately.";
+        ? mac ? "Entune has access to the microphone, your shortcuts and pasting." : "Entune can use the microphone."
+        : mac
+          ? "Allow these three permissions so you can dictate in any app. macOS asks for each one separately."
+          : "Windows privacy settings have the microphone turned off for apps like Entune.";
       status.textContent = ready
         ? "Choose your shortcuts below."
-        : `${allowed} of 3 allowed. Enable Entune in System Settings when asked. If macOS asks you to quit, reopen Entune to continue here.`;
-      onChange?.({ desktop: true, permissions: states });
+        : mac
+          ? `${allowed} of ${asked.length} allowed. Enable Entune in System Settings when asked. If macOS asks you to quit, reopen Entune to continue here.`
+          : "Turn on microphone access for desktop apps in Settings, then come back here.";
+      onChange?.({ desktop: true, system: result.system, permissions: states });
     } catch (err) {
       lastStatus = "";
       panel.hidden = false;
