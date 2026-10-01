@@ -81,8 +81,15 @@ def _validate_bundle(app: Path) -> None:
 def _preserve_signing_identity(installed: Path, prepared: Path) -> None:
     """A certificate-signed installation must keep its macOS permission identity."""
     current = subprocess.run(
-        ["codesign", "-d", "-r-", str(installed)], capture_output=True, text=True, check=True
+        ["codesign", "-d", "-r-", str(installed)], capture_output=True, text=True, check=False
     )
+    # Early launchers were unsigned, so they have no signing identity to preserve.
+    if (
+        current.returncode == 1
+        and current.stderr.strip() == f"{installed}: code object is not signed at all"
+    ):
+        return
+    current.check_returncode()
     requirement = next(
         (
             line.removeprefix("designated => ")

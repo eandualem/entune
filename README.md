@@ -15,19 +15,24 @@ when a dictionary replacement actually fits the sentence.
 
 ## Install
 
+The first PyPI release is being prepared. For now, install the current source
+from GitHub; this requires [Git](https://git-scm.com/downloads).
+
 With [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```sh
-uv tool install entune
+uv tool install "git+https://github.com/eandualem/entune.git@develop"
 entune
 ```
 
 Or use pip in a Python 3.12+ environment:
 
 ```sh
-python -m pip install entune
+python -m pip install "git+https://github.com/eandualem/entune.git@develop"
 entune
 ```
+
+Once the PyPI release is available, you can use `entune` in place of the Git URL.
 
 **Start dictating:**
 
@@ -44,9 +49,9 @@ You can start without a dictionary or decision model and add them later.
 
 **macOS permissions:** when launched from a terminal, permission entries may
 belong to the terminal or Python. For a named `Entune.app`, use the
-[standalone app installation](https://github.com/eandualem/entune/blob/main/docs/guide.md#install).
+[standalone app installation](https://github.com/eandualem/entune/blob/develop/docs/guide.md#install).
 It requires a source build; a notarized app download is not available.
-The [permission guide](https://github.com/eandualem/entune/blob/main/docs/guide.md#permissions-macos)
+The [permission guide](https://github.com/eandualem/entune/blob/develop/docs/guide.md#permissions-macos)
 covers missing shortcuts, “1 of 3 allowed,” and keeping permissions across updates.
 
 Entune uses browser mode on Windows and Linux; on macOS, use
@@ -93,7 +98,7 @@ This is a small, single-user test, judged from text context before the models
 ran—not an overall transcription-accuracy claim. Repeated contractions
 contributed substantially to the result. The comparison applies the first
 available replacement unconditionally; it is not the app's decision-model-off
-setting. Read the [per-batch results and method](https://github.com/eandualem/entune/blob/main/docs/decision-model-results.md)
+setting. Read the [per-batch results and method](https://github.com/eandualem/entune/blob/develop/docs/decision-model-results.md)
 for the denominators, limitations and current Laya input constraints.
 
 ## Choose the models that suit you
@@ -115,10 +120,10 @@ ChatGPT subscription → Sign in with ChatGPT** in dictionary setup. This access
 option does not require an OpenAI API key; your plan's model access and usage
 limits apply. An OpenAI API key is also available as a separate access option.
 ChatGPT sign-in is currently experimental; see the
-[access details](https://github.com/eandualem/entune/blob/main/docs/models.md#dictionary-generation).
+[access details](https://github.com/eandualem/entune/blob/develop/docs/models.md#dictionary-generation).
 It covers dictionary generation, not cloud speech recognition or Jev.
 
-The [model guide](https://github.com/eandualem/entune/blob/main/docs/models.md)
+The [model guide](https://github.com/eandualem/entune/blob/develop/docs/models.md)
 covers exact model IDs, local-engine installation, account access, and the
 limits of our recommendations.
 
@@ -161,7 +166,7 @@ There is no Entune account, telemetry or hosted history. Cloud speech sends
 audio to your chosen provider; dictionary generation sends its selected
 transcripts and dictionary to the chosen language-model provider. **Jev sends
 matched context to TypeSafe even when speech recognition is local.** Laya
-keeps that step local. See [data and privacy](https://github.com/eandualem/entune/blob/main/docs/guide.md#data-and-privacy).
+keeps that step local. See [data and privacy](https://github.com/eandualem/entune/blob/develop/docs/guide.md#data-and-privacy).
 
 Entune is for a trusted, single-user machine. Its loopback API has no
 authentication: other local processes can read or change data through it.
@@ -169,15 +174,15 @@ Do not expose its port to a network or tunnel.
 
 ## Guides and contributing
 
-- [Using Entune](https://github.com/eandualem/entune/blob/main/docs/guide.md): permissions, shortcuts, imports, updates and troubleshooting.
-- [Choosing models](https://github.com/eandualem/entune/blob/main/docs/models.md): cloud and local setup, recommendations and generation time.
-- [Decision-model results](https://github.com/eandualem/entune/blob/main/docs/decision-model-results.md): what changed, how it was measured, and limitations.
-- [Dictionary reference](https://github.com/eandualem/entune/blob/main/docs/dictionary.md): meanings, matching, learning and the file format.
-- [Building Entune.app](https://github.com/eandualem/entune/blob/main/docs/packaging.md), [local API](https://github.com/eandualem/entune/blob/main/docs/agents-api.md), and [architecture](https://github.com/eandualem/entune/blob/main/docs/architecture.md).
+- [Using Entune](https://github.com/eandualem/entune/blob/develop/docs/guide.md): permissions, shortcuts, imports, updates and troubleshooting.
+- [Choosing models](https://github.com/eandualem/entune/blob/develop/docs/models.md): cloud and local setup, recommendations and generation time.
+- [Decision-model results](https://github.com/eandualem/entune/blob/develop/docs/decision-model-results.md): what changed, how it was measured, and limitations.
+- [Dictionary reference](https://github.com/eandualem/entune/blob/develop/docs/dictionary.md): meanings, matching, learning and the file format.
+- [Building Entune.app](https://github.com/eandualem/entune/blob/develop/docs/packaging.md), [local API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md), and [architecture](https://github.com/eandualem/entune/blob/develop/docs/architecture.md).
 
 To work on Entune, clone the repository and run `uv sync`, then `uv run entune`.
 Run `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy` and
 `uv run pytest` before contributing. Pull requests target `develop`;
-`main` receives reviewed releases. See [CONTRIBUTING.md](https://github.com/eandualem/entune/blob/main/CONTRIBUTING.md).
+`main` receives reviewed releases. See [CONTRIBUTING.md](https://github.com/eandualem/entune/blob/develop/CONTRIBUTING.md).
 
-[MIT licensed](https://github.com/eandualem/entune/blob/main/LICENSE).
+[MIT licensed](https://github.com/eandualem/entune/blob/develop/LICENSE).

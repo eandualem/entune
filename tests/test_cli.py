@@ -240,6 +240,35 @@ def test_install_app_stops_when_the_certificate_cannot_sign(
     assert [c[4] for c in calls if c[0] == "codesign"] == ["Dictum Developer"]
 
 
+@pytest.mark.parametrize("diagnostic", ["code object is not signed at all", "Permission denied"])
+def test_update_of_unsigned_launcher_preserves_other_inspection_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, diagnostic: str
+) -> None:
+    import subprocess
+
+    from entune.desktop.macos import bundle
+
+    installed = tmp_path / "Entune.app"
+    installed.mkdir()
+    (installed / "original").write_text("old launcher")
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert cmd == ["codesign", "-d", "-r-", str(installed)]
+        return subprocess.CompletedProcess(cmd, 1, "", f"{installed}: {diagnostic}\n")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(bundle, "sign", lambda app: "-")
+    if diagnostic == "code object is not signed at all":
+        bundle.install_app(tmp_path)
+        assert (installed / "Contents/MacOS/Entune").is_file()
+        assert not (installed / "original").exists()
+    else:
+        with pytest.raises(subprocess.CalledProcessError):
+            bundle.install_app(tmp_path)
+        assert (installed / "original").read_text() == "old launcher"
+    assert list(tmp_path.iterdir()) == [installed]
+
+
 @pytest.mark.parametrize("matches", [True, False])
 def test_update_preserves_the_installed_certificate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, matches: bool
