@@ -17,6 +17,9 @@ assert sys.platform == "win32"  # imported only there; type checkers skip the re
 CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x0002
 VK_V = 0x56  # the V key itself, so Ctrl+V works on every keyboard layout
+# Held with our Ctrl+V, these would make it another shortcut (Ctrl+Alt+V, Win+Ctrl+V…).
+MODIFIERS = (0x10, 0x12, 0x5B, 0x5C)  # Shift, Alt, left and right Windows key
+KEYS_UP_SECONDS = 0.5
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -32,6 +35,8 @@ _user32.GetForegroundWindow.argtypes = []
 _user32.GetForegroundWindow.restype = wintypes.HWND
 _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 _user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+_user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+_user32.GetAsyncKeyState.restype = ctypes.c_short
 _kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
 _kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
 _kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
@@ -99,6 +104,11 @@ def front_app_is_another() -> bool:
     return owner.value != os.getpid()
 
 
+def modifiers_down() -> bool:
+    """Whether Shift, Alt or a Windows key is physically held right now."""
+    return any(_user32.GetAsyncKeyState(key) & 0x8000 for key in MODIFIERS)
+
+
 def paste_into_focused_app(text: str, check: Callable[[], None] | None = None) -> Delivery:
     """Press Ctrl+V for the app in front. The text is on the clipboard already.
 
@@ -106,6 +116,13 @@ def paste_into_focused_app(text: str, check: Callable[[], None] | None = None) -
     """
     if not front_app_is_another():
         return "no_target"  # nothing in front, or Entune's own window
+    # The shortcut's own key events reach the engine through a queue, so it may not
+    # know yet that a modifier is still down; ask Windows directly.
+    deadline = time.monotonic() + KEYS_UP_SECONDS
+    while modifiers_down():
+        if time.monotonic() >= deadline:
+            return "keys_held"
+        time.sleep(0.02)
     if check is not None:
         check()
     from pynput.keyboard import Controller, Key, KeyCode

@@ -494,12 +494,15 @@ class EntuneApp:
             actions, permissions = self.platform.actions, self.platform.permissions
             actions.copy_to_clipboard(text)
             title, completion = "Entune: copied", ""
+            keys_held = f"Copied to clipboard — release shortcut keys and press {PASTE_KEYS}."
             if self.engine is not None and self.engine.pressed:
-                completion = f"Copied to clipboard — release shortcut keys and press {PASTE_KEYS}."
+                completion = keys_held
             elif permissions.can_post():
                 operation.check()
                 outcome = actions.paste_into_focused_app(text, operation.check)
-                if outcome == "no_target":
+                if outcome == "keys_held":
+                    completion = keys_held
+                elif outcome == "no_target":
                     completion = "Copied to clipboard — no active text field."
                 elif outcome == "focus_moving":
                     completion = "Copied to clipboard — focus kept changing before paste."

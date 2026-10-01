@@ -403,6 +403,20 @@ def test_accessibility_lost_while_running_is_explained_not_called_a_missing_fiel
     assert "no active text field" not in message and platform.permissions.requested == ["post"]
 
 
+def test_a_modifier_still_held_skips_the_paste_and_says_how_to_paste(tmp_path: Path) -> None:
+    app, platform, entune = make(tmp_path)
+    platform.actions.outcome = "keys_held"
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_shortcuts("alt_r", None, "ctrl+esc")
+    app.engine.press("alt_r")  # type: ignore[union-attr]
+    app.engine.release("alt_r")  # type: ignore[union-attr]
+    wait_for(lambda: bool(platform.actions.notices))
+    _title, message = platform.actions.notices[0]
+    assert platform.actions.clipboard == "hello from the fake" and platform.actions.pasted == 0
+    assert "release shortcut keys and press" in message
+
+
 def test_a_failed_transcription_is_a_notification_and_the_icon_recovers(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
     entune.settings.set_key("stub", "k")

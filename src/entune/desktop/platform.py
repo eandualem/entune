@@ -17,7 +17,10 @@ from entune.desktop.engine import ShortcutEngine
 
 State = str  # operation stage, plus idle/quiet
 # "sent": the paste keystroke went to the app in front, which cannot be checked there.
-Delivery = Literal["inserted", "sent", "no_target", "unverified", "focus_moving", "no_permission"]
+# "keys_held": a modifier was still down, so pasting would have sent another shortcut.
+Delivery = Literal[
+    "inserted", "sent", "keys_held", "no_target", "unverified", "focus_moving", "no_permission"
+]
 
 
 class Tray(Protocol):

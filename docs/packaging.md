@@ -170,9 +170,11 @@ inside the bundle while `engine_python()` resolves outside it to the separately
 installed engine. Test its protocol without downloading weights or transcribing
 private audio; run real engine/inference tests only with an explicit test corpus.
 
-Windows has no native shortcut/paste/indicator/permission/lifecycle implementation
-or supported desktop package yet. Its data-directory branch and portable WebView
-libraries do not change that; Windows native work is tracked separately in #36.
+Windows has its own shortcut, paste, indicator and permission code under
+`src/entune/desktop/windows/`, and `entune` installs a Start menu entry rather than
+a package. The Windows CI job runs the clipboard, Start menu, indicator and
+microphone checks for real; verification on a Windows machine by hand is tracked
+in #36.
 
 ## Bundle identity
 
