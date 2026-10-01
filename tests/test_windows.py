@@ -58,6 +58,29 @@ def test_start_menu_entry_runs_this_installation_without_a_console(tmp_path: Pat
     install_shortcut(tmp_path)  # replacing it is fine
 
 
+def test_key_released_after_shift_ends_under_its_pressed_name() -> None:
+    # ":" down, Shift up, then the key up reads ";": it must still release ":".
+    pytest.importorskip("pynput", reason="pynput is installed on macOS and Windows")
+    import threading
+
+    from pynput.keyboard import KeyCode
+
+    from entune.desktop.windows.hotkeys import HotkeyListener
+
+    listener = HotkeyListener()
+    captured: list[tuple[str, ...]] = []
+    done = threading.Event()
+
+    def finish(keys: tuple[str, ...]) -> None:
+        captured.append(keys)
+        done.set()
+
+    listener.begin_capture(finish)
+    listener._queue(True, KeyCode.from_vk(0xBA, char=":"), False)
+    listener._queue(False, KeyCode.from_vk(0xBA, char=";"), False)
+    assert done.wait(2) and captured == [(":",)]
+
+
 def test_start_menu_entry_needs_windowless_python(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
