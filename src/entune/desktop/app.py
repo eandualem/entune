@@ -56,7 +56,6 @@ class EntuneApp:
         self._closed = False
         self._close_lock = threading.RLock()
         self._operation: Operation | None = None
-        self._saved_recording: Recording | None = None
         self._captures: queue.Queue[tuple[Capture, Upload | None, Operation]] = queue.Queue()
         self._jobs: queue.Queue[tuple[Recording, float, Upload | None, Operation]] = queue.Queue()
         threading.Thread(target=self._persist, daemon=True, name="entune-persist").start()
@@ -287,7 +286,6 @@ class EntuneApp:
                 self._notify_later("Entune: busy", str(exc))
                 return
             self._operation = operation
-            self._saved_recording = None
             self._upload = None
             try:
                 self.recorder.start(self._begin_upload)
@@ -358,7 +356,6 @@ class EntuneApp:
             capture, upload, operation = self._captures.get()
             try:
                 recording = self.entune.dictation.store_recording(capture.wav(), "audio/wav")
-                self._saved_recording = recording
             except Exception as exc:
                 self._capture_error = f"{type(exc).__name__}: {exc}"
                 logging.getLogger(__name__).exception("Could not save captured audio")
@@ -422,7 +419,6 @@ class EntuneApp:
     def _finish(self, operation: Operation) -> None:
         if self._operation is operation:
             self._operation = None
-            self._saved_recording = None
         self.entune.operations.finish(operation)
 
     def _cancelled(self, operation: Operation, recording: Recording) -> None:

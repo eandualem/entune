@@ -65,9 +65,6 @@ def wav_duration_seconds(data: bytes) -> float | None:
     """Duration of a WAV clip from its header, or None for any other container."""
     if sniff_mime(data) != "audio/wav":
         return None
-    import io
-    import wave
-
     try:
         with wave.open(io.BytesIO(data), "rb") as clip:
             frames, rate = clip.getnframes(), clip.getframerate()

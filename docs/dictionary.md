@@ -1,5 +1,9 @@
 # Meaning-based dictionary
 
+For setup, start with [Choosing models](models.md) and [Using Entune](guide.md#personal-dictionary).
+The [fresh decision-model comparison](decision-model-results.md) measures actual
+replacements with Jev and Laya; this page describes the dictionary format and behavior.
+
 `dictionary.json` uses version 2. The primary record is a confusion group with
 stable meaning IDs and explicit recognized-form associations. `pinned` is shared;
 `learned` is keyed by the unchanged speech model identifier (`provider/model`).
@@ -54,15 +58,15 @@ words; it does not infer plurals, fuzzy aliases or word boundaries. Costs includ
 size of the matching bucket: a larger dictionary is not automatically faster.
 
 With contextual correction enabled, one request supplies the original transcript,
-matched meanings, original character spans and surrounding context. Jev selects a
-semantic interpretation. For an isolated span that is one eligible meaning. An overlap
+matched meanings, original character spans and surrounding context. The decision model
+chosen in Settings (Jev at TypeSafe, or Laya on this Mac) selects a semantic interpretation. For an isolated span that is one eligible meaning. An overlap
 can offer the whole multiword name or compatible word-level meanings. Literal meanings
 are ordinary candidates: selecting the computing or weather meaning of cloud outputs
 cloud; selecting Claude outputs Claude. There is no semantic replace/keep choice.
 
 A valid response always selects its highest-scoring eligible interpretation, even
 when probabilities are close. Distinct meanings never pool probability merely because
-they output the same spelling. Exact ties honor Jev's declared choice after validating
+they output the same spelling. Exact ties honor the decision model's declared choice after validating
 that it is tied for highest. There is no generic uncertainty candidate or confidence
 threshold for dictionary choices. Invalid/failed responses fail the stage; missing
 usable definitions or overly complex overlaps remain visibly unresolved without an
@@ -93,7 +97,8 @@ Editing an output spelling or casing clears its approvals; save that edit before
 approving the revised mapping.
 
 Direct-only dictation needs no contextual request (cleanup/formatting may make their own).
-Mixed dictation still makes one request, with one focused Choice per occurrence. The
+Mixed dictation still makes one request, with one focused Choice per occurrence;
+with Laya, which reads a short input, each occurrence is its own request. The
 state holds only an excerpt of up to 160 characters either side, the span marked; each
 option states its span, output spelling, definition and personal usage directly; for
 overlapping spans it also states how the marked words read with that choice.
@@ -113,10 +118,9 @@ separately from dictionary replacements. Raw text and completed stage outputs/pr
 only the final text after processing; pending results cannot be copied as final text.
 History and Settings separate decisions, direct replacements, unresolved occurrences,
 retries, failures, preserved spans and timings. Replacements count edited disjoint
-components, not words proven correct. Old combined counters remain in exports under
-`legacy_processing`, excluded from new summaries.
+components, not words proven correct.
 
-Settings > Providers exposes the initial retry policy: **5 seconds total**
+Settings › Corrections & formatting › Advanced exposes the initial retry policy: **5 seconds total**
 across correction, cleanup and formatting, **3 seconds per attempt**, and **2 attempts
 per request**. These are configurable defaults, not measured provider
 service guarantees. Transient connection/read failures, timeouts and HTTP
@@ -126,8 +130,9 @@ when encoded as 429. Malformed successful responses fail without an invented dec
 `Retry-After` is respected only when another attempt fits the remaining
 budget; longer waits return the original immediately. Authentication,
 request-validation and malformed-answer failures are not retried.
-[TypeSafe's API](https://docs.typesafe.ai/api) documents the response schema
-and rate-limit/overload errors.
+Both decision models answer over TypeSafe's System One API, Laya through its own
+server on 127.0.0.1; [TypeSafe's API](https://docs.typesafe.ai/api) documents the
+response schema and rate-limit/overload errors.
 
 A reused asynchronous HTTP client runs on an owned event loop so the total
 deadline cancels ongoing I/O, including a response body that keeps dripping
@@ -236,8 +241,8 @@ these edits and the original transcription. Cleanup's removed-word count and for
 changed-span count are operations, not accuracy scores. Older formatting outcomes have
 `changes: null` (not recorded), not an invented zero; aggregate span counts cover recorded
 edits only. Mocked probability tests establish
-these boundaries and failure behavior, not acoustic truth or live Jev classification
-quality. Paid evaluation needs separate authorization.
+these boundaries and failure behavior, not acoustic truth or live decision-model
+classification quality. Paid evaluation needs separate authorization.
 
 ## Generation, editing and migration
 
@@ -262,14 +267,17 @@ of any age. Temporary target-model transcripts stay in memory and are reused on 
 they never enter the database or ordinary history. Applying, discarding, replacing the
 workflow or closing the app clears them, while source audio remains. The generation
 provider receives the selected inputs, pinned knowledge and this model's working groups.
-The configured model is honored; suggestions remain Sonnet 5 and GPT-5.4 mini with
-medium reasoning where supported. No generation or classification model rewrites dictation.
+The configured model is honored, including a custom model ID. The
+[model guide](models.md#dictionary-generation) gives our current recommendation;
+the built-in suggested list can contain older models. Medium reasoning is requested
+where supported. No generation or classification model rewrites dictation.
 
 Sequential steps contain about 24,000 transcript characters; the full growing dictionary
 adds to that request size. A long transcript split across steps carries only its own
 span of the dictionary result. Step numbers stay in the app for progress and resume. Each
 reply may use up to 32,000 output tokens, including the model's thinking; a reply cut at
-that limit fails its step visibly. Unmentioned knowledge remains. New temporary IDs are assigned
+that limit fails its step visibly. On a ChatGPT subscription the plan's own limit applies
+instead, and a reply it cuts fails the same way. Unmentioned knowledge remains. New temporary IDs are assigned
 persistent IDs once; subsequent steps and editor changes retain them. Pinned definitions
 and usage can be proposed for review, but existing pinned variants/meanings cannot be
 removed. Separate editing and dictation are blocked from generation through review;

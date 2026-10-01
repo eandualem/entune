@@ -6,6 +6,17 @@ import os
 import sys
 from pathlib import Path
 
+from entune.storage import data_folder
+
+
+def protect_data(path: Path) -> None:
+    """Protect Entune-owned items, preserving the containing folder and unrelated files."""
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ours, _ = data_folder.inventory(path)
+    for item in ours:
+        if not item.is_symlink():
+            item.chmod(0o700 if item.is_dir() else 0o600)
+
 
 def _default_location(name: str) -> Path:
     if sys.platform == "darwin":

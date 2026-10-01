@@ -134,7 +134,10 @@ def test_a_body_without_text_is_a_failure(clip: Clip) -> None:
     assert result.error.startswith("Response had no transcript text")
 
 
-def test_soniox_uploads_polls_fetches_and_cleans_up(clip: Clip) -> None:
+@pytest.mark.parametrize("cleanup", ["success", "http_error", "connection_error"])
+def test_soniox_uploads_polls_fetches_and_cleans_up(
+    clip: Clip, cleanup: str, caplog: pytest.LogCaptureFixture
+) -> None:
     seen: list[httpx.Request] = []
     polls = 0
 
@@ -143,6 +146,10 @@ def test_soniox_uploads_polls_fetches_and_cleans_up(clip: Clip) -> None:
         seen.append(request)
         path = request.url.path
         if request.method == "DELETE":
+            if cleanup == "connection_error":
+                raise httpx.ConnectError("private response details", request=request)
+            if cleanup == "http_error":
+                return httpx.Response(503, text="private response details")
             return httpx.Response(204)
         if path == "/v1/files":
             return httpx.Response(201, json={"id": "f1"})
@@ -165,6 +172,13 @@ def test_soniox_uploads_polls_fetches_and_cleans_up(clip: Clip) -> None:
     assert slept == [0.5]
     deleted = sorted(r.url.path for r in seen if r.method == "DELETE")
     assert deleted == ["/v1/files/f1", "/v1/transcriptions/t1"]
+    if cleanup == "success":
+        assert not caplog.records
+    else:
+        reason = "HTTP 503" if cleanup == "http_error" else "ConnectError"
+        assert len(caplog.records) == 2
+        assert all(f"Soniox cleanup failed ({reason})" in r.message for r in caplog.records)
+        assert "private response details" not in caplog.text
 
 
 def test_soniox_reports_a_failed_job_verbatim(clip: Clip) -> None:

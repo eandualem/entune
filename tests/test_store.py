@@ -1,7 +1,40 @@
+import sys
 from pathlib import Path
+
+import pytest
 
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file permissions")
+def test_custom_data_is_private_on_creation_reopen_and_reset(tmp_path: Path) -> None:
+    from contextlib import closing
+    from stat import S_IMODE
+
+    data = tmp_path / "data"
+    with closing(Store(data)) as store:
+        store.set_setting("credential", "synthetic-test-key")
+        recording = store.create_recording(WEBM_HEADER)
+        assert S_IMODE(store.audio_path(recording).stat().st_mode) == 0o600
+        assert S_IMODE(data.stat().st_mode) == 0o700
+        assert S_IMODE((data / "entune.db").stat().st_mode) == 0o600
+        assert S_IMODE((data / "entune.db-wal").stat().st_mode) == 0o600
+        assert S_IMODE((data / "entune.db-shm").stat().st_mode) == 0o600
+    data.chmod(0o755)
+    (data / "entune.db").chmod(0o644)
+    (data / "audio").chmod(0o755)
+    unrelated = data / "unrelated.txt"
+    unrelated.write_text("keep me")
+    with closing(Store(data)) as reopened:
+        assert S_IMODE(data.stat().st_mode) == 0o755  # shared parent is unchanged
+        assert S_IMODE((data / "audio").stat().st_mode) == 0o700
+        assert S_IMODE((data / "entune.db").stat().st_mode) == 0o600
+        assert reopened.get_setting("credential") == "synthetic-test-key"
+        assert reopened.audio_path(recording).read_bytes() == WEBM_HEADER
+        reopened.reset()
+        assert S_IMODE((data / "entune.db").stat().st_mode) == 0o600
+        assert unrelated.read_text() == "keep me"
 
 
 def test_settings_recordings_and_attempts_persist(tmp_path: Path) -> None:
@@ -30,18 +63,6 @@ def test_clearing_a_setting(tmp_path: Path) -> None:
     store.set_setting("k", "v")
     store.set_setting("k", None)
     assert store.get_setting("k") is None
-
-
-def test_recent_transcripts_are_one_models_raw_text_newest_first(tmp_path: Path) -> None:
-    store = Store(tmp_path)
-    rec = store.create_recording(WEBM_HEADER)
-    store.add_transcription(rec.id, "p", "m", "error", None, "boom")
-    store.add_transcription(rec.id, "p", "m", "ok", "fixed one", None, raw_text="raw one")
-    store.add_transcription(rec.id, "p", "other", "ok", "another model's", None)
-    store.add_transcription(rec.id, "p", "m", "ok", "two", None)
-    assert store.recent_transcripts("p", "m", 10) == ["two", "raw one"]
-    assert store.recent_transcripts("p", "m", 1) == ["two"]
-    assert store.recent_transcripts("p", "other", 10) == ["another model's"]
 
 
 def test_learning_audio_lists_recordings_with_their_newest_length_and_models(

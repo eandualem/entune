@@ -1,6 +1,7 @@
-"""The questions Jev answers: which meaning fits, where paragraphs go, which fillers go.
+"""The questions a decision model answers: which meaning fits, where paragraphs go, which
+fillers go.
 
-Code alone applies what the answers allow; Jev never writes text.
+Code alone applies what the answers allow; the decision model never writes text.
 """
 
 from __future__ import annotations
@@ -79,6 +80,24 @@ def _option(text: str, component: Component, interpretation: Interpretation) -> 
     return " ".join(parts)
 
 
+def settle(text: str, component: Component) -> Decision | None:
+    """The decision an occurrence needs no question for: one direct mapping, or every
+    reading leaving the text as it is. None when only context can decide."""
+    direct = component.direct_choice(text)
+    if direct is not None:
+        return Decision(
+            component,
+            Edit(component.start, component.end, component.output(text, direct)),
+            "direct",
+            tuple(c.meaning.id for c in direct.choices),
+        )
+    raw = text[component.start : component.end]
+    plans = component.interpretations
+    if plans and all(component.output(text, p) == raw for p in plans):
+        return Decision(component, None, "unchanged")
+    return None
+
+
 def meaning_request(
     text: str, components: list[Component], variant: Variant = DEFAULT
 ) -> MeaningRequest:
@@ -90,20 +109,10 @@ def meaning_request(
     support: dict[int, dict[str, tuple[str, ...]]] = {}
     for i, component in enumerate(components):
         raw = text[component.start : component.end]
-        direct = component.direct_choice(text)
-        if direct is not None:
-            output = component.output(text, direct)
-            decisions[i] = Decision(
-                component,
-                Edit(component.start, component.end, output),
-                "direct",
-                tuple(c.meaning.id for c in direct.choices),
-            )
+        if (settled := settle(text, component)) is not None:
+            decisions[i] = settled
             continue
         plans = component.interpretations
-        if plans and all(component.output(text, p) == raw for p in plans):
-            decisions[i] = Decision(component, None, "unchanged")
-            continue
         # Retain imported undefined meanings in storage, but never fabricate a
         # definition to turn them into eligible semantic claims.
         eligible = [p for p in plans if all(c.meaning.meaning for c in p.choices)]
@@ -141,7 +150,7 @@ def decide(
     request = meaning_request(text, components, variant)
     decisions = dict(request.decisions)
     if request.questions:
-        answers = call.ask(request.state, request.questions)
+        answers = _ask_meanings(request, call)
         for i, values in request.outputs.items():
             probabilities = answers[f"o{i}"]
             option = max(probabilities, key=lambda name: probabilities[name])
@@ -153,6 +162,17 @@ def decide(
                 request.support[i][option],
             )
     return [decisions[i] for i in range(len(components))]
+
+
+def _ask_meanings(request: MeaningRequest, call: Call) -> dict[str, dict[str, float]]:
+    if not call.endpoint.short_input:
+        return call.ask(request.state, request.questions)
+    # A short-input model would cut a shared state off, and later occurrences with it:
+    # each occurrence is asked alone, within the same deadline.
+    return call.ask_each(
+        ({**request.state, "occurrences": {name: request.state["occurrences"][name]}}, {name: q})
+        for name, q in request.questions.items()
+    )
 
 
 # ---- formatting

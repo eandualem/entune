@@ -1,10 +1,21 @@
 import plistlib
 import socket
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from entune.cli import applications_folder, build_parser, main, port_is_free
+from entune import cli
+from entune.cli import (
+    _log_to_file,
+    _own_data,
+    applications_folder,
+    build_parser,
+    main,
+    port_is_free,
+)
+from entune.storage.store import Store
 
 
 def test_port_probe_sees_a_listener(tmp_path: Path) -> None:
@@ -21,6 +32,70 @@ def test_port_probe_sees_a_listener(tmp_path: Path) -> None:
 def test_parser_defaults() -> None:
     args = build_parser().parse_args([])
     assert args.port == 4187 and args.data is None and not args.no_menu
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX directory locks")
+def test_cli_owns_data_through_reset_and_releases_after_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path / "data"
+    monkeypatch.setattr(cli, "_log_to_file", lambda path: None)
+    monkeypatch.setattr(cli, "port_is_free", lambda port: True)
+
+    def run(args: object, path: Path, store: Store) -> None:
+        def second_process() -> None:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "entune",
+                    "--no-menu",
+                    "--no-open",
+                    "--port",
+                    "0",
+                    "--data",
+                    str(path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            assert result.returncode != 0 and "already using" in result.stderr
+
+        try:
+            second_process()
+            store.reset()
+            second_process()  # reset must not discard the ownership lock
+            with _own_data(tmp_path / "other"):
+                pass  # independent data remains independently runnable
+        finally:
+            store.close()
+        raise RuntimeError("startup failed")
+
+    monkeypatch.setattr(cli, "_run", run)
+    with pytest.raises(RuntimeError, match="startup failed"):
+        main(["--no-menu", "--no-open", "--data", str(data)])
+    with _own_data(data):
+        pass  # failure released the descriptor
+
+
+def test_same_port_window_activation_precedes_data_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "port_is_free", lambda port: False)
+    monkeypatch.setattr(cli, "_show_running_window", lambda port: True)
+    monkeypatch.setattr(cli, "_own_data", lambda path: pytest.fail("must show the existing window"))
+    main(["--data", str(tmp_path)])
+
+
+def test_data_directory_failure_keeps_the_startup_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "file"
+    path.touch()
+    monkeypatch.setattr(cli, "_log_to_file", lambda path: None)
+    with pytest.raises(SystemExit, match="Cannot open Entune data"):
+        main(["--no-menu", "--no-open", "--port", "0", "--data", str(path)])
 
 
 def test_install_app_writes_a_launchable_bundle(tmp_path: Path) -> None:
@@ -76,6 +151,7 @@ def test_failed_install_preserves_the_previous_app(
         raise OSError("injected failure")
 
     monkeypatch.setattr(bundle, "sign", lambda app: "-")
+    monkeypatch.setattr(bundle, "_preserve_signing_identity", lambda installed, prepared: None)
     if failure == "source":
         (built / "Contents" / "Info.plist").unlink()
     elif failure == "copy":
@@ -142,8 +218,8 @@ def test_install_app_signs_with_the_stable_identity_when_present(
     assert bundle.sign(tmp_path) == "-"
 
 
-def test_install_app_falls_back_to_ad_hoc_when_the_certificate_cannot_sign(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_install_app_stops_when_the_certificate_cannot_sign(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import subprocess
 
@@ -159,6 +235,86 @@ def test_install_app_falls_back_to_ad_hoc_when_the_certificate_cannot_sign(
         return subprocess.CompletedProcess(cmd, int(failed), "", "errSecInternalComponent")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    assert bundle.sign(tmp_path) == "-"
-    assert [c[4] for c in calls if c[0] == "codesign"] == ["Dictum Developer", "-"]
-    assert "errSecInternalComponent" in capsys.readouterr().err
+    with pytest.raises(RuntimeError, match="errSecInternalComponent"):
+        bundle.sign(tmp_path)
+    assert [c[4] for c in calls if c[0] == "codesign"] == ["Dictum Developer"]
+
+
+@pytest.mark.parametrize("diagnostic", ["code object is not signed at all", "Permission denied"])
+def test_update_of_unsigned_launcher_preserves_other_inspection_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, diagnostic: str
+) -> None:
+    import subprocess
+
+    from entune.desktop.macos import bundle
+
+    installed = tmp_path / "Entune.app"
+    installed.mkdir()
+    (installed / "original").write_text("old launcher")
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert cmd == ["codesign", "-d", "-r-", str(installed)]
+        return subprocess.CompletedProcess(cmd, 1, "", f"{installed}: {diagnostic}\n")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(bundle, "sign", lambda app: "-")
+    if diagnostic == "code object is not signed at all":
+        bundle.install_app(tmp_path)
+        assert (installed / "Contents/MacOS/Entune").is_file()
+        assert not (installed / "original").exists()
+    else:
+        with pytest.raises(subprocess.CalledProcessError):
+            bundle.install_app(tmp_path)
+        assert (installed / "original").read_text() == "old launcher"
+    assert list(tmp_path.iterdir()) == [installed]
+
+
+@pytest.mark.parametrize("matches", [True, False])
+def test_update_preserves_the_installed_certificate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, matches: bool
+) -> None:
+    import subprocess
+
+    from entune.desktop.macos import bundle
+
+    installed = tmp_path / "Entune.app"
+    installed.mkdir()
+    (installed / "original").write_text("working app")
+    requirement = 'identifier "dev.elias.dictum" and certificate leaf = H"abcd"'
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "-d" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "", f"designated => {requirement}\n")
+        assert cmd[1:5] == ["--verify", "--strict", "-R", "=" + requirement]
+        return subprocess.CompletedProcess(cmd, int(not matches), "", "identity mismatch")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(bundle, "sign", lambda app: "-")
+    if matches:
+        bundle.install_app(tmp_path)
+        assert (installed / "Contents/MacOS/Entune").is_file()
+    else:
+        with pytest.raises(RuntimeError, match="does not match the installed signing certificate"):
+            bundle.install_app(tmp_path)
+        assert (installed / "original").read_text() == "working app"
+    assert list(tmp_path.iterdir()) == [installed]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file permissions")
+def test_log_tightens_existing_file_without_changing_shared_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from stat import S_IMODE
+
+    tmp_path.chmod(0o755)
+    path = tmp_path / "entune.log"
+    path.write_text("existing log\n")
+    path.chmod(0o644)
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "stdout", sys.stdout)
+        patch.setattr(sys, "stderr", sys.stderr)
+        _log_to_file(tmp_path)
+        sys.stdout.close()
+    assert S_IMODE(tmp_path.stat().st_mode) == 0o755
+    assert S_IMODE(path.stat().st_mode) == 0o600
+    assert path.read_text().startswith("existing log\n")

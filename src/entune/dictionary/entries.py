@@ -6,7 +6,6 @@ derived matcher combines associations for an occurrence.
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 
@@ -58,7 +57,12 @@ class Group:
 
     def as_json(self) -> dict[str, Any]:
         # JSON arrays, including at the service boundary (not Python tuples).
-        return json.loads(json.dumps(asdict(self)))  # type: ignore[no-any-return]
+        return asdict(
+            self,
+            dict_factory=lambda fields: {
+                name: list(value) if isinstance(value, tuple) else value for name, value in fields
+            },
+        )
 
 
 Groups = tuple[Group, ...]

@@ -38,8 +38,23 @@ class BrokenReply(ValueError):
     """Every reply, including the corrected ones, broke a rule of the dictionary."""
 
 
+class ReplyStopped(ValueError):
+    """Entune stopped a reply that ran into empty output or past its time limit."""
+
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__(detail)
+        self.reason = reason  # for the person, e.g. "the reply ran into empty output"
+
+
 async def call_model(request: Request, model: Model | None = None) -> str:
     """One request through Pydantic AI; see call.py."""
     from entune.learning.suggestion_model import call
 
     return await call.run(request, model)
+
+
+def passing(error: Exception) -> str | None:
+    """Why another attempt of a failed request may succeed, or None; see call.py."""
+    from entune.learning.suggestion_model import call
+
+    return call.passing(error)

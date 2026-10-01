@@ -339,7 +339,7 @@ historyList.addEventListener("click", async (e) => {
 });
 
 // ---- Wire the views, then load the saved configuration ----
-const dictionary = createDictionary({ getModel: () => defaultModel, getSettings: () => settings, onSettingsChanged: () => settingsView.load() });
+const dictionary = createDictionary({ getModel: () => defaultModel, getSettings: () => settings, onSettingsChanged: () => settingsView.load(), openSettings });
 const permissionsView = createPermissions();
 const settingsView = createSettings({
   async onLoaded(next) {

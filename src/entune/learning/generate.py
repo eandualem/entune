@@ -8,6 +8,7 @@ knowledge is shared and protected; it does not take priority over competing mean
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable, Sequence
 
 from entune.dictionary import changes as dictionary_changes
@@ -26,7 +27,10 @@ from entune.learning.suggestion_model import (
     Caller,
     Request,
     call_model,
+    passing,
 )
+
+PART_ATTEMPTS = 3  # tries of one part when a failure may pass; see suggestion_model.passing
 
 
 class StepFailed(ValueError):
@@ -38,10 +42,14 @@ class StepFailed(ValueError):
 
 
 def _service_problem(detail: str) -> str:
-    """What the person can do about a failed request, from the service's own words."""
+    """What the person can do about a failed request, from the service's own words. Status
+    codes come before words such as "timeout", which a busy service's reply can contain."""
     words = detail.lower()
-    if "timed out" in words or "timeout" in words:
-        return "the suggestion model did not answer within 20 minutes."
+    if "ran into empty output" in words:
+        return (
+            "the suggestion model's reply ran into empty output, so it was stopped;"
+            " try again in a little while."
+        )
     if any(sign in words for sign in ("401", "403", "authentication", "api key", "api_key")):
         return (
             "the suggestion model's service refused the key;"
@@ -54,6 +62,8 @@ def _service_problem(detail: str) -> str:
         )
     if any(sign in words for sign in ("500", "502", "503", "529", "overloaded", "unavailable")):
         return "the suggestion model's service is busy or down; try again in a little while."
+    if "timed out" in words or "timeout" in words:
+        return "the suggestion model did not finish its reply within the time limit for one reply."
     return "the suggestion model's service returned an error."
 
 
@@ -69,6 +79,7 @@ async def propose_learned(
     mode: Mode,
     progress: Callable[[int, int, int], None] | None = None,
     retrying: Callable[[int, str], None] | None = None,
+    retrying_part: Callable[[int, int, str, float], None] | None = None,
     inputs: Sequence[LearningText] | None = None,
     checkpoint: Callable[[Groups, int, int, tuple[str, ...]], None] | None = None,
     working: Groups | None = None,
@@ -78,9 +89,12 @@ async def propose_learned(
 
     Each step sees the working dictionary after the earlier steps' changes. Step numbers
     stay in the app for progress and resume. A reply that breaks a rule is sent back for
-    a fix, and `retrying` hears (attempt, rule broken) first. Raises StepFailed carrying
-    the provider's or the model's own words when a step fails; the checkpoint keeps only
-    validated steps.
+    a fix, and `retrying` hears (attempt, rule broken) first. A step that failed for a
+    passing reason is tried again, PART_ATTEMPTS times in all, and once more after a reply
+    that still broke a rule; `retrying_part` hears (step, attempt, why the last one failed,
+    its seconds) first. Each attempt starts from the same working dictionary. Raises
+    StepFailed carrying the provider's or the model's own words when a step fails; the
+    checkpoint keeps only validated steps.
     """
     current = dictionary_changes.share(current, set())
     proposed = current.effective(speech_model) if working is None else working
@@ -98,8 +112,6 @@ async def propose_learned(
         await asyncio.sleep(0)  # cancellation between chunks even for immediate test callers
         user_prompt = build_user_prompt(mode, current, step.snippets, speech_model, proposed)
         system = system_prompt(mode)
-        if progress:
-            progress(number, len(steps), len(system) + len(user_prompt))
         texts = [s.text for s in step.snippets]
 
         def check(reply: str, before: Groups = proposed, texts: list[str] = texts) -> Groups:
@@ -115,23 +127,41 @@ async def propose_learned(
             check,
             retrying or (lambda attempt, problem: None),
         )
-        try:
-            # Each attempt has its own 20 minutes; this bounds the part as a whole.
-            async with asyncio.timeout(1200 * (MAX_FIXES + 1)):
-                reply = await call(request)
-        except TimeoutError as exc:
-            raise StepFailed(
-                f"{part}: the suggestion model did not finish within an hour.", "TimeoutError"
-            ) from exc
-        except BrokenReply as exc:
-            raise StepFailed(
-                f"{part}: the suggestion model's reply still broke the dictionary's rules after"
-                f" {MAX_FIXES} corrections, so nothing from it was kept.",
-                f"BrokenReply: {exc}",
-            ) from exc
-        except Exception as exc:
-            detail = f"{type(exc).__name__}: {exc}"
-            raise StepFailed(f"{part}: {_service_problem(detail)}", detail) from exc
+        attempt, fresh = 1, True  # a reply that still broke a rule starts over once
+        failed: tuple[str, float] | None = None  # why the last attempt failed, its seconds
+        while True:
+            if progress:
+                progress(number, len(steps), len(system) + len(user_prompt))
+            if failed and retrying_part:
+                retrying_part(number, attempt, *failed)
+            label = part if attempt == 1 else f"{part}, attempt {attempt} of {PART_ATTEMPTS}"
+            started = time.monotonic()
+            try:
+                # Each reply has its own time limit; this bounds one attempt as a whole.
+                async with asyncio.timeout(1200 * (MAX_FIXES + 1)):
+                    reply = await call(request)
+                break
+            except TimeoutError as exc:
+                raise StepFailed(
+                    f"{label}: the suggestion model did not finish within an hour.",
+                    "TimeoutError",
+                ) from exc
+            except BrokenReply as exc:
+                if not fresh or attempt == PART_ATTEMPTS:
+                    raise StepFailed(
+                        f"{label}: the suggestion model's reply still broke the dictionary's"
+                        f" rules after {MAX_FIXES} corrections, so nothing from it was kept.",
+                        f"BrokenReply: {exc}",
+                    ) from exc
+                fresh, reason = False, "the reply still broke a rule after its corrections"
+            except Exception as exc:
+                detail = f"{type(exc).__name__}: {exc}"
+                why = passing(exc)
+                if why is None or attempt == PART_ATTEMPTS:
+                    raise StepFailed(f"{label}: {_service_problem(detail)}", detail) from exc
+                reason = why
+            failed = reason, time.monotonic() - started
+            attempt += 1
         try:
             proposed = check(reply)
             if checkpoint:

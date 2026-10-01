@@ -48,7 +48,8 @@ function player(url, label, seconds) {
 // What happened after speech recognition, told plainly and kept out of the way:
 // a compact Details control, a readable breakdown on demand, and failures in view.
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const took = (stage) => [stage.attempts > 1 ? `after ${plural(stage.attempts - 1, "retry", "retries")}` : "", stage.seconds ? `${stage.seconds.toFixed(1)} s` : ""].filter(Boolean).join(" · ");
+const DECISION_MODELS = { jev: "Jev", laya: "Laya" };
+const took = (stage) => [DECISION_MODELS[stage.model] ?? "", stage.attempts > 1 ? `after ${plural(stage.attempts - 1, "retry", "retries")}` : "", stage.seconds ? `${stage.seconds.toFixed(1)} s` : ""].filter(Boolean).join(" · ");
 function describe(name, stage) {
   if (stage.status === "failed") {
     return `${name} failed${name === "Dictionary" ? "; the original transcription was kept" : "; the text before this step was kept"}: ${stage.error}`;

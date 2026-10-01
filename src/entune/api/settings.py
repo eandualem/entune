@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import webbrowser
 from dataclasses import asdict
 
 from starlette.concurrency import run_in_threadpool
@@ -14,9 +16,11 @@ from entune.app import shortcuts
 from entune.app.entune import Entune
 from entune.app.metrics import processing_summary
 from entune.app.models import UnknownModel
-from entune.app.settings import JEV_PROVIDER
+from entune.app.operations import Busy
+from entune.app.settings import DECISION_MODELS, JEV_PROVIDER
 from entune.learning import suggestion_model
-from entune.processing import jev_client
+from entune.learning.suggestion_model import chatgpt
+from entune.processing import jev_client, laya
 
 
 def routes(app: Entune) -> list[Route]:
@@ -50,7 +54,14 @@ def routes(app: Entune) -> list[Route]:
                 "jev": {
                     **asdict(app.settings.jev_status()),
                     "policy": asdict(app.settings.jev_policy()),
-                    "summary": asdict(processing_summary(app.store)),
+                    "summary": asdict(processing_summary(app.store, app.settings.decision_model())),
+                },
+                "decisionModel": {
+                    "selected": app.settings.decision_model(),
+                    "laya": dict(
+                        zip(("state", "error"), app.decisions.laya.status(), strict=True),
+                        install=laya.INSTALL_COMMAND,
+                    ),
                 },
             }
         )
@@ -71,7 +82,7 @@ def routes(app: Entune) -> list[Route]:
                 raise ValueError("keys must be an object")
             known = (
                 {p.id for p in app.providers}
-                | suggestion_model.LLM_PROVIDERS.keys()
+                | (suggestion_model.LLM_PROVIDERS.keys() - {suggestion_model.CHATGPT})
                 | {JEV_PROVIDER}
             )
             for provider_id, key in keys.items():
@@ -92,10 +103,12 @@ def routes(app: Entune) -> list[Route]:
                 ):
                     raise ValueError(
                         "dictionaryModel must be provider:model for Anthropic, OpenAI,"
-                        " Google Gemini, Groq or Mistral"
+                        " ChatGPT subscription, Google Gemini, Groq or Mistral"
                     )
             if "fastMode" in body and not isinstance(body["fastMode"], bool):
                 raise ValueError("fastMode must be a boolean")
+            if "decisionModel" in body and body["decisionModel"] not in DECISION_MODELS:
+                raise ValueError("decisionModel must be jev or laya")
             jev_settings = body.get("jev", {})
             if not isinstance(jev_settings, dict) or set(jev_settings) - {
                 "dictionary",
@@ -121,16 +134,18 @@ def routes(app: Entune) -> list[Route]:
                         "jev.policy needs total_seconds, attempt_seconds and max_attempts"
                     )
                 policy = jev_client.Policy(**value)
-            if (
-                (
-                    jev_settings.get("dictionary")
-                    or jev_settings.get("formatting")
-                    or jev_settings.get("cleanup")
-                )
-                and JEV_PROVIDER not in keys
-                and app.settings.jev_status().key_hint is None
-            ):
-                raise ValueError("Save a TypeSafe API key first.")
+            # The same check the change itself makes, counting a key saved by this request,
+            # so a refusal comes before any field is stored.
+            processing = (
+                body.get("decisionModel"),
+                jev_settings.get("dictionary"),
+                jev_settings.get("formatting"),
+                jev_settings.get("cleanup"),
+            )
+            app.settings.check_processing(
+                *processing,
+                key_saved=JEV_PROVIDER in keys or app.settings.key(JEV_PROVIDER) is not None,
+            )
             shortcut_settings = body.get("shortcuts", {})
             if not isinstance(shortcut_settings, dict):
                 raise ValueError("shortcuts must be an object")
@@ -151,23 +166,87 @@ def routes(app: Entune) -> list[Route]:
                 app.settings.set_dictionary_model(dictionary_model or None)
             if "fastMode" in body:
                 app.settings.set_fast_mode(body["fastMode"])
-            if jev_settings:
-                app.settings.set_jev(
-                    jev_settings.get("dictionary"),
-                    jev_settings.get("formatting"),
-                    jev_settings.get("cleanup"),
-                )
+
+            if any(value is not None for value in processing):
+                app.settings.set_processing(*processing)
             if policy is not None:
                 app.settings.set_jev_policy(policy)
             if "shortcuts" in body:
                 app.settings.set_shortcuts(hold, toggle, cancel)
+            if "decisionModel" in body:
+                app.decisions.sync(retry=True)  # choosing Laya again starts it after a failure
         except UnknownModel as exc:
             return bad(f"Unknown model: {exc}")
         except ValueError as exc:
             return bad(str(exc))
         return JSONResponse({"ok": True})
 
+    # Signing in with ChatGPT: start gives the code to enter at OpenAI, the page then
+    # checks until the person has approved it. The waiting code is kept with the
+    # settings, so a newer start replaces it and deleting all data forgets it; each step
+    # counts as work on the data, so that deletion waits for a check in progress.
+    lock = threading.Lock()  # a sign-out waits for a check, so neither undoes the other
+
+    def start_sign_in() -> Response:
+        try:
+            with app.data.using_data("ChatGPT sign-in"):
+                code = chatgpt.start()
+                with lock:
+                    app.settings.set_chatgpt_sign_in(code)
+        except ValueError as exc:
+            return bad(str(exc), 409 if isinstance(exc, Busy) else 400)
+        # OpenAI's page opens where the person is signed in to ChatGPT: their own browser.
+        opened = webbrowser.open(chatgpt.VERIFICATION_URL)
+        return JSONResponse(
+            {
+                "userCode": code.user_code,
+                "verificationUrl": chatgpt.VERIFICATION_URL,
+                "interval": code.interval,
+                "opened": opened,
+            }
+        )
+
+    def check_sign_in(user_code: object) -> Response:
+        try:
+            with app.data.using_data("ChatGPT sign-in"), lock:
+                code = app.settings.chatgpt_sign_in()
+                # The page names the code it shows: a newer start replaced any other.
+                if code is None or code.user_code != user_code:
+                    return bad("This ChatGPT sign-in is no longer waiting; sign in again", 409)
+                try:
+                    login = chatgpt.check(code)
+                except ValueError as exc:
+                    app.settings.set_chatgpt_sign_in(None)
+                    return bad(str(exc))
+                if login is None:
+                    return JSONResponse({"state": "waiting"})
+                app.settings.set_chatgpt_sign_in(None)
+                app.settings.set_chatgpt_login(login)
+        except Busy as exc:
+            return bad(str(exc), 409)
+        return JSONResponse({"state": "signed-in", "account": login.email})
+
+    def sign_out() -> Response:
+        with lock:
+            app.settings.set_chatgpt_sign_in(None)
+            app.settings.set_chatgpt_login(None)
+        return JSONResponse({"state": "signed-out"})
+
+    async def chatgpt_sign_in(request: Request) -> Response:
+        action = {"POST": start_sign_in, "DELETE": sign_out}[request.method]
+        return await run_in_threadpool(action)
+
+    async def chatgpt_sign_in_check(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except ValueError as exc:
+            return bad(str(exc))
+        user_code = body.get("userCode") if isinstance(body, dict) else None
+        return await run_in_threadpool(check_sign_in, user_code)
+
     return [
         Route("/api/settings", get_settings, methods=["GET"]),
         Route("/api/settings", put_settings, methods=["PUT"]),
+        Route("/api/chatgpt/sign-in", chatgpt_sign_in, methods=["POST", "DELETE"]),
+        Route("/api/chatgpt/sign-in/check", chatgpt_sign_in_check, methods=["POST"]),
     ]

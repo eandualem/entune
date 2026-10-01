@@ -458,6 +458,10 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
+    { name = "httpx2" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "pydantic" },
     { name = "pydantic-ai-slim", extra = ["anthropic", "google", "groq", "mistral", "openai"] },
     { name = "pynput", marker = "sys_platform == 'darwin'" },
     { name = "pyobjc-framework-applicationservices", marker = "sys_platform == 'darwin'" },
@@ -476,7 +480,6 @@ build = [
     { name = "pyinstaller" },
 ]
 dev = [
-    { name = "httpx2" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
@@ -486,6 +489,10 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
+    { name = "httpx2" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "pydantic", specifier = ">=2" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "google", "groq", "mistral", "openai"], specifier = ">=2.48" },
     { name = "pynput", marker = "sys_platform == 'darwin'", specifier = ">=1.7,<2" },
     { name = "pyobjc-framework-applicationservices", marker = "sys_platform == 'darwin'", specifier = ">=10" },
@@ -502,7 +509,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 build = [{ name = "pyinstaller", specifier = ">=6" }]
 dev = [
-    { name = "httpx2" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.6" },

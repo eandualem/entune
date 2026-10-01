@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Generator
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -89,5 +90,94 @@ def import_wispr(store: Store) -> dict[str, int]:
         except (sqlite3.Error, OSError, ValueError) as exc:
             raise ValueError(
                 f"Wispr import stopped at {source.name}: {exc}. Already imported audio is kept."
+            ) from exc
+    return {"added": added, "duplicates": duplicates, "empty": empty}
+
+
+@dataclass(frozen=True)
+class DictationApp:
+    """Another dictation app that keeps each recording as an audio file on this Mac. Where
+    and how comes from its source code or documentation; nothing beside the audio is read."""
+
+    id: str  # the stored source
+    name: str
+    note: str
+    folders: tuple[str, ...]  # under the home folder; every one that exists is read
+    pattern: str  # the audio files in a folder
+
+
+APPS = (
+    DictationApp("wispr", "Wispr Flow", "Its recordings on this Mac, including backups", (), ""),
+    DictationApp(
+        "superwhisper",
+        "Superwhisper",
+        "The recordings in its recordings folder",
+        ("superwhisper/recordings", "Documents/superwhisper/recordings"),
+        "*/output.wav",
+    ),
+    DictationApp(
+        "voiceink",
+        "VoiceInk",
+        "The recordings it keeps on this Mac",
+        ("Library/Application Support/com.prakashjoshipax.VoiceInk/Recordings",),
+        "*.wav",
+    ),
+    DictationApp(
+        "openwhispr",
+        "OpenWhispr",
+        "The recordings it keeps on this Mac, 30 days by default",
+        (
+            "Library/Application Support/open-whispr/audio",
+            "Library/Application Support/OpenWhispr/audio",
+        ),
+        "*.webm",
+    ),
+    DictationApp(
+        "handy",
+        "Handy",
+        "The recordings it keeps on this Mac, the latest five by default",
+        ("Library/Application Support/com.pais.handy/recordings",),
+        "*.wav",
+    ),
+)
+
+
+def import_app(store: Store, app_id: str) -> dict[str, int]:
+    """Copy the audio another dictation app keeps, dated by when each file was written."""
+    app = next((a for a in APPS if a.id == app_id), None)
+    if app is None:
+        raise ValueError(f"Unknown dictation app: {app_id}")
+    if app.id == "wispr":
+        return import_wispr(store)
+    files: list[tuple[Path, Path]] = []
+    for folder in app.folders:
+        root = Path.home() / folder
+        try:
+            root.stat()
+        except FileNotFoundError:
+            continue
+        except PermissionError as exc:
+            raise ValueError(
+                f"Entune may not read {root}. Allow it in System Settings > Privacy & Security"
+                " > Files and Folders, then import again."
+            ) from exc
+        files += sorted((root, path) for path in root.glob(app.pattern) if path.is_file())
+    if not files:
+        raise ValueError(f"No {app.name} recordings found on this Mac.")
+    added = duplicates = empty = 0
+    for root, path in files:
+        try:
+            data = path.read_bytes()
+            if not data or (sniff_mime(data) == "audio/wav" and not wav_duration_seconds(data)):
+                empty += 1
+                continue
+            name = "-".join((app.id, *path.relative_to(root).parts))
+            if import_audio(store, data, name, recorded_at(path.stat().st_mtime), app.id):
+                added += 1
+            else:
+                duplicates += 1
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"{app.name} import stopped at {path.name}: {exc}. Already imported audio is kept."
             ) from exc
     return {"added": added, "duplicates": duplicates, "empty": empty}

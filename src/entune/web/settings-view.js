@@ -48,18 +48,27 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     if (await saveSetting({ keys }, el("keys-status"))) await loadSettings();
   });
 
-  // The dictionary model: a summary line with Change, then provider, key and model.
-  const dm = { edit: el("dm-edit"), provider: el("dm-provider"), key: el("dm-key"), model: el("dm-model"), custom: el("dm-model-custom") };
+  // The dictionary model: a summary line with Change, then provider, key and model. OpenAI
+  // is reached with an API key or on a ChatGPT subscription (PLAN, its own provider id).
+  const dm = { edit: el("dm-edit"), provider: el("dm-provider"), key: el("dm-key"), model: el("dm-model"), custom: el("dm-model-custom"), access: document.querySelectorAll('input[name="dm-access"]') };
+  const PLAN = "chatgpt";
+  function chosenProvider() {
+    const plan = dm.provider.value === "openai" && document.querySelector('input[name="dm-access"]:checked')?.value === PLAN;
+    return settings.llmProviders.find((p) => p.id === (plan ? PLAN : dm.provider.value));
+  }
   function renderDictionaryModel() {
     const [providerId, , modelId] = splitRef(settings.dictionaryModel);
     const provider = settings.llmProviders.find((p) => p.id === providerId);
     const anyKey = settings.llmProviders.find((p) => p.keyHint);
-    if (provider) {
+    if (provider?.id === PLAN) {
+      el("dm-title").textContent = `OpenAI · ${modelId}`;
+      el("dm-caption").textContent = provider.keyHint ? `ChatGPT subscription, signed in as ${provider.keyHint}` : "ChatGPT subscription, not signed in yet: sign in to build the dictionary";
+    } else if (provider) {
       el("dm-title").textContent = `${provider.name} · ${modelId}`;
       el("dm-caption").textContent = provider.keyHint ? `key saved ${provider.keyHint}` : `no key for ${provider.name} yet: add one to build the dictionary`;
     } else {
       el("dm-title").textContent = "No model";
-      el("dm-caption").textContent = anyKey ? "" : "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral to build the dictionary from your history.";
+      el("dm-caption").textContent = anyKey ? "" : "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral, or sign in with ChatGPT, to build the dictionary from your history.";
     }
   }
   function splitRef(ref) {
@@ -67,14 +76,24 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     return i < 0 ? [ref ?? "", "", ""] : [ref.slice(0, i), ":", ref.slice(i + 1)];
   }
   function fillDictionaryModelForm() {
-    const [providerId, , modelId] = splitRef(settings.dictionaryModel);
-    dm.provider.replaceChildren(...settings.llmProviders.map((p) => new Option(p.name, p.id, false, p.id === providerId)));
-    if (!providerId) dm.provider.value = settings.llmProviders.find((p) => p.keyHint)?.id ?? settings.llmProviders[0]?.id ?? "";
+    const [savedId, , modelId] = splitRef(settings.dictionaryModel);
+    const shown = (id) => (id === PLAN ? "openai" : id);
+    dm.provider.replaceChildren(...settings.llmProviders.filter((p) => p.id !== PLAN).map((p) => new Option(p.name, p.id, false, p.id === shown(savedId))));
+    if (!savedId) dm.provider.value = shown(settings.llmProviders.find((p) => p.keyHint)?.id ?? settings.llmProviders[0]?.id ?? "");
+    // OpenAI's access: as saved; with nothing saved for OpenAI, a signed-in plan without a key.
+    const key = (id) => settings.llmProviders.find((p) => p.id === id)?.keyHint;
+    const plan = savedId === PLAN || (savedId !== "openai" && !key("openai") && Boolean(key(PLAN)));
+    for (const input of dm.access) input.checked = input.value === (plan ? PLAN : "openai");
     fillDictionaryModelChoices(modelId);
   }
   function fillDictionaryModelChoices(chosen) {
-    const provider = settings.llmProviders.find((p) => p.id === dm.provider.value);
+    el("dm-access-row").hidden = dm.provider.value !== "openai";
+    const provider = chosenProvider();
     if (!provider) return;
+    // A ChatGPT plan is signed in to instead of given a key.
+    el("dm-key-row").hidden = provider.id === PLAN;
+    el("dm-signin").hidden = provider.id !== PLAN;
+    renderSignIn();
     dm.key.value = "";
     dm.key.placeholder = provider.keyHint ? `saved ${provider.keyHint} · type to replace` : "Not set";
     const known = provider.models.map((m) => m.id);
@@ -88,6 +107,8 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     dm.custom.value = "";
   }
   dm.provider.addEventListener("change", () => fillDictionaryModelChoices(null));
+  // Switching how OpenAI is reached keeps the model picked, where both offer it.
+  for (const input of dm.access) input.addEventListener("change", () => fillDictionaryModelChoices(dm.model.value === "__custom__" ? null : dm.model.value));
   dm.model.addEventListener("change", () => {
     dm.custom.hidden = dm.model.value !== "__custom__";
     if (!dm.custom.hidden) dm.custom.focus();
@@ -97,23 +118,158 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     el("dm-summary").hidden = true;
     dm.edit.hidden = false;
   });
-  el("dm-cancel").addEventListener("click", () => { dm.edit.hidden = true; el("dm-summary").hidden = false; });
+  el("dm-cancel").addEventListener("click", () => { stopSignIn(); dm.edit.hidden = true; el("dm-summary").hidden = false; });
+
+  // Signing in with ChatGPT: OpenAI gives a code to enter on its page; Entune checks, at
+  // the pace OpenAI asks, until the person approves it there.
+  let signInTimer = null, signInRun = 0;
+  function stopSignIn() { clearTimeout(signInTimer); signInRun += 1; }
+  function renderSignIn() {
+    stopSignIn();
+    const account = settings.llmProviders.find((p) => p.id === PLAN)?.keyHint;
+    el("dm-signin-state").textContent = account ? `Signed in as ${account}` : "Not signed in";
+    el("dm-signin-start").hidden = Boolean(account);
+    el("dm-signout").hidden = !account;
+    el("dm-signin-note").hidden = Boolean(account);
+  }
+  async function signInChanged(message) {
+    await loadSettings();
+    renderSignIn();
+    flash(el("dm-status"), message, "ok");
+  }
+  let starting = false; // one start at a time, so the code shown is the one the server has
+  el("dm-signin-start").addEventListener("click", async () => {
+    if (starting) return;
+    starting = true;
+    el("dm-signin-start").disabled = true;
+    stopSignIn();
+    const run = signInRun;
+    try {
+      const request = api("/api/chatgpt/sign-in", { method: "POST" });
+      // The code goes to the clipboard where there is one. WebKit only allows a clipboard
+      // write that starts in the click, so hand it the pending code.
+      let copied = Promise.resolve(false);
+      try {
+        copied = navigator.clipboard
+          .write([new ClipboardItem({ "text/plain": request.then((s) => new Blob([s.userCode], { type: "text/plain" })) })])
+          .then(() => true, () => false);
+      } catch { /* no clipboard: the code is shown to enter by hand */ }
+      const start = await request;
+      const pasted = await copied;
+      if (run !== signInRun) return; // the form changed while OpenAI answered
+      const code = document.createElement("strong");
+      code.className = "mono";
+      code.textContent = start.userCode;
+      const page = document.createElement("a");
+      page.href = start.verificationUrl;
+      page.target = "_blank";
+      page.rel = "noopener";
+      page.textContent = "OpenAI's sign-in page";
+      const opened = start.opened ? " (open in your browser)" : "";
+      el("dm-signin-state").replaceChildren(
+        ...(pasted ? ["Copied ", code, ": paste it on "] : ["Enter ", code, " on "]),
+        page, `${opened} and approve it. Waiting…`,
+      );
+      el("dm-signin-start").hidden = true;
+      const check = async () => {
+        if (run !== signInRun) return;
+        try {
+          const result = await api("/api/chatgpt/sign-in/check", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userCode: start.userCode }) });
+          if (run !== signInRun) return;
+          if (result.state === "waiting") signInTimer = setTimeout(check, start.interval * 1000);
+          else await signInChanged("Signed in");
+        } catch (err) {
+          if (run !== signInRun) return;
+          renderSignIn();
+          flash(el("dm-status"), errorText(err), "err");
+        }
+      };
+      signInTimer = setTimeout(check, start.interval * 1000);
+    } catch (err) {
+      if (run === signInRun) flash(el("dm-status"), errorText(err), "err");
+    } finally {
+      starting = false;
+      el("dm-signin-start").disabled = false;
+    }
+  });
+  el("dm-signout").addEventListener("click", async () => {
+    try {
+      await api("/api/chatgpt/sign-in", { method: "DELETE" });
+      await signInChanged("Signed out");
+    } catch (err) {
+      flash(el("dm-status"), errorText(err), "err");
+    }
+  });
   dm.edit.addEventListener("submit", async (e) => {
     e.preventDefault();
     const modelId = dm.model.value === "__custom__" ? dm.custom.value.trim() : dm.model.value;
     if (!modelId) { flash(el("dm-status"), "Give the model's id", "err"); return; }
-    const keys = dm.key.value.trim() ? { [dm.provider.value]: dm.key.value.trim() } : {};
-    if (await saveSetting({ keys, dictionaryModel: `${dm.provider.value}:${modelId}` }, el("dm-status"))) {
+    const provider = chosenProvider().id;
+    const keys = provider !== PLAN && dm.key.value.trim() ? { [provider]: dm.key.value.trim() } : {};
+    if (await saveSetting({ keys, dictionaryModel: `${provider}:${modelId}` }, el("dm-status"))) {
       dm.edit.hidden = true;
       el("dm-summary").hidden = false;
       await loadSettings();
     }
   });
 
-  // Jev: its key, independent processing controls, and what it has done.
+  // The decision model: the choice, Jev's key or Laya's state on this Mac, independent
+  // processing controls, and what the chosen model has done.
   const jev = { dictionary: el("jev-dictionary"), formatting: el("jev-formatting"), cleanup: el("jev-cleanup"), key: el("key-typesafe") };
+  const LAYA = {
+    unavailable: "Its engine is not installed on this Mac.",
+    stopped: "Installed. It starts when a step below is on.",
+    starting: "Starting on this Mac. The first start downloads the model, about 850 MB.",
+    ready: "Running on this Mac.",
+  };
+  let layaPoll = null;
+  // The option shown is the saved one, unless a switch was refused: then the picked option
+  // stays shown with its setup (Jev's key, Laya's install command) until it can be saved.
+  let picked = null, refusal = "";
+  function renderDecisionModel() {
+    const { selected, laya } = settings.decisionModel;
+    const shown = picked ?? selected;
+    for (const input of document.querySelectorAll('input[name="decision-model"]')) input.checked = input.value === shown;
+    el("jev-key-form").hidden = shown !== "jev";
+    el("laya-setup").hidden = shown !== "laya";
+    const names = { jev: "Jev", laya: "Laya" };
+    el("decision-note").textContent = picked ? `Not switched yet: ${refusal}${selected ? ` The steps still use ${names[selected]}.` : ""}` : "";
+    el("laya-status").textContent = laya.state === "failed" ? laya.error : LAYA[laya.state];
+    el("laya-status").classList.toggle("err", laya.state === "failed");
+    el("laya-retry").hidden = !["failed", "unavailable"].includes(laya.state);
+    el("laya-retry").textContent = laya.state === "failed" ? "Start again" : "Check again";
+    el("laya-install").hidden = laya.state !== "unavailable";
+    el("laya-command").textContent = laya.install;
+    // Follow Laya while it starts; the first start can take minutes.
+    clearTimeout(layaPoll);
+    if (shown === "laya" && laya.state === "starting") {
+      layaPoll = setTimeout(async () => {
+        try { settings.decisionModel = (await api("/api/settings")).decisionModel; renderDecisionModel(); } catch { /* the next load shows it */ }
+      }, 2000);
+    }
+  }
+  async function chooseDecisionModel(value) {
+    try {
+      await api("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: {}, decisionModel: value }) });
+      picked = null;
+      flash(el("decision-status"), "Saved", "ok");
+      await loadSettings();
+    } catch (err) {
+      picked = value === settings.decisionModel.selected ? null : value;
+      refusal = errorText(err);
+      if (!picked) flash(el("decision-status"), refusal, "err");
+      renderDecisionModel();
+    }
+  }
+  for (const input of document.querySelectorAll('input[name="decision-model"]')) {
+    input.addEventListener("change", () => chooseDecisionModel(input.value));
+  }
+  // Start again after a failure; after installing, Check again finds the engine and, if
+  // Laya was picked but refused for lack of it, saves the choice.
+  el("laya-retry").addEventListener("click", () => (settings.decisionModel.laya.state === "failed" || picked === "laya" ? chooseDecisionModel("laya") : loadSettings()));
   function renderJev() {
     const j = settings.jev;
+    renderDecisionModel();
     jev.key.value = "";
     jev.key.placeholder = j.key_hint ? `saved ${j.key_hint} · type to replace` : "Not set";
     jev.dictionary.checked = j.dictionary;
@@ -132,7 +288,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const seconds = (value) => (value === null || value === undefined ? "–" : `+${value.toFixed(1)} s`);
     el("activity-total").textContent = s.transcriptions
       ? `${s.transcriptions} processed dictation${s.transcriptions === 1 ? "" : "s"} · median ${seconds(s.median_seconds)} added per dictation.`
-      : j.key_hint ? "No processed dictations yet." : "Add a TypeSafe key in Settings › Corrections & formatting to enable processing.";
+      : settings.decisionModel.selected ? "No processed dictations yet." : "Choose a decision model in Settings › Corrections & formatting to enable processing.";
     const steps = [["contextual", "Dictionary, read in context"], ["deterministic", "Dictionary, always-apply entries"], ["cleanup", "Repeated fillers"], ["formatting", "Paragraphs and bullets"]];
     const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
     const rows = [];
@@ -176,11 +332,14 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     e.preventDefault();
     const key = jev.key.value.trim();
     if (!key) { flash(el("jev-key-status"), "Nothing to save", "ok"); return; }
-    if (await saveSetting({ keys: { typesafe: key } }, el("jev-key-status"))) await loadSettings();
+    // A key saved while Jev is picked but not yet chosen completes the switch.
+    const choice = picked === "jev" ? { decisionModel: "jev" } : {};
+    if (await saveSetting({ keys: { typesafe: key }, ...choice }, el("jev-key-status"))) { picked = null; await loadSettings(); }
   });
   for (const name of ["dictionary", "formatting", "cleanup"]) {
     jev[name].addEventListener("change", async () => {
-      if (!(await saveSetting({ jev: { [name]: jev[name].checked } }, el("jev-key-status")))) jev[name].checked = !jev[name].checked;
+      if (await saveSetting({ jev: { [name]: jev[name].checked } }, el("decision-status"))) await loadSettings();
+      else jev[name].checked = !jev[name].checked;
     });
   }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import subprocess
 import sys
@@ -8,12 +9,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import Any
+from urllib.parse import parse_qs
 
 import httpx
 import httpx2
 import pytest
 from mistralai.client.utils import RetryConfig
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -23,7 +25,7 @@ from entune import prompts
 from entune.dictionary.entries import Association, Dictionary, Form, Group, Meaning
 from entune.learning import batches, generate, replies, suggestion_model
 from entune.learning import inputs as learning_inputs
-from entune.learning.suggestion_model import Request, call, providers
+from entune.learning.suggestion_model import Request, call, chatgpt, providers
 from tests.dictionary_samples import JEV, group, proposed
 
 TEXT = "I use cloud code."
@@ -60,13 +62,19 @@ def test_user_prompt_carries_only_this_models_working_groups_and_literal_data() 
 def test_all_supplied_text_is_processed_in_bounded_steps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
     transcripts = [" first second third\nfourth fifth ", "", "x" * 15, *["tail"] * 301]
-    steps = batches.batches(transcripts)
+    steps = [
+        [s.text for s in step.snippets]
+        for step in batches.learning_batches(
+            [learning_inputs.LearningText(str(i), text) for i, text in enumerate(transcripts)]
+        )
+    ]
     assert all(sum(map(len, step)) <= 10 for step in steps)
     assert "".join("".join(t.split()) for step in steps for t in step) == "".join(
         "".join(t.split()) for t in transcripts
     )
     assert steps[:2] == [["first"], ["second"]]  # whole words when they fit
-    assert batches.batches([]) == [] and batches.batches(["", " "]) == []
+    assert batches.learning_batches([]) == []
+    assert batches.learning_batches([learning_inputs.LearningText("empty", " ")]) == []
 
 
 @pytest.mark.parametrize("reply", [REPLY, f"```json\n{REPLY}\n```"])
@@ -337,6 +345,7 @@ def test_new_providers_are_offered_with_their_own_defaults() -> None:
     assert set(suggestion_model.LLM_PROVIDERS) == {
         "anthropic",
         "openai",
+        "chatgpt",
         "google",
         "groq",
         "mistral",
@@ -639,18 +648,30 @@ def test_a_request_waits_five_seconds_to_connect_and_twenty_minutes_to_read(
     assert all(t["connect"] == providers.CONNECT and t["read"] == providers.TIMEOUT for t in limits)
 
 
+@pytest.mark.parametrize("plan", [False, True])
 def test_a_reply_that_keeps_streaming_past_the_limit_is_cut(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, plan: bool
 ) -> None:
-    monkeypatch.setattr(call, "TIMEOUT", 0.05)
+    # A ChatGPT plan cuts a request at about 900 seconds; Entune stops its reply just before.
+    assert providers.PLAN_TIMEOUT < 900 < providers.TIMEOUT
+    monkeypatch.setattr(call, "TIMEOUT", 0.03)
+    monkeypatch.setattr(call, "PLAN_TIMEOUT", 0.06)
+    chosen = (
+        replace(request(), provider=suggestion_model.CHATGPT, model="chatgpt:gpt-6-sol")
+        if plan
+        else request()
+    )
 
     async def endless(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         while True:
             await asyncio.sleep(0.01)
             yield " "
 
-    with pytest.raises(ValueError, match="timed out"):
-        asyncio.run(suggestion_model.call_model(request(), FunctionModel(stream_function=endless)))
+    with pytest.raises(suggestion_model.ReplyStopped, match="timed out") as stopped:
+        asyncio.run(suggestion_model.call_model(chosen, FunctionModel(stream_function=endless)))
+    limit = 0.06 if plan else 0.03
+    assert stopped.value.reason == f"the reply ran past its {limit / 60:g}-minute limit"
+    assert ("ChatGPT plan" in str(stopped.value)) == plan
 
 
 def test_request_failures_are_not_retried() -> None:
@@ -667,7 +688,10 @@ def test_request_failures_are_not_retried() -> None:
 
 
 def test_a_step_whose_fixes_all_break_rules_fails_plainly() -> None:
+    calls: list[int] = []
+
     async def broken(_: Request) -> str:
+        calls.append(1)
         raise suggestion_model.BrokenReply("basis: literal needs no evidence")
 
     with pytest.raises(
@@ -686,6 +710,220 @@ def test_a_step_whose_fixes_all_break_rules_fails_plainly() -> None:
             )
         )
     assert failed.value.detail == "BrokenReply: basis: literal needs no evidence"
+    assert len(calls) == 2  # one fresh attempt of the part, then it stops
+
+
+def test_a_part_whose_reply_still_broke_the_rules_gets_one_fresh_attempt() -> None:
+    calls: list[int] = []
+    heard: list[tuple[int, int, str]] = []
+
+    async def broken_once(_: Request) -> str:
+        calls.append(1)
+        if len(calls) == 1:
+            raise suggestion_model.BrokenReply("basis: literal needs no evidence")
+        return REPLY
+
+    learned = asyncio.run(
+        generate.propose_learned(
+            "openai",
+            "k",
+            "openai:gpt-6-luna",
+            Dictionary(),
+            [TEXT],
+            "s/m",
+            call=broken_once,
+            mode="generate",
+            retrying_part=lambda part, attempt, reason, seconds: heard.append(
+                (part, attempt, reason)
+            ),
+        )
+    )
+    assert learned[0].meanings[0].spelling == "Claude Code" and len(calls) == 2
+    assert heard == [(1, 2, "the reply still broke a rule after its corrections")]
+
+
+def test_a_reply_that_runs_into_empty_output_is_stopped_and_its_part_retried() -> None:
+    good = strict_reply(REPLY)
+    blank: list[int] = []  # whitespace characters each request streamed after its JSON
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        blank.append(0)
+        yield good
+        # The first reply runs away; bounded only so that a missing stop fails, not hangs.
+        while len(blank) == 1 and blank[-1] < 10 * call.RUNAWAY:
+            blank[-1] += 100
+            yield " " * 100
+
+    model = Finished(stream_function=stream)
+
+    async def caller(request: Request) -> str:
+        return await suggestion_model.call_model(request, model)
+
+    heard: list[tuple[int, int, str]] = []
+    learned = asyncio.run(
+        generate.propose_learned(
+            "openai",
+            "k",
+            "openai:gpt-6-luna",
+            Dictionary(),
+            [TEXT],
+            "s/m",
+            call=caller,
+            mode="generate",
+            retrying_part=lambda part, attempt, reason, seconds: heard.append(
+                (part, attempt, reason)
+            ),
+        )
+    )
+    assert learned[0].meanings[0].spelling == "Claude Code"
+    assert blank == [call.RUNAWAY + 100, 0]  # stopped at the first chunk past the threshold
+    assert heard == [(1, 2, "the reply ran into empty output")]
+
+
+@pytest.mark.parametrize(
+    "error,reason",
+    [
+        (ModelAPIError("gpt-6-luna", "Connection error."), "the connection failed"),
+        (httpx2.RemoteProtocolError("peer closed connection"), "the connection failed"),
+        (ModelHTTPError(500, "gpt-6-luna", {"error": "boom"}), "the service returned error 500"),
+        (
+            suggestion_model.ReplyStopped(
+                "the reply ran into empty output", "The reply ran into empty output"
+            ),
+            "the reply ran into empty output",
+        ),
+        (
+            suggestion_model.ReplyStopped(
+                "the reply ran past its 14.5-minute limit",
+                "The reply timed out: still streaming after 14.5 minutes",
+            ),
+            "the reply ran past its 14.5-minute limit",
+        ),
+    ],
+)
+def test_a_part_that_failed_in_a_way_that_may_pass_is_tried_twice_more_and_announced(
+    error: Exception, reason: str
+) -> None:
+    events: list[object] = []
+
+    async def failing(_: Request) -> str:
+        events.append("call")
+        raise error
+
+    with pytest.raises(generate.StepFailed, match=r"^Part 1 of 1, attempt 3 of 3: "):
+        asyncio.run(
+            generate.propose_learned(
+                "openai",
+                "k",
+                "openai:gpt-6-luna",
+                Dictionary(),
+                ["x"],
+                "s/m",
+                call=failing,
+                mode="generate",
+                progress=lambda part, total, size: events.append(("progress", part)),
+                retrying_part=lambda part, attempt, why, seconds: events.append(
+                    (part, attempt, why)
+                ),
+            )
+        )
+    assert events == [
+        ("progress", 1),
+        "call",
+        ("progress", 1),
+        (1, 2, reason),
+        "call",
+        ("progress", 1),
+        (1, 3, reason),
+        "call",
+    ]
+
+
+@pytest.mark.parametrize(
+    "status,problem", [(401, "refused the key"), (403, "refused the key"), (429, "quota")]
+)
+def test_a_refused_key_or_a_limit_is_never_retried(status: int, problem: str) -> None:
+    calls: list[int] = []
+    heard: list[object] = []
+
+    async def refused(_: Request) -> str:
+        calls.append(1)
+        raise ModelHTTPError(status, "gpt-6-luna", {"error": "no"})
+
+    with pytest.raises(generate.StepFailed, match=rf"^Part 1 of 1: .*{problem}"):
+        asyncio.run(
+            generate.propose_learned(
+                "openai",
+                "k",
+                "openai:gpt-6-luna",
+                Dictionary(),
+                ["x"],
+                "s/m",
+                call=refused,
+                mode="generate",
+                retrying_part=lambda *told: heard.append(told),
+            )
+        )
+    assert calls == [1] and heard == []
+
+
+def test_a_busy_service_whose_words_mention_a_timeout_is_reported_as_busy() -> None:
+    async def busy(_: Request) -> str:
+        raise ModelHTTPError(
+            503,
+            "gpt-6-sol",
+            "upstream connect error or disconnect/reset before headers."
+            " reset reason: connection timeout",
+        )
+
+    with pytest.raises(generate.StepFailed, match="busy or down") as failed:
+        asyncio.run(
+            generate.propose_learned(
+                "chatgpt",
+                "k",
+                "chatgpt:gpt-6-sol",
+                Dictionary(),
+                ["x"],
+                "s/m",
+                call=busy,
+                mode="generate",
+            )
+        )
+    assert "reset reason: connection timeout" in failed.value.detail
+
+
+def test_a_retried_part_starts_from_the_working_dictionary_and_repeats_no_finished_part(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
+    prompts: list[str] = []
+    saved: list[int] = []
+
+    async def flaky(request: Request) -> str:
+        prompts.append(request.user)
+        if len(prompts) == 1:
+            return json.dumps(proposed("cloud code"))
+        if len(prompts) == 2:
+            raise ModelHTTPError(502, "gpt-6-luna", "bad gateway")
+        return '{"additions": []}'
+
+    learned = asyncio.run(
+        generate.propose_learned(
+            "openai",
+            "k",
+            "openai:gpt-6-luna",
+            Dictionary(),
+            ["cloud code", "second one", "third item"],
+            "s/m",
+            call=flaky,
+            mode="generate",
+            checkpoint=lambda groups, number, total, covered: saved.append(number),
+        )
+    )
+    assert saved == [1, 2, 3] and len(prompts) == 4
+    assert prompts[1] == prompts[2] and "Claude Code" in prompts[2]  # part 1's dictionary
+    assert len({prompts[0], prompts[2], prompts[3]}) == 3  # part 1 was not asked again
+    assert learned[0].meanings[0].spelling == "Claude Code"
 
 
 def test_refinement_names_each_group_once_and_only_existing_ones() -> None:
@@ -744,3 +982,99 @@ def test_starting_entune_loads_no_suggestion_sdk() -> None:
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert loaded.stdout.strip() == "[]"
+
+
+def jwt(claims: dict[str, Any]) -> str:
+    """An unsigned token carrying `claims`, as Entune reads them."""
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+    return f"e30.{payload}.signature"
+
+
+ACCOUNT = {"https://api.openai.com/auth": {"chatgpt_account_id": "acct-1"}}
+
+
+def test_chatgpt_sign_in_waits_for_approval_then_exchanges_the_code() -> None:
+    sent: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        if request.url.path.endswith("/usercode"):
+            code = {"device_auth_id": "d1", "user_code": "ABCD-1234", "interval": "7"}
+            return httpx.Response(200, json={**code, "expires_at": "2030-03-17T17:46:40+00:00"})
+        if request.url.path.endswith("/deviceauth/token"):
+            approved = {"authorization_code": "c1", "code_verifier": "v1"}
+            return httpx.Response(403 if len(sent) == 2 else 200, json=approved)
+        tokens = {
+            "access_token": jwt({**ACCOUNT, "exp": 2_000_000_000}),
+            "refresh_token": "r1",
+            "id_token": jwt({"email": "a@example.com"}),
+        }
+        return httpx.Response(200, json=tokens)
+
+    transport = httpx.MockTransport(respond)
+    code = chatgpt.start(transport)
+    assert code == chatgpt.DeviceCode("d1", "ABCD-1234", 7, 1_900_000_000.0)
+    assert chatgpt.check(code, transport, now=code.expires_at - 60) is None  # not yet approved
+    login = chatgpt.check(code, transport, now=code.expires_at - 55)
+    assert login == chatgpt.Login(
+        jwt({**ACCOUNT, "exp": 2_000_000_000}), "r1", "a@example.com", 2e9
+    )
+    assert chatgpt.account_id(login.access_token) == "acct-1"
+    exchange = parse_qs(sent[-1].content.decode())
+    assert exchange["code"] == ["c1"] and exchange["code_verifier"] == ["v1"]
+    with pytest.raises(ValueError, match="code expired"):  # never asks OpenAI again
+        chatgpt.check(code, transport, now=code.expires_at + 1)
+    assert len(sent) == 4
+
+
+def test_a_chatgpt_login_is_renewed_only_when_due_and_failures_read_as_openais() -> None:
+    login = chatgpt.Login("old", "r1", "a@example.com", 100_000.0)
+
+    def renew(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content)["refresh_token"] == "r1"
+        return httpx.Response(200, json={"access_token": "new", "refresh_token": "r2"})
+
+    transport = httpx.MockTransport(renew)
+    assert chatgpt.renewed(login, transport, now=100_000.0 - 2 * chatgpt.RENEW_WITHIN) is None
+    fresh = chatgpt.renewed(login, transport, now=99_000.0)
+    assert fresh is not None and (fresh.access_token, fresh.refresh_token) == ("new", "r2")
+    assert fresh.email == "a@example.com"  # kept when the renewal names no account
+
+    refused = httpx.MockTransport(lambda _: httpx.Response(401, text="refresh_token_reused"))
+    with pytest.raises(ValueError, match=r"\(401\): refresh_token_reused"):
+        chatgpt.renewed(login, refused, now=99_000.0)
+
+    def offline(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("offline", request=request)
+
+    with pytest.raises(ValueError, match="Could not reach OpenAI"):
+        chatgpt.start(httpx.MockTransport(offline))
+
+
+def test_a_chatgpt_plan_is_asked_at_its_endpoint_for_its_account_without_an_output_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[httpx2.Request] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request)
+        return openai_stream("completed")
+
+    monkeypatch.setattr(
+        providers,
+        "_http2",
+        lambda header, value: httpx2.AsyncClient(
+            transport=httpx2.MockTransport(respond),
+            event_hooks=providers._credential(header, value),
+        ),
+    )
+    token = jwt(ACCOUNT)
+    plan = replace(request(), provider="chatgpt", api_key=token, model="chatgpt:gpt-6-sol")
+    assert json.loads(asyncio.run(suggestion_model.call_model(plan))) == {"additions": []}
+    [outgoing] = sent
+    assert str(outgoing.url) == f"{chatgpt.BACKEND}/responses"
+    assert outgoing.headers["authorization"] == f"Bearer {token}"
+    assert outgoing.headers["chatgpt-account-id"] == "acct-1"
+    body = json.loads(outgoing.content)
+    assert body["store"] is False and body["stream"] is True
+    assert "max_output_tokens" not in body

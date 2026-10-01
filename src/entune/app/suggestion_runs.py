@@ -233,6 +233,23 @@ class DictionaryBuilds:
                 attempt=attempt, attempts=suggestion_model.MAX_FIXES + 1, brokenRule=rule
             )
 
+    def _retrying_part(self, part: int, attempt: int, reason: str, seconds: float) -> None:
+        # A part starts over after a failure that may pass: say why, and keep each failed
+        # attempt in the run's record.
+        failed = {
+            "part": part,
+            "attempt": attempt - 1,
+            "reason": reason,
+            "seconds": round(seconds, 1),
+        }
+        with self._lock:
+            self._state.update(
+                partAttempt=attempt,
+                partAttempts=generate.PART_ATTEMPTS,
+                retryReason=reason,
+                retries=[*self._state.get("retries", ()), failed],
+            )
+
     async def _generate(
         self, spec: BuildInput, inputs: list[learning_inputs.LearningText]
     ) -> Groups:
@@ -274,10 +291,13 @@ class DictionaryBuilds:
                     stepStartedAt=time.time(),  # the page shows how long this part has run
                     attempt=1,
                     brokenRule=None,
+                    partAttempt=1,
+                    retryReason=None,
                 ),
                 # A reply broke a rule and the model is asked to fix it: say so, with the
                 # rule, so the person can stop instead.
                 retrying=self._retrying,
+                retrying_part=self._retrying_part,
             )
         finally:
             with self._lock:

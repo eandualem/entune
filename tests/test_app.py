@@ -311,7 +311,7 @@ def test_starting_a_recording_opens_the_provider_and_jev_connections(tmp_path: P
     entune.settings.set_key("stub", "k")
     entune.models.set_default_model("stub/good")
     entune.settings.set_key("typesafe", "ts")
-    entune.settings.set_jev(formatting=True)
+    entune.settings.set_processing(formatting=True)
     app.start_recording()
     assert provider.preconnected.wait(2) and jev_opened.wait(2)
     app.stop_recording()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import threading
 from pathlib import Path
@@ -66,7 +67,6 @@ def test_wispr_import_deduplicates_backups_without_importing_history(
             b,
         ]
         assert store.list_recordings() == []
-        assert store.recent_transcripts("stub", "good", 300) == []
     finally:
         live.close()
         backup.close()
@@ -265,6 +265,74 @@ def test_reimporting_saved_audio_adds_a_missing_date_only(tmp_path: Path) -> Non
         store.close()
 
 
+def test_other_dictation_apps_import_only_their_audio_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each app's layout as its source code or documentation describes it, with the
+    # transcripts it keeps beside the audio, which must stay unread.
+    home = tmp_path / "home"
+    support = home / "Library" / "Application Support"
+    clips = [wav_bytes(bytes([n, 0]) * 16) for n in range(6)]
+    layout = {
+        home / "superwhisper/recordings/1726000000/output.wav": clips[0],
+        home / "Documents/superwhisper/recordings/1725000000/output.wav": clips[1],
+        support / "com.prakashjoshipax.VoiceInk/Recordings/5B8C1D3E.wav": clips[2],
+        support / "open-whispr/audio/OpenWhispr-2026-09-20-10-00-00-7.webm": b"\x1a\x45\xdf\xa3"
+        + b"\x00" * 12,
+        support / "com.pais.handy/recordings/handy-1726000000.wav": clips[3],
+        support / "com.pais.handy/recordings/handy-1726000001.wav": wav_bytes(b""),
+    }
+    for path, data in layout.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    (home / "superwhisper/recordings/1726000000/meta.json").write_text('{"result": "private"}')
+    (support / "com.pais.handy/history.db").write_bytes(b"not audio")
+    monkeypatch.setattr(Path, "home", lambda: home)
+    store = Store(tmp_path / "data")
+    client = TestClient(create_app(Entune(store, [])), base_url="http://localhost")
+    try:
+        apps = client.get("/api/dictionary/audio").json()["apps"]
+        assert [a["id"] for a in apps] == [
+            "wispr",
+            "superwhisper",
+            "voiceink",
+            "openwhispr",
+            "handy",
+        ]
+        imported = {
+            app: client.post(f"/api/dictionary/audio/apps/{app}").json()
+            for app in ("superwhisper", "voiceink", "openwhispr", "handy")
+        }
+        assert imported == {
+            "superwhisper": {"added": 2, "duplicates": 0, "empty": 0},
+            "voiceink": {"added": 1, "duplicates": 0, "empty": 0},
+            "openwhispr": {"added": 1, "duplicates": 0, "empty": 0},
+            "handy": {"added": 1, "duplicates": 0, "empty": 1},
+        }
+        again = client.post("/api/dictionary/audio/apps/superwhisper").json()
+        assert again == {"added": 0, "duplicates": 2, "empty": 0}
+        items = client.get("/api/dictionary/audio").json()["items"]
+        assert sorted((i["source"], i["name"]) for i in items) == [
+            ("handy", "handy-handy-1726000000.wav"),
+            ("openwhispr", "openwhispr-OpenWhispr-2026-09-20-10-00-00-7.webm"),
+            ("superwhisper", "superwhisper-1725000000-output.wav"),
+            ("superwhisper", "superwhisper-1726000000-output.wav"),
+            ("voiceink", "voiceink-5B8C1D3E.wav"),
+        ]
+        assert all(i["created_at"] for i in items)  # dated by when each file was written
+        missing = client.post("/api/dictionary/audio/apps/wispr")
+        assert missing.status_code == 400
+        assert client.post("/api/dictionary/audio/apps/other").text == (
+            "Unknown dictation app: other"
+        )
+        for folder in ("superwhisper", "Documents"):
+            shutil.rmtree(home / folder)
+        empty = client.post("/api/dictionary/audio/apps/superwhisper")
+        assert empty.text == "No Superwhisper recordings found on this Mac."
+    finally:
+        store.close()
+
+
 def test_import_source_is_recorded_not_inferred_from_the_file_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -277,7 +345,7 @@ def test_import_source_is_recorded_not_inferred_from_the_file_name(
     try:
         folder_file = wav_bytes(b"\x01\x00" * 16)
         client.post("/api/dictionary/audio", files={"audio": ("wispr-looking.wav", folder_file)})
-        client.post("/api/dictionary/audio/wispr")
+        client.post("/api/dictionary/audio/apps/wispr")
         items = client.get("/api/dictionary/audio").json()["items"]
         assert {i["name"]: i["source"] for i in items} == {
             "wispr-looking.wav": "folder",

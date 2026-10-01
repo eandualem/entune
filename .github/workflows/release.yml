@@ -1,0 +1,63 @@
+name: Publish to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Reviewed commit on main"
+        required: true
+      wheel_sha256:
+        description: "SHA-256 of the audited wheel"
+        required: true
+      sdist_sha256:
+        description: "SHA-256 of the audited source archive"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a release from main
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: test "$RELEASE_REF" = refs/heads/main
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          version: "0.12.6"
+      - name: Verify the reviewed source
+        env:
+          EXPECTED_SOURCE: ${{ inputs.source_sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+      - run: uv build --no-sources
+      - name: Verify both archives match the audited files
+        env:
+          EXPECTED_WHEEL: ${{ inputs.wheel_sha256 }}
+          EXPECTED_SDIST: ${{ inputs.sdist_sha256 }}
+        run: |
+          python - <<'PYTHON'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          for pattern, variable in [("*.whl", "EXPECTED_WHEEL"), ("*.tar.gz", "EXPECTED_SDIST")]:
+              files = list(Path("dist").glob(pattern))
+              if len(files) != 1:
+                  raise SystemExit(f"Expected one {pattern} archive")
+              actual = hashlib.sha256(files[0].read_bytes()).hexdigest()
+              if actual != os.environ[variable]:
+                  raise SystemExit(f"Archive differs from the audited file: {files[0].name}")
+              print(f"Verified {files[0].name}: {actual}")
+          PYTHON
+      - name: Publish the audited archives
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          test -n "$UV_PUBLISH_TOKEN" || { echo "Configure the PYPI_API_TOKEN repository secret first."; exit 1; }
+          uv publish --trusted-publishing never dist/*.whl dist/*.tar.gz

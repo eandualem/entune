@@ -20,6 +20,7 @@ from entune.dictionary.corrections import Correction as SubmittedCorrection
 from entune.learning.inputs import DictionaryResult, LearningText
 from entune.processing.results import Processed, Stage, interrupted
 from entune.storage import data_folder
+from entune.storage.paths import protect_data
 from entune.storage.records import (
     Correction,
     DictionaryAudio,
@@ -65,8 +66,12 @@ class Store:
 
     def _open(self) -> None:
         """Create the audio folder and database if needed; the caller holds the lock."""
-        self.audio_dir.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(self.data_dir / "entune.db", check_same_thread=False)
+        protect_data(self.data_dir)
+        self.audio_dir.mkdir(exist_ok=True, mode=0o700)
+        database = self.data_dir / "entune.db"
+        database.touch(mode=0o600, exist_ok=True)
+        database.chmod(0o600)
+        self._db = sqlite3.connect(database, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode = WAL")
         self._db.executescript(SCHEMA)
@@ -129,7 +134,9 @@ class Store:
         created_at = now()
         # The file and its row are written together, so a reset never splits them.
         with self._lock, self._db:
-            (self.audio_dir / file).write_bytes(data)
+            path = self.audio_dir / file
+            path.touch(mode=0o600)
+            path.write_bytes(data)
             cursor = self._db.execute(
                 "INSERT INTO recordings (created_at, file, mime) VALUES (?, ?, ?)",
                 (created_at, file, mime),
@@ -289,12 +296,10 @@ class Store:
             stage = attempt.correction
             # The dictionary step's own result, only when it ran and recorded its edits.
             # Later stages (fillers, formatting) and delivered text never stand in for it.
-            ran = stage is not None and (
-                stage.status == "succeeded" or (stage.status == "skipped" and not stage.error)
-            )
+            changes = stage.recorded_changes() if stage is not None else None
             result = (
-                DictionaryResult(stage.changes, stage.selections or None)
-                if ran and stage is not None and stage.changes is not None
+                DictionaryResult(changes, stage.selections or None)
+                if stage is not None and changes is not None
                 else None
             )
             inputs.append(LearningText(str(attempt.id), attempt.raw_text, "raw_speech", result))
@@ -331,6 +336,7 @@ class Store:
                 "steps",
                 "coveredInputIds",
                 "outcome",
+                "retries",
             }
         }
         with self._lock, self._db:
@@ -488,19 +494,6 @@ class Store:
         for attempt in attempts:
             grouped.setdefault(attempt["recording_id"], []).append(transcription_from_row(attempt))
         return [Recording(**dict(row), transcriptions=grouped.get(row["id"], [])) for row in rows]
-
-    def recent_transcripts(self, provider: str, model: str, limit: int) -> list[str]:
-        """That model's text from its latest successful transcriptions, newest first, raw
-        when kept."""
-        with self._lock:
-            rows = self._db.execute(
-                "SELECT COALESCE(raw_text, text) AS text FROM transcriptions"
-                " WHERE status = 'ok' AND provider = ? AND model = ?"
-                " AND COALESCE(raw_text, text) <> ''"
-                " ORDER BY id DESC LIMIT ?",
-                (provider, model, limit),
-            ).fetchall()
-        return [str(row["text"]) for row in rows]
 
     # Corrections agents sent, so the Agents page can show what arrived and from whom.
 

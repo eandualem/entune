@@ -4,7 +4,8 @@ and the Dock, without PyInstaller.
 macOS names a process and picks its Dock icon from the application bundle it was
 launched from. A plain `entune` process has none, so it shows as "python3".
 `entune install-app` writes a bundle whose executable is a two-line script running the
-current Python with the same arguments; nothing is copied.
+current Python with the same arguments and a copy of the packaged icon.
+Reinstall the launcher to update that icon after a package upgrade.
 
 Known limit: macOS's permission panels were not willing to list the first version of
 this bundle (a script executable, unsigned). It is now signed ad hoc, which may be
@@ -31,7 +32,6 @@ from entune import __version__
 BUNDLE_ID = "dev.elias.dictum"
 SIGNING_IDENTITIES = ("Entune Developer", "Dictum Developer")
 ASSETS = Path(__file__).resolve().parents[2] / "assets"
-ICON_SIZES = (16, 32, 64, 128, 256, 512)
 
 
 def install_app(directory: Path, source: Path | None = None) -> Path:
@@ -54,6 +54,7 @@ def install_app(directory: Path, source: Path | None = None) -> Path:
             _write_launcher(prepared)
         sign(prepared)
         if app.exists():
+            _preserve_signing_identity(app, prepared)
             app.rename(previous)
         try:
             prepared.rename(app)
@@ -77,6 +78,43 @@ def _validate_bundle(app: Path) -> None:
         raise ValueError(f"Not a Entune application bundle: {app}")
 
 
+def _preserve_signing_identity(installed: Path, prepared: Path) -> None:
+    """A certificate-signed installation must keep its macOS permission identity."""
+    current = subprocess.run(
+        ["codesign", "-d", "-r-", str(installed)], capture_output=True, text=True, check=False
+    )
+    # Early launchers were unsigned, so they have no signing identity to preserve.
+    if (
+        current.returncode == 1
+        and current.stderr.strip() == f"{installed}: code object is not signed at all"
+    ):
+        return
+    current.check_returncode()
+    requirement = next(
+        (
+            line.removeprefix("designated => ")
+            for line in (current.stdout + current.stderr).splitlines()
+            if line.startswith("designated => ")
+        ),
+        None,
+    )
+    # Ad-hoc signatures have a different cdhash on each build and cannot preserve grants.
+    if requirement is None or "certificate " not in requirement:
+        return
+    verified = subprocess.run(
+        ["codesign", "--verify", "--strict", "-R", "=" + requirement, str(prepared)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if verified.returncode:
+        raise RuntimeError(
+            "Update stopped: the new app does not match the installed signing certificate. "
+            "The existing app is unchanged. Restore access to its code-signing identity "
+            f"and retry. codesign: {verified.stderr.strip()}"
+        )
+
+
 def _write_launcher(app: Path) -> None:
     contents = app / "Contents"
     (contents / "MacOS").mkdir(parents=True)
@@ -89,7 +127,7 @@ def _write_launcher(app: Path) -> None:
     )
     launcher.chmod(0o755)
 
-    icon_file = _write_icns(contents / "Resources")
+    shutil.copyfile(ASSETS / "Entune.icns", contents / "Resources" / "Entune.icns")
     info: dict[str, object] = {
         "CFBundleName": "Entune",
         "CFBundleDisplayName": "Entune",
@@ -98,14 +136,13 @@ def _write_launcher(app: Path) -> None:
         "CFBundleShortVersionString": __version__,
         "CFBundleExecutable": "Entune",
         "CFBundlePackageType": "APPL",
+        "CFBundleIconFile": "Entune.icns",
         "LSUIElement": True,
         "NSMicrophoneUsageDescription": (
             "Entune records your voice while you hold the dictation shortcut."
         ),
         "NSHighResolutionCapable": True,
     }
-    if icon_file is not None:
-        info["CFBundleIconFile"] = icon_file
     with (contents / "Info.plist").open("wb") as f:
         plistlib.dump(info, f)
 
@@ -119,33 +156,31 @@ def signing_identity() -> str | None:
     Certificate Assistant > Create a Certificate, name "Entune Developer", type Code
     Signing) gives every build the same identity.
     """
-    try:
-        found = subprocess.run(
-            ["security", "find-identity", "-v", "-p", "codesigning"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except OSError:
-        return None
+    found = subprocess.run(
+        ["security", "find-identity", "-v", "-p", "codesigning"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     return next((name for name in SIGNING_IDENTITIES if f'"{name}"' in found.stdout), None)
 
 
 def sign(app: Path) -> str:
     """Sign the bundle with the stable identity when there is one, ad hoc otherwise.
 
-    Without any signature, System Settings would not list the bundle under Input
-    Monitoring or Accessibility when Elias tried. Returns the identity used; when
-    signing with the certificate fails (typically macOS refusing the private key to a
-    process that cannot show its "allow" prompt) the bundle is signed ad hoc instead
-    and the error is printed, so a half-signed bundle is never left behind.
+    Returns the identity used. Certificate signing failures stop the installation:
+    falling back to ad hoc would discard the existing macOS permission identity.
     """
     identity = signing_identity()
     if identity is not None:
         done = _codesign(app, identity)
         if done.returncode == 0:
             return identity
-        print(f"Could not sign with {identity}: {done.stderr.strip()}", file=sys.stderr)
+        raise RuntimeError(
+            f"Could not sign with {identity}: {done.stderr.strip()}. "
+            "The existing app is unchanged. Check access to the signing key in "
+            "Keychain Access, then retry."
+        )
     fallback = _codesign(app, "-")
     fallback.check_returncode()
     return "-"
@@ -158,35 +193,6 @@ def _codesign(app: Path, identity: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
-
-
-def _write_icns(resources: Path) -> str | None:
-    """Build Entune.icns from the shipped PNG with the system's sips and iconutil."""
-    source = ASSETS / "icon.png"
-    iconset = resources / "Entune.iconset"
-    iconset.mkdir()
-    try:
-        for size in ICON_SIZES:
-            for scale, suffix in ((1, ""), (2, "@2x")):
-                px = size * scale
-                if px > 1024:
-                    continue
-                target = iconset / f"icon_{size}x{size}{suffix}.png"
-                subprocess.run(
-                    ["sips", "-z", str(px), str(px), str(source), "--out", str(target)],
-                    check=True,
-                    capture_output=True,
-                )
-        subprocess.run(
-            ["iconutil", "-c", "icns", str(iconset), "-o", str(resources / "Entune.icns")],
-            check=True,
-            capture_output=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    finally:
-        shutil.rmtree(iconset, ignore_errors=True)
-    return "Entune.icns"
 
 
 def name_this_process() -> None:

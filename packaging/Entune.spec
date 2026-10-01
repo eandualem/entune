@@ -50,7 +50,7 @@ coll = COLLECT(exe, a.binaries, a.datas, name="Entune")
 app = BUNDLE(
     coll,
     name="Entune.app",
-    icon=str(Path(SPECPATH) / "Entune.icns"),
+    icon=str(PACKAGE_DIR / "assets" / "Entune.icns"),
     bundle_identifier="dev.elias.dictum",
     version=VERSION,
     info_plist={

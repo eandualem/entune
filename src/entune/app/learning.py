@@ -1,6 +1,6 @@
 """Suggestion runs the person starts: prepare the input, then retry, apply or discard.
 
-The run itself (batches, the model, checkpoints) belongs to learning/builds.py; this
+The run itself (batches, the model, checkpoints) belongs to app/suggestion_runs.py; this
 part decides what a run reads and what applying its proposal writes.
 """
 
@@ -38,10 +38,15 @@ class Learning:
         model = self._settings.dictionary_model()
         if model is None:
             raise ValueError(
-                "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral"
-                " under Settings first."
+                "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral,"
+                " or sign in with ChatGPT, under Settings first."
             )
         provider = model.partition(":")[0]
+        if provider == suggestion_model.CHATGPT:
+            api_key = self._settings.chatgpt_access_token()
+            if api_key is None:
+                raise ValueError("Sign in with ChatGPT under Settings first.")
+            return provider, api_key, model
         api_key = self._settings.key(provider)
         if api_key is None:
             raise ValueError(f"No API key set for {suggestion_model.LLM_PROVIDERS[provider][0]}.")

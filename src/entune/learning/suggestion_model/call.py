@@ -5,27 +5,46 @@ enforced by the provider itself. Rules a schema cannot express run as a check; w
 reply breaks one, the model is shown the rule and asked for a corrected reply, at most
 MAX_FIXES times, and the caller is told before each attempt so the person can stop it.
 Nothing else is retried: the provider SDKs' own retries are off, and a failed request,
-a refusal or a reply cut at the output limit ends the call at once.
+a refusal or a reply cut at the output limit ends the call at once. `passing` tells the
+caller which failures another attempt of the same request may overcome.
 """
 
 from __future__ import annotations
 
 import asyncio
 
+import httpx
+import httpx2
 import pydantic_ai
 from pydantic import BaseModel
 from pydantic_ai import Agent, ModelRetry, NativeOutput, PromptedOutput, RunContext
-from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import RetryPromptPart
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.messages import (
+    PartDeltaEvent,
+    PartStartEvent,
+    RetryPromptPart,
+    TextPart,
+    TextPartDelta,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
-from entune.learning.suggestion_model.providers import TIMEOUT, provider_model
-from entune.learning.suggestion_model.request import MAX_FIXES, BrokenReply, Request
+from entune.learning.suggestion_model.catalog import CHATGPT
+from entune.learning.suggestion_model.providers import PLAN_TIMEOUT, TIMEOUT, provider_model
+from entune.learning.suggestion_model.request import (
+    MAX_FIXES,
+    BrokenReply,
+    ReplyStopped,
+    Request,
+)
 
 # Thinking and reasoning tokens count toward this cap, so it leaves room for a long
 # proposal after the model has reasoned. Billing follows actual use.
 MAX_OUTPUT_TOKENS = 32_000
+
+# A runaway reply streams valid JSON, then only whitespace until the connection is cut,
+# and never recovers; no finished reply has ended in a run this long.
+RUNAWAY = 2_000  # whitespace characters
 
 pydantic_ai.BANNER_ENABLED = False  # Entune's output is its own
 
@@ -44,13 +63,19 @@ async def run(request: Request, model: Model | None = None) -> str:
 
 async def _run(request: Request, chosen: Model) -> str:
     native = chosen.profile.get("supports_json_schema_output", False)
+    plan = request.provider == CHATGPT
     agent = Agent(
         chosen,
         output_type=NativeOutput(request.shape) if native else PromptedOutput(request.shape),
         instructions=request.system,
         retries={"output": MAX_FIXES},
         # No timeout here: it would replace each provider client's five-second connect limit.
-        model_settings=ModelSettings(max_tokens=MAX_OUTPUT_TOKENS, thinking="medium"),
+        # A ChatGPT plan's endpoint takes no output limit; the plan applies its own.
+        model_settings=(
+            ModelSettings(thinking="medium")
+            if plan
+            else ModelSettings(max_tokens=MAX_OUTPUT_TOKENS, thinking="medium")
+        ),
     )
 
     @agent.output_validator
@@ -75,19 +100,32 @@ async def _run(request: Request, chosen: Model) -> str:
                 # Streamed: a connection that carries nothing for a minute is cut on the
                 # way (observed 2026-09-21), and a reasoning reply is silent for minutes.
                 # The HTTP timeout only limits silence between reads, so a stream that
-                # keeps sending is given TIMEOUT in total.
+                # keeps sending is given TIMEOUT in total, or PLAN_TIMEOUT on a plan.
+                allowed = PLAN_TIMEOUT if plan else TIMEOUT
                 try:
-                    async with asyncio.timeout(TIMEOUT), node.stream(run.ctx) as stream:
-                        async for _ in stream:
-                            pass
+                    async with asyncio.timeout(allowed), node.stream(run.ctx) as stream:
+                        blank = 0  # whitespace characters the reply's text ends in
+                        async for event in stream:
+                            text = _text(event)
+                            kept = text.rstrip()
+                            blank = blank + len(text) if not kept else len(text) - len(kept)
+                            if blank > RUNAWAY:
+                                raise ReplyStopped(
+                                    "the reply ran into empty output",
+                                    f"The reply ran into empty output: more than {RUNAWAY}"
+                                    " whitespace characters in a row, so it was stopped",
+                                )
                         finish = stream.response.finish_reason
                 except TimeoutError as exc:
-                    raise ValueError(
-                        f"The reply timed out: still streaming after {TIMEOUT / 60:.0f} minutes"
+                    raise ReplyStopped(
+                        f"the reply ran past its {allowed / 60:g}-minute limit",
+                        f"The reply timed out: still streaming after {allowed / 60:g} minutes"
+                        + (", just before the ChatGPT plan would cut it" if plan else ""),
                     ) from exc
                 if finish == "length":
+                    limit = "plan's" if plan else f"{MAX_OUTPUT_TOKENS}-token"
                     raise ValueError(
-                        f"The reply reached the {MAX_OUTPUT_TOKENS}-token output limit,"
+                        f"The reply reached the {limit} output limit,"
                         " which includes reasoning; nothing from this step was used"
                     )
                 # Only a reply the provider says it finished is used: a stream that
@@ -103,6 +141,29 @@ async def _run(request: Request, chosen: Model) -> str:
         if isinstance(last, RetryPromptPart):
             raise BrokenReply(_problem(last)) from exc
         raise ValueError(str(exc)) from exc
+
+
+def passing(error: Exception) -> str | None:
+    """Why another attempt of the same request may succeed, or None when it would fail the
+    same way: Entune stopped the reply, the connection failed or the service had a server
+    error. A refused key, a limit or quota (401, 403, 429) and anything else do not pass."""
+    if isinstance(error, ReplyStopped):
+        return error.reason
+    if isinstance(error, ModelHTTPError):
+        code = error.status_code
+        return f"the service returned error {code}" if code >= 500 else None
+    if isinstance(error, ModelAPIError | httpx.TransportError | httpx2.TransportError):
+        return "the connection failed"
+    return None
+
+
+def _text(event: object) -> str:
+    """The reply text a stream event adds; reasoning is not the reply."""
+    if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+        return event.part.content
+    if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+        return event.delta.content_delta
+    return ""
 
 
 def _problem(part: RetryPromptPart) -> str:

@@ -1,16 +1,12 @@
 import { api, el, errorText } from "./ui.js";
 
-// Learn from audio: one source at a time, a contiguous span chosen on a range over
-// recorded time (oldest to newest, without calendar gaps), whole recordings only.
+// Learn from audio, in the suggestions panel: one source at a time (chosen from the menu), a
+// contiguous span chosen on a range over recorded time (oldest to newest, without calendar
+// gaps), whole recordings only.
 const PAGE = 60;
 const NOTES = {
-  entune: "Recordings you made in Entune.",
+  entune: "",
   folder: "WAV, MP3, M4A, FLAC, OGG or WebM files, up to 199 MB each, dated by when they were modified.",
-};
-// Other providers: transcription apps whose recordings Entune can import. Each entry is
-// an importer that exists; the stored source is the provider's id.
-const PROVIDERS = {
-  wispr: "Wispr Flow keeps its recordings, including backups, on this Mac. Entune copies the audio only, never Wispr's transcripts.",
 };
 
 export function duration(seconds) {
@@ -19,15 +15,28 @@ export function duration(seconds) {
   if (minutes < 60) return `${minutes} min`;
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
 }
+// Planning allowance, not a measured confidence interval: a 12.3-hour sample
+// took 135 minutes with GPT-6.1 Sol, medium effort, 24k-character requests.
+// See docs/models.md. Transcription is additional; other models are uncalibrated.
+export function generationEstimate(seconds, unknown, model) {
+  if (unknown) return "Time estimate unavailable: some selected recordings have no known duration. Dictionary generation can take minutes to hours, plus transcription.";
+  if (!(seconds > 0)) return "Select audio to see an estimated generation time.";
+  const hours = seconds / 3600;
+  const low = Math.max(1, Math.ceil(hours * 10));
+  const high = Math.max(low + 1, Math.ceil(hours * 20));
+  const interval = `${duration(low * 60)}–${duration(high * 60)}`;
+  const calibrated = ["chatgpt:gpt-6.1-sol", "openai:gpt-6.1-sol"].includes(model);
+  return `${calibrated ? "Estimated dictionary generation" : "GPT-6.1 Sol reference estimate"}: ${interval}, plus audio transcription. Based on a small Sol benchmark at medium effort; ${calibrated ? "large dictionaries and retries can take longer" : "the selected model has not been timed and may differ"}.`;
+}
 const day = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "Undated";
 const moment = (iso) => iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "Undated";
 
 export function createAudioOnboarding({ getModel, getSettings, getDictionaryModelName, onBuild, onBusy }) {
-  const dialog = el("audio-dialog");
   const folder = el("audio-folder");
   const start = el("audio-range-start"), end = el("audio-range-end");
   const player = new Audio();
   let items = [];
+  let apps = [];          // dictation apps with an importer, from the server; the stored source is the id
   let source = "entune";
   let list = [];          // this source's recordings, oldest first
   let edges = [0];        // cumulative position of each boundary, 0..1000
@@ -48,8 +57,26 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   }
   const nearest = (value) => edges.reduce((best, edge, i) => Math.abs(edge - value) < Math.abs(edges[best] - value) ? i : best, 0);
 
-  // The stored source of the recordings shown: the tab, or the provider picked under it.
-  const shownSource = () => (source === "provider" ? el("audio-provider").value : source);
+  // The stored source of the recordings shown: Entune, a folder, or the app picked in the list.
+  const pickedApp = () => apps.find((app) => app.id === document.querySelector('input[name="audio-provider"]:checked')?.value) ?? apps[0];
+  const shownSource = () => (source === "provider" ? pickedApp()?.id : source);
+  function drawApps() {
+    const box = el("audio-provider-pick");
+    if (box.childElementCount === apps.length) return;
+    box.replaceChildren(...apps.map((app, index) => {
+      const option = document.createElement("label");
+      option.className = "app-option";
+      const input = Object.assign(document.createElement("input"), { type: "radio", name: "audio-provider", value: app.id, checked: index === 0 });
+      input.addEventListener("change", () => { el("audio-import-status").textContent = ""; choose(); });
+      const text = document.createElement("span");
+      text.append(
+        Object.assign(document.createElement("span"), { className: "app-name", textContent: app.name }),
+        Object.assign(document.createElement("span"), { className: "caption", textContent: app.note }),
+      );
+      option.append(input, text);
+      return option;
+    }));
+  }
 
   function choose() {
     const skip = source === "entune" && el("audio-other-models").checked ? getModel()?.id : null;
@@ -64,20 +91,20 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   }
 
   function draw() {
-    for (const tab of dialog.querySelectorAll("[data-source]")) tab.setAttribute("aria-selected", String(tab.dataset.source === source));
     el("audio-provider-pick").hidden = source !== "provider";
-    el("audio-source-note").textContent = source === "provider" ? PROVIDERS[shownSource()] : NOTES[source];
-    el("import-wispr").hidden = shownSource() !== "wispr";
+    const app = source === "provider" ? pickedApp() : null;
+    el("audio-source-note").textContent = app ? `Entune copies the audio only, never ${app.name}'s transcripts.` : NOTES[source] ?? "";
+    el("import-app").hidden = !app;
     el("choose-audio-folder").hidden = source !== "folder";
     const some = items.some((item) => item.source === shownSource());
-    el("import-wispr").textContent = some ? "Import new Wispr audio" : "Import from Wispr Flow";
+    el("import-app").textContent = app ? (some ? `Import new ${app.name} audio` : `Import from ${app.name}`) : "";
     el("choose-audio-folder").textContent = some ? "Add another folder…" : "Choose folder…";
     el("audio-other-models").closest("label").hidden = source !== "entune";
     el("audio-pick").hidden = !list.length;
     el("audio-empty").hidden = !loaded || list.length > 0;
     el("audio-empty").textContent = source === "entune"
       ? (items.some((item) => item.source === "entune") ? "Every recording here was already transcribed by this speech model." : "No Entune recordings yet.")
-      : source === "provider" ? `Nothing imported from ${el("audio-provider").selectedOptions[0]?.textContent ?? "this provider"} yet.`
+      : source === "provider" ? `Nothing imported from ${app?.name ?? "this app"} yet.`
         : "No audio files imported yet.";
     const chosen = list.slice(from, to);
     const seconds = (values) => values.reduce((sum, item) => sum + (item.seconds ?? 0), 0);
@@ -96,6 +123,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     if (el("audio-detail").open) drawList(chosen);
     const speech = getModel();
     const language = getDictionaryModelName();
+    el("audio-generation-estimate").textContent = generationEstimate(seconds(chosen), unknown, getSettings()?.dictionaryModel);
     el("audio-models").textContent = !speech
       ? "Choose a speech model in the toolbar first."
       : !language
@@ -103,7 +131,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
         : `Transcribe ${duration(seconds(chosen))} (${chosen.length} recording${chosen.length === 1 ? "" : "s"}) with ${speech.label}, then suggest with ${language}.`;
     const blocked = importing || buildBusy || !chosen.length || !speech || !language;
     el("build-audio-dictionary").disabled = blocked;
-    for (const control of [start, end, el("import-wispr"), el("choose-audio-folder")]) control.disabled = importing || buildBusy;
+    for (const control of [start, end, el("import-app"), el("choose-audio-folder")]) control.disabled = importing || buildBusy;
     onBusy(importing);
     // A folder import is one request per file; deleting all data waits for the last one.
     document.documentElement.toggleAttribute("data-importing", importing);
@@ -162,14 +190,11 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   el("audio-other-models").addEventListener("change", choose);
   el("audio-detail").addEventListener("toggle", () => draw());
   el("audio-more").addEventListener("click", () => { shown += PAGE; draw(); });
-  el("audio-provider").addEventListener("change", () => { el("audio-import-status").textContent = ""; choose(); });
-  for (const tab of dialog.querySelectorAll("[data-source]")) {
-    tab.addEventListener("click", () => { source = tab.dataset.source; el("audio-import-status").textContent = ""; choose(); });
-  }
-  dialog.addEventListener("close", stop);
+  el("suggest-drawer").addEventListener("close", stop);
 
   async function refresh() {
-    items = (await api("/api/dictionary/audio")).items;
+    ({ items, apps } = await api("/api/dictionary/audio"));
+    drawApps();
     loaded = true;
     choose();
   }
@@ -203,14 +228,15 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
       await refresh();
     }
   });
-  el("import-wispr").addEventListener("click", async () => {
+  el("import-app").addEventListener("click", async () => {
+    const app = pickedApp();
     importing = true;
     draw();
     const status = el("audio-import-status");
     status.classList.remove("err");
-    status.textContent = "Copying the audio Wispr Flow kept on this Mac…";
+    status.textContent = `Copying the audio ${app.name} keeps on this Mac…`;
     try {
-      const result = await api("/api/dictionary/audio/wispr", { method: "POST" });
+      const result = await api(`/api/dictionary/audio/apps/${encodeURIComponent(app.id)}`, { method: "POST" });
       status.textContent = `Imported ${result.added}; ${result.duplicates} already saved; ${result.empty} empty recordings skipped.`;
     } catch (err) {
       status.textContent = errorText(err);
@@ -222,13 +248,16 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   });
   el("build-audio-dictionary").addEventListener("click", async () => {
     const ids = list.slice(from, to).map((item) => item.id);
-    dialog.close();
+    stop();
     await onBuild({ audio_ids: ids });
   });
 
   return {
     load: refresh,
-    async open() { dialog.showModal(); await refresh(); },
+    // Opens on the source the menu named: Entune recordings, another app, or a folder.
+    // The selection switches at once from the recordings already loaded, so Transcribe and
+    // suggest never sends the previous source's audio while the list refreshes.
+    async show(pick) { if (pick !== source) { source = pick; el("audio-import-status").textContent = ""; choose(); } await refresh(); },
     // Status polls repeat the same value; redraw only on a change, keeping focus in the list.
     setBuildBusy(value) { if (value !== buildBusy) { buildBusy = value; draw(); } },
     redraw: draw,

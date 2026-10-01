@@ -201,5 +201,7 @@ def save(data_dir: Path, dictionary: Dictionary) -> None:
     validate(dictionary)
     target = data_dir / FILENAME
     temporary = target.with_name(FILENAME + ".tmp")
+    temporary.touch(mode=0o600, exist_ok=True)
+    temporary.chmod(0o600)
     temporary.write_text(dumps(dictionary) + "\n", encoding="utf-8")
     os.replace(temporary, target)

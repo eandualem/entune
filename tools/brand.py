@@ -18,8 +18,6 @@ from __future__ import annotations
 
 import math
 import re
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -375,6 +373,12 @@ def template_png(points: int = 22, scale: int = 3, glyph: float = 17.0) -> Image
 
 
 def main() -> None:
+    assets = ROOT / "src" / "entune" / "assets"
+    icons = {size: icon_png(size) for size in (32, 64, 128, 256, 512, 1024)}
+    with tempfile.TemporaryDirectory(dir=assets) as tmp:
+        icns = Path(tmp) / "Entune.icns"
+        icons[1024].save(icns, append_images=list(icons.values()))
+        icns.replace(assets / "Entune.icns")
     brand = ROOT / "docs" / "brand"
     brand.mkdir(parents=True, exist_ok=True)
     (brand / "entune-mark-light.svg").write_text(mark_file(VIOLET))
@@ -384,29 +388,10 @@ def main() -> None:
     (brand / "entune-app-icon.svg").write_text(icon_file())
     web = ROOT / "src" / "entune" / "web"
     (web / "favicon.svg").write_text(icon_file())
-    assets = ROOT / "src" / "entune" / "assets"
-    icon_png(1024).save(assets / "icon.png")
-    icon_png(512).save(assets / "icon-512.png")
+    icons[1024].save(assets / "icon.png")
+    icons[512].save(assets / "icon-512.png")
     template_png().save(assets / "menubar-template.png")
-    icon_png(256).save(ROOT / "docs" / "demo" / "icon-256.png")
-    if sys.platform == "darwin":
-        with tempfile.TemporaryDirectory() as tmp:
-            iconset = Path(tmp) / "Entune.iconset"
-            iconset.mkdir()
-            for size in (16, 32, 128, 256, 512):
-                icon_png(size).save(iconset / f"icon_{size}x{size}.png")
-                icon_png(size * 2).save(iconset / f"icon_{size}x{size}@2x.png")
-            subprocess.run(
-                [
-                    "iconutil",
-                    "-c",
-                    "icns",
-                    str(iconset),
-                    "-o",
-                    str(ROOT / "packaging" / "Entune.icns"),
-                ],
-                check=True,
-            )
+    icons[256].save(ROOT / "docs" / "demo" / "icon-256.png")
     print("Wrote docs/brand, the favicon, the app icons, the menu-bar template and Entune.icns.")
 
 

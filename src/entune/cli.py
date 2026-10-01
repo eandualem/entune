@@ -10,6 +10,8 @@ import sys
 import threading
 import time
 import webbrowser
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import uvicorn
@@ -19,7 +21,7 @@ from entune.app.entune import Entune
 from entune.desktop.platform import create_platform
 from entune.providers.registry import default_providers
 from entune.server import create_app
-from entune.storage.paths import default_data_dir
+from entune.storage.paths import default_data_dir, protect_data
 from entune.storage.store import Store
 
 DEFAULT_PORT = 4187
@@ -106,11 +108,38 @@ def _show_running_window(port: int) -> bool:
 
 def _log_to_file(data_dir: Path) -> None:
     """Launched from the Dock there is no terminal; keep what would have been printed."""
-    data_dir.mkdir(parents=True, exist_ok=True)
-    log = (data_dir / "entune.log").open("a", encoding="utf-8", buffering=1)
+    protect_data(data_dir)
+    path = data_dir / "entune.log"
+    path.touch(mode=0o600, exist_ok=True)
+    path.chmod(0o600)
+    log = path.open("a", encoding="utf-8", buffering=1)
     sys.stdout = log
     sys.stderr = log
     print(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} entune {__version__} starting", flush=True)
+
+
+@contextmanager
+def _own_data(data_dir: Path) -> Iterator[None]:
+    """Keep another process from recovering or resetting this process's active data."""
+    if sys.platform == "win32":
+        # Directory locks are POSIX-only; Windows desktop support is not implemented yet.
+        yield
+        return
+    import fcntl
+
+    data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(data_dir, os.O_RDONLY)
+    try:
+        try:
+            # The directory survives a data reset; a lock on the database would not.
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.exit(
+                f"Entune is already using {data_dir}. Quit it, or choose another --data folder."
+            )
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -147,10 +176,26 @@ def main(argv: list[str] | None = None) -> None:
 
             notify("Entune is already running", message)
         sys.exit(message)
-    if not sys.stderr.isatty():
-        _log_to_file(data_dir)
-    entune = Entune(Store(data_dir), default_providers(data_dir / "models"))
+    with ExitStack() as ownership:
+        try:
+            ownership.enter_context(_own_data(data_dir))
+            if not sys.stderr.isatty():
+                _log_to_file(data_dir)
+            store = Store(data_dir)
+        except OSError as exc:
+            message = f"Cannot open Entune data in {data_dir}: {exc}"
+            if sys.platform == "darwin" and not args.no_menu:
+                from entune.desktop.macos.actions import notify
+
+                notify("Entune could not open its data", message)
+            sys.exit(message)
+        _run(args, data_dir, store)
+
+
+def _run(args: argparse.Namespace, data_dir: Path, store: Store) -> None:
+    entune = Entune(store, default_providers(data_dir / "models"))
     entune.models.warm_default_model()
+    entune.decisions.sync()
     server = uvicorn.Server(
         uvicorn.Config(create_app(entune), host="127.0.0.1", port=args.port, log_level="warning")
     )

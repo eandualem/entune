@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from pydantic_ai.exceptions import ModelHTTPError
 from starlette.testclient import TestClient
 
 from entune.app import audio_import
@@ -285,3 +286,32 @@ def test_a_fix_request_is_shown_with_its_rule_and_stop_still_stops_it(
     assert wait_for_build(client)["phase"] == "cancelled"
     assert seen[0]["attempt"] == 2 and seen[0]["attempts"] == 3
     assert seen[0]["brokenRule"] == "evidence: List should have at most 0 items"
+
+
+def test_a_retried_part_is_shown_and_kept_in_the_runs_record(
+    app: Entune, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[dict[str, object]] = []
+
+    async def fake(_: Request) -> str:
+        seen.append(app.learning.dictionary_build_status())
+        if len(seen) == 1:
+            raise ModelHTTPError(503, "gpt-6-luna", "busy")
+        return '{"additions": []}'
+
+    monkeypatch.setattr(app.builds, "_call", fake)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
+    ready = wait_for_build(client)
+    assert ready["phase"] == "ready" and seen[0]["partAttempt"] == 1
+    assert seen[1]["partAttempt"] == 2 and seen[1]["partAttempts"] == 3
+    assert seen[1]["retryReason"] == "the service returned error 503"
+    client.delete(f"/api/dictionary/build/{ready['id']}")
+    [run] = app.store.learning_history("stub/good")
+    [retry] = run["details"]["retries"]  # type: ignore[index]
+    assert {k: retry[k] for k in ("part", "attempt", "reason")} == {
+        "part": 1,
+        "attempt": 1,
+        "reason": "the service returned error 503",
+    }
+    assert isinstance(retry["seconds"], float)
