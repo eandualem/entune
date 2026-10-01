@@ -1,6 +1,8 @@
 // Shared DOM helpers used by the window views. No application state lives here.
 
 export const el = (id) => document.getElementById(id);
+// What the page calls the computer it runs on: written for a Mac, "this computer" elsewhere.
+export const THIS_DEVICE = /Macintosh/.test(navigator.userAgent) ? "this Mac" : "this computer";
 
 export const ICON = {
   check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>',

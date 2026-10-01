@@ -1,4 +1,4 @@
-import { api, el, errorText } from "./ui.js";
+import { THIS_DEVICE, api, el, errorText } from "./ui.js";
 
 // Learn from audio, in the suggestions panel: one source at a time (chosen from the menu), a
 // contiguous span chosen on a range over recorded time (oldest to newest, without calendar
@@ -234,7 +234,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     draw();
     const status = el("audio-import-status");
     status.classList.remove("err");
-    status.textContent = `Copying the audio ${app.name} keeps on this Mac…`;
+    status.textContent = `Copying the audio ${app.name} keeps on ${THIS_DEVICE}…`;
     try {
       const result = await api(`/api/dictionary/audio/apps/${encodeURIComponent(app.id)}`, { method: "POST" });
       status.textContent = `Imported ${result.added}; ${result.duplicates} already saved; ${result.empty} empty recordings skipped.`;

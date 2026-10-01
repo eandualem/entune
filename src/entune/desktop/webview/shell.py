@@ -1,7 +1,7 @@
 """The desktop shell: pywebview for the window, pystray for the tray icon.
 
-Currently wired for macOS only. Cocoa compatibility hooks live in macos/webview.py;
-portable window/tray libraries alone do not provide native support on other systems.
+Wired for macOS and Windows. Cocoa compatibility hooks live in macos/webview.py; the
+Windows pieces (shortcuts, paste, the recording pill, permissions) in windows/.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ class WebviewPlatform:
         self.tray: Tray = _Tray(self)
         self.window: Window = _Window(url)
         self.hotkeys: Hotkeys = _hotkeys()
-        self.actions: Actions = _actions()
+        self.actions: Actions = _actions(self.tray)
         self.permissions: Permissions = _permissions()
         self._icon: pystray.Icon | None = None
         self._quitting = False
@@ -108,9 +108,14 @@ class WebviewPlatform:
         webview.settings["SHOW_DEFAULT_MENUS"] = True
         webview.settings["ALLOW_DOWNLOADS"] = True  # WebKit presents a native Save panel
         webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
+        window.create()
+        if sys.platform != "darwin":
+            _windows_identity()
+            # The page keeps its appearance choice (not private); Entune's icon, not Python's.
+            webview.start(private_mode=False, icon=str(ASSETS / "Entune.ico"))
+            return
         from entune.desktop.macos.webview import CocoaWebview
 
-        window.create()
         cocoa = CocoaWebview(self.url, window._window.uid, tray._quit, self.actions.notify)
         cocoa.install()
         try:
@@ -184,14 +189,22 @@ class _Tray:
         self._platform.call_later(5.0, hide)
 
     def _indicator(self) -> Any:
-        """The on-screen pill (macOS today); the tray title alone is a tooltip there."""
-        if sys.platform != "darwin":
-            return None
+        """The on-screen pill, created on first use."""
         if self._pill is None:
-            from entune.desktop.macos.indicator import Indicator
+            if sys.platform == "darwin":
+                from entune.desktop.macos.indicator import Indicator as MacIndicator
 
-            self._pill = Indicator()
+                self._pill = MacIndicator()
+            elif sys.platform == "win32":
+                from entune.desktop.windows.indicator import Indicator as WindowsIndicator
+
+                self._pill = WindowsIndicator()
         return self._pill
+
+    def notify(self, title: str, message: str) -> None:
+        """A notification from the tray icon (Windows shows it as a toast)."""
+        if self._icon is not None:
+            self._icon.notify(message, title)
 
     def set_status(self, text: str) -> None:
         self._status = text
@@ -324,20 +337,39 @@ def _set_dock_icon() -> None:
         AppKit.NSApp.setApplicationIconImage_(image)
 
 
+def _windows_identity() -> None:
+    """Group Entune's windows as Entune on the taskbar, not as Python."""
+    if sys.platform == "win32":
+        import contextlib
+        import ctypes
+
+        with contextlib.suppress(AttributeError, OSError):
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Entune.Entune")
+
+
 def _hotkeys() -> Hotkeys:
     if sys.platform == "darwin":
         from entune.desktop.macos.hotkeys import HotkeyListener
 
         return HotkeyListener()
-    raise NotImplementedError("Global shortcuts are implemented for macOS only so far (#36)")
+    if sys.platform == "win32":
+        from entune.desktop.windows.hotkeys import HotkeyListener as WindowsHotkeys
+
+        return WindowsHotkeys()
+    raise NotImplementedError("Global shortcuts exist for macOS and Windows only")
 
 
-def _actions() -> Actions:
+def _actions(tray: Tray) -> Actions:
     if sys.platform == "darwin":
         from entune.desktop.macos.adapters import _Actions
 
         return _Actions()
-    raise NotImplementedError("Clipboard, paste and notifications for this platform: #36")
+    if sys.platform == "win32":
+        from entune.desktop.windows.actions import Actions as WindowsActions
+
+        assert isinstance(tray, _Tray)
+        return WindowsActions(tray.notify)
+    raise NotImplementedError("Clipboard, paste and notifications exist for macOS and Windows")
 
 
 def _permissions() -> Permissions:
@@ -345,4 +377,8 @@ def _permissions() -> Permissions:
         from entune.desktop.macos.adapters import _Permissions
 
         return _Permissions()
-    raise NotImplementedError("Native permissions are implemented for macOS only (#36)")
+    if sys.platform == "win32":
+        from entune.desktop.windows.permissions import Permissions as WindowsPermissions
+
+        return WindowsPermissions()
+    raise NotImplementedError("Native permissions exist for macOS and Windows only")

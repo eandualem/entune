@@ -1,30 +1,26 @@
-"""A Entune.app that runs this very installation: Entune's name and icon in the menu bar
-and the Dock, without PyInstaller.
+"""A Entune.app that runs this very installation, so macOS sees an app named Entune.
 
-macOS names a process and picks its Dock icon from the application bundle it was
-launched from. A plain `entune` process has none, so it shows as "python3".
-`entune install-app` writes a bundle whose executable is a two-line script running the
-current Python with the same arguments and a copy of the packaged icon.
-Reinstall the launcher to update that icon after a package upgrade.
+macOS asks for Microphone, Input Monitoring and Accessibility on behalf of the app a
+process was started from. A plain `entune` process belongs to the terminal that
+started it, so the terminal would get the permissions. The bundle written here holds a
+small native launcher (packaging/app-launcher) that starts this installation's Python
+as its child and stays its parent; the permissions then belong to Entune.
 
-Known limit: macOS's permission panels were not willing to list the first version of
-this bundle (a script executable, unsigned). It is now signed ad hoc, which may be
-enough; the standalone bundle from `packaging/build_app.py`, a real Mach-O executable,
-is the sure route for the three permissions. `entune install-app --from DIST_APP`
-copies that one instead.
+Nothing version-specific goes into the bundle: the command it runs is kept in its
+preferences. Every installation and every upgrade writes byte-identical files, so the
+ad hoc signature, and with it every permission already granted, stays the same.
+No certificate is needed. `entune install-app --from DIST_APP` copies a standalone
+PyInstaller build instead.
 """
 
 from __future__ import annotations
 
 import plistlib
-import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-
-from entune import __version__
 
 # macOS ties Microphone, Input Monitoring and Accessibility to the bundle identifier and
 # signing certificate. These are the ones the installed app's permissions were granted
@@ -32,13 +28,14 @@ from entune import __version__
 BUNDLE_ID = "dev.elias.dictum"
 SIGNING_IDENTITIES = ("Entune Developer", "Dictum Developer")
 ASSETS = Path(__file__).resolve().parents[2] / "assets"
+LAUNCHER = ASSETS / "EntuneLauncher"
 
 
 def install_app(directory: Path, source: Path | None = None) -> Path:
     """Write `<directory>/Entune.app` and return its path. Replaces an existing one.
 
     With `source`, copy that already-built bundle (the PyInstaller one) instead of
-    writing the script bundle.
+    writing the launcher, which is signed ad hoc and told to run this installation.
     """
     app = directory / "Entune.app"
     if source is not None:
@@ -50,11 +47,15 @@ def install_app(directory: Path, source: Path | None = None) -> Path:
     try:
         if source is not None:
             shutil.copytree(source, prepared, symlinks=True)
+            sign(prepared)
         else:
             _write_launcher(prepared)
-        sign(prepared)
+            # Ad hoc on every Mac: identical files give an identical identity, so the
+            # permissions survive reinstalls and upgrades without a certificate.
+            _codesign(prepared, "-").check_returncode()
         if app.exists():
-            _preserve_signing_identity(app, prepared)
+            if source is not None:
+                _preserve_signing_identity(app, prepared)
             app.rename(previous)
         try:
             prepared.rename(app)
@@ -63,11 +64,37 @@ def install_app(directory: Path, source: Path | None = None) -> Path:
                 previous.rename(app)
             raise
         installed = True
+        if source is None:
+            remember_launch_command()
     finally:
         # If restoring the old app also failed, keep its backup for recovery.
         if installed or not previous.exists():
             shutil.rmtree(staging, ignore_errors=True)
     return app
+
+
+def remember_launch_command() -> None:
+    """Point the launcher at this installation's Python; it reads this on every start."""
+    subprocess.run(
+        ["defaults", "write", BUNDLE_ID, "LaunchCommand", "-array", sys.executable, "-m", "entune"],
+        check=True,
+        capture_output=True,
+    )
+
+
+def is_launcher(app: Path) -> bool:
+    """Whether `app` is a launcher bundle (this one, or the earlier script) that may be
+    replaced, as opposed to a standalone build someone installed on purpose."""
+    if not app.exists():
+        return True
+    try:
+        with (app / "Contents" / "Info.plist").open("rb") as handle:
+            if plistlib.load(handle).get("EntuneLauncher"):
+                return True
+        with (app / "Contents" / "MacOS" / "Entune").open("rb") as handle:
+            return handle.read(2) == b"#!"
+    except (OSError, plistlib.InvalidFileException):
+        return False
 
 
 def _validate_bundle(app: Path) -> None:
@@ -121,10 +148,7 @@ def _write_launcher(app: Path) -> None:
     (contents / "Resources").mkdir()
 
     launcher = contents / "MacOS" / "Entune"
-    launcher.write_text(
-        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -m entune "$@"\n',
-        encoding="utf-8",
-    )
+    shutil.copyfile(LAUNCHER, launcher)
     launcher.chmod(0o755)
 
     shutil.copyfile(ASSETS / "Entune.icns", contents / "Resources" / "Entune.icns")
@@ -132,12 +156,16 @@ def _write_launcher(app: Path) -> None:
         "CFBundleName": "Entune",
         "CFBundleDisplayName": "Entune",
         "CFBundleIdentifier": BUNDLE_ID,
-        "CFBundleVersion": __version__,
-        "CFBundleShortVersionString": __version__,
+        # The launcher's own version, not Entune's: a changing value would change the
+        # signature and make macOS ask for every permission again after an upgrade.
+        "CFBundleVersion": "1",
+        "CFBundleShortVersionString": "1",
         "CFBundleExecutable": "Entune",
         "CFBundlePackageType": "APPL",
         "CFBundleIconFile": "Entune.icns",
         "LSUIElement": True,
+        "LSMinimumSystemVersion": "11.0",
+        "EntuneLauncher": True,
         "NSMicrophoneUsageDescription": (
             "Entune records your voice while you hold the dictation shortcut."
         ),

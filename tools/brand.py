@@ -390,9 +390,13 @@ def main() -> None:
     (web / "favicon.svg").write_text(icon_file())
     icons[1024].save(assets / "icon.png")
     icons[512].save(assets / "icon-512.png")
+    icons[256].save(assets / "Entune.ico", sizes=[(n, n) for n in (16, 24, 32, 48, 64, 128, 256)])
     template_png().save(assets / "menubar-template.png")
     icons[256].save(ROOT / "docs" / "demo" / "icon-256.png")
-    print("Wrote docs/brand, the favicon, the app icons, the menu-bar template and Entune.icns.")
+    print(
+        "Wrote docs/brand, the favicon, the app icons, the menu-bar template, Entune.icns"
+        " and Entune.ico."
+    )
 
 
 if __name__ == "__main__":

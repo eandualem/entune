@@ -100,6 +100,7 @@ class FakeActions:
 
 class FakePermissions:
     settings_hint = "Settings"
+    names: tuple[str, ...] = ("microphone", "inputMonitoring", "accessibility")
 
     def __init__(self, listen: bool = True, post: bool = True) -> None:
         self.listen, self.post = listen, post
@@ -402,6 +403,20 @@ def test_accessibility_lost_while_running_is_explained_not_called_a_missing_fiel
     assert "no active text field" not in message and platform.permissions.requested == ["post"]
 
 
+def test_a_modifier_still_held_skips_the_paste_and_says_how_to_paste(tmp_path: Path) -> None:
+    app, platform, entune = make(tmp_path)
+    platform.actions.outcome = "keys_held"
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_shortcuts("alt_r", None, "ctrl+esc")
+    app.engine.press("alt_r")  # type: ignore[union-attr]
+    app.engine.release("alt_r")  # type: ignore[union-attr]
+    wait_for(lambda: bool(platform.actions.notices))
+    _title, message = platform.actions.notices[0]
+    assert platform.actions.clipboard == "hello from the fake" and platform.actions.pasted == 0
+    assert "release shortcut keys and press" in message
+
+
 def test_a_failed_transcription_is_a_notification_and_the_icon_recovers(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
     entune.settings.set_key("stub", "k")
@@ -452,6 +467,7 @@ def test_the_window_opens_on_settings_only_until_a_shortcut_exists(
     tmp_path: Path, configured: bool
 ) -> None:
     entune = Entune(Store(tmp_path), [StubProvider()])
+    entune.store.create_recording(Capture(b"\x00\x00" * 16_000, 16_000).wav())
     if configured:
         entune.settings.set_shortcuts("alt_r", None)
     platform = FakePlatform()
@@ -469,11 +485,28 @@ def test_the_window_opens_on_settings_only_until_a_shortcut_exists(
     assert app.engine is not None if configured else app.engine is None
 
 
+def test_a_first_run_opens_get_started(tmp_path: Path) -> None:
+    entune = Entune(Store(tmp_path), [StubProvider()])
+    platform = FakePlatform()
+    EntuneApp(
+        entune,
+        platform,
+        "http://localhost:0/",
+        show_window=True,
+        recorder=FakeRecorder(Capture(b"", 16_000)),
+        server_answers=lambda: True,
+    )
+    _delay, action = platform.timers[-1]
+    action()
+    assert platform.window.shown == [""]  # History, whose Get started leads the setup
+
+
 def test_missing_permissions_reopen_setup_and_recover_without_recording(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path, listen=False, post=False)
     platform.permissions.microphone = "not_requested"
     entune.settings.set_shortcuts("fn", "cmd+fn")
     app._server_answers = lambda: True
+    entune.store.create_recording(Capture(b"\x00\x00" * 16_000, 16_000).wav())
     app._show_window_when_served(time.monotonic())
     assert platform.window.shown == ["#settings"]
     assert entune.desktop.request_permission("microphone", False)
@@ -490,7 +523,7 @@ def test_missing_permissions_reopen_setup_and_recover_without_recording(tmp_path
         "accessibility": "granted",
     }
     assert platform.hotkeys.running
-    assert not app._recording and not entune.store.list_recordings()
+    assert not app._recording and len(entune.store.list_recordings()) == 1
     app._show_window_when_served(time.monotonic())
     assert platform.window.shown[-1] == ""
 
@@ -587,7 +620,7 @@ def test_cancelling_retains_capture_aborts_upload_and_prevents_transcription_or_
     entune.settings.set_key("stub", "k")
     entune.models.set_default_model("stub/good")
     entune.settings.set_fast_mode(True)
-    entune.settings.set_shortcuts("fn", "cmd+fn")
+    entune.settings.set_shortcuts("fn", "cmd+fn", "fn+ctrl")
     engine = app.engine
     assert engine is not None
     engine.press("cmd")

@@ -1,4 +1,4 @@
-import { ICON, api, el, errorText, figure, flash, whenLabel } from "./ui.js";
+import { ICON, THIS_DEVICE, api, el, errorText, figure, flash, whenLabel } from "./ui.js";
 
 // Settings owns its forms, local-model polling and shortcut capture. Callbacks
 // refresh the model and dictionary views after a successful configuration change.
@@ -217,10 +217,10 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   // processing controls, and what the chosen model has done.
   const jev = { dictionary: el("jev-dictionary"), formatting: el("jev-formatting"), cleanup: el("jev-cleanup"), key: el("key-typesafe") };
   const LAYA = {
-    unavailable: "Its engine is not installed on this Mac.",
+    unavailable: `Its engine is not installed on ${THIS_DEVICE}.`,
     stopped: "Installed. It starts when a step below is on.",
-    starting: "Starting on this Mac. The first start downloads the model, about 850 MB.",
-    ready: "Running on this Mac.",
+    starting: `Starting on ${THIS_DEVICE}. The first start downloads the model, about 850 MB.`,
+    ready: `Running on ${THIS_DEVICE}.`,
   };
   let layaPoll = null;
   // The option shown is the saved one, unless a switch was refused: then the picked option
@@ -381,7 +381,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       const isParakeet = provider.id === "parakeet";
       head.innerHTML = isParakeet
         ? `<div class="name strong">Parakeet <span class="caption">· NVIDIA on Apple MLX</span></div><div class="caption">The most accurate offline model. Its engine is installed outside Entune, once; Entune then finds it.</div>`
-        : `<div class="name strong">Whisper <span class="caption">· whisper.cpp</span></div><div class="caption">Downloaded inside Entune with one click. Speech recognition runs on this Mac.</div>`;
+        : `<div class="name strong">Whisper <span class="caption">· whisper.cpp</span></div><div class="caption">Downloaded inside Entune with one click. Speech recognition runs on ${THIS_DEVICE}.</div>`;
       card.append(head, ...mine.map((m) => localRow(m, isParakeet)));
       const missing = mine.find((m) => m.state === "unavailable");
       if (isParakeet && missing) card.append(engineNote(missing));

@@ -21,7 +21,7 @@ Edit `tools/brand.py`, not the exported files, then run it again.
 The generator also writes the app's own copies: `src/entune/assets/Entune.icns`,
 `src/entune/assets/icon.png` and `icon-512.png` (Dock and launcher),
 `src/entune/assets/menubar-template.png` (a black template image that macOS tints for a
-light or dark menu bar), `src/entune/web/favicon.svg` and `docs/demo/icon-256.png`.
+light or dark menu bar), `src/entune/assets/Entune.ico` (the Windows Start menu and window icon), `src/entune/web/favicon.svg` and `docs/demo/icon-256.png`.
 
 Rules: no gradients, glows or shadows; the mark alone is violet on light backgrounds
 and lavender or white on dark ones, never white on white.

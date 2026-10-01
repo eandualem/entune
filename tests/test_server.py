@@ -19,6 +19,7 @@ from starlette.testclient import TestClient
 from entune.api import data as data_api
 from entune.app.entune import Entune
 from entune.app.metrics import model_metrics
+from entune.app.shortcuts import DEFAULT_CANCEL
 from entune.audio.formats import wav_bytes
 from entune.learning.suggestion_model import Request, chatgpt
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
@@ -59,7 +60,7 @@ def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
         {"id": "stub", "name": "Stub", "keyHint": None, "streams": False, "local": False}
     ]
     assert settings["defaultModel"] is None
-    assert settings["shortcuts"] == {"hold": None, "toggle": None, "cancel": "fn+ctrl"}
+    assert settings["shortcuts"] == {"hold": None, "toggle": None, "cancel": DEFAULT_CANCEL}
     assert client.get("/api/models").json() == []
 
     res = client.put(
@@ -150,7 +151,7 @@ def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None
     assert client.get("/api/settings").json()["shortcuts"] == {
         "hold": None,
         "toggle": None,
-        "cancel": "fn+ctrl",
+        "cancel": DEFAULT_CANCEL,
     }
     res = client.put(
         "/api/settings", json={"shortcuts": {"hold": "Alt_R", "toggle": "Cmd+Shift+Space"}}
@@ -159,7 +160,7 @@ def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None
     assert client.get("/api/settings").json()["shortcuts"] == {
         "hold": "alt_r",
         "toggle": "cmd+shift+space",
-        "cancel": "fn+ctrl",
+        "cancel": DEFAULT_CANCEL,
     }
     bad = client.put("/api/settings", json={"shortcuts": {"hold": "cmd+space", "toggle": ""}})
     assert bad.status_code == 400 and "exactly one key" in bad.text
@@ -168,7 +169,7 @@ def test_shortcut_settings_round_trip_and_validation(client: TestClient) -> None
     assert client.get("/api/settings").json()["shortcuts"] == {
         "hold": None,
         "toggle": "cmd+shift+space",
-        "cancel": "fn+ctrl",
+        "cancel": DEFAULT_CANCEL,
     }
 
 

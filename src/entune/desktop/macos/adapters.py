@@ -26,6 +26,7 @@ class _Actions:
 
 class _Permissions:
     settings_hint = _permissions.SETTINGS_HINT
+    names: tuple[str, ...] = ("microphone", "inputMonitoring", "accessibility")
 
     def can_listen(self) -> bool:
         return _permissions.can_listen()

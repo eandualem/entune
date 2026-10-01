@@ -11,67 +11,70 @@
 
 Entune is an open-source, cross-platform dictation app. Record in your browser,
 choose a cloud or local speech model, and keep your recordings on your computer.
-On macOS, you can also dictate into other apps with a global shortcut.
+On macOS and Windows, you can also dictate into other apps with a global shortcut.
 Its personal dictionary learns from your dictation; a decision model chooses
 when a dictionary replacement actually fits the sentence.
 
 ## Install
 
-**Before the first PyPI release is published**, use the source-install option
-below. The standard commands install the published version:
-
-With [uv](https://docs.astral.sh/uv/getting-started/installation/):
+With [uv](https://docs.astral.sh/uv/getting-started/installation/), one command
+installs Entune and opens it:
 
 ```sh
-uv tool install entune
-entune
+uv tool install entune && entune
 ```
+
+In Windows PowerShell, use `uv tool install entune; entune`.
+
+On **macOS**, this puts **Entune** in your Applications folder, preparing it for
+up to a minute the first time; on **Windows**, in the Start menu. Then it opens
+Entune. From then on, open it like any other app; the terminal is no longer needed.
+If the terminal cannot find `entune`, open a new one and run `entune` again.
 
 Or use pip in a Python 3.12+ environment:
 
 ```sh
-python -m pip install entune
-entune
+python -m pip install entune && entune
 ```
 
 <details>
-<summary>Install from source before the first release, or try development changes</summary>
+<summary>Install from source, or try development changes</summary>
 
 This option requires [Git](https://git-scm.com/downloads):
 
 ```sh
-uv tool install "git+https://github.com/eandualem/entune.git@develop"
-entune
+uv tool install "git+https://github.com/eandualem/entune.git@develop" && entune
 ```
 
 With pip, use `python -m pip install "git+https://github.com/eandualem/entune.git@develop"`.
 
 </details>
 
-**Start dictating:**
+**Start dictating:** Entune opens on **Get started**.
 
-1. In **Models**, add a speech provider's API key, or install a local model.
-   Choose it as your default. AssemblyAI is a straightforward cloud starting
-   point; Parakeet is our local recommendation on Apple Silicon.
-2. Click **Record** and allow microphone access. Speak, then stop recording
-   to transcribe. Your audio and transcript are saved in **History**.
-3. Copy the transcript into any app. On **macOS**, you can also enable
-   Microphone, Input Monitoring and Accessibility in **Settings**, set a
-   shortcut, and dictate directly into the focused text field.
+1. **Set up a speech model:** in **Models**, add a speech provider's API key, or
+   download a local model. The first one becomes your default. AssemblyAI is a
+   straightforward cloud starting point; Parakeet is our local recommendation
+   on Apple Silicon.
+2. **Allow permissions:** on macOS, Microphone, Input Monitoring and
+   Accessibility, each from its own button. On Windows, only the microphone.
+3. **Set a shortcut,** then hold it in any app and speak. The text is typed
+   where you are and copied. Or click **Record**. Your audio and transcript are
+   saved in **History**.
 
 You can start without a dictionary or decision model and add them later.
 
-**macOS permissions:** when launched from a terminal, permission entries may
-belong to the terminal or Python. For a named `Entune.app`, use the
-[standalone app installation](https://github.com/eandualem/entune/blob/develop/docs/guide.md#install).
-It requires a source build; a notarized app download is not available.
-The [permission guide](https://github.com/eandualem/entune/blob/develop/docs/guide.md#permissions-macos)
-covers missing shortcuts, “1 of 3 allowed,” and keeping permissions across updates.
+**macOS permissions** belong to the Entune app, which is signed on your Mac
+without any certificate and stays the same across versions, so they remain
+granted when you upgrade. The
+[permission guide](https://github.com/eandualem/entune/blob/develop/docs/guide.md#permissions-macos)
+covers missing shortcuts and “1 of 3 allowed.”
 
-Entune uses browser mode on Windows and Linux; on macOS, use
-`entune --no-menu` to open it in your browser. **Windows and Linux have not yet
-been tested end to end.** Global shortcuts and automatic paste currently
-require macOS.
+On Linux, Entune opens in your browser; shortcuts and automatic paste are not
+available there, and Linux has not yet been tested end to end. The full setup and
+dictation have been tested on macOS and Windows; see
+[Windows](https://github.com/eandualem/entune/blob/develop/docs/guide.md#windows)
+for what differs there.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/eandualem/entune/main/docs/demo/history-light.jpg" width="49%" alt="Entune history: recordings, transcripts, audio playback and retry" />
@@ -169,7 +172,7 @@ refinement does not guarantee a better dictionary.
 
 - **History:** replay audio, copy text, inspect processing changes, and retry
   a recording with another speech model. Provider failures remain visible.
-- **macOS shortcuts:** hold to talk or toggle hands-free recording. Cancel without
+- **Shortcuts (macOS, Windows):** hold to talk or toggle hands-free recording. Cancel without
   pasting; usable captured audio stays available for retry.
 - **Local data:** audio, transcripts, settings and keys stay in Entune's data
   folder. Export or delete them in **Settings → Data & Privacy**.

@@ -8,6 +8,7 @@ again to stop. Keys are named the way pynput names them (`alt_r`, `cmd`,
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
 NAMED_KEYS = frozenset(
@@ -28,13 +29,18 @@ ALIASES = {
 }
 
 
+# Cancel is all modifiers, so pressing it types nothing into the app in front. A Mac
+# has Fn; Windows keyboards have no Fn the system can see.
+DEFAULT_CANCEL = "fn+ctrl" if sys.platform == "darwin" else "ctrl+alt+shift"
+
+
 @dataclass(frozen=True)
 class Shortcuts:
     """The recording shortcuts and the key combination that cancels an operation."""
 
     hold: tuple[str, ...] | None = None
     toggle: tuple[str, ...] | None = None
-    cancel: tuple[str, ...] | None = ("fn", "ctrl")
+    cancel: tuple[str, ...] | None = tuple(DEFAULT_CANCEL.split("+"))
 
     def __bool__(self) -> bool:
         return self.hold is not None or self.toggle is not None
@@ -92,7 +98,7 @@ def parse_toggle(text: str) -> tuple[str, ...]:
     return keys
 
 
-def parse(hold: str | None, toggle: str | None, cancel: str | None = "fn+ctrl") -> Shortcuts:
+def parse(hold: str | None, toggle: str | None, cancel: str | None = DEFAULT_CANCEL) -> Shortcuts:
     """Build shortcuts from the text fields; blank means not set."""
     parsed = Shortcuts(
         hold=parse_hold(hold) if hold and hold.strip() else None,
