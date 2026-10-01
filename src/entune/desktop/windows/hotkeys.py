@@ -57,6 +57,7 @@ class HotkeyListener:
         self._capture_done: Callable[[tuple[str, ...]], None] | None = None
         self._capture_keys: list[str] = []
         self._capture_down: set[str] = set()
+        self._pressed_as: dict[int, str] = {}  # the hook's thread only
         self._events: queue.SimpleQueue[tuple[bool, str]] = queue.SimpleQueue()
         threading.Thread(target=self._feed, daemon=True, name="entune-shortcuts").start()
 
@@ -102,6 +103,12 @@ class HotkeyListener:
         if injected:
             return  # our own paste (Ctrl+V) and other synthetic keys are not the user's
         name = key_name(key)
+        vk = getattr(key, "vk", None)
+        if name is not None and vk is not None:
+            # Released under the name it was pressed with: letting go of Shift first
+            # would otherwise turn ":" into ";" and leave ":" held.
+            pressed = self._pressed_as
+            name = pressed.setdefault(vk, name) if down else pressed.pop(vk, name)
         if name is not None:
             self._events.put((down, name))
 
