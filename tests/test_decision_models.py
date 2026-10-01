@@ -24,6 +24,7 @@ from tests.test_server import StubProvider
 FAKE_SERVE = """
 import json, os, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from unittest.mock import patch
 
 def main():
     if os.environ.get("FAKE_LAYA_BROKEN"):
@@ -72,7 +73,10 @@ def main():
         def log_message(self, *args):
             pass
 
-    HTTPServer((os.environ["LAYA_HOST"], int(os.environ["LAYA_PORT"])), Handler).serve_forever()
+    # The fixture needs only loopback; reverse DNS can stall macOS CI runners.
+    with patch("http.server.socket.getfqdn", return_value="localhost"):
+        server = HTTPServer((os.environ["LAYA_HOST"], int(os.environ["LAYA_PORT"])), Handler)
+    server.serve_forever()
 """
 
 
