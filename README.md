@@ -5,6 +5,8 @@
   </picture>
 </h1>
 
+[![CI](https://github.com/eandualem/entune/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/eandualem/entune/actions/workflows/ci.yml)
+
 **Your speech model. Your vocabulary. Corrections that consider the context.**
 
 Entune is an open-source, cross-platform dictation app. Record in your browser,
@@ -15,24 +17,36 @@ when a dictionary replacement actually fits the sentence.
 
 ## Install
 
-The first PyPI release is being prepared. For now, install the current source
-from GitHub; this requires [Git](https://git-scm.com/downloads).
+**Before the first PyPI release is published**, use the source-install option
+below. The standard commands install the published version:
 
 With [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```sh
-uv tool install "git+https://github.com/eandualem/entune.git@develop"
+uv tool install entune
 entune
 ```
 
 Or use pip in a Python 3.12+ environment:
 
 ```sh
-python -m pip install "git+https://github.com/eandualem/entune.git@develop"
+python -m pip install entune
 entune
 ```
 
-Once the PyPI release is available, you can use `entune` in place of the Git URL.
+<details>
+<summary>Install from source before the first release, or try development changes</summary>
+
+This option requires [Git](https://git-scm.com/downloads):
+
+```sh
+uv tool install "git+https://github.com/eandualem/entune.git@develop"
+entune
+```
+
+With pip, use `python -m pip install "git+https://github.com/eandualem/entune.git@develop"`.
+
+</details>
 
 **Start dictating:**
 
