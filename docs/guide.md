@@ -323,6 +323,9 @@ audio file in `dictionary-audio/`, separate from recording history, and can reus
 it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
 up to 199 MB can be uploaded; the chosen provider must support the audio format
 and length. A build uses the speech and dictionary models selected when it starts.
+A recording that will not transcribe is tried once more, then skipped, and the
+suggestions come from the others; the result says how many were skipped. If the build
+stops, Retry continues from where it was: recordings already transcribed are kept.
 A two-handle range over recorded time, oldest to newest without the gaps between days,
 selects a continuous stretch of whole recordings: all audio by default, the most recent
 by dragging the left handle. The exact duration, count and edge dates are shown, and

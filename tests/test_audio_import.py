@@ -238,14 +238,14 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
         assert started.status_code == 202
         result = wait_for_build(client)
         if model == "bad":
-            assert result["phase"] == "failed" and "could not transcribe it" in result["error"]
+            assert result["phase"] == "failed" and "could not be transcribed" in result["error"]
             assert result["errorDetail"] == "HTTP 401 Unauthorized\n{}"
             assert "proposal" not in result
         else:
             assert result["phase"] == "ready", result
             assert result["proposal"]["model"] == f"stub/{model}"
         assert client.delete(f"/api/dictionary/build/{result['id']}").status_code == 200
-    assert len(stub.calls) == 3 and len(prompts) == 2  # no fallback or retry
+    assert len(stub.calls) == 4 and len(prompts) == 2  # the bad one once more, no fallback
     assert client.get("/api/dictionary/audio").json()["count"] == 1
     assert client.get("/api/dictionary/audio").json()["seconds"] > 0
     assert store.list_recordings() == []

@@ -303,6 +303,25 @@ class DictionaryBuilds:
             with self._lock:
                 self._loop = self._task = None
 
+    def _transcribe_clip(self, spec: BuildInput, item: DictionaryAudio, path: Path) -> None:
+        with self._speech.use(spec.speech, background=True, cancel=self._cancel):
+            self._checkpoint()
+            data = path.read_bytes()
+            if not item.id.startswith("recording:") and hashlib.sha256(data).hexdigest() != item.id:
+                raise ValueError("The imported audio changed; import it again")
+            result = spec.speech.provider.transcribe(
+                Clip(data, item.mime), spec.speech.model, spec.speech_key
+            )
+        if isinstance(result, Failure):
+            raise generate.StepFailed(f"{spec.speech.label} could not transcribe it.", result.error)
+        # Preserve a successful in-flight result even if Stop arrived during inference.
+        # It can be reused on Retry, never delivered.
+        if not self._closed:
+            self._texts[item.id] = learning_inputs.LearningText(
+                item.id, result.text, "temporary_audio"
+            )
+        self._checkpoint()
+
     def _run(self) -> None:
         spec = self._spec
         assert spec is not None
@@ -310,49 +329,41 @@ class DictionaryBuilds:
         try:
             self._checkpoint()
             if spec.source == "audio":
-                self._progress(phase="transcribing")
+                self._progress(phase="transcribing", skipped=0)
+                # One clip that will not transcribe does not stop the rest: it is tried
+                # once more, then skipped, and the suggestions come from the others.
+                skipped: list[tuple[str, str]] = []
                 for number, (item, path) in enumerate(spec.audio, 1):
                     self._checkpoint()
                     if item.id not in self._texts:
-                        try:
-                            with self._speech.use(
-                                spec.speech, background=True, cancel=self._cancel
-                            ):
-                                self._checkpoint()
-                                data = path.read_bytes()
-                                if (
-                                    not item.id.startswith("recording:")
-                                    and hashlib.sha256(data).hexdigest() != item.id
-                                ):
-                                    raise ValueError("The imported audio changed; import it again")
-                                result = spec.speech.provider.transcribe(
-                                    Clip(data, item.mime), spec.speech.model, spec.speech_key
-                                )
-                            if isinstance(result, Failure):
-                                raise generate.StepFailed(
-                                    f"{spec.speech.label} could not transcribe it.", result.error
-                                )
-                            # Preserve a successful in-flight result even if Stop arrived
-                            # during inference. It can be reused on Retry, never delivered.
-                            if not self._closed:
-                                self._texts[item.id] = learning_inputs.LearningText(
-                                    item.id, result.text, "temporary_audio"
-                                )
-                            self._checkpoint()
-                        except CancelledError:
-                            raise
-                        except Exception as exc:
-                            detail = (
-                                exc.detail
-                                if isinstance(exc, generate.StepFailed)
-                                else f"{type(exc).__name__}: {exc}"
-                            )
-                            raise generate.StepFailed(
-                                f"Recording {number} of {len(spec.audio)} ({item.name}): {exc}",
-                                detail,
-                            ) from exc
-                    self._progress(completed=number)
-                inputs = [self._texts[item.id] for item, _ in spec.audio]
+                        for attempt in (1, 2):
+                            try:
+                                self._transcribe_clip(spec, item, path)
+                                break
+                            except CancelledError:
+                                raise
+                            except Exception as exc:
+                                if attempt == 2:
+                                    why = (
+                                        exc.detail
+                                        if isinstance(exc, generate.StepFailed)
+                                        else f"{type(exc).__name__}: {exc}"
+                                    )
+                                    skipped.append((item.name, why))
+                    self._progress(completed=number, skipped=len(skipped))
+                inputs = [self._texts[item.id] for item, _ in spec.audio if item.id in self._texts]
+                if not inputs:
+                    name, why = skipped[0]
+                    count = len(spec.audio)
+                    what = "The recording" if count == 1 else f"None of the {count} recordings"
+                    raise generate.StepFailed(
+                        f"{what} could be transcribed with {spec.speech.label}, even on a"
+                        f" second try; {name} failed with: {why}"
+                        if count > 1
+                        else f"{what} could not be transcribed with {spec.speech.label}, even"
+                        f" on a second try: {why}",
+                        why,
+                    )
             else:
                 inputs = list(spec.transcripts)
             if not any(item.text.strip() for item in inputs):
