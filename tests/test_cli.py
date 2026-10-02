@@ -173,8 +173,10 @@ def test_plain_entune_on_macos_opens_the_app(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.delenv("ENTUNE_APP")
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     assert not opens_as_app([])  # the standalone build is the app
-    monkeypatch.setattr(sys, "platform", "linux")  # no desktop app there
     monkeypatch.setattr(sys, "frozen", False)
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert opens_as_app([])
+    monkeypatch.setattr(sys, "platform", "freebsd")  # no desktop app there
     assert not opens_as_app([])
     opened: list[bool] = []
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -404,7 +406,7 @@ def test_log_tightens_existing_file_without_changing_shared_parent(
 @pytest.mark.skipif(sys.platform != "darwin", reason="the Mac app's launch modules")
 def test_first_start_modules_exist() -> None:
     # A renamed one would not fail the install, only bring back the slow first launch.
-    import importlib
+    import importlib.util
 
-    for name in cli.FIRST_START_MODULES:
-        importlib.import_module(name)
+    for name in cli.FIRST_START_MODULES:  # each platform imports only its own
+        assert importlib.util.find_spec(name) is not None, name

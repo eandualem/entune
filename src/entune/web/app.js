@@ -6,7 +6,8 @@ import { createHistory } from "./history.js";
 import { placeDetails, renderCard } from "./history-card.js";
 import { createDictionary } from "./dictionary-view.js";
 import { createSettings } from "./settings-view.js";
-import { createPermissions } from "./permissions-view.js";
+import { openApp } from "./intro.js";
+import { LINUX_LABELS, LINUX_SETUP, copySetup, createPermissions } from "./permissions-view.js";
 import { initRecording } from "./recording.js";
 import { ICON, THIS_DEVICE, api, el, errorText, figure, fillModels, segmentedGroup } from "./ui.js";
 
@@ -24,7 +25,7 @@ let settings = null; // the last /api/settings answer
 let shortcuts = { hold: null, toggle: null };
 let recordingsCount = 0;
 let desktop = null; // the desktop app (true) or a browser page (false), once /api/status answers
-let system = null; // "macos", "windows" or "other"
+let system = null; // "macos", "windows", "linux" or "other"
 let permissionStates = {};
 
 // The Mac's real window controls share the toolbar. Browser windows keep their
@@ -114,11 +115,7 @@ function show(name) { selectTab(name); showView(name); }
 // The Models page: three jobs, one at a time, like Settings.
 const MODEL_SECTIONS = ["cloud", "local", "performance"];
 const modelSections = Object.fromEntries(MODEL_SECTIONS.map((name) => [name, el(`models-${name}`)]));
-let modelSectionChosen = false;
-const pickModelSection = segmentedGroup(Object.fromEntries(MODEL_SECTIONS.map((name) => [name, el(`msec-${name}`)])), (name) => {
-  modelSectionChosen = true;
-  showModelSection(name);
-});
+const pickModelSection = segmentedGroup(Object.fromEntries(MODEL_SECTIONS.map((name) => [name, el(`msec-${name}`)])), showModelSection);
 function showModelSection(name) {
   for (const key in modelSections) modelSections[key].toggleAttribute("data-active", key === name);
 }
@@ -210,8 +207,6 @@ async function loadMetrics() {
   const rows = await api("/api/metrics");
   el("metrics-table").hidden = rows.length === 0;
   el("metrics-empty").hidden = rows.length > 0;
-  // Setup comes first until there is something to compare; then the page opens on Performance.
-  if (!modelSectionChosen) { const start = rows.length ? "performance" : "cloud"; pickModelSection(start); showModelSection(start); }
   metricsRows.replaceChildren(
     ...rows.map((m) => {
       const row = document.createElement("div");
@@ -240,7 +235,8 @@ async function loadMetrics() {
 
 // ---- Getting started: the empty history, as steps that tick themselves off ----
 // In order: a speech model, then (in the Mac app) the permissions, then a shortcut.
-const PERMISSIONS = { microphone: "Microphone", inputMonitoring: "Input Monitoring", accessibility: "Accessibility" };
+// Input Monitoring last: macOS asks to quit and reopen after it, and the reopened app sees all three.
+const PERMISSIONS = { microphone: "Microphone", accessibility: "Accessibility", inputMonitoring: "Input Monitoring" };
 function renderStart() {
   const kbd = (keys) => Object.assign(document.createElement("kbd"), { textContent: keys });
   const haveShortcut = Boolean(shortcuts.hold || shortcuts.toggle);
@@ -272,10 +268,14 @@ function renderStart() {
     step(Boolean(defaultModel), "Set up a speech model", ["A cloud service's key, or a model that runs on your computer. The first one becomes your default."], { label: "Models", go: () => openModels("cloud") }),
   ];
   if (desktop) {
-    const allowed = Object.keys(permissionStates).every((name) => permissionStates[name] === "granted");
+    // Not yet reported (the app is still starting) is not the same as all allowed.
+    const names = Object.keys(permissionStates);
+    const allowed = names.length > 0 && names.every((name) => permissionStates[name] === "granted");
     const li = system === "macos"
-      ? step(allowed, "Allow Entune on this Mac", ["The microphone to record; Input Monitoring and Accessibility so your shortcut works in any app and the text is typed there."], null)
-      : step(allowed, "Allow the microphone", ["Windows lets desktop apps use the microphone unless it is turned off in Privacy settings."], null);
+      ? step(allowed, "Allow Entune on this Mac", ["The microphone to record; Accessibility and Input Monitoring so your shortcut works in any app and the text is typed there."], null)
+      : system === "linux"
+        ? step(allowed, "Allow keyboard access", ["So your shortcut works in any app and the text is typed there. Run this once in a terminal, then log out and back in:"], null)
+        : step(allowed, "Allow the microphone", ["Windows lets desktop apps use the microphone unless it is turned off in Privacy settings."], null);
     if (!allowed) li.querySelector(".what").append(permissionRows());
     steps.push(li);
   }
@@ -300,14 +300,22 @@ function renderStart() {
 function permissionRows() {
   const rows = document.createElement("span");
   rows.className = "permission-steps";
+  if (system === "linux") {
+    const command = Object.assign(document.createElement("pre"), { className: "code-block", textContent: LINUX_SETUP });
+    const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn ghost sm", textContent: "Copy command" });
+    copy.addEventListener("click", () => copySetup(copy));
+    rows.append(command, copy);
+  }
   for (const [name, label] of Object.entries(PERMISSIONS)) {
     if (!(name in permissionStates)) continue; // not something this system asks for
     const row = document.createElement("span");
     row.className = "permission-step";
-    row.append(label);
+    row.append(system === "linux" ? LINUX_LABELS[name] : label);
     const state = permissionStates[name];
     if (state === "granted") {
       row.append(Object.assign(document.createElement("span"), { className: "caption", textContent: "Allowed" }));
+    } else if (system === "linux") {
+      row.append(Object.assign(document.createElement("span"), { className: "caption", textContent: "Not yet allowed" }));
     } else {
       const button = Object.assign(document.createElement("button"), {
         type: "button", className: "btn ghost sm",
@@ -391,8 +399,10 @@ historyList.addEventListener("click", async (e) => {
     const label = select.selectedOptions[0]?.textContent ?? "";
     retry.disabled = true;
     retry.dataset.busy = "true";
-    rowStatus.className = "status";
-    rowStatus.textContent = `Transcribing with ${label}…`;
+    // Visible while it runs: a spinner and the model's name, and a light along the card.
+    card.classList.add("retrying");
+    rowStatus.className = "status working";
+    rowStatus.replaceChildren(Object.assign(document.createElement("span"), { className: "spinner" }), `Transcribing with ${label}…`);
     try {
       await api(`/api/recordings/${card.dataset.id}/transcriptions`, {
         method: "POST",
@@ -400,12 +410,14 @@ historyList.addEventListener("click", async (e) => {
         body: JSON.stringify({ model: select.value }),
       });
     } catch (err) {
+      card.classList.remove("retrying");
       rowStatus.className = "status err";
       rowStatus.textContent = errorText(err);
       retry.disabled = false;
       delete retry.dataset.busy;
       return;
     }
+    card.classList.remove("retrying");
     await loadHistory(true);
   }
 });
@@ -436,6 +448,8 @@ initRecording({
   onStatus(message) { status.textContent = message; },
   async onUploaded() { show("history"); await history.latest(); },
 });
+// A first launch opens through the introduction, which covers the loading below.
+openApp();
 // A failed load is shown; the page still opens its view instead of stopping here.
 await settingsView.load().catch((err) => { status.textContent = errorText(err); });
 try {

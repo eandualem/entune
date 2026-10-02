@@ -1,6 +1,6 @@
 [project]
 name = "entune"
-version = "0.2.0"
+version = "0.2.1"
 description = "Dictation with your choice of speech model and a personal dictionary that selects corrections in context."
 readme = "README.md"
 license = "MIT"
@@ -16,11 +16,13 @@ dependencies = [
   "pynput>=1.7,<2 ; sys_platform == 'darwin' or sys_platform == 'win32'",
   "pyobjc-framework-applicationservices>=10 ; sys_platform == 'darwin'",
   "pyobjc-framework-AVFoundation>=10 ; sys_platform == 'darwin'",
-  "pystray>=0.19",
+  "pyside6>=6.7 ; sys_platform == 'linux'",
+  "pystray>=0.19 ; sys_platform == 'darwin' or sys_platform == 'win32'",
   "python-multipart>=0.0.12",
   "pywebview>=5",
+  "qtpy>=2 ; sys_platform == 'linux'",
   "pywhispercpp>=1.5",
-  "sounddevice>=0.5 ; sys_platform == 'darwin' or sys_platform == 'win32'",
+  "sounddevice>=0.5",
   "starlette>=0.41",
   "uvicorn>=0.30",
 ]
@@ -60,7 +62,7 @@ mypy_path = "src"
 files = ["src/entune", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["sounddevice", "objc", "Quartz", "ApplicationServices", "AppKit", "AVFoundation", "Foundation", "WebKit", "PyObjCTools", "pystray.*", "webview.*", "PIL.*", "parakeet_mlx", "parakeet_mlx.*", "mlx.*", "librosa"]
+module = ["sounddevice", "objc", "Quartz", "ApplicationServices", "AppKit", "AVFoundation", "Foundation", "WebKit", "PyObjCTools", "pystray.*", "webview.*", "qtpy.*", "PIL.*", "parakeet_mlx", "parakeet_mlx.*", "mlx.*", "librosa"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -112,6 +112,44 @@ def test_the_pill_shows_without_taking_focus() -> None:
 
 
 @windows_only
+def test_the_pill_animates_and_its_retry_works_without_taking_focus() -> None:
+    if sys.platform == "win32":
+        import ctypes
+        import time
+
+        from entune.desktop.windows.indicator import WM_LBUTTONUP, Indicator
+
+        front = ctypes.windll.user32.GetForegroundWindow()
+        pill = Indicator()
+        pill.level = lambda: 0.8
+        pill.show("Recording", recording=True)
+        time.sleep(0.4)
+        assert pill.visible, "the recording pill is not shown"
+        deadline = time.monotonic() + 2
+        while not any(pill._smoothed) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert any(pill._smoothed), f"the bars never moved: ticks={pill._ticks}"
+        pressed: list[str] = []
+        pill.message(
+            "stub · bad failed",
+            "HTTP 401: the key was refused. A longer detail wraps onto more lines.",
+            error=True,
+            retry=lambda: pressed.append("retry"),
+            dismiss=lambda: pressed.append("dismiss"),
+        )
+        time.sleep(0.4)
+        (left, top, right, bottom), _call = pill._buttons[0]
+        x, y = (left + right) // 2, (top + bottom) // 2
+        ctypes.windll.user32.PostMessageW(pill._hwnd, WM_LBUTTONUP, 0, (y << 16) | x)
+        time.sleep(0.3)
+        assert pressed == ["retry"]
+        assert ctypes.windll.user32.GetForegroundWindow() == front
+        pill.hide()
+        time.sleep(0.3)
+        assert not pill.visible
+
+
+@windows_only
 def test_microphone_status_reads_the_privacy_switches() -> None:
     from entune.desktop.windows.permissions import Permissions
 

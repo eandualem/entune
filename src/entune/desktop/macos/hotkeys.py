@@ -159,6 +159,18 @@ class HotkeyListener:
         self._capture_done: Callable[[tuple[str, ...]], None] | None = None
         self._capture_keys: list[str] = []
         self._capture_down: set[str] = set()
+        self._codes: dict[str, int] = {}  # each key seen going down, by name: its key code
+
+    def held(self) -> set[str]:
+        """The keys seen going down that macOS says are down now."""
+        import Quartz
+
+        state = Quartz.kCGEventSourceStateHIDSystemState
+        return {
+            name
+            for name, code in dict(self._codes).items()
+            if Quartz.CGEventSourceKeyState(state, code)
+        }
 
     def start(self, engine: ShortcutEngine | None) -> None:
         """Run the listener with this engine (None: listen, but drive nothing).
@@ -223,6 +235,9 @@ class HotkeyListener:
         name = key_name(self._listener, key)
         if name is None:
             return
+        code = key.value.vk if isinstance(key, Key) else getattr(key, "vk", None)
+        if code is not None:
+            self._codes[name] = int(code)
         with self._lock:
             if self._capture_done is not None:
                 if name not in self._capture_keys:
@@ -239,6 +254,7 @@ class HotkeyListener:
         name = key_name(self._listener, key)
         if name is None:
             return
+        self._codes.pop(name, None)
         with self._lock:
             if self._capture_done is not None:
                 self._capture_down.discard(name)

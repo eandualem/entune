@@ -336,3 +336,41 @@ def test_native_listener_reads_keyboard_layout_on_the_creating_thread(
 
     assert reads == [threading.current_thread()]
     assert contexts == [("type", b"layout")]
+
+
+def test_a_start_that_fails_late_does_not_end_a_newer_hold() -> None:
+    engine, events = make("alt_r", None)
+    engine.press("alt_r")
+    first = engine.starts
+    engine.release("alt_r")
+    engine.press("alt_r")  # pressed again while the first start was still starting
+    engine.start_failed(first)
+    assert engine.recording
+    engine.release("alt_r")
+    assert events == ["start", "stop", "start", "stop"]
+    engine.press("alt_r")
+    engine.start_failed(engine.starts)  # its own start failed: the next press starts again
+    assert not engine.recording
+
+
+def test_keys_left_held_by_a_missed_release_are_forgotten_after_a_dictation() -> None:
+    engine, events = make("fn", None, "fn+ctrl")
+    engine.press("ctrl")
+    engine.press("fn")  # Cancel; then both releases are missed (secure input, say)
+    assert events == ["cancel"]
+    engine.press("fn")
+    assert events == ["cancel"]  # stuck: no new dictation could start
+    engine.forget_keys(set())
+    engine.press("fn")
+    assert events == ["cancel", "start"]
+    engine.forget_keys(set())  # never while recording
+    assert engine.pressed == {"fn"} and engine.recording
+
+
+def test_a_key_still_physically_held_is_not_forgotten() -> None:
+    engine, events = make("f5", None, "fn+ctrl")
+    engine.press("f5")
+    engine.press("f5")  # auto-repeat
+    engine.forget_keys({"f5"})  # held through delivery: still down, so still known
+    engine.press("f5")  # its auto-repeat must not start a recording
+    assert events == ["start"]

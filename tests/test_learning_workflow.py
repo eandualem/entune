@@ -188,6 +188,76 @@ def test_partial_generation_keeps_validated_proposal_and_only_fully_covered_inpu
         app.close()
 
 
+def test_a_recording_that_will_not_transcribe_is_skipped_and_the_rest_are_used(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[bytes] = []
+    bad = wav_bytes(bytes([1, 0]) * 16)
+
+    def speech(clip: Clip, model: str, key: str) -> Transcript | Failure:
+        calls.append(clip.data)
+        return Failure("too short to transcribe") if clip.data == bad else Transcript("cloud code")
+
+    async def call(_: Request) -> str:
+        return json.dumps(proposed("cloud code"))
+
+    with closing(Store(tmp_path)) as store:
+        app, client = setup(store, call)
+        monkeypatch.setattr(app.providers[0], "transcribe", speech)
+        for i in range(3):
+            client.post(
+                "/api/dictionary/audio",
+                files={"audio": (f"{i}.wav", wav_bytes(bytes([i, 0]) * 16))},
+            )
+        client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
+        ready = wait_for_build(client)
+        assert ready["phase"] == "ready" and ready["skipped"] == 1, ready
+        assert calls.count(bad) == 2  # tried once more, then skipped
+        assert ready["coveredInputs"] == 2
+        app.close()
+
+
+def test_a_recording_recovered_on_retry_is_not_left_out_of_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(batches, "BATCH_CHARS", 12)  # one recording per part
+    first = wav_bytes(bytes([0, 0]) * 16)
+    attempts = {"first": 0, "generation": 0}
+
+    def speech(clip: Clip, model: str, key: str) -> Transcript | Failure:
+        if clip.data == first:
+            attempts["first"] += 1
+            if attempts["first"] <= 2:  # skipped on the first run, fine on Retry
+                return Failure("busy")
+        return Transcript("cloud code")
+
+    async def call(_: Request) -> str:
+        attempts["generation"] += 1
+        if attempts["generation"] == 2:
+            raise ValueError("generation stopped")  # after the first part finished
+        return '{"additions": []}'
+
+    with closing(Store(tmp_path)) as store:
+        app, client = setup(store, call)
+        monkeypatch.setattr(app.providers[0], "transcribe", speech)
+        for i in range(3):
+            client.post(
+                "/api/dictionary/audio",
+                files={"audio": (f"{i}.wav", wav_bytes(bytes([i, 0]) * 16))},
+            )
+        job = client.post(
+            "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
+        ).json()
+        partial = wait_for_build(client)  # the finished part stays reviewable
+        assert partial["outcome"] == "failed" and partial["completedBatches"] == 1, partial
+        assert client.post(f"/api/dictionary/build/{job['id']}/retry").status_code == 200
+        ready = wait_for_build(client)
+        assert ready["outcome"] == "complete" and ready["coveredInputs"] == 3, ready
+        app.close()
+
+
 def test_retry_audio_reuses_successes_and_generation_checkpoint_without_persisting_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -219,8 +289,7 @@ def test_retry_audio_reuses_successes_and_generation_checkpoint_without_persisti
         job = client.post(
             "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
         ).json()
-        assert wait_for_build(client)["phase"] == "failed"
-        assert client.post(f"/api/dictionary/build/{job['id']}/retry").status_code == 200
+        # The clip that failed is tried once more at once; generation then fails.
         failed = wait_for_build(client)
         assert failed["phase"] == "failed" and failed["cachedTranscripts"] == 2
         assert len(speech_calls) == 3 and speech_calls[0] != speech_calls[1] == speech_calls[2]

@@ -7,6 +7,7 @@ import threading
 import time
 import weakref
 from collections.abc import Callable
+from concurrent.futures import CancelledError
 from pathlib import Path
 
 import httpx
@@ -29,6 +30,8 @@ class FakeTray:
     def __init__(self) -> None:
         self.states: list[State] = []
         self.status = ""
+        self.notices: list[tuple[str, str]] = []  # what the pill told, title and body
+        self.retries: list[Callable[[], None] | None] = []  # an error's Retry, if it had one
 
     def set_state(self, state: State) -> None:
         self.states.append(state)
@@ -36,8 +39,17 @@ class FakeTray:
     def set_status(self, text: str) -> None:
         self.status = text
 
-    def complete(self, text: str) -> None:
-        self.status = text
+    def complete(self, title: str, body: str = "") -> None:
+        self.status = title
+        self.notices.append((title, body))
+
+    def alert(self, title: str, body: str, retry: Callable[[], None] | None) -> None:
+        self.status = title
+        self.notices.append((title, body))
+        self.retries.append(retry)
+
+    def set_level(self, level: Callable[[], float]) -> None:
+        self.level = level
 
     def set_actions(
         self,
@@ -74,9 +86,13 @@ class FakeHotkeys:
     def cancel_capture(self) -> None:
         self.capturing = None
 
+    def held(self) -> set[str]:
+        return set()  # nothing is physically down in these tests
+
 
 class FakeActions:
     def __init__(self) -> None:
+        self.restored: list[object] = []
         self.clipboard: str | None = None
         self.pasted = 0
         self.outcome: Delivery = "inserted"
@@ -96,6 +112,13 @@ class FakeActions:
 
     def notify(self, title: str, message: str) -> None:
         self.notices.append((title, message))
+
+    def save_clipboard(self) -> object:
+        return self.clipboard
+
+    def restore_clipboard(self, saved: object) -> None:
+        self.restored.append(saved)
+        self.clipboard = saved if isinstance(saved, str) else None
 
 
 class FakePermissions:
@@ -161,7 +184,8 @@ class FakeRecorder:
     def __init__(self, capture: Capture) -> None:
         self.capture = capture
         self.recording = False
-        self.quiet = False
+        self.silence: str | None = None
+        self.level = 0.0
 
     def start(self, sink_for_rate: SinkFactory | None = None) -> None:
         self.recording = True
@@ -217,7 +241,15 @@ def make(tmp_path: Path, **kwargs: bool) -> tuple[EntuneApp, FakePlatform, Entun
     platform = FakePlatform(**kwargs)
     second = Capture(b"\x00\x00" * 16_000, 16_000)  # one second, above the tap threshold
     app = EntuneApp(entune, platform, "http://localhost:0/", recorder=FakeRecorder(second))
+    app._key_actions = Immediately()  # type: ignore[assignment]
     return app, platform, entune
+
+
+class Immediately:
+    """Runs a shortcut action as it is queued, so a test sees its effect after `press`."""
+
+    def put(self, action: Callable[[], None]) -> None:
+        action()
 
 
 def wait_for(condition: Callable[[], bool], seconds: float = 3.0) -> None:
@@ -261,6 +293,18 @@ def test_a_shortcut_with_fn_also_needs_accessibility(tmp_path: Path) -> None:
     platform.permissions.post = True
     app._recheck_permission()
     assert platform.hotkeys.running and platform.tray.status == "Dictate: hold fn"
+
+
+def test_recording_starts_off_the_keyboard_listener_thread(tmp_path: Path) -> None:
+    entune = Entune(Store(tmp_path), [StubProvider()])
+    recorder = FakeRecorder(Capture(b"\x00\x00" * 16_000, 16_000))
+    app = EntuneApp(entune, FakePlatform(), "http://localhost:0/", recorder=recorder)
+    entune.settings.set_shortcuts("alt_r", None)
+    started_on: list[threading.Thread] = []
+    app.start_recording = lambda *_: started_on.append(threading.current_thread())  # type: ignore[method-assign]
+    app.engine.press("alt_r")  # type: ignore[union-attr]
+    wait_for(lambda: len(started_on) == 1)
+    assert started_on[0] is not threading.current_thread()
 
 
 def test_a_dictation_is_transcribed_copied_and_pasted(tmp_path: Path) -> None:
@@ -320,7 +364,7 @@ def test_starting_a_recording_opens_the_provider_and_jev_connections(tmp_path: P
     entune.close()
 
 
-def test_quiet_microphone_warns_once_and_still_saves_the_recording(tmp_path: Path) -> None:
+def test_silence_shows_on_the_pill_and_only_a_long_pause_notifies(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
     entune.settings.set_key("stub", "k")
     entune.models.set_default_model("stub/good")
@@ -328,21 +372,25 @@ def test_quiet_microphone_warns_once_and_still_saves_the_recording(tmp_path: Pat
     app.start_recording()
     assert entune.desktop.desktop_status()["lastError"] is None
     assert isinstance(app.recorder, FakeRecorder)
-    app.recorder.quiet = True
+    app.recorder.silence = "start"  # nothing heard yet: the pill says so, nothing more
+    app._recheck_permission()
+    assert platform.tray.states[-1] == "quiet" and not platform.actions.notices
+    app.recorder.silence = None
+    app._recheck_permission()
+    assert platform.tray.states[-1] == "recording"
+    app.recorder.silence = "pause"  # a long silence after speech may also notify, once
     app._recheck_permission()
     app._recheck_permission()
-    assert platform.tray.states[-1] == "quiet"
+    assert platform.tray.states[-1] == "silent"
     assert len(platform.actions.notices) == 1
     assert "Recording continues" in platform.actions.notices[0][1]
     assert app.recorder.recording
-    app.recorder.quiet = False
-    app._recheck_permission()
-    assert platform.tray.states[-2:] == ["quiet", "recording"]
     app.stop_recording()
     wait_for(lambda: platform.actions.pasted == 1)
     assert len(entune.store.list_recordings()) == 1
+    assert len(platform.actions.notices) == 1  # pasting is told on the pill only
     app.start_recording()
-    app.recorder.quiet = True
+    app.recorder.silence = "pause"
     app._recheck_permission()
     assert len(platform.actions.notices) == 2
     app.cancel_recording()
@@ -380,9 +428,9 @@ def test_without_accessibility_the_transcript_is_copied_and_explained(tmp_path: 
     entune.settings.set_shortcuts("alt_r", None, "ctrl+esc")  # no Fn: listening needs no active tap
     app.engine.press("alt_r")  # type: ignore[union-attr]
     app.engine.release("alt_r")  # type: ignore[union-attr]
-    wait_for(lambda: bool(platform.actions.notices))
+    wait_for(lambda: bool(platform.tray.notices))
     assert platform.actions.clipboard == "hello from the fake" and platform.actions.pasted == 0
-    assert platform.actions.notices[0][0] == "Entune: copied, not pasted"
+    assert platform.tray.notices[0][0] == "Copied, not pasted"
     assert platform.permissions.requested == ["post"]
 
 
@@ -396,11 +444,11 @@ def test_accessibility_lost_while_running_is_explained_not_called_a_missing_fiel
     entune.settings.set_shortcuts("alt_r", None, "ctrl+esc")
     app.engine.press("alt_r")  # type: ignore[union-attr]
     app.engine.release("alt_r")  # type: ignore[union-attr]
-    wait_for(lambda: bool(platform.actions.notices))
-    title, message = platform.actions.notices[0]
+    wait_for(lambda: bool(platform.tray.notices))
+    title, message = platform.tray.notices[0]
     assert platform.actions.clipboard == "hello from the fake" and platform.actions.pasted == 0
-    assert title == "Entune: copied, not pasted" and "Allow Accessibility" in message
-    assert "no active text field" not in message and platform.permissions.requested == ["post"]
+    assert title == "Copied, not pasted" and "Allow Accessibility" in message
+    assert "No text field" not in message and platform.permissions.requested == ["post"]
 
 
 def test_a_modifier_still_held_skips_the_paste_and_says_how_to_paste(tmp_path: Path) -> None:
@@ -411,23 +459,70 @@ def test_a_modifier_still_held_skips_the_paste_and_says_how_to_paste(tmp_path: P
     entune.settings.set_shortcuts("alt_r", None, "ctrl+esc")
     app.engine.press("alt_r")  # type: ignore[union-attr]
     app.engine.release("alt_r")  # type: ignore[union-attr]
-    wait_for(lambda: bool(platform.actions.notices))
-    _title, message = platform.actions.notices[0]
+    wait_for(lambda: bool(platform.tray.notices))
+    _title, message = platform.tray.notices[0]
     assert platform.actions.clipboard == "hello from the fake" and platform.actions.pasted == 0
-    assert "release shortcut keys and press" in message
+    assert "Release the shortcut keys" in message
 
 
-def test_a_failed_transcription_is_a_notification_and_the_icon_recovers(tmp_path: Path) -> None:
+def test_a_key_whose_release_was_missed_never_blocks_the_paste(tmp_path: Path) -> None:
+    app, platform, entune = make(tmp_path)
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_shortcuts("alt_r", None)
+    app.engine.press("v")  # type: ignore[union-attr]  # its release never arrives
+    app.engine.press("alt_r")  # type: ignore[union-attr]
+    app.engine.release("alt_r")  # type: ignore[union-attr]
+    wait_for(lambda: platform.actions.pasted == 1)
+    assert not app.engine.pressed  # type: ignore[union-attr]
+
+
+def test_a_failed_transcription_stays_on_the_pill_with_retry(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
     entune.settings.set_key("stub", "k")
     entune.models.set_default_model("stub/bad")
     entune.settings.set_shortcuts("alt_r", None)
     app.engine.press("alt_r")  # type: ignore[union-attr]
     app.engine.release("alt_r")  # type: ignore[union-attr]
-    wait_for(lambda: bool(platform.actions.notices))
-    title, message = platform.actions.notices[0]
-    assert title == "Entune: stub / bad failed" and message.startswith("HTTP 401")
+    wait_for(lambda: bool(platform.tray.notices))
+    title, message = platform.tray.notices[0]
+    assert title == "stub · bad failed" and message.startswith("HTTP 401")
+    assert not platform.actions.notices  # the pill says it; no system notification
     wait_for(lambda: platform.tray.states[-1] == "idle")
+    retry = platform.tray.retries[0]
+    assert retry is not None
+    (recording,) = entune.store.list_recordings()
+    entune.models.set_default_model("stub/good")
+    retry()  # the same recording, again, with the default model, then delivered
+    wait_for(lambda: platform.actions.pasted == 1)
+    assert platform.actions.clipboard == "hello from the fake"
+    assert len(entune.store.get_recording(recording.id).transcriptions) == 2  # type: ignore[union-attr]
+
+
+def test_a_canceled_retry_leaves_the_failure_it_retried_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, platform, entune = make(tmp_path)
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/bad")
+    entune.settings.set_shortcuts("alt_r", None)
+    app.engine.press("alt_r")  # type: ignore[union-attr]
+    app.engine.release("alt_r")  # type: ignore[union-attr]
+    wait_for(lambda: bool(platform.tray.retries) and entune.operations.status() is None)
+    (recording,) = entune.store.list_recordings()
+
+    def canceled(*args: object, **kwargs: object) -> None:
+        raise CancelledError("Cancelled; recorded audio is saved")
+
+    monkeypatch.setattr(entune.dictation, "transcribe_recording", canceled)
+    retry = platform.tray.retries[0]
+    assert retry is not None
+    retry()
+    wait_for(
+        lambda: entune.operations.status() is None and platform.tray.notices[-1][0] == "Canceled"
+    )
+    (failure,) = entune.store.get_recording(recording.id).transcriptions  # type: ignore[union-attr]
+    assert failure.status == "error" and failure.processing_state != "cancelled"
 
 
 def test_no_default_model_is_told_not_hidden(tmp_path: Path) -> None:
@@ -435,8 +530,8 @@ def test_no_default_model_is_told_not_hidden(tmp_path: Path) -> None:
     entune.settings.set_shortcuts("alt_r", None)
     app.engine.press("alt_r")  # type: ignore[union-attr]
     app.engine.release("alt_r")  # type: ignore[union-attr]
-    wait_for(lambda: bool(platform.actions.notices))
-    assert "No default model" in platform.actions.notices[0][1]
+    wait_for(lambda: bool(platform.tray.notices))
+    assert "No default model" in platform.tray.notices[0][1]
 
 
 def test_capture_needs_permission_then_uses_the_listener(tmp_path: Path) -> None:
@@ -569,7 +664,7 @@ def test_new_recording_is_blocked_until_processing_and_delivery_finish(
     app.start_recording()
     assert not app._recording
     assert platform.tray.states[-1] == "transcribing"
-    assert "Finish the current dictation" in platform.actions.notices[-1][1]
+    assert "Finish the current dictation" in platform.tray.notices[-1][1]
     release.set()
     wait_for(lambda: entune.operations.status() is None)
     assert platform.actions.pasted == 1 and len(entune.store.list_recordings()) == 1
@@ -600,7 +695,7 @@ def test_a_stopped_clip_is_in_history_before_its_transcription_runs(tmp_path: Pa
     wait_for(lambda: len(entune.store.list_recordings()) == 1)
     (recording,) = entune.store.list_recordings()
     wait_for(lambda: len(entune.store.get_recording(recording.id).transcriptions) == 1)  # type: ignore[union-attr]
-    assert "No default model" in (platform.actions.notices[-1][1])
+    assert "No default model" in (platform.tray.notices[-1][1])
 
 
 def test_quitting_right_after_a_recording_still_saves_it(tmp_path: Path) -> None:
@@ -664,7 +759,7 @@ def test_a_store_error_while_cancelling_ends_the_dictation_and_keeps_the_worker(
         patched.setattr(entune.store, "cancel_recording", disk_full)
         app._jobs.put((recording, 1.0, None, operation))
         wait_for(lambda: entune.operations.status() is None)
-    assert "disk is full" in platform.actions.notices[-1][1]
+    assert "disk is full" in platform.tray.notices[-1][1]
     app.start_recording()  # the same worker transcribes the next clip
     app.stop_recording()
     wait_for(lambda: platform.actions.pasted == 1)
@@ -712,8 +807,8 @@ def test_correction_failure_delivers_raw_with_a_noninterrupting_notice(tmp_path:
     app._transcribe_and_deliver(recording, 1.0, None, operation)
     assert platform.actions.clipboard == "hello from the fake"
     assert platform.actions.pasted == 1 and not platform.window.shown
-    assert any("Last completed text retained" in message for _, message in platform.actions.notices)
-    assert not any("transcription failed" in title for title, _ in platform.actions.notices)
+    assert any("Last completed text retained" in message for _, message in platform.tray.notices)
+    assert not any("transcription failed" in title.lower() for title, _ in platform.tray.notices)
     assert entune.operations.status() is None
 
 

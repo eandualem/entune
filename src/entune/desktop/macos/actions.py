@@ -8,13 +8,43 @@ from collections.abc import Callable
 from typing import Any
 
 import ApplicationServices as AX
-from AppKit import NSWorkspace
+import Quartz
+from AppKit import NSPasteboard, NSPasteboardItem, NSWorkspace
 
 from entune.desktop.platform import Delivery
 
+_copied_count: int | None = None  # the pasteboard's change count right after our copy
+
 
 def copy_to_clipboard(text: str) -> None:
+    global _copied_count
     subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
+    _copied_count = int(NSPasteboard.generalPasteboard().changeCount())
+
+
+def save_clipboard() -> list[dict[str, Any]]:
+    """Every item on the pasteboard, in every type it offers: text, images, files."""
+    board = NSPasteboard.generalPasteboard()
+    return [
+        {kind: item.dataForType_(kind) for kind in item.types()}
+        for item in board.pasteboardItems() or []
+    ]
+
+
+def restore_clipboard(saved: list[dict[str, Any]]) -> None:
+    board = NSPasteboard.generalPasteboard()
+    if int(board.changeCount()) != _copied_count:
+        return  # something else was copied since: that is what the user wants now
+    board.clearContents()
+    items = []
+    for kinds in saved:
+        item = NSPasteboardItem.alloc().init()
+        for kind, data in kinds.items():
+            if data is not None:
+                item.setData_forType_(data, kind)
+        items.append(item)
+    if items:
+        board.writeObjects_(items)
 
 
 _keyboard: Any = None
@@ -125,6 +155,13 @@ def paste_into_focused_app(text: str, check: Callable[[], None] | None = None) -
     """
     if not _trusted():
         return "no_permission"  # never reported as a missing text field
+    # A modifier still down would turn Cmd+V into another shortcut. Ask the system, not
+    # the shortcut listener, which can miss a release and would then block every paste.
+    deadline = time.monotonic() + KEYS_UP_SECONDS
+    while _modifiers_down():
+        if time.monotonic() >= deadline:
+            return "keys_held"
+        time.sleep(0.02)
     target = _focused()
     expected: str | None = None
     caret: tuple[int, int] | None = None
@@ -159,6 +196,22 @@ def paste_into_focused_app(text: str, check: Callable[[], None] | None = None) -
             return "inserted"
         time.sleep(0.02)
     return "unverified"
+
+
+KEYS_UP_SECONDS = 0.5
+MODIFIERS = (
+    Quartz.kCGEventFlagMaskCommand
+    | Quartz.kCGEventFlagMaskControl
+    | Quartz.kCGEventFlagMaskAlternate
+    | Quartz.kCGEventFlagMaskShift
+    | Quartz.kCGEventFlagMaskSecondaryFn
+)
+
+
+def _modifiers_down() -> bool:
+    """Whether Command, Control, Option, Shift or Fn is physically held right now."""
+    flags = Quartz.CGEventSourceFlagsState(Quartz.kCGEventSourceStateHIDSystemState)
+    return bool(int(flags) & MODIFIERS)
 
 
 def notify(title: str, message: str) -> None:

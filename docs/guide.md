@@ -16,7 +16,8 @@ In Windows PowerShell, use `uv tool install entune; entune`. If the terminal
 cannot find `entune`, open a new one and run `entune` again.
 
 On macOS, `entune` puts **Entune** in your Applications folder and opens it. On
-Windows, it adds **Entune** to the Start menu and opens it. On macOS, the first
+Windows, it adds **Entune** to the Start menu and opens it. On Linux, it adds
+**Entune** to your applications menu and opens it. On macOS, the first
 time, it prepares Entune for up to a minute before opening it. You can close the
 terminal: from now on, open Entune like any other app, from Applications,
 Spotlight or Launchpad, or from the Start menu and Windows search.
@@ -30,15 +31,16 @@ Entune opens on **Get started**, three steps in order:
    or download a local model. The first model you set up becomes your default,
    and Entune returns to Get started. Parakeet additionally needs its separately
    installed engine; see [Speech models and cost](#speech-models-and-cost).
-2. **Allow permissions.** On macOS: Microphone, Input Monitoring and
-   Accessibility, each with its own button; see [Permissions (macOS)](#permissions-macos).
-   On Windows only the microphone matters; see [Windows](#windows).
+2. **Allow permissions.** On macOS: Microphone, Accessibility and Input
+   Monitoring, each with its own button; see [Permissions (macOS)](#permissions-macos).
+   On Windows only the microphone matters; see [Windows](#windows). On Linux,
+   keyboard access, one command run once; see [Linux](#linux).
 3. **Set a shortcut and dictate.** Choose the key you hold while speaking, then
    hold it in any app and speak. Release it to transcribe and paste. The
    recording and result also appear in History.
 
-On Linux, and with `entune --no-menu`, Entune is the page alone, opened in your
-browser at `http://localhost:4187`. It provides recording, history, retry and
+With `entune --no-menu`, Entune serves the page alone at `http://localhost:4187`,
+for a browser you open yourself. It provides recording, history, retry and
 dictionary controls; shortcuts and paste are not available there. Any option,
 for example `entune --no-app`, runs Entune in the terminal instead of installing
 and opening the app. `entune --help` lists `--port`, `--data DIR`, `--no-open`,
@@ -56,8 +58,8 @@ to **System Settings › Privacy & Security** to enable Entune:
 | Permission | Why Entune needs it |
 |---|---|
 | Microphone | to record the clip |
-| Input Monitoring | to see the shortcut while another app has focus |
 | Accessibility | to paste the transcript into that app |
+| Input Monitoring | to see the shortcut while another app has focus |
 
 They are granted to **Entune** in Applications, the app `entune` installs. It is
 a small launcher that runs your installation; it is signed on your Mac without
@@ -67,8 +69,9 @@ would instead need them granted to the terminal.
 
 Microphone access can be requested from setup without making a recording.
 Each row updates when its permission is granted. If access was denied,
-**Open Settings…** takes you to the relevant pane. If macOS asks you to quit,
-reopen Entune to continue; missing permissions bring setup back on launch.
+**Open Settings…** takes you to the relevant pane. Input Monitoring comes last because macOS
+asks you to quit after it: reopen Entune and all three show as allowed.
+Missing permissions bring setup back on launch.
 The Fn key needs Accessibility as well as Input Monitoring.
 
 If setup remains at **1 of 3 allowed**, check Input Monitoring and Accessibility
@@ -92,12 +95,54 @@ was sent. Windows does not let an ordinary app type into a window running as
 administrator; paste there yourself with Ctrl+V. The recording pill sits in the
 bottom-left corner and never takes the keyboard focus.
 
+## Linux
+
+Entune runs as its own app on Linux, with its own window, icon and tray item, on
+X11 and on Wayland. Its window and microphone use a few system libraries that
+Python packages cannot bring, and in a Wayland session it also uses `wl-copy`. If
+any is missing, `entune` names it and prints the one command that installs it
+(package names for apt, library names for dnf). On a fresh Ubuntu 24.04 desktop
+in a Wayland session that is:
+
+```sh
+sudo apt install libminizip1t64 libportaudio2 libsnappy1v5 libxcb-cursor0 wl-clipboard
+```
+
+Get started then asks for **keyboard access**, Linux's counterpart of the Mac's
+Input Monitoring and Accessibility. Entune reads your shortcut from the keyboard
+devices in `/dev/input`, and types the transcript through a virtual keyboard made
+with `/dev/uinput`, which works the same on X11 and on Wayland. Run this once in a
+terminal (**Copy command** in Entune copies it):
+
+```sh
+echo 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/70-entune-uinput.rules && sudo modprobe uinput && sudo udevadm control --reload-rules && sudo udevadm trigger --sysname-match=uinput && sudo usermod -aG input "$USER"
+```
+
+It adds you to the `input` group and lets that group use `/dev/uinput`. Linux
+applies a new group at your next login, so log out and back in; Get started then
+shows both as allowed. Membership of `input` lets any program you run read the
+keyboard, as Input Monitoring does for one app on a Mac; to undo it, run
+`sudo gpasswd -d "$USER" input` and delete the rule file.
+
+The final text goes on the clipboard and on the primary selection, and Entune
+presses Shift+Insert. Most apps paste the clipboard on Shift+Insert, and terminals
+(GNOME Terminal, Konsole, xterm, kitty) paste the primary selection, so the same
+keystroke pastes everywhere. Linux offers no general way to confirm the text
+arrived, so completion says the paste was sent.
+
+The tray item appears where the desktop shows tray icons: KDE, and GNOME with the
+AppIndicator extension (Ubuntu includes it). Without one, closing the window keeps
+Entune running for your shortcut; open Entune from the applications menu to bring
+the window back. Under Wayland, Entune's window runs through XWayland, so it can
+show the recording pill while another app has the focus, and `wl-copy` puts the
+text on the Wayland clipboard for the app you are in.
+
 ## Dictating
 
-In the browser, click **Record**, allow microphone access, then stop recording
-to transcribe. Copy the result from History into another app.
+In Entune's window, click **Record**, speak, then click **Stop** to transcribe. Copy
+the result from History into another app.
 
-In the desktop app on macOS and Windows, you can also dictate with global shortcuts. Set a shortcut once in Settings, or from Get started. Click
+In the desktop app on macOS, Windows and Linux, you can also dictate with global shortcuts. Set a shortcut once in Settings, or from Get started. Click
 "Set…", press the key or combination, let go. Two recording shortcuts, and both
 can be set:
 
@@ -114,15 +159,26 @@ resources. Existing Fn+Escape cancellation settings use Fn+Control on load becau
 Escape can cancel foreground work. Custom shortcuts remain configurable; a modifier
 combination is not universally conflict-free across all applications.
 
-The non-activating pill displays the actual stage: recording, saving, transcribing,
-contextual correction, filler reduction, formatting, or delivery. Disabled stages are
-skipped. One dictation owns the app until delivery completes; a new one must wait.
-Learning owns the same guard through proposal review. The final text is copied once
-and pasted into the **current editable input**, including in a different app from where
-recording began. With no editable target, Entune reports “Copied to clipboard — no
-active text field.” If a paste cannot be verified through Accessibility, completion
-says so. Completion also appears in the pill, so it does not depend on notification
-permissions. History retains audio and all attempts for retry.
+The pill in the bottom-left corner shows what is happening: level bars that move with
+your voice while recording, then the actual stage (saving, transcribing, contextual
+correction, filler reduction, formatting, delivery). Disabled stages are skipped. One
+dictation owns the app until delivery completes; a new one must wait. Learning owns the
+same guard through proposal review. The final text is pasted into the **current
+editable input**, including in a different app from where recording began. The paste
+borrows the clipboard: what was on it is put back a moment later, unless you copied
+something else meanwhile. On Windows only copied text is put back; an image or files
+copied before a dictation are replaced. With no editable input, the text stays on the
+clipboard.
+
+The pill then says what happened, growing to show the detail: pasted, or copied with
+the reason it was not pasted (no text field was active, say). An error stays on the
+pill with the provider's message, a **Retry** button that transcribes the same
+recording again with the default model, and **Dismiss**; pressing them does not take
+the focus from the app you were in. Entune shows no system notification for any of
+this. If nothing is heard in the first seconds of a recording, the pill says so at
+once; a long silence after you have spoken (about 40 seconds) is a pause, and only
+then does Entune also send a notification, in case the pill is out of sight.
+History retains audio and all attempts for retry.
 
 The default model is the picker next to the Record button, the same one as
 in Settings; picking a model applies at once, no Save. The Record button in
@@ -192,7 +248,8 @@ belong to, and are never shown again beyond a masked hint. A ChatGPT sign-in is 
 the same way and renewed by Entune; only the account's email is shown.
 
 **Local models** need no key. The Models page lists them with their size and a
-Download button; a model is fetched once (resumes if interrupted) and then
+Download button (Cancel while it downloads); a model is fetched once
+(resumes if interrupted) and then
 sits in the same model lists as the cloud ones, so you can make it the
 default or retry a cloud failure with it. Runs on the GPU on Apple Silicon.
 Local models read WAV, which is what Entune records; other imported audio
@@ -270,6 +327,9 @@ audio file in `dictionary-audio/`, separate from recording history, and can reus
 it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
 up to 199 MB can be uploaded; the chosen provider must support the audio format
 and length. A build uses the speech and dictionary models selected when it starts.
+A recording that will not transcribe is tried once more, then skipped, and the
+suggestions come from the others; the result says how many were skipped. If the build
+stops, Retry continues from where it was: recordings already transcribed are kept.
 A two-handle range over recorded time, oldest to newest without the gaps between days,
 selects a continuous stretch of whole recordings: all audio by default, the most recent
 by dragging the left handle. The exact duration, count and edge dates are shown, and
@@ -433,7 +493,7 @@ Enabled features determine what is sent out:
 - **Optional model downloads:** Hugging Face serves local model weights, Laya's
   included; no dictation audio or text is included. The separately installed engines
   of Parakeet and Laya have their own package downloads. Export files are generated locally and saved through the
-  browser or native Save panel.
+  system's Save panel.
 
 There is no Entune account, telemetry or hosted history storage. Local speech alone
 does not make every enabled feature offline. Temporary onboarding transcripts are

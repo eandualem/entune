@@ -112,8 +112,8 @@ class Parakeet:
     def remove(self, name: str) -> None:
         _check(name)
         with self._lock:
-            if self._download is not None and self._download.running:
-                raise ValueError("The model is still downloading; wait before removing it")
+            if self._download is not None:
+                self._download.close()  # cancels a download still running
             self._stop_helper()
             self._download = None
             shutil.rmtree(self._dir(), ignore_errors=True)

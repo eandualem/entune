@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 
 from entune.app.shortcuts import Shortcuts
@@ -35,8 +36,41 @@ class ShortcutEngine:
         self._chord_fired = False
         self._hold_stop_pending = False
         self._cancelled = False
+        self.starts = 0  # numbers each start, so a start that fails late resets only itself
+        self._lock = threading.RLock()  # the listener's thread and the app's worker
 
     def press(self, key: str) -> None:
+        with self._lock:
+            self._press(key)
+
+    def release(self, key: str) -> None:
+        with self._lock:
+            self._release(key)
+
+    def forget_keys(self, held: set[str]) -> None:
+        """The listener can miss a release (secure input, a skipped event), and a key it
+        still counts as held would make its next press look like auto-repeat and, as part
+        of Cancel, block every start. Keys not in `held`, what the system says is down,
+        are forgotten; never mid-recording."""
+        with self._lock:
+            if self.recording:
+                return
+            self.pressed &= held
+            if not self.pressed & set(self.shortcuts.cancel or ()):
+                self._cancelled = False
+            if not self.pressed & set(self.shortcuts.toggle or ()):
+                self._chord_fired = False
+            if not self.pressed & set(self.shortcuts.hold or ()):
+                self._hold_stop_pending = False
+
+    def start_failed(self, start: int) -> None:
+        """Start number `start` did not record. When the key has been pressed again since,
+        that newer start owns the state and its release must still stop it."""
+        with self._lock:
+            if start == self.starts:
+                self.recording = self._held = False
+
+    def _press(self, key: str) -> None:
         if key in self.pressed:
             return  # the OS auto-repeats a held key; only a new physical press counts
         self.pressed.add(key)
@@ -79,7 +113,7 @@ class ShortcutEngine:
                     # the chord and start again; this press has done its job until released.
                     self._chord_fired = True
 
-    def release(self, key: str) -> None:
+    def _release(self, key: str) -> None:
         self.pressed.discard(key)
         if self._cancelled:
             if not self.pressed.intersection(self.shortcuts.cancel or ()):
@@ -95,6 +129,7 @@ class ShortcutEngine:
             self._chord_fired = False
 
     def _start(self) -> None:
+        self.starts += 1
         self.recording = True
         self._on_start()
 

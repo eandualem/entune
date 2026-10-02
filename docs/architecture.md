@@ -1,11 +1,13 @@
 # Architecture
 
 One Python process. A Starlette app served by uvicorn holds the local HTTP
-API and the page; on macOS a menu-bar app runs on the main thread beside it.
+API and the page; the desktop app (its window, tray item, shortcuts and pill) runs on
+the main thread beside it on macOS, Windows and Linux. Nothing opens a browser.
 
 ```
 src/entune/
-  cli.py          the `entune` command: data directory, port check, server thread, menu-bar app
+  cli.py          the `entune` command: installs the app, then data directory, port check,
+                  server thread, desktop app
   server.py       the page, static files and middleware: refuses requests not addressed to
                   localhost and state changes from other origins; assembles api/
   api/            the HTTP routes, one module per resource (settings, models, recordings,
@@ -51,12 +53,16 @@ src/entune/
   desktop/        app.py: the orchestration, written against platform.py's protocols
                   (tray, window, hotkeys, actions, permissions, UI-thread scheduling);
                   engine.py: press/release -> start/stop, pure;
-                  webview/shell.py: the window (pywebview) and tray (pystray), one
-                  implementation currently wired for macOS;
-                  macos/: what is macOS-specific underneath: pynput listener with
-                  the fn key (injected keystrokes ignored), pbcopy/osascript, Quartz
-                  permissions, the recording pill (indicator.py), the .app bundle;
-                  webview.py owns Cocoa delegate hooks and native title-bar layout
+                  webview/shell.py: the window (pywebview) and tray (pystray, or Qt
+                  on Linux), and the pill's shared logic, for every system;
+                  macos/: pynput listener with the fn key (injected keystrokes
+                  ignored), the clipboard, Quartz permissions, the pill
+                  (indicator.py), the .app launcher; webview.py owns Cocoa delegate
+                  hooks and native title-bar layout;
+                  windows/: pynput listener, Win32 clipboard and paste, the painted
+                  pill, the Start menu entry;
+                  linux/: Qt (window, tray, pill), keyboard from /dev/input and paste
+                  through /dev/uinput, Qt and wl-copy clipboard, the menu entry
 ```
 
 Packages depend one way: audio and dictionary; then processing, learning and storage
@@ -81,7 +87,7 @@ proposed spans before applying edits; original speech and operation counts remai
 History polling invalidates on processing updates as well as
 new recordings. Entune owns a lazy decision-model event loop and HTTP pool: cancellable
 requests share one processing deadline, including bounded retries, and the
-desktop owner (or CLI in browser mode) closes the client at shutdown. Speech and
+desktop owner (or the CLI with `--no-menu`) closes the client at shutdown. Speech and
 processing failures are distinct.
 
 History/audio learning and dictation share one exclusive operation owner. Dictation
@@ -106,9 +112,9 @@ for queued captures to reach disk, and then closes the service. Close-to-hide re
 separate; explicit window destruction allows the WebView loop to end. The same idempotent
 cleanup runs if the desktop loop returns or fails. Pending transcription work does not
 start or paste after quit begins. A capture-save failure or timeout is logged and notified;
-force exit cannot promise to save a clip that has not reached disk. The page's Record
-button owns browser memory until Stop/upload; it does not participate in this native
-capture flush. Stop it before quitting or closing a browser tab.
+force exit cannot promise to save a clip that has not reached disk. The window's Record
+button keeps its audio in the page until Stop/upload; it does not participate in this
+native capture flush. Stop it before quitting.
 
 Shutdown rejects new work, cancels generation and owns worker/client/upload/download/helper
 cleanup. The decision-model client has a separate two-second close bound, and Laya's
@@ -138,11 +144,10 @@ transcript data are never interpreted as template instructions. Resources
 are loaded with importlib.resources, independent of the working directory.
 The wheel and desktop bundle include the same files.
 
-Native recording, permissions, shortcuts, paste and the indicator live under
-`desktop/macos/`; the webview shell also wires macOS application termination
-and media permission callbacks. `desktop/create_platform()` picks the
-implementation for the running system. Cross-platform work is tracked in
-the issues (Windows, #36).
+Native permissions, shortcuts, paste and the pill live under `desktop/macos/`,
+`desktop/windows/` and `desktop/linux/`; the webview shell also wires macOS
+application termination and media permission callbacks. `desktop/create_platform()`
+picks the implementation for the running system.
 
 Dictionary suggestions go through Pydantic AI and the selected provider's
 official SDK and endpoint (`learning/suggestion_model/`), loaded on the first

@@ -84,9 +84,9 @@ whose recordings can be imported. POST `/api/dictionary/audio/apps/{app}` import
 app's audio (never its transcripts) and returns added, duplicate and empty counts. Temporary learning text is never
 persisted; per-model learning run/coverage metadata is persisted only on finish/discard.
 
-The browser starts `POST /api/operations` before microphone capture, then sends its
+The window's Record button starts `POST /api/operations` before microphone capture, then sends its
 returned `id` as multipart `operation` with the audio. GET lists the active operation;
 POST `/api/operations/{id}/cancel` cancels dictation without deleting audio. The recorder
 still submits saved audio after cancellation. DELETE `/api/operations/{id}` releases
-only an unclaimed browser capture after failed setup. Ordinary retry and direct upload
+only an unclaimed window capture after failed setup. Ordinary retry and direct upload
 also acquire the operation guard. Busy mutations return 409 with a user-facing reason.
