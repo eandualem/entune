@@ -268,7 +268,9 @@ function renderStart() {
     step(Boolean(defaultModel), "Set up a speech model", ["A cloud service's key, or a model that runs on your computer. The first one becomes your default."], { label: "Models", go: () => openModels("cloud") }),
   ];
   if (desktop) {
-    const allowed = Object.keys(permissionStates).every((name) => permissionStates[name] === "granted");
+    // Not yet reported (the app is still starting) is not the same as all allowed.
+    const names = Object.keys(permissionStates);
+    const allowed = names.length > 0 && names.every((name) => permissionStates[name] === "granted");
     const li = system === "macos"
       ? step(allowed, "Allow Entune on this Mac", ["The microphone to record; Accessibility and Input Monitoring so your shortcut works in any app and the text is typed there."], null)
       : system === "linux"

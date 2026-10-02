@@ -95,8 +95,17 @@ class Actions:
                 clipboard_restored |= name == "Clipboard"
             return clipboard_restored
 
-        wl_copy = shutil.which("wl-copy") if os.environ.get("WAYLAND_DISPLAY") else None
-        if on_ui_thread_wait(restore) and wl_copy:
+        wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+        wl_copy, wl_paste = (
+            (shutil.which("wl-copy"), shutil.which("wl-paste")) if wayland else (None, None)
+        )
+        if on_ui_thread_wait(restore) and wl_copy and wl_paste:
+            # The X11 side can still hold our text after a Wayland app copied something.
+            current = subprocess.run(
+                [wl_paste, "--no-newline"], capture_output=True, timeout=5, check=False
+            )
+            if current.returncode != 0 or current.stdout != self._copied.encode():
+                return
             # The Wayland clipboard was set by wl-copy, so it is put back the same way,
             # in the saved form: the text's own type, or an image's.
             formats = saved.get("Clipboard", {})
