@@ -44,7 +44,6 @@ class HotkeyListener(QueuedHotkeys):
     def __init__(self) -> None:
         super().__init__()
         self._reader: KeyboardReader | None = None
-        self.held_codes: set[int] = set()  # key codes down now, for the paste to wait on
 
     def start(self, engine: ShortcutEngine | None) -> None:
         with self._lock:
@@ -61,12 +60,14 @@ class HotkeyListener(QueuedHotkeys):
                 self._reader.stop()
                 self._reader = None
             self._engine = None
-            self.held_codes.clear()
+
+    def down_codes(self) -> set[int]:
+        """Key codes down now, asked of the kernel."""
+        reader = self._reader
+        return reader.down() if reader is not None else set()
 
     def held(self) -> set[str]:
-        """The kernel reports every release, so what it has seen down is down."""
-        return {key_name(code) for code in set(self.held_codes)}
+        return {key_name(code) for code in self.down_codes()}
 
     def _key(self, code: int, down: bool) -> None:
-        (self.held_codes.add if down else self.held_codes.discard)(code)
         self._events.put((down, key_name(code)))

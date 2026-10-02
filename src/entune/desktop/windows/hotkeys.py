@@ -113,7 +113,7 @@ class HotkeyListener:
         if injected:
             return  # our own paste (Ctrl+V) and other synthetic keys are not the user's
         name = key_name(key)
-        vk = getattr(key, "vk", None)
+        vk = getattr(getattr(key, "value", key), "vk", None)  # a named Key holds a KeyCode
         if name is not None and vk is not None:
             # Released under the name it was pressed with: letting go of Shift first
             # would otherwise turn ":" into ";" and leave ":" held.

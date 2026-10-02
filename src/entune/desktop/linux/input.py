@@ -55,6 +55,17 @@ def _eviocgname(size: int) -> int:
     return _ioc(2, "E", 0x06, size)
 
 
+def _eviocgkey(size: int) -> int:
+    return _ioc(2, "E", 0x18, size)
+
+
+def keys_down(fd: int) -> set[int]:
+    """The keys the kernel says are down on this device now."""
+    bits = bytearray((KEY_MAX + 8) // 8)
+    fcntl.ioctl(fd, _eviocgkey(len(bits)), bits)
+    return {code for code in range(KEY_MAX + 1) if bits[code // 8] >> (code % 8) & 1}
+
+
 UI_SET_EVBIT = _ioc(1, "U", 100, 4)
 UI_SET_KEYBIT = _ioc(1, "U", 101, 4)
 UI_DEV_SETUP = _ioc(1, "U", 3, 92)  # struct uinput_setup: input_id, name[80], ff_effects_max
@@ -158,6 +169,17 @@ class KeyboardReader:
     def stop(self) -> None:
         self._stopped = True
         os.write(self._wake_w, b"x")
+
+    def down(self) -> set[int]:
+        """Every key down now on the keyboards being read, asked of the kernel: events
+        can be dropped and a keyboard can go away mid-press, so no cache is trusted."""
+        codes: set[int] = set()
+        for fd in list(self._devices.values()):
+            try:
+                codes |= keys_down(fd)
+            except OSError:  # unplugged, or closed by the reading thread meanwhile
+                continue
+        return codes
 
     def _scan(self) -> None:
         for path in event_devices():

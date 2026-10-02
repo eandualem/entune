@@ -54,7 +54,7 @@ def _copy_wayland(text: str) -> None:
 class Actions:
     def __init__(self, notify: Callable[[str, str], None], held: Callable[[], set[int]]) -> None:
         self._notify = notify
-        self._held = held  # key codes the shortcut listener sees down
+        self._held = held  # key codes down now, asked of the kernel
         self._keyboard = VirtualKeyboard()
 
     def copy_to_clipboard(self, text: str) -> None:

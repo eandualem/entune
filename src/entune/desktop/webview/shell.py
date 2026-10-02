@@ -461,7 +461,7 @@ def _actions(tray: Tray, hotkeys: Hotkeys) -> Actions:
         from entune.desktop.linux.hotkeys import HotkeyListener as LinuxHotkeys
 
         assert isinstance(tray, _Tray) and isinstance(hotkeys, LinuxHotkeys)
-        return LinuxActions(tray.notify, lambda: set(hotkeys.held_codes))
+        return LinuxActions(tray.notify, hotkeys.down_codes)
     raise NotImplementedError("Clipboard, paste and notifications exist for macOS, Windows, Linux")
 
 
