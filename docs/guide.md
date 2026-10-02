@@ -139,8 +139,8 @@ text on the Wayland clipboard for the app you are in.
 
 ## Dictating
 
-In the browser, click **Record**, allow microphone access, then stop recording
-to transcribe. Copy the result from History into another app.
+In Entune's window, click **Record**, speak, then click **Stop** to transcribe. Copy
+the result from History into another app.
 
 In the desktop app on macOS, Windows and Linux, you can also dictate with global shortcuts. Set a shortcut once in Settings, or from Get started. Click
 "Set…", press the key or combination, let go. Two recording shortcuts, and both
@@ -163,8 +163,10 @@ The pill in the bottom-left corner shows what is happening: level bars that move
 your voice while recording, then the actual stage (saving, transcribing, contextual
 correction, filler reduction, formatting, delivery). Disabled stages are skipped. One
 dictation owns the app until delivery completes; a new one must wait. Learning owns the
-same guard through proposal review. The final text is copied once and pasted into the
-**current editable input**, including in a different app from where recording began.
+same guard through proposal review. The final text is pasted into the **current
+editable input**, including in a different app from where recording began. The paste
+borrows the clipboard: what was on it is put back a moment later, unless you copied
+something else meanwhile. With no editable input, the text stays on the clipboard.
 
 The pill then says what happened, growing to show the detail: pasted, or copied with
 the reason it was not pasted (no text field was active, say). An error stays on the
@@ -489,7 +491,7 @@ Enabled features determine what is sent out:
 - **Optional model downloads:** Hugging Face serves local model weights, Laya's
   included; no dictation audio or text is included. The separately installed engines
   of Parakeet and Laya have their own package downloads. Export files are generated locally and saved through the
-  browser or native Save panel.
+  system's Save panel.
 
 There is no Entune account, telemetry or hosted history storage. Local speech alone
 does not make every enabled feature offline. Temporary onboarding transcripts are

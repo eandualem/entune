@@ -11,8 +11,8 @@ instructions in the main view. Keep frequent actions reachable in a narrow
 window.
 
 The interface uses plain HTML, CSS and JavaScript without a framework or build
-step, system fonts and inline SVG icons. It runs in the macOS webview and in a
-browser. Light and dark themes follow the system or the selected setting; text
+step, system fonts and inline SVG icons. It runs in Entune's own window: WebKit on macOS,
+WebView2 on Windows and Qt WebEngine on Linux. Light and dark themes follow the system or the selected setting; text
 size is configurable. Shared colours, sizes and depth are defined in
 `src/entune/web/tokens.css`.
 
