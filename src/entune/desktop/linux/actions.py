@@ -72,6 +72,7 @@ class Actions:
         self._held = held  # key codes down now, asked of the kernel
         self._keyboard = VirtualKeyboard()
         self._copied = ""
+        self._copies = 0  # numbers each copy, for the restore that follows it
 
     def save_clipboard(self) -> object:
         def save() -> dict[str, dict[str, bytes]]:
@@ -88,12 +89,17 @@ class Actions:
         which may in turn ask Qt for data, so Qt's thread must stay free meanwhile."""
         assert isinstance(saved, dict)
         threading.Thread(
-            target=self._restore, args=(saved,), daemon=True, name="entune-clipboard"
+            target=self._restore, args=(saved, self._copies), daemon=True, name="entune-clipboard"
         ).start()
 
-    def _restore(self, saved: dict[str, dict[str, bytes]]) -> None:
+    def _restore(self, saved: dict[str, dict[str, bytes]], copy: int) -> None:
+        """`copy` numbers the copy this restore follows; a newer copy, even of the same
+        text, owns the clipboard, so this one then leaves it alone."""
+
         def restore() -> None:
             """Each selection on its own: only one still holding our text is put back."""
+            if copy != self._copies:
+                return
             board = QApplication.clipboard()
             for name, formats in saved.items():
                 mode = getattr(QClipboard.Mode, name)
@@ -115,7 +121,7 @@ class Actions:
             if current.returncode != 0 or current.stdout != self._copied.encode():
                 return
         on_ui_thread_wait(restore)
-        if wl_copy and wl_paste:
+        if wl_copy and wl_paste and copy == self._copies:
             # The Wayland clipboard was set by wl-copy, so it is put back the same way,
             # in the saved form: the text's own type, or an image's.
             formats = saved.get("Clipboard", {})
@@ -126,6 +132,7 @@ class Actions:
                 subprocess.run(command, input=data, timeout=3, check=False)
 
     def copy_to_clipboard(self, text: str) -> None:
+        self._copies += 1
         self._copied = text
         on_ui_thread_wait(lambda: _copy(text))
         _copy_wayland(text)
