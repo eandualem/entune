@@ -8,10 +8,12 @@ the same text in both, one keystroke pastes everywhere, terminals included.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
 
@@ -82,39 +84,46 @@ class Actions:
         return on_ui_thread_wait(save)
 
     def restore_clipboard(self, saved: object) -> None:
+        """On its own thread: checking the Wayland clipboard waits on another process,
+        which may in turn ask Qt for data, so Qt's thread must stay free meanwhile."""
         assert isinstance(saved, dict)
+        threading.Thread(
+            target=self._restore, args=(saved,), daemon=True, name="entune-clipboard"
+        ).start()
 
-        def restore() -> bool:
+    def _restore(self, saved: dict[str, dict[str, bytes]]) -> None:
+        def restore() -> None:
             """Each selection on its own: only one still holding our text is put back."""
-            board, clipboard_restored = QApplication.clipboard(), False
+            board = QApplication.clipboard()
             for name, formats in saved.items():
                 mode = getattr(QClipboard.Mode, name)
-                if board.text(mode) != self._copied:
-                    continue  # something else was copied or selected since
-                _put_back(mode, formats)
-                clipboard_restored |= name == "Clipboard"
-            return clipboard_restored
+                if board.text(mode) == self._copied:  # else something new was copied
+                    _put_back(mode, formats)
 
         wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
-        wl_copy, wl_paste = (
-            (shutil.which("wl-copy"), shutil.which("wl-paste")) if wayland else (None, None)
-        )
-        if on_ui_thread_wait(restore) and wl_copy and wl_paste:
-            # The X11 side can still hold our text after a Wayland app copied something.
-            current = subprocess.run(
-                [wl_paste, "--no-newline"], capture_output=True, timeout=5, check=False
-            )
+        wl_copy = shutil.which("wl-copy") if wayland else None
+        wl_paste = shutil.which("wl-paste") if wayland else None
+        if wl_copy and wl_paste:
+            # Under Wayland the X11 side can still hold our text after a Wayland app
+            # copied something new: ask the Wayland clipboard before anything else.
+            try:
+                current = subprocess.run(
+                    [wl_paste, "--no-newline"], capture_output=True, timeout=3, check=False
+                )
+            except subprocess.TimeoutExpired:
+                return
             if current.returncode != 0 or current.stdout != self._copied.encode():
                 return
+        on_ui_thread_wait(restore)
+        if wl_copy and wl_paste:
             # The Wayland clipboard was set by wl-copy, so it is put back the same way,
             # in the saved form: the text's own type, or an image's.
             formats = saved.get("Clipboard", {})
             kinds = sorted(formats, key=lambda kind: not kind.startswith("text/plain"))
-            if kinds:
-                command = [wl_copy, "--type", kinds[0]]
-                subprocess.run(command, input=formats[kinds[0]], timeout=5, check=False)
-            else:
-                subprocess.run([wl_copy, "--clear"], timeout=5, check=False)
+            command = [wl_copy, "--type", kinds[0]] if kinds else [wl_copy, "--clear"]
+            data = formats[kinds[0]] if kinds else None
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                subprocess.run(command, input=data, timeout=3, check=False)
 
     def copy_to_clipboard(self, text: str) -> None:
         self._copied = text
