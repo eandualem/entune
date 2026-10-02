@@ -9,9 +9,9 @@
 
 **Your speech model. Your vocabulary. Corrections that consider the context.**
 
-Entune is an open-source, cross-platform dictation app. Record in your browser,
-choose a cloud or local speech model, and keep your recordings on your computer.
-On macOS and Windows, you can also dictate into other apps with a global shortcut.
+Entune is an open-source dictation app for macOS, Windows and Linux. It runs as its
+own app: hold a shortcut in any app, speak, and the text is pasted where you are.
+Choose a cloud or local speech model, and keep your recordings on your computer.
 Its personal dictionary learns from your dictation; a decision model chooses
 when a dictionary replacement actually fits the sentence.
 
@@ -27,8 +27,8 @@ uv tool install entune && entune
 In Windows PowerShell, use `uv tool install entune; entune`.
 
 On **macOS**, this puts **Entune** in your Applications folder, preparing it for
-up to a minute the first time; on **Windows**, in the Start menu. Then it opens
-Entune. From then on, open it like any other app; the terminal is no longer needed.
+up to a minute the first time; on **Windows**, in the Start menu; on **Linux**, in
+your applications menu. Then it opens Entune. From then on, open it like any other app; the terminal is no longer needed.
 If the terminal cannot find `entune`, open a new one and run `entune` again.
 
 Or use pip in a Python 3.12+ environment:
@@ -50,17 +50,20 @@ With pip, use `python -m pip install "git+https://github.com/eandualem/entune.gi
 
 </details>
 
-**Start dictating:** Entune opens on **Get started**.
+**Start dictating:** the first time, Entune opens with a short introduction, then
+**Get started**.
 
 1. **Set up a speech model:** in **Models**, add a speech provider's API key, or
    download a local model. The first one becomes your default. AssemblyAI is a
    straightforward cloud starting point; Parakeet is our local recommendation
    on Apple Silicon.
-2. **Allow permissions:** on macOS, Microphone, Input Monitoring and
-   Accessibility, each from its own button. On Windows, only the microphone.
-3. **Set a shortcut,** then hold it in any app and speak. The text is typed
-   where you are and copied. Or click **Record**. Your audio and transcript are
-   saved in **History**.
+2. **Allow permissions:** on macOS, Microphone, Accessibility and Input
+   Monitoring, each from its own button. On Windows, only the microphone. On
+   Linux, keyboard access: one command, run once, then log out and back in.
+3. **Set a shortcut,** then hold it in any app and speak. The text is pasted
+   where you are, and what you had copied is put back (on Windows, copied text only);
+   with no text field active, the text is copied instead. Or click **Record** in Entune's window. Your audio and
+   transcript are saved in **History**.
 
 You can start without a dictionary or decision model and add them later.
 
@@ -70,11 +73,11 @@ granted when you upgrade. The
 [permission guide](https://github.com/eandualem/entune/blob/develop/docs/guide.md#permissions-macos)
 covers missing shortcuts and “1 of 3 allowed.”
 
-On Linux, Entune opens in your browser; shortcuts and automatic paste are not
-available there, and Linux has not yet been tested end to end. The full setup and
-dictation have been tested on macOS and Windows; see
+The full setup and dictation have been tested on macOS and Windows; see
 [Windows](https://github.com/eandualem/entune/blob/develop/docs/guide.md#windows)
-for what differs there.
+for what differs there. Linux is new: see
+[Linux](https://github.com/eandualem/entune/blob/develop/docs/guide.md#linux) for
+the two system libraries it needs and how shortcuts work on X11 and Wayland.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/eandualem/entune/main/docs/demo/history-light.jpg" width="49%" alt="Entune history: recordings, transcripts, audio playback and retry" />
@@ -172,8 +175,11 @@ refinement does not guarantee a better dictionary.
 
 - **History:** replay audio, copy text, inspect processing changes, and retry
   a recording with another speech model. Provider failures remain visible.
-- **Shortcuts (macOS, Windows):** hold to talk or toggle hands-free recording. Cancel without
+- **Shortcuts (macOS, Windows, Linux):** hold to talk or toggle hands-free recording. Cancel without
   pasting; usable captured audio stays available for retry.
+- **The pill:** a small indicator in the corner shows level bars while you record,
+  then says what happened; an error stays there with **Retry**. No system
+  notifications for results.
 - **Local data:** audio, transcripts, settings and keys stay in Entune's data
   folder. Export or delete them in **Settings → Data & Privacy**.
 - **Optional processing:** dictionary correction, repeated-filler reduction,

@@ -104,7 +104,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     el("audio-empty").hidden = !loaded || list.length > 0;
     el("audio-empty").textContent = source === "entune"
       ? (items.some((item) => item.source === "entune") ? "Every recording here was already transcribed by this speech model." : "No Entune recordings yet.")
-      : source === "provider" ? `Nothing imported from ${app?.name ?? "this app"} yet.`
+      : source === "provider" ? `Nothing imported from ${app?.name ?? "this app"} yet. Press Import to copy its recordings.`
         : "No audio files imported yet.";
     const chosen = list.slice(from, to);
     const seconds = (values) => values.reduce((sum, item) => sum + (item.seconds ?? 0), 0);

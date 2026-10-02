@@ -1,7 +1,7 @@
 """What the desktop app needs from an operating system, as small protocols.
 
 The orchestration in `app.py` is written against these and nothing else. Each
-platform implements them under its own package (`desktop/macos/` today); tests use
+platform implements them under its own package (`desktop/macos/`, `windows/`, `linux/`); tests use
 fakes. Keep them minimal: a method earns its place only when the orchestration
 calls it.
 """
@@ -28,7 +28,18 @@ class Tray(Protocol):
 
     def set_state(self, state: State) -> None: ...
     def set_status(self, text: str) -> None: ...
-    def complete(self, text: str) -> None: ...
+    def complete(self, title: str, body: str = "") -> None:
+        """What happened, shown for a few seconds; a body makes the pill taller."""
+        ...
+
+    def alert(self, title: str, body: str, retry: Callable[[], None] | None) -> None:
+        """An error that stays until dismissed, with Retry when `retry` is given."""
+        ...
+
+    def set_level(self, level: Callable[[], float]) -> None:
+        """Where the recording pill reads the microphone level (0..1) for its bars."""
+        ...
+
     def set_actions(
         self,
         open_window: Callable[[], None],
@@ -46,9 +57,20 @@ class Hotkeys(Protocol):
     def stop(self) -> None: ...
     def begin_capture(self, done: Callable[[tuple[str, ...]], None]) -> None: ...
     def cancel_capture(self) -> None: ...
+    def held(self) -> set[str]:
+        """The keys the listener has seen go down that the system says are down now."""
+        ...
 
 
 class Actions(Protocol):
+    def save_clipboard(self) -> object:
+        """What is on the clipboard now, to put back once a paste has used it."""
+        ...
+
+    def restore_clipboard(self, saved: object) -> None:
+        """Put it back, unless something else was copied since Entune's own copy."""
+        ...
+
     def copy_to_clipboard(self, text: str) -> None: ...
     def paste_into_focused_app(
         self, text: str, check: Callable[[], None] | None = None
@@ -73,7 +95,9 @@ class Microphone(Protocol):
     """What the app needs from a recorder; `recorder.Recorder` is the real one."""
 
     @property
-    def quiet(self) -> bool: ...
+    def silence(self) -> str | None: ...
+    @property
+    def level(self) -> float: ...
 
     def start(self, sink_for_rate: SinkFactory | None = None) -> None: ...
     def stop(self, *, discard: bool = False) -> Capture: ...
@@ -119,7 +143,7 @@ def create_platform(url: str) -> Platform | None:
 
         name_this_process()
         return WebviewPlatform(url)
-    if sys.platform == "win32":
+    if sys.platform in ("win32", "linux"):
         from entune.desktop.webview.shell import WebviewPlatform
 
         return WebviewPlatform(url)

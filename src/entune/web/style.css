@@ -181,6 +181,16 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .card-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); margin: var(--sp-10) 0 0 calc(-1 * var(--sp-6)); padding-top: var(--sp-10); border-top: 1px solid var(--line-soft); }
 .card-row .status { font-size: var(--fs-12); color: var(--text-dim); margin-left: var(--sp-6); }
 .card-row .status.err { color: var(--error); }
+.card-row .status.working { display: inline-flex; align-items: center; gap: var(--sp-6); color: var(--accent-text); font-weight: 500; }
+/* A retry in progress: a light runs along the card's top edge until the new attempt arrives. */
+.card.retrying { position: relative; overflow: hidden; }
+.card.retrying::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 40% 100% no-repeat;
+  animation: card-working 1.2s ease-in-out infinite;
+}
+@keyframes card-working { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+@media (prefers-reduced-motion: reduce) { .card.retrying::before { animation: none; background-size: 100% 100%; opacity: 0.6; } }
 .player { display: inline-flex; align-items: center; gap: var(--sp-8); height: var(--h-28); padding: 0 var(--sp-10) 0 var(--sp-2); color: var(--text-faint); font-size: var(--fs-11-5); font-variant-numeric: tabular-nums; }
 .player .track { width: 6.875rem; height: 2px; border-radius: 1px; background: var(--control-active); position: relative; cursor: default; }
 .player .track > span { position: absolute; left: 0; top: 0; bottom: 0; background: var(--text-muted); border-radius: 1px; width: 0; }
@@ -204,6 +214,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .step .what { flex: 1; min-width: 0; }
 .step .how { display: block; font-size: var(--fs-12); color: var(--text-dim); line-height: var(--lh-caption); margin-top: 2px; }
 .permission-steps { display: flex; flex-direction: column; gap: var(--sp-4); margin-top: var(--sp-8); }
+.permission-steps > .btn { align-self: flex-start; }
 .permission-step { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); font-size: var(--fs-12-5); }
 .step.done .how { display: none; }
 
@@ -527,6 +538,7 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .engine code { font-size: var(--fs-12); }
 .engine-steps { padding: 0 var(--sp-16) var(--sp-14); display: grid; grid-template-columns: 1.25rem 1fr; gap: var(--sp-8) var(--sp-10); font-size: var(--fs-12-5); color: var(--text-secondary); line-height: 1.5; }
 .engine-steps .n { color: var(--text-faint); }
+.setup-command { display: block; margin: var(--sp-10) var(--sp-16) 0; }
 .engine-steps pre { margin: var(--sp-6) 0 0; padding: var(--sp-8) var(--sp-10); border-radius: var(--r-7); background: var(--well); font: var(--fs-12)/1.5 var(--mono); color: var(--text); -webkit-user-select: text; user-select: text; white-space: pre-wrap; }
 .engine-steps b { color: var(--text); }
 
@@ -638,3 +650,104 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .guide li { margin: var(--sp-4) 0; }
 .guide b { color: var(--text); font-weight: 600; }
 .guide-example { margin: var(--sp-8) 0; padding: var(--sp-10) var(--sp-14); border-radius: var(--r-8); background: var(--well); font-size: var(--fs-13); line-height: 1.8; }
+
+/* ---- The first launch's introduction (intro.js) ---- */
+/* Held back until intro.js decides, then risen in as the scene dissolves over it. */
+.intro-pending body > header, .intro-pending body > main { visibility: hidden; }
+.intro-leaving body > header, .intro-leaving body > main { animation: intro-arrive 1100ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+/* Always a dark stage, as light reads best on it; the app arrives in its own theme. */
+.intro {
+  position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  overflow: hidden; background: var(--intro-bg); color: var(--intro-text); font-family: var(--font);
+  animation: intro-fade 450ms ease-out both;
+}
+.intro-leaving .intro { animation: intro-leave 1100ms cubic-bezier(0.4, 0, 0.2, 1) both; pointer-events: none; }
+/* Slow light behind everything: three soft colours drifting apart. */
+.intro-light {
+  position: absolute; inset: -25%; pointer-events: none; filter: blur(2.5rem);
+  background:
+    radial-gradient(32% 30% at 50% 40%, var(--intro-glow-a), transparent 70%),
+    radial-gradient(26% 26% at 34% 62%, var(--intro-glow-b), transparent 70%),
+    radial-gradient(24% 24% at 67% 60%, var(--intro-glow-c), transparent 70%);
+  animation: intro-aurora 8600ms ease-in-out both;
+}
+.intro-mark { position: relative; width: 7.5rem; height: 7.5rem; animation: intro-mark 1100ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.intro-mark svg { position: relative; width: 100%; height: 100%; display: block; filter: drop-shadow(0 0.75rem 2.5rem var(--intro-glow-a)); }
+/* A light behind the mark, and two rings that leave it as it starts to listen. */
+.intro-mark::before {
+  content: ""; position: absolute; inset: -4.5rem; border-radius: 50%;
+  background: radial-gradient(closest-side, var(--intro-glow-a), transparent);
+  animation: intro-glow 2600ms ease-in-out 300ms both;
+}
+.intro-mark::after, .intro-name::after {
+  content: ""; position: absolute; left: 50%; top: 3.75rem; width: 7.5rem; height: 7.5rem; margin: -3.75rem 0 0 -3.75rem;
+  border-radius: 1.75rem; border: 1px solid var(--intro-accent); pointer-events: none;
+  animation: intro-ripple 1800ms cubic-bezier(0.2, 0.7, 0.2, 1) 550ms both;
+}
+.intro-name::after { top: -5.5rem; animation-delay: 900ms; }
+/* The five level bars listen for a moment, each at its own pace, then settle. */
+.intro-mark rect[rx="16.25"] { transform-box: fill-box; transform-origin: center; animation: intro-listen 520ms ease-in-out 600ms 4 alternate both; }
+.intro-mark rect[rx="16.25"]:nth-child(2) { animation-duration: 440ms; animation-delay: 680ms; }
+.intro-mark rect[rx="16.25"]:nth-child(3) { animation-duration: 600ms; animation-delay: 560ms; }
+.intro-mark rect[rx="16.25"]:nth-child(4) { animation-duration: 480ms; animation-delay: 720ms; }
+.intro-mark rect[rx="16.25"]:nth-child(5) { animation-duration: 560ms; animation-delay: 640ms; }
+/* The name rises, and a light passes across it once. */
+.intro-name {
+  position: relative; margin-top: 1.75rem; font-size: 2.75rem; font-weight: 650; letter-spacing: -0.03em;
+  background: linear-gradient(100deg, var(--intro-text) 40%, var(--intro-accent-text) 50%, var(--intro-text) 60%) 120% 0 / 300% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: intro-rise 800ms cubic-bezier(0.2, 0.7, 0.2, 1) 1100ms both, intro-sheen 1600ms ease-in-out 1500ms both;
+}
+.intro-stage { display: grid; margin-top: 1.75rem; min-height: 6.5rem; place-items: start center; }
+.intro-stage > * { grid-area: 1 / 1; }
+.intro-lines { text-align: center; transition: opacity 500ms ease, transform 500ms ease; }
+.intro-lines p { margin: 0.5rem 0 0; font-size: 1.3125rem; letter-spacing: -0.01em; color: var(--intro-muted); animation: intro-rise 700ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.intro-lines p:nth-child(1) { animation-delay: 2000ms; }
+.intro-lines p:nth-child(2) { animation-delay: 2550ms; }
+.intro-lines p:nth-child(3) { animation-delay: 3100ms; color: var(--intro-accent-text); }
+.intro[data-phase="steps"] .intro-lines { opacity: 0; transform: translateY(-0.75rem); }
+/* What comes next: four steps that light up in turn, joined by a line that draws. */
+.intro-steps { display: flex; gap: 1.5rem; margin: 0.5rem 0 0; padding: 0; list-style: none; }
+.intro-steps li {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.75rem; width: 8.5rem; text-align: center;
+  opacity: 0; transform: translateY(0.5rem); transition: opacity 600ms cubic-bezier(0.2, 0.7, 0.2, 1), transform 600ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.intro-steps li.on { opacity: 1; transform: none; }
+.intro-steps .n {
+  display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; font-size: 0.9375rem; font-weight: 600;
+  border: 1px solid var(--intro-line); color: var(--intro-muted); transition: all 600ms ease;
+}
+.intro-steps li.on .n { border-color: var(--intro-accent); color: var(--intro-accent-text); background: var(--intro-wash); box-shadow: 0 0 1.5rem var(--intro-glow-a); }
+.intro-steps .label { font-size: 1rem; line-height: 1.35; white-space: nowrap; color: var(--intro-muted); transition: color 600ms ease; }
+.intro-steps li.on .label { color: var(--intro-text); }
+.intro-steps li:not(:last-child)::after {
+  content: ""; position: absolute; top: 1.125rem; left: calc(50% + 1.5rem); width: calc(100% - 1.5rem); height: 1px;
+  background: linear-gradient(90deg, var(--intro-accent), transparent); transform-origin: left; transform: scaleX(0);
+  transition: transform 700ms cubic-bezier(0.2, 0.7, 0.2, 1) 150ms;
+}
+.intro-steps li.on:not(:last-child)::after { transform: none; }
+@keyframes intro-aurora { 0% { opacity: 0; transform: scale(0.85) rotate(0deg); } 18% { opacity: 1; } 100% { opacity: 0.9; transform: scale(1.12) rotate(10deg); } }
+@keyframes intro-mark { from { opacity: 0; transform: scale(0.88); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes intro-glow { 0% { opacity: 0; transform: scale(0.8); } 55% { opacity: 1; transform: scale(1.06); } 100% { opacity: 0.6; transform: none; } }
+@keyframes intro-ripple { 0% { opacity: 0.6; transform: scale(0.95); } 100% { opacity: 0; transform: scale(2.4); } }
+@keyframes intro-listen { from { transform: scaleY(1); } to { transform: scaleY(0.45); } }
+@keyframes intro-sheen { from { background-position: 120% 0; } to { background-position: -20% 0; } }
+@keyframes intro-rise { from { opacity: 0; transform: translateY(0.5rem); } to { opacity: 1; transform: none; } }
+@keyframes intro-leave { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(1.04); } }
+@keyframes intro-arrive { from { opacity: 0; transform: translateY(0.625rem) scale(0.99); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .intro-mark, .intro-name, .intro-lines p, .intro-leaving body > header, .intro-leaving body > main { animation-name: intro-fade; }
+  .intro-leaving .intro { animation-name: intro-fade-out; }
+  .intro-mark rect[rx="16.25"], .intro-mark::before, .intro-mark::after, .intro-name::after, .intro-light { animation: none; }
+  .intro-mark::after, .intro-name::after { opacity: 0; }
+  .intro-steps li, .intro-lines { transform: none; }
+  .intro[data-phase="steps"] .intro-lines { transform: none; }
+}
+/* A narrow window lists the steps one under another. */
+@media (max-width: 44rem) {
+  .intro-steps { flex-direction: column; gap: 0.75rem; }
+  .intro-steps li { flex-direction: row; width: auto; gap: 0.75rem; text-align: left; }
+  .intro-steps li:not(:last-child)::after { display: none; }
+}
+@keyframes intro-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes intro-fade-out { from { opacity: 1; } to { opacity: 0; } }

@@ -121,8 +121,8 @@ class WhisperCpp:
         _spec(name)
         with self._lock:
             download = self._downloads.get(name)
-            if download is not None and download.running:
-                raise ValueError("The model is still downloading; wait before removing it")
+            if download is not None:
+                download.close()  # cancels a download still running
             self._models.pop(name, None)
             self._downloads.pop(name, None)
             for path in (self._path(name), self._part(name)):

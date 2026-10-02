@@ -428,7 +428,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     button.className = "btn sm";
     button.dataset.model = m.name;
     if (m.state === "ready") { button.textContent = "Remove"; button.dataset.action = "remove"; }
-    else if (m.state === "downloading") { button.textContent = "Downloading…"; button.disabled = true; }
+    else if (m.state === "downloading") { button.textContent = "Cancel"; button.dataset.action = "remove"; }
     else if (m.state === "unavailable") { button.textContent = "Check installation"; button.classList.add("setup"); button.dataset.action = "check"; }
     else { button.textContent = m.state === "error" ? "Retry" : "Download"; button.dataset.action = "download"; }
     row.append(name, size, state, button);

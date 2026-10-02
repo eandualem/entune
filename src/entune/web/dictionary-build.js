@@ -40,9 +40,11 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
       : `${task}${partElapsed ? ` · ${partElapsed}` : ""}`)
       + (again ? `. Retrying this part (${state.retryReason}), attempt ${state.partAttempt} of ${state.partAttempts}` : "")
       + (fixing ? `. The model's reply broke a dictionary rule, so it is asked to fix it: attempt ${state.attempt} of ${state.attempts}. Stop if you'd rather not wait.` : "");
+    // A recording that would not transcribe, even on a second try, is skipped; say how many.
+    const skippedNote = state.skipped ? ` ${state.skipped} could not be transcribed and ${state.skipped === 1 ? "was" : "were"} skipped.` : "";
     const messages = {
       idle: "", queued: `Getting ready to read your ${from === "audio" ? "audio" : "transcripts"}…`,
-      transcribing: `Transcribing recording ${state.completed} of ${state.total}…`,
+      transcribing: `Transcribing recording ${state.completed} of ${state.total}…${skippedNote}`,
       building,
       cancelling: "Stopping… a transcription already under way may need to finish.",
       cleaning: "Finishing…", ready: "Suggestions are ready to review.",
@@ -56,7 +58,7 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
       const coverage = `${state.coveredInputs} of ${state.total} ${from === "audio" ? "recordings" : "dictations"} read`;
       message = state.outcome === "stopped" ? `Stopped with ${coverage}. Review what's ready, retry the rest, or discard.`
         : state.outcome === "failed" ? `${state.error} ${coverage}. Review what's ready, retry the rest, or discard.`
-        : `Suggestions are ready (${coverage}). Review them, then apply or discard to resume dictation.`;
+        : `Suggestions are ready (${coverage}).${skippedNote} Review them, then apply or discard to resume dictation.`;
     }
     progress.textContent = message;
     el("build-spinner").hidden = !running();

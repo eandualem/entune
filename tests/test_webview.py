@@ -24,18 +24,25 @@ def test_dragged_indicator_position_survives_a_status_change(
         frame.origin = SimpleNamespace(x=rect[0][0], y=rect[0][1])
 
     pill = Indicator()
+    layer = SimpleNamespace(setCornerRadius_=lambda radius: None)
     pill._panel = SimpleNamespace(
         frame=lambda: frame,
         setFrame_display_=move,
         orderFrontRegardless=lambda: None,
         orderOut_=lambda sender: None,
+        contentView=lambda: SimpleNamespace(layer=lambda: layer),
     )
     pill._label = SimpleNamespace(
         setStringValue_=lambda text: None,
+        setFont_=lambda font: None,
+        setTextColor_=lambda color: None,
         sizeToFit=lambda: None,
         frame=lambda: SimpleNamespace(size=SimpleNamespace(width=90, height=14)),
         setFrameOrigin_=lambda point: None,
     )
+    pill._dot = SimpleNamespace(setHidden_=lambda hidden: None, setBackgroundColor_=lambda c: None)
+    monkeypatch.setattr(pill, "_clear_card", lambda: None)  # this test is about the position
+    monkeypatch.setattr(pill, "_animate", lambda on: None)
     pill._placed = (16.0, 16.0)
     monkeypatch.setattr(pill, "_saved_origin", lambda: tuple(saved[ORIGIN_KEY]) if saved else None)
     monkeypatch.setattr(pill, "_corner", lambda: (16.0, 16.0))
@@ -236,7 +243,7 @@ def test_native_quit_saves_capture_and_closes_processing_before_termination(
     from tests.test_app import FakeActions, FakeHotkeys, FakePermissions, FakeRecorder
 
     monkeypatch.setattr(shell, "_hotkeys", FakeHotkeys)
-    monkeypatch.setattr(shell, "_actions", lambda tray: FakeActions())
+    monkeypatch.setattr(shell, "_actions", lambda tray, hotkeys: FakeActions())
     monkeypatch.setattr(shell, "_permissions", FakePermissions)
     monkeypatch.setattr(shell, "_on_ui_thread", lambda action: action())
     monkeypatch.setattr(shell.WebviewPlatform, "every", lambda *args: None)

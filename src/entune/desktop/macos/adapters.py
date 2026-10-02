@@ -12,6 +12,12 @@ from entune.desktop.platform import Delivery
 
 
 class _Actions:
+    def save_clipboard(self) -> object:
+        return _actions.save_clipboard()
+
+    def restore_clipboard(self, saved: object) -> None:
+        _actions.restore_clipboard(saved)  # type: ignore[arg-type]
+
     def copy_to_clipboard(self, text: str) -> None:
         _actions.copy_to_clipboard(text)
 

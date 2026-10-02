@@ -7,7 +7,13 @@ from unittest.mock import Mock
 import pytest
 
 from entune.audio.formats import wav_bytes
-from entune.audio.recorder import QUIET_SECONDS, Capture, Recorder, duration_seconds
+from entune.audio.recorder import (
+    PAUSE_QUIET_SECONDS,
+    START_QUIET_SECONDS,
+    Capture,
+    Recorder,
+    duration_seconds,
+)
 
 
 def test_wav_bytes_is_a_valid_16khz_mono_wav() -> None:
@@ -135,23 +141,26 @@ def test_next_recording_refreshes_devices_even_after_initialization_failed(
     recorder.stop()
 
 
-def test_quiet_input_warns_after_ten_seconds_and_recovers_without_dropping_audio(
+def test_silence_at_the_start_shows_soon_and_a_pause_after_speech_much_later(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = 0.0
     monkeypatch.setattr("entune.audio.recorder.monotonic", lambda: now)
     recorder = Recorder()
     recorder._stream = Mock()
+    recorder._started = 0.0
     quiet = b"\x01\x00" * 100
     recorder._on_audio(quiet, 100, None, None)
-    now = QUIET_SECONDS - 1
-    assert not recorder.quiet
-    now = QUIET_SECONDS
-    assert recorder.quiet
+    now = START_QUIET_SECONDS - 0.5
+    assert recorder.silence is None
+    now = START_QUIET_SECONDS
+    assert recorder.silence == "start"
     speech = b"\x00\x10" * 100
     recorder._on_audio(speech, 100, None, None)
-    assert not recorder.quiet
-    now += QUIET_SECONDS  # a dead stream with no callbacks also warns
-    assert recorder.quiet
+    assert recorder.silence is None and recorder.level > 0.5
+    now += PAUSE_QUIET_SECONDS - 1  # thinking mid-sentence is not a problem
+    assert recorder.silence is None
+    now += 1  # a dead stream with no callbacks also warns
+    assert recorder.silence == "pause"
     assert recorder.stop().pcm == quiet + speech
-    assert not recorder.quiet
+    assert recorder.silence is None

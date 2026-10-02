@@ -32,6 +32,18 @@
   --label-col: 10.625rem;  /* 170: the label column of a settings row */
   --rail: 12.5rem;         /* 200: the settings side rail */
   --content-max: 51.25rem; /* 820: settings content */
+
+  /* The first launch's introduction: a dark stage in either theme, lit in the accent. */
+  --intro-bg: #0f0f12;
+  --intro-text: #f1f0ee;
+  --intro-muted: #a3a2ab;
+  --intro-line: rgba(255, 255, 255, 0.14);
+  --intro-accent: #a99cf2;
+  --intro-accent-text: #cfc6fa;
+  --intro-wash: rgba(169, 156, 242, 0.16);
+  --intro-glow-a: rgba(169, 156, 242, 0.42);
+  --intro-glow-b: rgba(94, 124, 232, 0.30);
+  --intro-glow-c: rgba(226, 120, 196, 0.22);
 }
 :root[data-scale="small"] { font-size: 14px; }
 :root[data-scale="large"] { font-size: 18px; }

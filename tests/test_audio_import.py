@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 from starlette.testclient import TestClient
@@ -70,6 +71,24 @@ def test_wispr_import_deduplicates_backups_without_importing_history(
     finally:
         live.close()
         backup.close()
+
+
+def test_wispr_import_names_a_refused_database(
+    tmp_path: Path, store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "wispr"
+    root.mkdir()
+    monkeypatch.setattr(audio_import, "wispr_directory", lambda: root)
+    real_stat = Path.stat
+
+    def refused(path: Path, **kwargs: Any) -> Any:
+        if path.name == "flow.sqlite":
+            raise PermissionError(1, "Operation not permitted")
+        return real_stat(path, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", refused)
+    with pytest.raises(ValueError, match=r"may not read .*flow\.sqlite.*Full Disk Access"):
+        audio_import.import_wispr(store)
 
 
 def test_import_upload_validates_audio_and_survives_restart(tmp_path: Path) -> None:
@@ -219,14 +238,14 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
         assert started.status_code == 202
         result = wait_for_build(client)
         if model == "bad":
-            assert result["phase"] == "failed" and "could not transcribe it" in result["error"]
+            assert result["phase"] == "failed" and "could not be transcribed" in result["error"]
             assert result["errorDetail"] == "HTTP 401 Unauthorized\n{}"
             assert "proposal" not in result
         else:
             assert result["phase"] == "ready", result
             assert result["proposal"]["model"] == f"stub/{model}"
         assert client.delete(f"/api/dictionary/build/{result['id']}").status_code == 200
-    assert len(stub.calls) == 3 and len(prompts) == 2  # no fallback or retry
+    assert len(stub.calls) == 4 and len(prompts) == 2  # the bad one once more, no fallback
     assert client.get("/api/dictionary/audio").json()["count"] == 1
     assert client.get("/api/dictionary/audio").json()["seconds"] > 0
     assert store.list_recordings() == []

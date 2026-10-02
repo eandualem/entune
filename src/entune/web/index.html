@@ -16,6 +16,10 @@
         const scale = localStorage.getItem("scale");
         if (scale === "small" || scale === "large" || scale === "larger") document.documentElement.dataset.scale = scale;
       } catch (e) {}
+      // Hold the app back until intro.js has asked whether this launch opens through the
+      // introduction; never a blank window, if that question goes unanswered.
+      document.documentElement.classList.add("intro-pending");
+      setTimeout(() => document.documentElement.classList.remove("intro-pending"), 4000);
       // The Mac app's window buttons sit in the toolbar: reserve their space before first paint.
       if (new URLSearchParams(location.search).get("shell") === "mac") document.documentElement.classList.add("native-mac");
     </script>
@@ -372,13 +376,14 @@
                     <div class="field permission"><span class="caption" data-permission-status="microphone"></span><button type="button" class="btn" data-permission="microphone">Allow…</button></div>
                   </div>
                   <div class="srow">
-                    <div><div class="name">Input Monitoring</div><div class="caption">Use your shortcuts while another app has focus.</div></div>
-                    <div class="field permission"><span class="caption" data-permission-status="inputMonitoring"></span><button type="button" class="btn" data-permission="inputMonitoring">Allow…</button></div>
-                  </div>
-                  <div class="srow">
                     <div><div class="name">Accessibility</div><div class="caption">Paste into the focused app and use the Fn key.</div></div>
                     <div class="field permission"><span class="caption" data-permission-status="accessibility"></span><button type="button" class="btn" data-permission="accessibility">Allow…</button></div>
                   </div>
+                  <div class="srow">
+                    <div><div class="name">Input Monitoring</div><div class="caption">Use your shortcuts while another app has focus.</div></div>
+                    <div class="field permission"><span class="caption" data-permission-status="inputMonitoring"></span><button type="button" class="btn" data-permission="inputMonitoring">Allow…</button></div>
+                  </div>
+                  <pre class="code-block setup-command" id="permissions-command" hidden></pre>
                   <div class="srow foot"><span class="caption" id="permissions-status" role="status"></span></div>
                 </div>
               </section>

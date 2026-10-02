@@ -9,7 +9,6 @@ import socket
 import sys
 import threading
 import time
-import webbrowser
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -32,19 +31,19 @@ def build_parser() -> argparse.ArgumentParser:
         prog="entune",
         description=__doc__,
         epilog=(
-            "On macOS and Windows, `entune` without options installs Entune as an app"
-            " (Applications, or the Start menu) and opens it; with any option it runs in"
-            " this terminal."
+            "`entune` without options installs Entune as an app (Applications on macOS,"
+            " the Start menu on Windows, the applications menu on Linux) and opens it;"
+            " with any option it runs in this terminal."
         ),
     )
     parser.add_argument("--version", action="version", version=f"entune {__version__}")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", DEFAULT_PORT)))
     parser.add_argument("--data", type=Path, default=None, help="data directory")
+    parser.add_argument("--no-open", action="store_true", help="do not open the window at start")
     parser.add_argument(
-        "--no-open", action="store_true", help="do not open the window (or browser) at start"
-    )
-    parser.add_argument(
-        "--no-menu", action="store_true", help="web page only, no menu-bar or tray app"
+        "--no-menu",
+        action="store_true",
+        help="serve the page only, no window, menu-bar or tray app",
     )
     parser.add_argument(
         "--no-app",
@@ -94,7 +93,7 @@ def install_app(directory: Path, source: Path | None) -> None:
 
 
 def opens_as_app(argv: list[str]) -> bool:
-    """Plain `entune` from a terminal installs and opens the app (macOS, Windows).
+    """Plain `entune` from a terminal installs and opens the app (macOS, Windows, Linux).
 
     Any option (--data, --port, --no-app…) or a PORT or ENTUNE_DATA setting runs here
     instead, since the app would not see them, as does the app itself: Entune.app's
@@ -108,16 +107,17 @@ def opens_as_app(argv: list[str]) -> bool:
         from entune.desktop.windows.install import is_windowless
 
         return not is_windowless()
-    return sys.platform == "darwin"
+    return sys.platform in ("darwin", "linux")
 
 
-# What the Mac app loads at launch beyond this module's own imports. After an install,
+# What the app loads at launch beyond this module's own imports. After an install,
 # the first load of each is slow: Python compiles it and macOS checks every new native
 # library, about half a minute in all, while the app has no window yet to show.
 FIRST_START_MODULES = (
     "entune.desktop.app",
     "entune.desktop.macos.adapters",
     "webview.platforms.cocoa",
+    "webview.platforms.qt",
     "pystray",
     "PIL.Image",
     "PIL.ImageChops",
@@ -143,6 +143,26 @@ def open_as_app() -> None:
     Started from the app, Entune's permissions belong to Entune; started from here they
     would belong to the terminal, and closing the terminal would stop it.
     """
+    if sys.platform == "linux":
+        from entune.desktop.linux import install
+
+        missing = install.missing_libraries()
+        if missing:
+            sys.exit(
+                "Entune needs a few system libraries first. Install them, then run"
+                f" `entune` again:\n\n    {install.install_command(missing)}\n\n"
+                f"Missing: {', '.join(missing)}"
+            )
+        print("Preparing Entune. The first time after installing takes a moment…", flush=True)
+        prepare_first_start()
+        install.install_entry()
+        install.open_app()
+        print(
+            "Entune is in your applications menu and is opening.\n"
+            "From now on, open it from there, like any app.",
+            flush=True,
+        )
+        return
     if sys.platform == "win32":
         from entune.desktop.windows.install import install_shortcut, open_app
 
@@ -293,8 +313,6 @@ def _run(args: argparse.Namespace, data_dir: Path, store: Store) -> None:
 
     platform = None if args.no_menu else create_platform(url)
     if platform is None:
-        if not args.no_open:
-            threading.Timer(0.5, webbrowser.open, args=(url,)).start()
         try:
             server.run()
         finally:

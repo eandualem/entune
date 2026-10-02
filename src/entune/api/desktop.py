@@ -31,12 +31,24 @@ def routes(app: Entune) -> list[Route]:
         return JSONResponse(
             {
                 "version": __version__,
-                "system": {"darwin": "macos", "win32": "windows"}.get(sys.platform, "other"),
+                "system": {"darwin": "macos", "win32": "windows", "linux": "linux"}.get(
+                    sys.platform, "other"
+                ),
                 "shortcuts": shortcuts_json(app),
                 "defaultModel": app.models.default_model(),
                 **app.desktop.desktop_status(),
             }
         )
+
+    def intro(_: Request) -> Response:
+        """Whether this launch opens through the introduction: the first one, with nothing
+        set up and nothing recorded. Kept with Entune's data, so deleting the data, in
+        Settings or by hand, brings it back; answered yes only once."""
+        unseen = app.store.get_setting("intro_seen") is None
+        if unseen:
+            app.store.set_setting("intro_seen", "1")
+        empty = app.models.default_model() is None and not app.store.list_recordings(limit=1)
+        return JSONResponse({"play": unseen and empty})
 
     async def show_window(_: Request) -> Response:
         if not app.desktop.show_window():
@@ -63,5 +75,6 @@ def routes(app: Entune) -> list[Route]:
         Route("/api/capture", cancel_capture, methods=["DELETE"]),
         Route("/api/status", status),
         Route("/api/window", show_window, methods=["POST"]),
+        Route("/api/intro", intro, methods=["POST"]),
         Route("/api/permissions/{name}", request_permission, methods=["POST"]),
     ]
