@@ -5,7 +5,6 @@
 // The page's head script holds the app back (`intro-pending`) until this decides, so
 // nothing flashes before it.
 
-const SEEN = "entune-intro";
 const LINES = ["Your speech model.", "Your vocabulary.", "Corrections that consider the context."];
 const STEPS = ["Choose your model", "Allow permissions", "Set your shortcut", "Start dictating"];
 const STEPS_AT = 4300; // ms: the lines give way to the steps
@@ -67,12 +66,16 @@ function chime() {
   return (index) => note(880 * 2 ** ([0, 2, 4, 7][index] / 12), 0, 0.5, 0.025, 0.005);
 }
 
-// `firstLaunch`: nothing set up and nothing recorded. Anyone else just sees the app.
-export async function openApp(firstLaunch) {
+// Asked first thing, before the rest of the page loads, so the scene covers the loading.
+// The server says yes once: on the first launch, with nothing set up or recorded.
+export async function openApp() {
   const root = document.documentElement;
-  if (!root.classList.contains("intro-pending")) return;
-  try { localStorage.setItem(SEEN, "1"); } catch (e) {}
-  if (!firstLaunch) { root.classList.remove("intro-pending"); return; }
+  let play = false;
+  try {
+    const res = await fetch("/api/intro", { method: "POST" });
+    play = res.ok && (await res.json()).play === true;
+  } catch (e) { /* no introduction; the app opens as usual */ }
+  if (!play) { root.classList.remove("intro-pending"); return; }
 
   const scene = element("div", "intro");
   scene.setAttribute("aria-hidden", "true");

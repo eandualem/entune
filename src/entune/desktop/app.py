@@ -32,6 +32,7 @@ PASTE_KEYS = {"darwin": "Cmd+V", "linux": "Shift+Insert"}.get(sys.platform, "Ctr
 QUIT_FLUSH_SECONDS = 3.0  # bound on waiting for a just-stopped clip to reach disk at quit
 PERMISSION_POLL_SECONDS = 5.0  # permissions are granted in System Settings; notice when they are
 WATCH_SECONDS = 1.0  # while recording: notice silence soon after it starts
+CLIPBOARD_RESTORE_SECONDS = 0.8  # after a paste: apps read the clipboard a moment later
 SERVER_WAIT_SECONDS = 10.0  # the page is served from a thread that may still be starting
 
 
@@ -317,7 +318,9 @@ class EntuneApp:
                 operation = self.entune.operations.begin("dictation", "recording")
             except Busy as exc:
                 failed()
-                self._tell_later("Entune is busy", str(exc))
+                busy = self.entune.operations.status()
+                still = "Still transcribing" if busy and busy.get("kind") == "dictation" else "Busy"
+                self._tell_later(still, str(exc))
                 return
             self._operation = operation
             self._upload = None
@@ -566,6 +569,7 @@ class EntuneApp:
         try:
             operation.check()
             actions, permissions = self.platform.actions, self.platform.permissions
+            saved = actions.save_clipboard()
             actions.copy_to_clipboard(text)
             title, body, error = "Copied to clipboard", "", False
             keys_held = f"Release the shortcut keys, then press {PASTE_KEYS}."
@@ -587,11 +591,15 @@ class EntuneApp:
                     title, body, error = "Copied, not pasted", not_allowed, True
                 elif outcome == "sent":
                     # Windows and Linux cannot confirm arrival: say what was done, no more.
-                    title, body = f"{PASTE_KEYS} sent to the app in front", "Also on the clipboard."
-                elif outcome == "unverified":
-                    body = "The paste was sent, but could not be confirmed."
-                else:
-                    title, body = "Inserted", "Also on the clipboard."
+                    title = f"{PASTE_KEYS} sent to the app in front"
+                    body = "If it did not arrive, copy it from History."
+                else:  # inserted, or pasted into a field that cannot show its text
+                    title = "Pasted"
+                if outcome in ("inserted", "unverified", "sent"):
+                    # Pasted, so the clipboard was only the way in: put back what was there.
+                    self.platform.call_later(
+                        CLIPBOARD_RESTORE_SECONDS, lambda: actions.restore_clipboard(saved)
+                    )
             else:
                 permissions.request_post()
                 title, body, error = "Copied, not pasted", not_allowed, True

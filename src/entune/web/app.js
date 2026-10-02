@@ -397,8 +397,10 @@ historyList.addEventListener("click", async (e) => {
     const label = select.selectedOptions[0]?.textContent ?? "";
     retry.disabled = true;
     retry.dataset.busy = "true";
-    rowStatus.className = "status";
-    rowStatus.textContent = `Transcribing with ${label}…`;
+    // Visible while it runs: a spinner and the model's name, and a light along the card.
+    card.classList.add("retrying");
+    rowStatus.className = "status working";
+    rowStatus.replaceChildren(Object.assign(document.createElement("span"), { className: "spinner" }), `Transcribing with ${label}…`);
     try {
       await api(`/api/recordings/${card.dataset.id}/transcriptions`, {
         method: "POST",
@@ -406,12 +408,14 @@ historyList.addEventListener("click", async (e) => {
         body: JSON.stringify({ model: select.value }),
       });
     } catch (err) {
+      card.classList.remove("retrying");
       rowStatus.className = "status err";
       rowStatus.textContent = errorText(err);
       retry.disabled = false;
       delete retry.dataset.busy;
       return;
     }
+    card.classList.remove("retrying");
     await loadHistory(true);
   }
 });
@@ -442,6 +446,8 @@ initRecording({
   onStatus(message) { status.textContent = message; },
   async onUploaded() { show("history"); await history.latest(); },
 });
+// A first launch opens through the introduction, which covers the loading below.
+openApp();
 // A failed load is shown; the page still opens its view instead of stopping here.
 await settingsView.load().catch((err) => { status.textContent = errorText(err); });
 try {
@@ -451,6 +457,3 @@ if (location.hash === "#settings") show("settings");
 else if (location.hash === "#models") show("models");
 else if (location.hash === "#dictionary") show("dictionary");
 else show("history");
-// A first launch (nothing set up, nothing recorded) opens through the introduction.
-await loadHistory().catch(() => {});
-openApp(!defaultModel && recordingsCount === 0 && !emptyState.hidden);

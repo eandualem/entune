@@ -1072,3 +1072,15 @@ def test_speed_and_corrections_use_only_measured_evidence(tmp_path: Path) -> Non
     # Only the replaced and the no-match dictations are evidence: 1 change in 10 words.
     assert (row.replacements, row.words, row.corrected, row.checked) == (1, 10, 1, 2)
     store.close()
+
+
+def test_the_introduction_plays_once_and_only_on_a_first_launch(tmp_path: Path) -> None:
+    fresh = TestClient(
+        create_app(Entune(Store(tmp_path / "fresh"), [])), base_url="http://localhost"
+    )
+    assert fresh.post("/api/intro").json() == {"play": True}
+    assert fresh.post("/api/intro").json() == {"play": False}  # once
+    used = Store(tmp_path / "used")
+    used.create_recording(wav_bytes(b"\x00\x00" * 16))
+    upgraded = TestClient(create_app(Entune(used, [])), base_url="http://localhost")
+    assert upgraded.post("/api/intro").json() == {"play": False}  # not for an existing install

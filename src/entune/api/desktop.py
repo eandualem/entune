@@ -40,6 +40,16 @@ def routes(app: Entune) -> list[Route]:
             }
         )
 
+    def intro(_: Request) -> Response:
+        """Whether this launch opens through the introduction: the first one, with nothing
+        set up and nothing recorded. Kept with Entune's data, so deleting the data, in
+        Settings or by hand, brings it back; answered yes only once."""
+        unseen = app.store.get_setting("intro_seen") is None
+        if unseen:
+            app.store.set_setting("intro_seen", "1")
+        empty = app.models.default_model() is None and not app.store.list_recordings(limit=1)
+        return JSONResponse({"play": unseen and empty})
+
     async def show_window(_: Request) -> Response:
         if not app.desktop.show_window():
             return bad("No desktop app is running to show a window", 409)
@@ -65,5 +75,6 @@ def routes(app: Entune) -> list[Route]:
         Route("/api/capture", cancel_capture, methods=["DELETE"]),
         Route("/api/status", status),
         Route("/api/window", show_window, methods=["POST"]),
+        Route("/api/intro", intro, methods=["POST"]),
         Route("/api/permissions/{name}", request_permission, methods=["POST"]),
     ]

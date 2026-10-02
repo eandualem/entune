@@ -9,13 +9,42 @@ from typing import Any
 
 import ApplicationServices as AX
 import Quartz
-from AppKit import NSWorkspace
+from AppKit import NSPasteboard, NSPasteboardItem, NSWorkspace
 
 from entune.desktop.platform import Delivery
 
+_copied_count: int | None = None  # the pasteboard's change count right after our copy
+
 
 def copy_to_clipboard(text: str) -> None:
+    global _copied_count
     subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
+    _copied_count = int(NSPasteboard.generalPasteboard().changeCount())
+
+
+def save_clipboard() -> list[dict[str, Any]]:
+    """Every item on the pasteboard, in every type it offers: text, images, files."""
+    board = NSPasteboard.generalPasteboard()
+    return [
+        {kind: item.dataForType_(kind) for kind in item.types()}
+        for item in board.pasteboardItems() or []
+    ]
+
+
+def restore_clipboard(saved: list[dict[str, Any]]) -> None:
+    board = NSPasteboard.generalPasteboard()
+    if int(board.changeCount()) != _copied_count:
+        return  # something else was copied since: that is what the user wants now
+    board.clearContents()
+    items = []
+    for kinds in saved:
+        item = NSPasteboardItem.alloc().init()
+        for kind, data in kinds.items():
+            if data is not None:
+                item.setData_forType_(data, kind)
+        items.append(item)
+    if items:
+        board.writeObjects_(items)
 
 
 _keyboard: Any = None

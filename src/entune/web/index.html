@@ -15,13 +15,11 @@
         if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
         const scale = localStorage.getItem("scale");
         if (scale === "small" || scale === "large" || scale === "larger") document.documentElement.dataset.scale = scale;
-        // Not opened before: hold the app back until intro.js knows whether this is a first launch.
-        if (!localStorage.getItem("entune-intro")) {
-          document.documentElement.classList.add("intro-pending");
-          // Never a blank window: if loading fails before that decision, show the app anyway.
-          setTimeout(() => document.documentElement.classList.remove("intro-pending"), 3000);
-        }
       } catch (e) {}
+      // Hold the app back until intro.js has asked whether this launch opens through the
+      // introduction; never a blank window, if that question goes unanswered.
+      document.documentElement.classList.add("intro-pending");
+      setTimeout(() => document.documentElement.classList.remove("intro-pending"), 4000);
       // The Mac app's window buttons sit in the toolbar: reserve their space before first paint.
       if (new URLSearchParams(location.search).get("shell") === "mac") document.documentElement.classList.add("native-mac");
     </script>

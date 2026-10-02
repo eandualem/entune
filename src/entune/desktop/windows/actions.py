@@ -48,6 +48,7 @@ _kernel32.GlobalFree.restype = wintypes.HGLOBAL
 
 
 def copy_to_clipboard(text: str) -> None:
+    global _copied_sequence
     data = text.encode("utf-16-le") + b"\0\0"
     for _attempt in range(20):  # another app may hold the clipboard for a moment
         if _user32.OpenClipboard(None):
@@ -73,6 +74,35 @@ def copy_to_clipboard(text: str) -> None:
         # From here the clipboard owns the memory.
     finally:
         _user32.CloseClipboard()
+    _copied_sequence = int(_user32.GetClipboardSequenceNumber())
+
+
+_copied_sequence: int | None = None  # the clipboard's sequence number after our copy
+_user32.GetClipboardSequenceNumber.argtypes = []
+_user32.GetClipboardSequenceNumber.restype = wintypes.DWORD
+_user32.CountClipboardFormats.argtypes = []
+_user32.CountClipboardFormats.restype = ctypes.c_int
+
+
+def save_clipboard() -> tuple[str, str]:
+    """("text", the text), ("empty", ""), or ("other", "") for what text cannot restore."""
+    if not _user32.CountClipboardFormats():
+        return "empty", ""
+    text = read_clipboard()
+    return ("text", text) if text else ("other", "")
+
+
+def restore_clipboard(saved: tuple[str, str]) -> None:
+    if _user32.GetClipboardSequenceNumber() != _copied_sequence:
+        return  # something else was copied since
+    kind, text = saved
+    if kind == "text":
+        copy_to_clipboard(text)
+    elif kind == "empty" and _user32.OpenClipboard(None):
+        try:
+            _user32.EmptyClipboard()
+        finally:
+            _user32.CloseClipboard()
 
 
 def read_clipboard() -> str:
@@ -137,6 +167,12 @@ def paste_into_focused_app(text: str, check: Callable[[], None] | None = None) -
 class Actions:
     def __init__(self, notify: Callable[[str, str], None]) -> None:
         self._notify = notify
+
+    def save_clipboard(self) -> object:
+        return save_clipboard()
+
+    def restore_clipboard(self, saved: object) -> None:
+        restore_clipboard(saved)  # type: ignore[arg-type]
 
     def copy_to_clipboard(self, text: str) -> None:
         copy_to_clipboard(text)

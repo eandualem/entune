@@ -63,6 +63,14 @@ class Hotkeys(Protocol):
 
 
 class Actions(Protocol):
+    def save_clipboard(self) -> object:
+        """What is on the clipboard now, to put back once a paste has used it."""
+        ...
+
+    def restore_clipboard(self, saved: object) -> None:
+        """Put it back, unless something else was copied since Entune's own copy."""
+        ...
+
     def copy_to_clipboard(self, text: str) -> None: ...
     def paste_into_focused_app(
         self, text: str, check: Callable[[], None] | None = None

@@ -19,6 +19,7 @@ from entune.desktop.platform import Delivery
 
 assert sys.platform == "linux"  # imported only there; type checkers skip the rest elsewhere
 
+from PySide6.QtCore import QByteArray, QMimeData  # noqa: E402
 from PySide6.QtGui import QClipboard  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -51,13 +52,58 @@ def _copy_wayland(text: str) -> None:
     subprocess.run([wl_copy, "--primary"], input=text.encode(), timeout=5, check=False)
 
 
+def _snapshot(mode: QClipboard.Mode) -> dict[str, bytes]:
+    data = QApplication.clipboard().mimeData(mode)
+    return {kind: bytes(data.data(kind).data()) for kind in data.formats()} if data else {}
+
+
+def _put_back(mode: QClipboard.Mode, formats: dict[str, bytes]) -> None:
+    data = QMimeData()
+    for kind, value in formats.items():
+        data.setData(kind, QByteArray(value))
+    QApplication.clipboard().setMimeData(data, mode)
+
+
 class Actions:
     def __init__(self, notify: Callable[[str, str], None], held: Callable[[], set[int]]) -> None:
         self._notify = notify
         self._held = held  # key codes down now, asked of the kernel
         self._keyboard = VirtualKeyboard()
+        self._copied = ""
+
+    def save_clipboard(self) -> object:
+        def save() -> dict[str, dict[str, bytes]]:
+            board = QApplication.clipboard()
+            modes = [QClipboard.Mode.Clipboard]
+            if board.supportsSelection():
+                modes.append(QClipboard.Mode.Selection)
+            return {mode.name: _snapshot(mode) for mode in modes}
+
+        return on_ui_thread_wait(save)
+
+    def restore_clipboard(self, saved: object) -> None:
+        assert isinstance(saved, dict)
+
+        def restore() -> bool:
+            if QApplication.clipboard().text() != self._copied:
+                return False  # something else was copied since
+            for name, formats in saved.items():
+                _put_back(getattr(QClipboard.Mode, name), formats)
+            return True
+
+        if (
+            on_ui_thread_wait(restore)
+            and os.environ.get("WAYLAND_DISPLAY")
+            and shutil.which("wl-copy")
+        ):
+            text = saved.get("Clipboard", {}).get("text/plain")
+            if text:
+                subprocess.run(["wl-copy"], input=text, timeout=5, check=False)
+            else:
+                subprocess.run(["wl-copy", "--clear"], timeout=5, check=False)
 
     def copy_to_clipboard(self, text: str) -> None:
+        self._copied = text
         on_ui_thread_wait(lambda: _copy(text))
         _copy_wayland(text)
 

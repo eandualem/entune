@@ -13,7 +13,7 @@ from starlette.testclient import TestClient
 
 from entune.app.entune import Entune
 from entune.audio.formats import wav_bytes
-from entune.desktop.app import EntuneApp
+from entune.desktop.app import CLIPBOARD_RESTORE_SECONDS, EntuneApp
 from entune.desktop.platform import Delivery
 from entune.dictionary import document as dictionary_document
 from entune.dictionary import entries as dictionary_entries
@@ -122,21 +122,30 @@ def test_cancel_speech_waits_for_resource_cleanup_but_saves_successful_raw(
     app.close()
 
 
-@pytest.mark.parametrize("outcome", ["no_target", "unverified"])
-def test_clipboard_completion_is_visible_and_does_not_claim_insertion(
+@pytest.mark.parametrize("outcome", ["no_target", "unverified", "inserted"])
+def test_the_clipboard_keeps_the_text_only_when_nothing_took_the_paste(
     tmp_path: Path, outcome: Delivery
 ) -> None:
     app, platform, service = configured(tmp_path)
     assert isinstance(platform.actions, FakeActions)
     platform.actions.outcome = outcome
+    platform.actions.clipboard = "copied earlier"
     app.start_recording()
     app.stop_recording()
     wait_for(lambda: service.operations.status() is None)
-    assert platform.actions.clipboard == "hello from the fake"
-    assert platform.actions.pasted == (0 if outcome == "no_target" else 1)
-    expected = "No text field was active" if outcome == "no_target" else "could not be confirmed"
-    assert platform.tray.notices[-1] == ("Copied to clipboard", platform.tray.notices[-1][1])
-    assert expected in platform.tray.notices[-1][1] and not platform.actions.notices
+    restores = [action for delay, action in platform.timers if delay == CLIPBOARD_RESTORE_SECONDS]
+    for action in restores:
+        action()
+    if outcome == "no_target":
+        assert platform.actions.pasted == 0
+        assert platform.actions.clipboard == "hello from the fake"  # kept: it was not pasted
+        assert platform.tray.notices[-1][0] == "Copied to clipboard"
+        assert "No text field was active" in platform.tray.notices[-1][1]
+    else:
+        assert platform.actions.pasted == 1
+        assert platform.actions.clipboard == "copied earlier"  # the paste only borrowed it
+        assert platform.tray.notices[-1] == ("Pasted", "")
+    assert not platform.actions.notices
     app.close()
 
 

@@ -92,6 +92,7 @@ class FakeHotkeys:
 
 class FakeActions:
     def __init__(self) -> None:
+        self.restored: list[object] = []
         self.clipboard: str | None = None
         self.pasted = 0
         self.outcome: Delivery = "inserted"
@@ -111,6 +112,13 @@ class FakeActions:
 
     def notify(self, title: str, message: str) -> None:
         self.notices.append((title, message))
+
+    def save_clipboard(self) -> object:
+        return self.clipboard
+
+    def restore_clipboard(self, saved: object) -> None:
+        self.restored.append(saved)
+        self.clipboard = saved if isinstance(saved, str) else None
 
 
 class FakePermissions:
