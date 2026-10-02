@@ -159,15 +159,22 @@ resources. Existing Fn+Escape cancellation settings use Fn+Control on load becau
 Escape can cancel foreground work. Custom shortcuts remain configurable; a modifier
 combination is not universally conflict-free across all applications.
 
-The non-activating pill displays the actual stage: recording, saving, transcribing,
-contextual correction, filler reduction, formatting, or delivery. Disabled stages are
-skipped. One dictation owns the app until delivery completes; a new one must wait.
-Learning owns the same guard through proposal review. The final text is copied once
-and pasted into the **current editable input**, including in a different app from where
-recording began. With no editable target, Entune reports “Copied to clipboard — no
-active text field.” If a paste cannot be verified through Accessibility, completion
-says so. Completion also appears in the pill, so it does not depend on notification
-permissions. History retains audio and all attempts for retry.
+The pill in the bottom-left corner shows what is happening: level bars that move with
+your voice while recording, then the actual stage (saving, transcribing, contextual
+correction, filler reduction, formatting, delivery). Disabled stages are skipped. One
+dictation owns the app until delivery completes; a new one must wait. Learning owns the
+same guard through proposal review. The final text is copied once and pasted into the
+**current editable input**, including in a different app from where recording began.
+
+The pill then says what happened, growing to show the detail: pasted, or copied with
+the reason it was not pasted (no text field was active, say). An error stays on the
+pill with the provider's message, a **Retry** button that transcribes the same
+recording again with the default model, and **Dismiss**; pressing them does not take
+the focus from the app you were in. Entune shows no system notification for any of
+this. If nothing is heard in the first seconds of a recording, the pill says so at
+once; a long silence after you have spoken (about 40 seconds) is a pause, and only
+then does Entune also send a notification, in case the pill is out of sight.
+History retains audio and all attempts for retry.
 
 The default model is the picker next to the Record button, the same one as
 in Settings; picking a model applies at once, no Save. The Record button in

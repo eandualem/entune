@@ -8,6 +8,7 @@ Providers accept any common rate, so the device's is used as is.
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -20,8 +21,10 @@ Sink = Callable[[bytes], None]
 SinkFactory = Callable[[int], Sink | None]
 """Given the sample rate once it is known, a function to hand every PCM chunk to, or None."""
 
-QUIET_SECONDS = 10.0
+START_QUIET_SECONDS = 3.0  # nothing heard since the start: a microphone problem, say so soon
+PAUSE_QUIET_SECONDS = 40.0  # silence after speech: a pause to think, so be patient
 QUIET_PEAK = 256  # about -42 dBFS; a warning, never a reason to discard audio
+LEVEL_FLOOR_DB = -55.0  # the pill's level bars: this is empty, 0 dBFS is full
 
 
 @dataclass(frozen=True)
@@ -52,15 +55,23 @@ class Recorder:
         self._rate = FALLBACK_RATE
         self._sink: Sink | None = None
         self._lock = threading.Lock()
-        self._last_signal = 0.0
+        self._started = 0.0
+        self._last_signal: float | None = None  # None: nothing heard yet in this recording
+        self.level = 0.0  # 0..1, the latest chunk's peak, for the recording pill
 
     @property
     def recording(self) -> bool:
         return self._stream is not None
 
     @property
-    def quiet(self) -> bool:
-        return self.recording and monotonic() - self._last_signal >= QUIET_SECONDS
+    def silence(self) -> str | None:
+        """ "start" when nothing has been heard for a few seconds since recording began,
+        "pause" after a long silence that followed speech, else None."""
+        if not self.recording:
+            return None
+        if self._last_signal is None:
+            return "start" if monotonic() - self._started >= START_QUIET_SECONDS else None
+        return "pause" if monotonic() - self._last_signal >= PAUSE_QUIET_SECONDS else None
 
     def start(self, sink_for_rate: SinkFactory | None = None) -> None:
         """Begin capturing; `sink_for_rate` may return a sink that gets every chunk as it
@@ -79,7 +90,7 @@ class Recorder:
             sounddevice._initialize()
             device = sounddevice.query_devices(kind="input")
             self._rate = int(device["default_samplerate"]) or FALLBACK_RATE
-            self._last_signal = monotonic()
+            self._started, self._last_signal, self.level = monotonic(), None, 0.0
             stream = None
             try:
                 stream = sounddevice.RawInputStream(
@@ -126,7 +137,10 @@ class Recorder:
         chunk = bytes(indata)
         self._chunks.append(chunk)
         samples = memoryview(chunk).cast("h")
-        if max(samples, default=0) >= QUIET_PEAK or min(samples, default=0) <= -QUIET_PEAK:
+        peak = max(max(samples, default=0), -min(samples, default=0))
+        if peak >= QUIET_PEAK:
             self._last_signal = monotonic()
+        decibels = 20 * math.log10(max(peak, 1) / 32768)
+        self.level = min(max(1 - decibels / LEVEL_FLOOR_DB, 0.0), 1.0)
         if self._sink is not None:
             self._sink(chunk)

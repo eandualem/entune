@@ -26,7 +26,8 @@ ASSETS = Path(__file__).resolve().parents[2] / "assets"
 INDICATOR: dict[State, str] = {
     "idle": "",
     "recording": "Recording",
-    "quiet": "Recording · mic very quiet",
+    "quiet": "No sound from the microphone",
+    "silent": "Recording · nothing heard for a while",
     "saving": "Saving audio…",
     "transcribing": "Transcribing…",
     "correction": "Contextual correction…",
@@ -161,6 +162,8 @@ class _Tray:
         self._open_window: Callable[[], None] = lambda: None
         self._open_settings: Callable[[], None] = lambda: None
         self._quit: Callable[[], None] = lambda: None
+        self._level: Callable[[], float] = lambda: 0.0
+        self._kept = False  # an error stays until dismissed or a new dictation starts
         self._pill: Any = None
         self._icon: Any = None
 
@@ -203,23 +206,56 @@ class _Tray:
         if indicator is None:
             return
         if state == "idle":
-            if time.monotonic() >= self._completion_until:
+            if not self._kept and time.monotonic() >= self._completion_until:
                 indicator.hide()
         else:
-            indicator.show(INDICATOR.get(state, state))
+            self._kept, self._completion_until = False, 0.0  # a new dictation replaces it
+            recording = state in ("recording", "quiet", "silent")
+            indicator.show(INDICATOR.get(state, state), recording=recording)
 
-    def complete(self, text: str) -> None:
-        self._completion_until = time.monotonic() + 5.0
+    def complete(self, title: str, body: str = "") -> None:
+        """Shown for a few seconds, longer when there is more to read."""
+        seconds = 6.0 if body else 3.5
+        self._kept, self._completion_until = False, time.monotonic() + seconds
         indicator = self._indicator()
         if indicator is not None:
-            indicator.show(text[:180])
-        self.set_status(text)
+            indicator.message(title, body, error=False, retry=None, dismiss=self._dismiss)
+        self.set_status(title)
 
         def hide() -> None:
-            if self._state == "idle" and time.monotonic() >= self._completion_until:
+            due = time.monotonic() >= self._completion_until
+            if self._state == "idle" and not self._kept and due:
                 self.set_state("idle")
 
-        self._platform.call_later(5.0, hide)
+        self._platform.call_later(seconds, hide)
+
+    def alert(self, title: str, body: str, retry: Callable[[], None] | None) -> None:
+        self._kept = True
+        indicator = self._indicator()
+        if indicator is not None:
+
+            def again() -> None:  # pressed on the pill's own thread
+                def run() -> None:
+                    self._dismiss()
+                    if retry is not None:
+                        retry()
+
+                self._platform.run_on_ui_thread(run)
+
+            indicator.message(
+                title, body, error=True, retry=again if retry else None, dismiss=self._dismiss
+            )
+        self.set_status(title)
+
+    def set_level(self, level: Callable[[], float]) -> None:
+        self._level = level
+        if self._pill is not None:
+            self._pill.level = level
+
+    def _dismiss(self) -> None:
+        self._kept, self._completion_until = False, 0.0
+        if self._state == "idle" and self._pill is not None:
+            self._pill.hide()
 
     def _indicator(self) -> Any:
         """The on-screen pill, created on first use."""
@@ -237,6 +273,8 @@ class _Tray:
                 from entune.desktop.linux.qt import on_ui_thread_wait
 
                 self._pill = on_ui_thread_wait(LinuxIndicator)
+            if self._pill is not None:
+                self._pill.level = self._level
         return self._pill
 
     def notify(self, title: str, message: str) -> None:

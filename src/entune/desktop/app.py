@@ -31,6 +31,7 @@ KEYS_UP_WAIT_SECONDS = 1.0  # let chord keys come up before pasting so Cmd+V is 
 PASTE_KEYS = {"darwin": "Cmd+V", "linux": "Shift+Insert"}.get(sys.platform, "Ctrl+V")
 QUIT_FLUSH_SECONDS = 3.0  # bound on waiting for a just-stopped clip to reach disk at quit
 PERMISSION_POLL_SECONDS = 5.0  # permissions are granted in System Settings; notice when they are
+WATCH_SECONDS = 1.0  # while recording: notice silence soon after it starts
 SERVER_WAIT_SECONDS = 10.0  # the page is served from a thread that may still be starting
 
 
@@ -69,6 +70,7 @@ class EntuneApp:
 
         entune.operations.listeners.append(lambda: self._later(self._refresh_state))
         platform.tray.set_actions(self.open_window, self.open_settings, self.quit)
+        platform.tray.set_level(lambda: self.recorder.level)
         platform.every(PERMISSION_POLL_SECONDS, self._recheck_permission)
         entune.on_change(lambda: platform.run_on_ui_thread(self.apply_shortcut))
         entune.capture.on_capture(lambda: platform.run_on_ui_thread(self.begin_capture))
@@ -314,7 +316,7 @@ class EntuneApp:
                 operation = self.entune.operations.begin("dictation", "recording")
             except Busy as exc:
                 failed()
-                self._notify_later("Entune: busy", str(exc))
+                self._tell_later("Entune is busy", str(exc))
                 return
             self._operation = operation
             self._upload = None
@@ -323,7 +325,7 @@ class EntuneApp:
             except Exception as exc:
                 message = f"{type(exc).__name__}: {exc}"
                 self.entune.desktop.report_status(lastError=message)
-                self._notify_later("Entune: microphone", message)
+                self._tell_later("Microphone unavailable", message, error=True)
                 failed()
                 if self._upload is not None:
                     self._upload.abort()
@@ -335,6 +337,7 @@ class EntuneApp:
             self._quiet_notified = False
             self._recording = True
             self._later(self._refresh_state)
+            self.platform.call_later(WATCH_SECONDS, lambda: self._watch(operation))
 
     def _begin_upload(self, sample_rate: int) -> Sink | None:
         self._upload = self.entune.dictation.begin_upload(sample_rate)
@@ -354,11 +357,9 @@ class EntuneApp:
             if capture.seconds < MIN_CLIP_SECONDS:
                 if upload is not None:
                     upload.abort()
-                self._notify_later(
-                    "Entune",
-                    "Canceled — no usable audio captured."
-                    if operation.cancel.is_set()
-                    else "No usable audio captured.",
+                self._tell_later(
+                    "Canceled" if operation.cancel.is_set() else "Nothing recorded",
+                    "No usable audio was captured.",
                 )
                 self._finish(operation)
                 return
@@ -389,7 +390,7 @@ class EntuneApp:
             except Exception as exc:
                 self._capture_error = f"{type(exc).__name__}: {exc}"
                 logging.getLogger(__name__).exception("Could not save captured audio")
-                self._notify_later("Entune: could not save", self._capture_error)
+                self._tell_later("Could not save the recording", self._capture_error, error=True)
                 if upload is not None:
                     upload.abort()
                 self._finish(operation)
@@ -400,13 +401,43 @@ class EntuneApp:
                 del capture
             self._jobs.put((recording, seconds, upload, operation))
 
-    def _notify_later(self, title: str, message: str) -> None:
-        self._later(lambda: self._notify(title, message))
+    def _tell_later(
+        self,
+        title: str,
+        body: str = "",
+        *,
+        error: bool = False,
+        retry: Callable[[], None] | None = None,
+    ) -> None:
+        self._later(lambda: self._tell(title, body, error=error, retry=retry))
 
-    def _notify(self, title: str, message: str) -> None:
-        self.entune.desktop.report_status(delivery=message)
-        self.platform.tray.complete(message)
-        self.platform.actions.notify(title, message)
+    def _tell(
+        self,
+        title: str,
+        body: str = "",
+        *,
+        error: bool = False,
+        retry: Callable[[], None] | None = None,
+    ) -> None:
+        """Say what happened in the pill, which is already on screen; never a system
+        notification. An error stays until dismissed, with Retry when there is a
+        recording to transcribe again."""
+        self.entune.desktop.report_status(delivery=f"{title}. {body}" if body else title)
+        if error:
+            self.platform.tray.alert(title, body, retry)
+        else:
+            self.platform.tray.complete(title, body)
+
+    def retry(self, recording: Recording, seconds: float) -> None:
+        """The pill's Retry: the same recording, transcribed again with the default model
+        and delivered like a dictation."""
+        try:
+            operation = self.entune.operations.begin("dictation", "transcribing")
+        except Busy as exc:
+            self._tell("Entune is busy", str(exc))
+            return
+        self._refresh_state()
+        self._jobs.put((recording, seconds, None, operation))
 
     def _work(self) -> None:
         while True:
@@ -420,7 +451,7 @@ class EntuneApp:
                 # while cancelling, say), and that clip's operation ends, so the next
                 # dictation is not refused as busy.
                 logging.getLogger(__name__).exception("Transcription worker")
-                self._notify_later("Entune: transcription failed", f"{type(exc).__name__}: {exc}")
+                self._tell_later("Transcription failed", f"{type(exc).__name__}: {exc}", error=True)
                 self._finish(operation)
             finally:
                 self._jobs.task_done()
@@ -432,19 +463,29 @@ class EntuneApp:
                 self.engine.recording = False
             self.stop_recording()
         if self._recording:
-            quiet = self.recorder.quiet
-            self.platform.tray.set_state("quiet" if quiet else "recording")
-            if quiet and not self._quiet_notified:
+            silence = self.recorder.silence
+            self.platform.tray.set_state(
+                {"start": "quiet", "pause": "silent"}.get(silence or "", "recording")
+            )
+            if silence == "pause" and not self._quiet_notified:
+                # Long into a dictation the pill may be out of sight; this one may notify.
                 self._quiet_notified = True
                 self.platform.actions.notify(
-                    "Entune: microphone very quiet",
-                    "Almost no sound is reaching Entune. Check your microphone in System "
-                    "Settings → Sound → Input. Recording continues.",
+                    "Entune is still recording",
+                    "Nothing has been heard for a while. Recording continues; stop when you"
+                    " are done.",
                 )
         elif operation:
             self.platform.tray.set_state(operation["stage"])
         else:
             self.platform.tray.set_state("idle")
+
+    def _watch(self, operation: Operation) -> None:
+        """Recheck the recording each second, so silence at the start shows within seconds."""
+        if self._quitting or self._operation is not operation or not self._recording:
+            return
+        self._refresh_state()
+        self.platform.call_later(WATCH_SECONDS, lambda: self._watch(operation))
 
     def _finish(self, operation: Operation) -> None:
         if self._operation is operation:
@@ -455,9 +496,7 @@ class EntuneApp:
         saved = self.entune.store.get_recording(recording.id)
         attempt = saved.transcriptions[0].id if saved and saved.transcriptions else None
         self.entune.store.cancel_recording(recording.id, attempt)
-        self._notify_later(
-            "Entune: canceled", "Canceled — audio saved. Open history to transcribe again."
-        )
+        self._tell_later("Canceled", "The audio is saved; transcribe it again from History.")
         self._finish(operation)
 
     def _transcribe_and_deliver(
@@ -491,19 +530,25 @@ class EntuneApp:
                 )
                 return  # ownership lasts through the queued UI delivery
             if attempt.status == "ok":
-                self._notify_later("Entune", "No speech detected.")
+                self._tell_later("No speech detected")
             else:
-                first = (attempt.error or "failed").splitlines()[0]
-                self._notify_later(
-                    f"Entune: {attempt.provider} / {attempt.model} failed",
-                    f"{first}. Open history to retry with another model.",
+                self._tell_later(
+                    f"{attempt.provider} · {attempt.model} failed",
+                    (attempt.error or "No reason given.").strip(),
+                    error=True,
+                    retry=lambda: self.retry(recording, seconds),
                 )
         except CancelledError:
             self._cancelled(operation, recording)
         except (NoDefaultModel, UnknownModel) as exc:
-            self._notify_later("Entune", str(exc))
+            self._tell_later("Choose a speech model", str(exc), error=True)
         except Exception as exc:
-            self._notify_later("Entune: transcription failed", f"{type(exc).__name__}: {exc}")
+            self._tell_later(
+                "Transcription failed",
+                f"{type(exc).__name__}: {exc}",
+                error=True,
+                retry=lambda: self.retry(recording, seconds),
+            )
         finally:
             if upload is not None and operation.cancel.is_set():
                 upload.abort()
@@ -516,55 +561,46 @@ class EntuneApp:
             operation.check()
             actions, permissions = self.platform.actions, self.platform.permissions
             actions.copy_to_clipboard(text)
-            title, completion = "Entune: copied", ""
-            keys_held = f"Copied to clipboard — release shortcut keys and press {PASTE_KEYS}."
+            title, body, error = "Copied to clipboard", "", False
+            keys_held = f"Release the shortcut keys, then press {PASTE_KEYS}."
+            not_allowed = (
+                f"Allow Accessibility in {permissions.settings_hint} to paste. "
+                f"{PASTE_KEYS} for now."
+            )
             if self.engine is not None and self.engine.pressed:
-                completion = keys_held
+                body = keys_held
             elif permissions.can_post():
                 operation.check()
                 outcome = actions.paste_into_focused_app(text, operation.check)
                 if outcome == "keys_held":
-                    completion = keys_held
+                    body = keys_held
                 elif outcome == "no_target":
-                    completion = "Copied to clipboard — no active text field."
+                    body = "No text field was active to paste into."
                 elif outcome == "focus_moving":
-                    completion = "Copied to clipboard — focus kept changing before paste."
+                    body = "Focus kept changing, so it was not pasted."
                 elif outcome == "no_permission":
                     permissions.request_post()
-                    title = "Entune: copied, not pasted"
-                    completion = (
-                        f"Copied to clipboard. Allow Accessibility in {permissions.settings_hint} "
-                        f"to paste. {PASTE_KEYS} for now."
-                    )
+                    title, body, error = "Copied, not pasted", not_allowed, True
                 elif outcome == "sent":
-                    # Windows cannot confirm arrival (an administrator window refuses it).
-                    sent = f"{PASTE_KEYS} sent to the app in front · also copied"
-                    self.entune.desktop.report_status(delivery=sent)
-                    self.platform.tray.complete(sent)
+                    # Windows and Linux cannot confirm arrival.
+                    title, body = f"Pasted with {PASTE_KEYS}", "Also on the clipboard."
                 elif outcome == "unverified":
-                    completion = (
-                        "Copied to clipboard. Paste was sent, but insertion could not be verified."
-                    )
+                    body = "The paste was sent, but could not be confirmed."
                 else:
-                    self.entune.desktop.report_status(delivery="Inserted into current text field")
-                    self.platform.tray.complete("Inserted into current text field")
+                    title, body = "Inserted", "Also on the clipboard."
             else:
                 permissions.request_post()
-                title = "Entune: copied, not pasted"
-                completion = (
-                    f"Copied to clipboard. Allow Accessibility in {permissions.settings_hint} "
-                    f"to paste. {PASTE_KEYS} for now."
-                )
+                title, body, error = "Copied, not pasted", not_allowed, True
             if message:
-                completion = f"{completion or 'Dictation delivered.'} {message}"
-            if completion:
-                self._notify(title, completion)
+                body = f"{body} {message}".strip()
+            self._tell(title, body, error=error)
         except CancelledError:
             self._cancelled(operation, recording)
         except Exception as exc:
-            self._notify_later(
-                "Entune: delivery unavailable",
-                f"{type(exc).__name__}: {exc}. Open history to copy the result.",
+            self._tell_later(
+                "Could not deliver the text",
+                f"{type(exc).__name__}: {exc}. Copy it from History.",
+                error=True,
             )
         finally:
             self._finish(operation)

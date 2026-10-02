@@ -134,9 +134,9 @@ def test_clipboard_completion_is_visible_and_does_not_claim_insertion(
     wait_for(lambda: service.operations.status() is None)
     assert platform.actions.clipboard == "hello from the fake"
     assert platform.actions.pasted == (0 if outcome == "no_target" else 1)
-    expected = "no active text field" if outcome == "no_target" else "could not be verified"
-    assert expected in platform.actions.notices[-1][1]
-    assert expected in platform.tray.status
+    expected = "No text field was active" if outcome == "no_target" else "could not be confirmed"
+    assert platform.tray.notices[-1] == ("Copied to clipboard", platform.tray.notices[-1][1])
+    assert expected in platform.tray.notices[-1][1] and not platform.actions.notices
     app.close()
 
 
