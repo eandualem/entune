@@ -360,8 +360,17 @@ def test_keys_left_held_by_a_missed_release_are_forgotten_after_a_dictation() ->
     assert events == ["cancel"]
     engine.press("fn")
     assert events == ["cancel"]  # stuck: no new dictation could start
-    engine.forget_keys()
+    engine.forget_keys(set())
     engine.press("fn")
     assert events == ["cancel", "start"]
-    engine.forget_keys()  # never while recording
+    engine.forget_keys(set())  # never while recording
     assert engine.pressed == {"fn"} and engine.recording
+
+
+def test_a_key_still_physically_held_is_not_forgotten() -> None:
+    engine, events = make("f5", None, "fn+ctrl")
+    engine.press("f5")
+    engine.press("f5")  # auto-repeat
+    engine.forget_keys({"f5"})  # held through delivery: still down, so still known
+    engine.press("f5")  # its auto-repeat must not start a recording
+    assert events == ["start"]

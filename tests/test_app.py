@@ -86,6 +86,9 @@ class FakeHotkeys:
     def cancel_capture(self) -> None:
         self.capturing = None
 
+    def held(self) -> set[str]:
+        return set()  # nothing is physically down in these tests
+
 
 class FakeActions:
     def __init__(self) -> None:

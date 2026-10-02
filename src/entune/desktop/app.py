@@ -617,7 +617,7 @@ class EntuneApp:
         if self.engine is not None:
             # Still counted as held: a release the listener missed. The paste asks the
             # system which keys are really down, so these are forgotten, not obeyed.
-            self.engine.forget_keys()
+            self.engine.forget_keys(self.platform.hotkeys.held())
 
     def _later(self, action: Callable[[], None]) -> None:
         def run() -> None:

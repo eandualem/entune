@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import sys
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -90,6 +91,15 @@ class HotkeyListener:
     def cancel_capture(self) -> None:
         with self._lock:
             self._capture_done = None
+
+    def held(self) -> set[str]:
+        """The keys seen going down that Windows says are down now."""
+        if sys.platform != "win32":
+            return set()
+        import ctypes
+
+        state = ctypes.windll.user32.GetAsyncKeyState
+        return {name for vk, name in dict(self._pressed_as).items() if state(vk) & 0x8000}
 
     # The hook's thread: name the key and queue it, nothing more.
 
