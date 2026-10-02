@@ -60,6 +60,7 @@ class DictionaryBuilds:
         self._working: Groups | None = None
         self._covered: set[str] = set()
         self._completed_batches = 0
+        self._planned: tuple[str, ...] | None = None  # the inputs the finished parts came from
         self._operation: Operation | None = None
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
@@ -207,7 +208,7 @@ class DictionaryBuilds:
             self._state = {"phase": "idle"}
 
     def _clear(self) -> None:
-        self._proposal = self._spec = self._working = None
+        self._proposal = self._spec = self._working = self._planned = None
         self._texts.clear()
         self._covered.clear()
         self._completed_batches = 0
@@ -352,6 +353,13 @@ class DictionaryBuilds:
                                     skipped.append((item.name, why))
                     self._progress(completed=number, skipped=len(skipped))
                 inputs = [self._texts[item.id] for item, _ in spec.audio if item.id in self._texts]
+                planned = tuple(item.id for item in inputs)
+                if self._planned is not None and planned != self._planned:
+                    # A recording skipped before transcribed on Retry: the parts are cut
+                    # differently now, so generation starts over rather than resume.
+                    self._working, self._completed_batches = None, 0
+                    self._covered.clear()
+                self._planned = planned
                 if not inputs:
                     name, why = skipped[0]
                     count = len(spec.audio)
