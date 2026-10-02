@@ -8,6 +8,7 @@ while another app has focus, which native Wayland refuses.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import sys
@@ -93,15 +94,38 @@ def on_ui_thread_wait(action: Callable[[], Any]) -> Any:
     return result[0]
 
 
-def allow_clipboard(native: Any) -> None:
-    """Let the page's Copy buttons write the clipboard, as WebKit and WebView2 do."""
+def prepare_page(native: Any) -> None:
+    """Let the page's Copy buttons write the clipboard, as WebKit and WebView2 do, and
+    save exports through a Save panel: pywebview's own handler calls a Qt 5 method
+    (setPath) that PySide6's download request does not have."""
     from PySide6.QtWebEngineCore import QWebEngineSettings
+    from PySide6.QtWidgets import QFileDialog
 
-    def allow() -> None:
-        settings = native.webview.page().settings()
-        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
+    def save(download: Any) -> None:
+        suggested = download.downloadFileName() or "Entune export"
+        start = str(Path(download.downloadDirectory() or Path.home()) / suggested)
+        path, _ = QFileDialog.getSaveFileName(native, "Save", start)
+        if not path:
+            download.cancel()
+            return
+        download.setDownloadDirectory(str(Path(path).parent))
+        download.setDownloadFileName(Path(path).name)
+        download.accept()
 
-    on_ui_thread(allow)
+    def prepare() -> None:
+        if getattr(native, "entune_prepared", False):
+            return  # the window was shown before: once is enough, or exports ask twice
+        native.entune_prepared = True
+        page = native.webview.page()
+        page.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True
+        )
+        requested = page.profile().downloadRequested
+        with contextlib.suppress(RuntimeError, TypeError):
+            requested.disconnect(native.on_download_requested)
+        requested.connect(save)
+
+    on_ui_thread(prepare)
 
 
 class TrayIcon:

@@ -326,9 +326,9 @@ class _Window:
         self._window.events.closing += self._on_closing
         self._window.events.shown += self._on_shown
         if sys.platform == "linux":
-            from entune.desktop.linux.qt import allow_clipboard
+            from entune.desktop.linux.qt import prepare_page
 
-            self._window.events.shown += lambda: allow_clipboard(self._window.native)
+            self._window.events.shown += lambda: prepare_page(self._window.native)
         if sys.platform == "darwin":
             # Frameless fills the title area; restore and align the real Mac controls.
             self._window.events.before_show += self._layout_titlebar

@@ -41,3 +41,28 @@ def test_our_virtual_keyboard_and_mice_are_not_keyboards() -> None:
 
 def test_uinput_setup_matches_the_kernel_struct() -> None:
     assert len(linux_input.setup_bytes(b"x")) == 92
+
+
+def test_an_unplugged_keyboard_releases_the_keys_it_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+    from pathlib import Path
+
+    seen: list[tuple[int, bool]] = []
+    reader = linux_input.KeyboardReader(lambda code, down: seen.append((code, down)))
+    path = Path("/dev/input/event9")
+    reader._devices[path] = 99
+    unplugged = False
+
+    def read(fd: int, size: int) -> bytes:
+        if unplugged:
+            raise OSError(19, "No such device")
+        return linux_input.event_bytes(linux_input.EV_KEY, 100, 1)
+
+    monkeypatch.setattr(os, "read", read)
+    monkeypatch.setattr(os, "close", lambda fd: None)
+    reader._read(path, 99)  # the hold key goes down
+    unplugged = True
+    reader._read(path, 99)  # then the keyboard is gone
+    assert seen == [(100, True), (100, False)] and path not in reader._devices
