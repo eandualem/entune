@@ -14,6 +14,7 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import CancelledError
+from functools import partial
 
 from entune.app.entune import Entune
 from entune.app.models import NoDefaultModel, UnknownModel
@@ -194,12 +195,13 @@ class EntuneApp:
             # Any settings or dictionary change lands here, including an agent's
             # corrections mid-dictation; a new engine would forget that a key is held.
             return
-        self.engine = ShortcutEngine(
+        engine = ShortcutEngine(
             shortcuts,
-            lambda: self._key_actions.put(self.start_recording),
+            lambda: self._key_actions.put(partial(self.start_recording, engine, engine.starts)),
             lambda: self._key_actions.put(self.stop_recording),
             lambda: self._key_actions.put(self.cancel_recording),
         )
+        self.engine = engine
         self.platform.hotkeys.start(self.engine)
         self._listening = True
         self._set_status(f"Dictate: {shortcuts.describe()}")
@@ -296,15 +298,22 @@ class EntuneApp:
             except Exception:
                 logging.getLogger(__name__).exception("A shortcut action failed")
 
-    def start_recording(self) -> None:
+    def start_recording(self, engine: ShortcutEngine | None = None, start: int = 0) -> None:
+        """`engine` and `start` say which key press asked; a failure resets only that one."""
+
+        def failed() -> None:
+            if engine is not None:
+                engine.start_failed(start)
+            elif self.engine:
+                self.engine.recording = False
+
         with self._close_lock:
             if self._quitting:
                 return
             try:
                 operation = self.entune.operations.begin("dictation", "recording")
             except Busy as exc:
-                if self.engine:
-                    self.engine.recording = False
+                failed()
                 self._notify_later("Entune: busy", str(exc))
                 return
             self._operation = operation
@@ -315,8 +324,7 @@ class EntuneApp:
                 message = f"{type(exc).__name__}: {exc}"
                 self.entune.desktop.report_status(lastError=message)
                 self._notify_later("Entune: microphone", message)
-                if self.engine:
-                    self.engine.recording = False
+                failed()
                 if self._upload is not None:
                     self._upload.abort()
                     self._upload = None

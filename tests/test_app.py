@@ -277,7 +277,7 @@ def test_recording_starts_off_the_keyboard_listener_thread(tmp_path: Path) -> No
     app = EntuneApp(entune, FakePlatform(), "http://localhost:0/", recorder=recorder)
     entune.settings.set_shortcuts("alt_r", None)
     started_on: list[threading.Thread] = []
-    app.start_recording = lambda: started_on.append(threading.current_thread())  # type: ignore[method-assign]
+    app.start_recording = lambda *_: started_on.append(threading.current_thread())  # type: ignore[method-assign]
     app.engine.press("alt_r")  # type: ignore[union-attr]
     wait_for(lambda: len(started_on) == 1)
     assert started_on[0] is not threading.current_thread()

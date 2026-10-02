@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 
 from entune.app.shortcuts import Shortcuts
@@ -35,8 +36,25 @@ class ShortcutEngine:
         self._chord_fired = False
         self._hold_stop_pending = False
         self._cancelled = False
+        self.starts = 0  # numbers each start, so a start that fails late resets only itself
+        self._lock = threading.RLock()  # the listener's thread and the app's worker
 
     def press(self, key: str) -> None:
+        with self._lock:
+            self._press(key)
+
+    def release(self, key: str) -> None:
+        with self._lock:
+            self._release(key)
+
+    def start_failed(self, start: int) -> None:
+        """Start number `start` did not record. When the key has been pressed again since,
+        that newer start owns the state and its release must still stop it."""
+        with self._lock:
+            if start == self.starts:
+                self.recording = self._held = False
+
+    def _press(self, key: str) -> None:
         if key in self.pressed:
             return  # the OS auto-repeats a held key; only a new physical press counts
         self.pressed.add(key)
@@ -79,7 +97,7 @@ class ShortcutEngine:
                     # the chord and start again; this press has done its job until released.
                     self._chord_fired = True
 
-    def release(self, key: str) -> None:
+    def _release(self, key: str) -> None:
         self.pressed.discard(key)
         if self._cancelled:
             if not self.pressed.intersection(self.shortcuts.cancel or ()):
@@ -95,6 +113,7 @@ class ShortcutEngine:
             self._chord_fired = False
 
     def _start(self) -> None:
+        self.starts += 1
         self.recording = True
         self._on_start()
 

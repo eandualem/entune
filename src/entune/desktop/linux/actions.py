@@ -8,6 +8,9 @@ the same text in both, one keystroke pastes everywhere, terminals included.
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -38,6 +41,16 @@ def _copy(text: str) -> None:
         clipboard.setText(text, QClipboard.Mode.Selection)
 
 
+def _copy_wayland(text: str) -> None:
+    """Entune's window is an XWayland one, and a compositor may keep a background X11
+    selection from the Wayland apps; wl-copy sets the Wayland clipboard itself."""
+    if not os.environ.get("WAYLAND_DISPLAY") or (wl_copy := shutil.which("wl-copy")) is None:
+        return
+    subprocess.run([wl_copy], input=text.encode(), timeout=5, check=True)
+    # Not every compositor has a primary selection; the clipboard is what matters.
+    subprocess.run([wl_copy, "--primary"], input=text.encode(), timeout=5, check=False)
+
+
 class Actions:
     def __init__(self, notify: Callable[[str, str], None], held: Callable[[], set[int]]) -> None:
         self._notify = notify
@@ -46,6 +59,7 @@ class Actions:
 
     def copy_to_clipboard(self, text: str) -> None:
         on_ui_thread_wait(lambda: _copy(text))
+        _copy_wayland(text)
 
     def paste_into_focused_app(
         self, text: str, check: Callable[[], None] | None = None

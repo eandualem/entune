@@ -18,6 +18,7 @@ from typing import Any
 assert sys.platform == "linux"  # imported only there; type checkers skip the rest elsewhere
 
 os.environ.setdefault("QT_API", "pyside6")
+os.environ.setdefault("PYWEBVIEW_GUI", "qt")  # else pywebview tries GTK first and logs why not
 if os.environ.get("WAYLAND_DISPLAY") and os.environ.get("DISPLAY"):
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 

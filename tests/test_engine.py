@@ -336,3 +336,18 @@ def test_native_listener_reads_keyboard_layout_on_the_creating_thread(
 
     assert reads == [threading.current_thread()]
     assert contexts == [("type", b"layout")]
+
+
+def test_a_start_that_fails_late_does_not_end_a_newer_hold() -> None:
+    engine, events = make("alt_r", None)
+    engine.press("alt_r")
+    first = engine.starts
+    engine.release("alt_r")
+    engine.press("alt_r")  # pressed again while the first start was still starting
+    engine.start_failed(first)
+    assert engine.recording
+    engine.release("alt_r")
+    assert events == ["start", "stop", "start", "stop"]
+    engine.press("alt_r")
+    engine.start_failed(engine.starts)  # its own start failed: the next press starts again
+    assert not engine.recording

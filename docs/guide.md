@@ -98,13 +98,14 @@ bottom-left corner and never takes the keyboard focus.
 ## Linux
 
 Entune runs as its own app on Linux, with its own window, icon and tray item, on
-X11 and on Wayland. It needs two system libraries that Python packages cannot
-bring: PortAudio for the microphone and the X cursor library for its window. If
-one is missing, `entune` prints the command that installs it, for example on
-Ubuntu or Debian:
+X11 and on Wayland. Its window and microphone use a few system libraries that
+Python packages cannot bring, and in a Wayland session it also uses `wl-copy`. If
+any is missing, `entune` names it and prints the one command that installs it
+(package names for apt, library names for dnf). On a fresh Ubuntu 24.04 desktop
+in a Wayland session that is:
 
 ```sh
-sudo apt install libportaudio2 libxcb-cursor0
+sudo apt install libminizip1t64 libportaudio2 libsnappy1v5 libxcb-cursor0 wl-clipboard
 ```
 
 Get started then asks for **keyboard access**, Linux's counterpart of the Mac's
@@ -133,7 +134,8 @@ The tray item appears where the desktop shows tray icons: KDE, and GNOME with th
 AppIndicator extension (Ubuntu includes it). Without one, closing the window keeps
 Entune running for your shortcut; open Entune from the applications menu to bring
 the window back. Under Wayland, Entune's window runs through XWayland, so it can
-set the clipboard and show the recording pill while another app has the focus.
+show the recording pill while another app has the focus, and `wl-copy` puts the
+text on the Wayland clipboard for the app you are in.
 
 ## Dictating
 

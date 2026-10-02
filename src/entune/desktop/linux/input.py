@@ -191,7 +191,9 @@ def event_bytes(kind: int, code: int, value: int) -> bytes:
 class VirtualKeyboard:
     """A keyboard made through /dev/uinput, kept for the app's lifetime once created."""
 
-    KEYS = (KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_INSERT, 47)  # 47: V
+    # Every ordinary key, as a real keyboard has: udev classes a device with only a few
+    # keys as a generic key device, which libinput, and so the desktop, can ignore.
+    KEYS = range(KEY_ESC, 249)  # up to KEY_MICMUTE
 
     def __init__(self) -> None:
         self._fd: int | None = None

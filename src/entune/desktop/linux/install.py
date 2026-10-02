@@ -27,10 +27,12 @@ QT_FILES = (
     "Qt/libexec/QtWebEngineProcess",
 )
 PORTAUDIO = "libportaudio.so.2"  # loaded by sounddevice at the first recording
+WL_COPY = "wl-copy"  # sets the clipboard for Wayland apps; a program, not a library
 # Debian and Ubuntu package names; the first that apt knows is used (Ubuntu 24.04 renamed
 # some with a t64 suffix). Fedora's dnf installs by library name, so needs no table.
 APT = {
     PORTAUDIO: ("libportaudio2",),
+    WL_COPY: ("wl-clipboard",),
     "libsnappy.so.1": ("libsnappy1v5",),
     "libminizip.so.1": ("libminizip1t64", "libminizip1"),
     "libasound.so.2": ("libasound2t64", "libasound2"),
@@ -102,10 +104,13 @@ def install_entry(home: Path | None = None) -> Path:
 
 
 def missing_libraries() -> list[str]:
-    """The system libraries Entune would fail to load, by file name (soname)."""
+    """The system libraries Entune would fail to load, by file name (soname), and wl-copy
+    in a Wayland session."""
     missing: set[str] = set()
     if ctypes.util.find_library("portaudio") is None:
         missing.add(PORTAUDIO)
+    if os.environ.get("WAYLAND_DISPLAY") and shutil.which(WL_COPY) is None:
+        missing.add(WL_COPY)
     spec = importlib.util.find_spec("PySide6")
     ldd = shutil.which("ldd")
     if spec is None or not spec.submodule_search_locations or ldd is None:
@@ -136,7 +141,9 @@ def install_command(missing: list[str]) -> str:
         return "sudo apt install " + " ".join(packages)
     if shutil.which("dnf"):
         bits = "(64bit)" if sys.maxsize > 2**32 else ""
-        return "sudo dnf install " + " ".join(f"'{name}(){bits}'" for name in missing)
+        return "sudo dnf install " + " ".join(
+            "wl-clipboard" if name == WL_COPY else f"'{name}(){bits}'" for name in missing
+        )
     return "Install the packages that provide: " + ", ".join(missing)
 
 
