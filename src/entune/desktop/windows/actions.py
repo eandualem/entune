@@ -88,8 +88,14 @@ def save_clipboard() -> tuple[str, str]:
     """("text", the text), ("empty", ""), or ("other", "") for what text cannot restore."""
     if not _user32.CountClipboardFormats():
         return "empty", ""
-    text = read_clipboard()
-    return ("text", text) if text else ("other", "")
+    for _attempt in range(20):  # another app may hold the clipboard for a moment
+        try:
+            text = read_clipboard()
+        except OSError:
+            time.sleep(0.05)
+            continue
+        return ("text", text) if text else ("other", "")
+    return "other", ""  # unreadable now: the paste goes ahead, nothing is put back
 
 
 def restore_clipboard(saved: tuple[str, str]) -> None:

@@ -85,22 +85,27 @@ class Actions:
         assert isinstance(saved, dict)
 
         def restore() -> bool:
-            if QApplication.clipboard().text() != self._copied:
-                return False  # something else was copied since
+            """Each selection on its own: only one still holding our text is put back."""
+            board, clipboard_restored = QApplication.clipboard(), False
             for name, formats in saved.items():
-                _put_back(getattr(QClipboard.Mode, name), formats)
-            return True
+                mode = getattr(QClipboard.Mode, name)
+                if board.text(mode) != self._copied:
+                    continue  # something else was copied or selected since
+                _put_back(mode, formats)
+                clipboard_restored |= name == "Clipboard"
+            return clipboard_restored
 
-        if (
-            on_ui_thread_wait(restore)
-            and os.environ.get("WAYLAND_DISPLAY")
-            and shutil.which("wl-copy")
-        ):
-            text = saved.get("Clipboard", {}).get("text/plain")
-            if text:
-                subprocess.run(["wl-copy"], input=text, timeout=5, check=False)
+        wl_copy = shutil.which("wl-copy") if os.environ.get("WAYLAND_DISPLAY") else None
+        if on_ui_thread_wait(restore) and wl_copy:
+            # The Wayland clipboard was set by wl-copy, so it is put back the same way,
+            # in the saved form: the text's own type, or an image's.
+            formats = saved.get("Clipboard", {})
+            kinds = sorted(formats, key=lambda kind: not kind.startswith("text/plain"))
+            if kinds:
+                command = [wl_copy, "--type", kinds[0]]
+                subprocess.run(command, input=formats[kinds[0]], timeout=5, check=False)
             else:
-                subprocess.run(["wl-copy", "--clear"], timeout=5, check=False)
+                subprocess.run([wl_copy, "--clear"], timeout=5, check=False)
 
     def copy_to_clipboard(self, text: str) -> None:
         self._copied = text

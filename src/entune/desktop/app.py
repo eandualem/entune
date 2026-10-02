@@ -61,6 +61,7 @@ class EntuneApp:
         self._closed = False
         self._close_lock = threading.RLock()
         self._operation: Operation | None = None
+        self._deliveries = 0  # numbers each delivery; only the latest restores the clipboard
         self._earlier: dict[int, set[int]] = {}  # id(operation): a retry's earlier attempts
         self._captures: queue.Queue[tuple[Capture, Upload | None, Operation]] = queue.Queue()
         self._jobs: queue.Queue[tuple[Recording, float, Upload | None, Operation]] = queue.Queue()
@@ -570,6 +571,8 @@ class EntuneApp:
             operation.check()
             actions, permissions = self.platform.actions, self.platform.permissions
             saved = actions.save_clipboard()
+            self._deliveries += 1
+            delivery = self._deliveries
             actions.copy_to_clipboard(text)
             title, body, error = "Copied to clipboard", "", False
             keys_held = f"Release the shortcut keys, then press {PASTE_KEYS}."
@@ -597,9 +600,12 @@ class EntuneApp:
                     title = "Pasted"
                 if outcome in ("inserted", "unverified", "sent"):
                     # Pasted, so the clipboard was only the way in: put back what was there.
-                    self.platform.call_later(
-                        CLIPBOARD_RESTORE_SECONDS, lambda: actions.restore_clipboard(saved)
-                    )
+
+                    def restore() -> None:
+                        if delivery == self._deliveries:  # a later dictation owns it now
+                            actions.restore_clipboard(saved)
+
+                    self.platform.call_later(CLIPBOARD_RESTORE_SECONDS, restore)
             else:
                 permissions.request_post()
                 title, body, error = "Copied, not pasted", not_allowed, True

@@ -206,3 +206,20 @@ def test_model_selected_at_speech_start_and_later_change_does_not_redirect(
     assert service.store.list_recordings()[0].transcriptions[0].model == "bad"
     assert platform.actions.pasted == 1
     app.close()
+
+
+def test_only_the_latest_delivery_puts_the_clipboard_back(tmp_path: Path) -> None:
+    app, platform, service = configured(tmp_path)
+    assert isinstance(platform.actions, FakeActions)
+    platform.actions.clipboard = "copied earlier"
+    for _ in range(2):  # two dictations, the second before the first's restore is due
+        app.start_recording()
+        app.stop_recording()
+        wait_for(lambda: service.operations.status() is None)
+    restores = [action for delay, action in platform.timers if delay == CLIPBOARD_RESTORE_SECONDS]
+    assert len(restores) == 2
+    restores[0]()  # the first is stale: the second dictation owns the clipboard now
+    assert platform.actions.restored == []
+    restores[1]()
+    assert platform.actions.restored == ["hello from the fake"]  # what was there before it
+    app.close()
