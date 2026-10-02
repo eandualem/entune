@@ -66,12 +66,25 @@ def wispr_audio(source: Path) -> Generator[tuple[str, bytes, str | None], None, 
             yield f"wispr-{identifier}.wav", data, recorded_at(timestamp)
 
 
+def _has_data(path: Path) -> bool:
+    """Path.is_file() answers False when macOS refuses access; say so instead."""
+    try:
+        return path.stat().st_size > 0
+    except FileNotFoundError:
+        return False
+    except PermissionError as exc:
+        raise ValueError(
+            f"Entune may not read {path}. Allow Entune in System Settings > Privacy & Security"
+            " > Full Disk Access, then import again."
+        ) from exc
+
+
 def import_wispr(store: Store) -> dict[str, int]:
     root = wispr_directory()
     sources = [
         p
         for p in [root / "flow.sqlite", *sorted((root / "backups").glob("*.sqlite"))]
-        if p.is_file() and p.stat().st_size
+        if _has_data(p)
     ]
     if not sources:
         raise ValueError("No local Wispr Flow audio database found on this Mac.")
