@@ -114,11 +114,7 @@ function show(name) { selectTab(name); showView(name); }
 // The Models page: three jobs, one at a time, like Settings.
 const MODEL_SECTIONS = ["cloud", "local", "performance"];
 const modelSections = Object.fromEntries(MODEL_SECTIONS.map((name) => [name, el(`models-${name}`)]));
-let modelSectionChosen = false;
-const pickModelSection = segmentedGroup(Object.fromEntries(MODEL_SECTIONS.map((name) => [name, el(`msec-${name}`)])), (name) => {
-  modelSectionChosen = true;
-  showModelSection(name);
-});
+const pickModelSection = segmentedGroup(Object.fromEntries(MODEL_SECTIONS.map((name) => [name, el(`msec-${name}`)])), showModelSection);
 function showModelSection(name) {
   for (const key in modelSections) modelSections[key].toggleAttribute("data-active", key === name);
 }
@@ -210,8 +206,6 @@ async function loadMetrics() {
   const rows = await api("/api/metrics");
   el("metrics-table").hidden = rows.length === 0;
   el("metrics-empty").hidden = rows.length > 0;
-  // Setup comes first until there is something to compare; then the page opens on Performance.
-  if (!modelSectionChosen) { const start = rows.length ? "performance" : "cloud"; pickModelSection(start); showModelSection(start); }
   metricsRows.replaceChildren(
     ...rows.map((m) => {
       const row = document.createElement("div");
@@ -240,7 +234,8 @@ async function loadMetrics() {
 
 // ---- Getting started: the empty history, as steps that tick themselves off ----
 // In order: a speech model, then (in the Mac app) the permissions, then a shortcut.
-const PERMISSIONS = { microphone: "Microphone", inputMonitoring: "Input Monitoring", accessibility: "Accessibility" };
+// Input Monitoring last: macOS asks to quit and reopen after it, and the reopened app sees all three.
+const PERMISSIONS = { microphone: "Microphone", accessibility: "Accessibility", inputMonitoring: "Input Monitoring" };
 function renderStart() {
   const kbd = (keys) => Object.assign(document.createElement("kbd"), { textContent: keys });
   const haveShortcut = Boolean(shortcuts.hold || shortcuts.toggle);
@@ -274,7 +269,7 @@ function renderStart() {
   if (desktop) {
     const allowed = Object.keys(permissionStates).every((name) => permissionStates[name] === "granted");
     const li = system === "macos"
-      ? step(allowed, "Allow Entune on this Mac", ["The microphone to record; Input Monitoring and Accessibility so your shortcut works in any app and the text is typed there."], null)
+      ? step(allowed, "Allow Entune on this Mac", ["The microphone to record; Accessibility and Input Monitoring so your shortcut works in any app and the text is typed there."], null)
       : step(allowed, "Allow the microphone", ["Windows lets desktop apps use the microphone unless it is turned off in Privacy settings."], null);
     if (!allowed) li.querySelector(".what").append(permissionRows());
     steps.push(li);

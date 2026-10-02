@@ -8,6 +8,7 @@ launching app in System Settings > Privacy & Security.
 from __future__ import annotations
 
 import AppKit
+import ApplicationServices
 import AVFoundation
 import Quartz
 from Foundation import NSURL
@@ -21,8 +22,11 @@ def can_listen() -> bool:
 
 
 def can_post() -> bool:
-    """Accessibility granted to this process, needed to send Cmd+V."""
-    return bool(Quartz.CGPreflightPostEventAccess())
+    """Accessibility granted to this process, needed to send Cmd+V.
+
+    The preflight answer can stay stale until a relaunch; AXIsProcessTrusted sees a
+    grant at once, so setup shows it without asking to quit."""
+    return bool(Quartz.CGPreflightPostEventAccess() or ApplicationServices.AXIsProcessTrusted())
 
 
 def request_listen() -> None:

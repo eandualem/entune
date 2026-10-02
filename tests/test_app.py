@@ -217,7 +217,15 @@ def make(tmp_path: Path, **kwargs: bool) -> tuple[EntuneApp, FakePlatform, Entun
     platform = FakePlatform(**kwargs)
     second = Capture(b"\x00\x00" * 16_000, 16_000)  # one second, above the tap threshold
     app = EntuneApp(entune, platform, "http://localhost:0/", recorder=FakeRecorder(second))
+    app._key_actions = Immediately()  # type: ignore[assignment]
     return app, platform, entune
+
+
+class Immediately:
+    """Runs a shortcut action as it is queued, so a test sees its effect after `press`."""
+
+    def put(self, action: Callable[[], None]) -> None:
+        action()
 
 
 def wait_for(condition: Callable[[], bool], seconds: float = 3.0) -> None:
@@ -261,6 +269,18 @@ def test_a_shortcut_with_fn_also_needs_accessibility(tmp_path: Path) -> None:
     platform.permissions.post = True
     app._recheck_permission()
     assert platform.hotkeys.running and platform.tray.status == "Dictate: hold fn"
+
+
+def test_recording_starts_off_the_keyboard_listener_thread(tmp_path: Path) -> None:
+    entune = Entune(Store(tmp_path), [StubProvider()])
+    recorder = FakeRecorder(Capture(b"\x00\x00" * 16_000, 16_000))
+    app = EntuneApp(entune, FakePlatform(), "http://localhost:0/", recorder=recorder)
+    entune.settings.set_shortcuts("alt_r", None)
+    started_on: list[threading.Thread] = []
+    app.start_recording = lambda: started_on.append(threading.current_thread())  # type: ignore[method-assign]
+    app.engine.press("alt_r")  # type: ignore[union-attr]
+    wait_for(lambda: len(started_on) == 1)
+    assert started_on[0] is not threading.current_thread()
 
 
 def test_a_dictation_is_transcribed_copied_and_pasted(tmp_path: Path) -> None:

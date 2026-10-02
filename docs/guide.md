@@ -30,8 +30,8 @@ Entune opens on **Get started**, three steps in order:
    or download a local model. The first model you set up becomes your default,
    and Entune returns to Get started. Parakeet additionally needs its separately
    installed engine; see [Speech models and cost](#speech-models-and-cost).
-2. **Allow permissions.** On macOS: Microphone, Input Monitoring and
-   Accessibility, each with its own button; see [Permissions (macOS)](#permissions-macos).
+2. **Allow permissions.** On macOS: Microphone, Accessibility and Input
+   Monitoring, each with its own button; see [Permissions (macOS)](#permissions-macos).
    On Windows only the microphone matters; see [Windows](#windows).
 3. **Set a shortcut and dictate.** Choose the key you hold while speaking, then
    hold it in any app and speak. Release it to transcribe and paste. The
@@ -56,8 +56,8 @@ to **System Settings › Privacy & Security** to enable Entune:
 | Permission | Why Entune needs it |
 |---|---|
 | Microphone | to record the clip |
-| Input Monitoring | to see the shortcut while another app has focus |
 | Accessibility | to paste the transcript into that app |
+| Input Monitoring | to see the shortcut while another app has focus |
 
 They are granted to **Entune** in Applications, the app `entune` installs. It is
 a small launcher that runs your installation; it is signed on your Mac without
@@ -67,8 +67,9 @@ would instead need them granted to the terminal.
 
 Microphone access can be requested from setup without making a recording.
 Each row updates when its permission is granted. If access was denied,
-**Open Settings…** takes you to the relevant pane. If macOS asks you to quit,
-reopen Entune to continue; missing permissions bring setup back on launch.
+**Open Settings…** takes you to the relevant pane. Input Monitoring comes last because macOS
+asks you to quit after it: reopen Entune and all three show as allowed.
+Missing permissions bring setup back on launch.
 The Fn key needs Accessibility as well as Input Monitoring.
 
 If setup remains at **1 of 3 allowed**, check Input Monitoring and Accessibility
@@ -192,7 +193,8 @@ belong to, and are never shown again beyond a masked hint. A ChatGPT sign-in is 
 the same way and renewed by Entune; only the account's email is shown.
 
 **Local models** need no key. The Models page lists them with their size and a
-Download button; a model is fetched once (resumes if interrupted) and then
+Download button (Cancel while it downloads); a model is fetched once
+(resumes if interrupted) and then
 sits in the same model lists as the cloud ones, so you can make it the
 default or retry a cloud failure with it. Runs on the GPU on Apple Silicon.
 Local models read WAV, which is what Entune records; other imported audio

@@ -232,6 +232,33 @@ def test_rapid_selection_changes_coalesce_to_the_latest_model(
     assert app.close()
 
 
+def test_remove_cancels_a_running_download_and_deletes_its_partial_file(tmp_path: Path) -> None:
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+
+    class Stream(httpx.SyncByteStream):
+        def __iter__(self) -> Any:
+            yield b"first"
+            entered.set()
+            release.wait(3)
+            yield b"second"
+
+    local = WhisperCpp(
+        tmp_path, client=mock_client(lambda req: httpx.Response(200, stream=Stream()))
+    )
+    local.download("base.en")
+    assert entered.wait(2)
+    assert [m.state for m in local.catalogue() if m.name == "base.en"] == ["downloading"]
+    remover = threading.Thread(target=local.remove, args=("base.en",))
+    remover.start()
+    release.set()
+    remover.join(3)
+    assert not remover.is_alive()
+    assert [m.state for m in local.catalogue() if m.name == "base.en"] == ["absent"]
+    assert not list(tmp_path.iterdir())
+
+
 def test_shutdown_stops_download_before_next_chunk_and_keeps_resumable_bytes(
     tmp_path: Path,
 ) -> None:

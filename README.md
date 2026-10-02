@@ -56,8 +56,8 @@ With pip, use `python -m pip install "git+https://github.com/eandualem/entune.gi
    download a local model. The first one becomes your default. AssemblyAI is a
    straightforward cloud starting point; Parakeet is our local recommendation
    on Apple Silicon.
-2. **Allow permissions:** on macOS, Microphone, Input Monitoring and
-   Accessibility, each from its own button. On Windows, only the microphone.
+2. **Allow permissions:** on macOS, Microphone, Accessibility and Input
+   Monitoring, each from its own button. On Windows, only the microphone.
 3. **Set a shortcut,** then hold it in any app and speak. The text is typed
    where you are and copied. Or click **Record**. Your audio and transcript are
    saved in **History**.

@@ -62,6 +62,8 @@ class EntuneApp:
         self._jobs: queue.Queue[tuple[Recording, float, Upload | None, Operation]] = queue.Queue()
         threading.Thread(target=self._persist, daemon=True, name="entune-persist").start()
         threading.Thread(target=self._work, daemon=True, name="entune-transcribe").start()
+        self._key_actions: queue.Queue[Callable[[], None]] = queue.Queue()
+        threading.Thread(target=self._act_on_keys, daemon=True, name="entune-keys").start()
         self._server_answers = server_answers or self._probe_server
 
         entune.operations.listeners.append(lambda: self._later(self._refresh_state))
@@ -193,7 +195,10 @@ class EntuneApp:
             # corrections mid-dictation; a new engine would forget that a key is held.
             return
         self.engine = ShortcutEngine(
-            shortcuts, self.start_recording, self.stop_recording, self.cancel_recording
+            shortcuts,
+            lambda: self._key_actions.put(self.start_recording),
+            lambda: self._key_actions.put(self.stop_recording),
+            lambda: self._key_actions.put(self.cancel_recording),
         )
         self.platform.hotkeys.start(self.engine)
         self._listening = True
@@ -279,7 +284,17 @@ class EntuneApp:
         ):
             self.apply_shortcut()
 
-    # Recording, called from the keyboard listener's thread
+    # Recording, called in order from one worker, never the keyboard listener's thread
+
+    def _act_on_keys(self) -> None:
+        """On macOS the listener with Fn is an active event tap: a slow first microphone
+        start inside it made macOS disable the tap and drop the key's release."""
+        while True:
+            action = self._key_actions.get()
+            try:
+                action()
+            except Exception:
+                logging.getLogger(__name__).exception("A shortcut action failed")
 
     def start_recording(self) -> None:
         with self._close_lock:
