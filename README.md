@@ -15,6 +15,10 @@ Choose a cloud or local speech model, and keep your recordings on your computer.
 Its personal dictionary learns from your dictation; a decision model chooses
 when a dictionary replacement actually fits the sentence.
 
+From install to the first dictation, on a Mac:
+
+https://github.com/user-attachments/assets/99d4f7a1-48a2-4e69-97d2-e04d8bc200fe
+
 ## Install
 
 With [uv](https://docs.astral.sh/uv/getting-started/installation/), one command
@@ -78,11 +82,6 @@ The full setup and dictation have been tested on macOS and Windows; see
 for what differs there. Linux is new: see
 [Linux](https://github.com/eandualem/entune/blob/develop/docs/guide.md#linux) for
 the two system libraries it needs and how shortcuts work on X11 and Wayland.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/eandualem/entune/main/docs/demo/history-light.jpg" width="49%" alt="Entune history: recordings, transcripts, audio playback and retry" />
-  <img src="https://raw.githubusercontent.com/eandualem/entune/main/docs/demo/models-dark.jpg" width="49%" alt="Choose your speech models and configure their keys" />
-</p>
 
 ## A dictionary match should not always become a replacement
 
