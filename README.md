@@ -61,8 +61,8 @@ With pip, use `python -m pip install "git+https://github.com/eandualem/entune.gi
    Monitoring, each from its own button. On Windows, only the microphone. On
    Linux, keyboard access: one command, run once, then log out and back in.
 3. **Set a shortcut,** then hold it in any app and speak. The text is pasted
-   where you are, and your clipboard is left as it was; with no text field active,
-   the text is copied instead. Or click **Record** in Entune's window. Your audio and
+   where you are, and what you had copied is put back (on Windows, copied text only);
+   with no text field active, the text is copied instead. Or click **Record** in Entune's window. Your audio and
    transcript are saved in **History**.
 
 You can start without a dictionary or decision model and add them later.

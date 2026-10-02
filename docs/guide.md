@@ -166,7 +166,9 @@ dictation owns the app until delivery completes; a new one must wait. Learning o
 same guard through proposal review. The final text is pasted into the **current
 editable input**, including in a different app from where recording began. The paste
 borrows the clipboard: what was on it is put back a moment later, unless you copied
-something else meanwhile. With no editable input, the text stays on the clipboard.
+something else meanwhile. On Windows only copied text is put back; an image or files
+copied before a dictation are replaced. With no editable input, the text stays on the
+clipboard.
 
 The pill then says what happened, growing to show the detail: pasted, or copied with
 the reason it was not pasted (no text field was active, say). An error stays on the
