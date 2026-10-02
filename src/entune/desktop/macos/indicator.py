@@ -293,6 +293,7 @@ class Indicator:
 
         label = AppKit.NSTextField.wrappingLabelWithString_("")
         label.setTextColor_(AppKit.NSColor.whiteColor())
+        label.setSelectable_(False)  # selectable, a click would make the panel take focus
         content.addSubview_(label)
         body = AppKit.NSTextField.wrappingLabelWithString_("")
         body.setTextColor_(MUTED)

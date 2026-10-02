@@ -145,6 +145,7 @@ class KeyboardReader:
     def __init__(self, on_key: Callable[[int, bool], None]) -> None:
         self._on_key = on_key
         self._devices: dict[Path, int] = {}
+        self._down: dict[Path, set[int]] = {}  # per keyboard, the keys it has down
         self._stopped = False
         self._wake_r, self._wake_w = os.pipe()
 
@@ -197,11 +198,15 @@ class KeyboardReader:
             data = os.read(fd, EVENT.size * 64)
         except BlockingIOError:
             return
-        except OSError:  # unplugged
+        except OSError:  # unplugged: its keys come up, or a held shortcut would never end
             os.close(self._devices.pop(path))
+            for code in self._down.pop(path, set()):
+                self._on_key(code, False)
             return
+        down = self._down.setdefault(path, set())
         for code, value in key_events(data):
             if value in (0, 1):
+                (down.add if value == 1 else down.discard)(code)
                 self._on_key(code, value == 1)
 
 
