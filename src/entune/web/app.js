@@ -6,6 +6,7 @@ import { createHistory } from "./history.js";
 import { placeDetails, renderCard } from "./history-card.js";
 import { createDictionary } from "./dictionary-view.js";
 import { createSettings } from "./settings-view.js";
+import { openApp } from "./intro.js";
 import { LINUX_LABELS, LINUX_SETUP, copySetup, createPermissions } from "./permissions-view.js";
 import { initRecording } from "./recording.js";
 import { ICON, THIS_DEVICE, api, el, errorText, figure, fillModels, segmentedGroup } from "./ui.js";
@@ -450,3 +451,6 @@ if (location.hash === "#settings") show("settings");
 else if (location.hash === "#models") show("models");
 else if (location.hash === "#dictionary") show("dictionary");
 else show("history");
+// A first launch (nothing set up, nothing recorded) opens through the introduction.
+await loadHistory().catch(() => {});
+openApp(!defaultModel && recordingsCount === 0 && !emptyState.hidden);

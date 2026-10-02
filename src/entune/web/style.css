@@ -640,3 +640,46 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .guide li { margin: var(--sp-4) 0; }
 .guide b { color: var(--text); font-weight: 600; }
 .guide-example { margin: var(--sp-8) 0; padding: var(--sp-10) var(--sp-14); border-radius: var(--r-8); background: var(--well); font-size: var(--fs-13); line-height: 1.8; }
+
+/* ---- The first launch's introduction (intro.js) ---- */
+/* Held back until intro.js decides, then risen in as the scene dissolves over it. */
+.intro-pending body > header, .intro-pending body > main { opacity: 0; }
+.intro-leaving body > header, .intro-leaving body > main { animation: intro-arrive 900ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.intro {
+  position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: var(--surface); color: var(--text); font-family: var(--font); pointer-events: none;
+}
+.intro-leaving .intro { animation: intro-leave 900ms cubic-bezier(0.4, 0, 0.2, 1) both; }
+.intro-mark { position: relative; width: 7.5rem; height: 7.5rem; animation: intro-mark 1100ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.intro-mark svg { position: relative; width: 100%; height: 100%; display: block; }
+/* A soft light behind the mark, breathing while it listens. */
+.intro-mark::before {
+  content: ""; position: absolute; inset: -4.5rem; border-radius: 50%;
+  background: radial-gradient(closest-side, var(--accent-wash-hover), transparent);
+  animation: intro-glow 2600ms ease-in-out 300ms both;
+}
+/* The five level bars listen for a moment, each at its own pace, then settle. */
+.intro-mark rect[rx="16.25"] { transform-box: fill-box; transform-origin: center; animation: intro-listen 520ms ease-in-out 600ms 4 alternate both; }
+.intro-mark rect[rx="16.25"]:nth-child(2) { animation-duration: 440ms; animation-delay: 680ms; }
+.intro-mark rect[rx="16.25"]:nth-child(3) { animation-duration: 600ms; animation-delay: 560ms; }
+.intro-mark rect[rx="16.25"]:nth-child(4) { animation-duration: 480ms; animation-delay: 720ms; }
+.intro-mark rect[rx="16.25"]:nth-child(5) { animation-duration: 560ms; animation-delay: 640ms; }
+.intro-name { margin-top: 1.75rem; font-size: 2.5rem; font-weight: 650; letter-spacing: -0.03em; animation: intro-rise 800ms cubic-bezier(0.2, 0.7, 0.2, 1) 1100ms both; }
+.intro-lines { margin-top: 1.75rem; text-align: center; }
+.intro-lines p { margin: 0.5rem 0 0; font-size: 1.3125rem; letter-spacing: -0.01em; color: var(--text-muted); animation: intro-rise 700ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.intro-lines p:nth-child(1) { animation-delay: 2000ms; }
+.intro-lines p:nth-child(2) { animation-delay: 2550ms; }
+.intro-lines p:nth-child(3) { animation-delay: 3100ms; color: var(--accent-text); }
+@keyframes intro-mark { from { opacity: 0; transform: scale(0.9); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes intro-glow { 0% { opacity: 0; transform: scale(0.8); } 55% { opacity: 1; transform: scale(1.05); } 100% { opacity: 0.55; transform: none; } }
+@keyframes intro-listen { from { transform: scaleY(1); } to { transform: scaleY(0.45); } }
+@keyframes intro-rise { from { opacity: 0; transform: translateY(0.5rem); } to { opacity: 1; transform: none; } }
+@keyframes intro-leave { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(1.03); } }
+@keyframes intro-arrive { from { opacity: 0; transform: translateY(0.625rem) scale(0.99); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .intro-mark, .intro-name, .intro-lines p, .intro-leaving .intro, .intro-leaving body > header, .intro-leaving body > main { animation-name: intro-fade; }
+  .intro-leaving .intro { animation-name: intro-fade-out; }
+  .intro-mark rect[rx="16.25"], .intro-mark::before { animation: none; }
+}
+@keyframes intro-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes intro-fade-out { from { opacity: 1; } to { opacity: 0; } }
