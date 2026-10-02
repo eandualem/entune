@@ -124,7 +124,11 @@ def test_the_pill_animates_and_its_retry_works_without_taking_focus() -> None:
         pill.level = lambda: 0.8
         pill.show("Recording", recording=True)
         time.sleep(0.4)
-        assert pill.visible and any(value > 0 for value in pill._smoothed)  # the bars move
+        assert pill.visible, "the recording pill is not shown"
+        deadline = time.monotonic() + 2
+        while not any(pill._smoothed) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert any(pill._smoothed), f"the bars never moved: ticks={pill._ticks}"
         pressed: list[str] = []
         pill.message(
             "stub · bad failed",

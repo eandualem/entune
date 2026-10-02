@@ -169,6 +169,7 @@ class Indicator:
         self._hwnd: Any = None
         self._fonts: dict[tuple[float, int, int], Any] = {}
         self._smoothed = [0.0] * 5
+        self._ticks = 0  # animation frames drawn; tests read it
         self._layout = (0, 0, 0, 0)  # a card's text x, text width, title and body heights
         self.level: Callable[[], float] = lambda: 0.0
         self._proc = WNDPROC(self._window_proc)  # kept: Windows calls it for the window's life
@@ -338,6 +339,7 @@ class Indicator:
         _user32.InvalidateRect(hwnd, None, True)
 
     def _tick(self) -> None:
+        self._ticks += 1
         now = time.monotonic()
         level = max(0.0, min(1.0, self.level()))
         for index in range(5):
