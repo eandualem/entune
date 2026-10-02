@@ -8,7 +8,11 @@ permission: PipeWire and PulseAudio let any desktop app use the microphone.
 
 from __future__ import annotations
 
-from entune.desktop.linux.input import can_read_keyboards, can_write_uinput
+import sys
+
+assert sys.platform != "win32"  # type checkers skip the rest on Windows
+
+from entune.desktop.linux.input import can_read_keyboards, can_write_uinput  # noqa: E402
 
 SETTINGS_HINT = "Settings > General (run the command shown there once)"
 

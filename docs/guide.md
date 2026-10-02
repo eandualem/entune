@@ -39,8 +39,8 @@ Entune opens on **Get started**, three steps in order:
    hold it in any app and speak. Release it to transcribe and paste. The
    recording and result also appear in History.
 
-On Linux, and with `entune --no-menu`, Entune is the page alone, opened in your
-browser at `http://localhost:4187`. It provides recording, history, retry and
+With `entune --no-menu`, Entune serves the page alone at `http://localhost:4187`,
+for a browser you open yourself. It provides recording, history, retry and
 dictionary controls; shortcuts and paste are not available there. Any option,
 for example `entune --no-app`, runs Entune in the terminal instead of installing
 and opening the app. `entune --help` lists `--port`, `--data DIR`, `--no-open`,
@@ -142,7 +142,7 @@ text on the Wayland clipboard for the app you are in.
 In the browser, click **Record**, allow microphone access, then stop recording
 to transcribe. Copy the result from History into another app.
 
-In the desktop app on macOS and Windows, you can also dictate with global shortcuts. Set a shortcut once in Settings, or from Get started. Click
+In the desktop app on macOS, Windows and Linux, you can also dictate with global shortcuts. Set a shortcut once in Settings, or from Get started. Click
 "Set…", press the key or combination, let go. Two recording shortcuts, and both
 can be set:
 

@@ -7,11 +7,14 @@ Windows listener's; only where the keys come from differs.
 
 from __future__ import annotations
 
+import sys
 import threading
 
-from entune.desktop.engine import ShortcutEngine
-from entune.desktop.linux.input import KeyboardReader
-from entune.desktop.windows.hotkeys import HotkeyListener as QueuedHotkeys
+assert sys.platform != "win32"  # reads /dev/input; type checkers skip the rest on Windows
+
+from entune.desktop.engine import ShortcutEngine  # noqa: E402
+from entune.desktop.linux.input import KeyboardReader  # noqa: E402
+from entune.desktop.windows.hotkeys import HotkeyListener as QueuedHotkeys  # noqa: E402
 
 # Linux key codes (linux/input-event-codes.h) -> shortcut names. Letters, digits and
 # punctuation are named by their position on a US keyboard, like Windows' virtual keys,

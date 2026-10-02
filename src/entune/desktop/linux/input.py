@@ -11,13 +11,17 @@ Plain ioctls and struct packing; the `evdev` package would need a compiler to in
 
 from __future__ import annotations
 
-import fcntl
-import os
-import select
-import struct
-import time
-from collections.abc import Callable, Iterator
-from pathlib import Path
+import sys
+
+assert sys.platform != "win32"  # POSIX ioctls; type checkers skip the rest on Windows
+
+import fcntl  # noqa: E402
+import os  # noqa: E402
+import select  # noqa: E402
+import struct  # noqa: E402
+import time  # noqa: E402
+from collections.abc import Callable, Iterator  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 INPUT_DIR = Path("/dev/input")
 UINPUT = Path("/dev/uinput")

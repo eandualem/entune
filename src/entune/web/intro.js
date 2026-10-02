@@ -23,10 +23,6 @@ export async function openApp(firstLaunch) {
   scene.setAttribute("aria-hidden", "true");
   const mark = document.createElement("div");
   mark.className = "intro-mark";
-  try {
-    // The app's own icon, inline, so its five level bars can move.
-    mark.innerHTML = await (await fetch("/static/favicon.svg")).text();
-  } catch (e) { /* the name and lines still introduce it */ }
   const name = Object.assign(document.createElement("div"), { className: "intro-name", textContent: "Entune" });
   const lines = document.createElement("div");
   lines.className = "intro-lines";
@@ -36,6 +32,9 @@ export async function openApp(firstLaunch) {
   // Nothing under the scene can be clicked or reached with Tab until it is revealed.
   const app = document.querySelectorAll("body > header, body > main");
   for (const part of app) part.inert = true;
+  // The app's own icon, inline, so its five level bars can move. The scene is already
+  // up, so a slow answer only delays the mark, never the decision above.
+  fetch("/static/favicon.svg").then((res) => res.text()).then((svg) => { mark.innerHTML = svg; }).catch(() => {});
 
   await wait(LEAVE_AT);
   for (const part of app) part.inert = false;

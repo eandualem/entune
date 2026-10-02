@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import stat
 from collections.abc import Generator
 from contextlib import closing
 from dataclasses import dataclass
@@ -69,7 +70,8 @@ def wispr_audio(source: Path) -> Generator[tuple[str, bytes, str | None], None, 
 def _has_data(path: Path) -> bool:
     """Path.is_file() answers False when macOS refuses access; say so instead."""
     try:
-        return path.stat().st_size > 0
+        info = path.stat()
+        return stat.S_ISREG(info.st_mode) and info.st_size > 0
     except FileNotFoundError:
         return False
     except PermissionError as exc:
