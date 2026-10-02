@@ -220,11 +220,14 @@ class Indicator:
         window_class = WNDCLASSW()
         window_class.lpfnWndProc = self._proc
         window_class.hInstance = instance
-        window_class.lpszClassName = "EntunePill"
-        _user32.RegisterClassW(ctypes.byref(window_class))  # fails harmlessly if registered
+        # A class of its own: a class keeps the window procedure it was registered with,
+        # so a second pill sharing one would have its messages answered by the first.
+        name = f"EntunePill{id(self)}"
+        window_class.lpszClassName = name
+        _user32.RegisterClassW(ctypes.byref(window_class))
         style = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED
         hwnd = _user32.CreateWindowExW(
-            style | WS_EX_TRANSPARENT, "EntunePill", "Entune", WS_POPUP,
+            style | WS_EX_TRANSPARENT, name, "Entune", WS_POPUP,
             0, 0, 10, 10, None, None, instance, None,
         )  # fmt: skip
         if hwnd:
