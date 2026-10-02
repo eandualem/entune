@@ -33,8 +33,12 @@ export async function openApp(firstLaunch) {
   for (const text of LINES) lines.append(Object.assign(document.createElement("p"), { textContent: text }));
   scene.append(mark, name, lines);
   document.body.append(scene);
+  // Nothing under the scene can be clicked or reached with Tab until it is revealed.
+  const app = document.querySelectorAll("body > header, body > main");
+  for (const part of app) part.inert = true;
 
   await wait(LEAVE_AT);
+  for (const part of app) part.inert = false;
   root.classList.add("intro-leaving");
   root.classList.remove("intro-pending");
   await wait(LEAVE_FOR);
