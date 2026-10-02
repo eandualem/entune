@@ -10,7 +10,11 @@ import pytest
 
 from entune.desktop.linux import install
 
+# A Linux menu entry holds POSIX paths; Windows paths would be escaped differently.
+posix_paths = pytest.mark.skipif(sys.platform == "win32", reason="POSIX paths")
 
+
+@posix_paths
 def test_the_menu_entry_runs_this_installation_as_the_app(tmp_path: Path) -> None:
     entry = install.install_entry(tmp_path)
     text = entry.read_text()
@@ -21,6 +25,7 @@ def test_the_menu_entry_runs_this_installation_as_the_app(tmp_path: Path) -> Non
     assert "StartupWMClass=Entune" in text
 
 
+@posix_paths
 def test_a_path_with_quotes_stays_one_argument() -> None:
     text = install.desktop_entry(Path('/opt/a "b"/$x/python'), Path("/i.png"))
     assert 'Exec=env ENTUNE_APP=1 "/opt/a \\"b\\"/\\$x/python" -m entune' in text
