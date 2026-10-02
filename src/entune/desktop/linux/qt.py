@@ -113,6 +113,9 @@ def prepare_page(native: Any) -> None:
         download.accept()
 
     def prepare() -> None:
+        if getattr(native, "entune_prepared", False):
+            return  # the window was shown before: once is enough, or exports ask twice
+        native.entune_prepared = True
         page = native.webview.page()
         page.settings().setAttribute(
             QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True
