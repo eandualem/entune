@@ -351,3 +351,17 @@ def test_a_start_that_fails_late_does_not_end_a_newer_hold() -> None:
     engine.press("alt_r")
     engine.start_failed(engine.starts)  # its own start failed: the next press starts again
     assert not engine.recording
+
+
+def test_keys_left_held_by_a_missed_release_are_forgotten_after_a_dictation() -> None:
+    engine, events = make("fn", None, "fn+ctrl")
+    engine.press("ctrl")
+    engine.press("fn")  # Cancel; then both releases are missed (secure input, say)
+    assert events == ["cancel"]
+    engine.press("fn")
+    assert events == ["cancel"]  # stuck: no new dictation could start
+    engine.forget_keys()
+    engine.press("fn")
+    assert events == ["cancel", "start"]
+    engine.forget_keys()  # never while recording
+    assert engine.pressed == {"fn"} and engine.recording

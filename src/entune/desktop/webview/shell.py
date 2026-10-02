@@ -38,6 +38,7 @@ INDICATOR: dict[State, str] = {
     "learning": "Preparing dictionary suggestions…",
     "review": "Review dictionary suggestions to dictate again",
 }
+ALERT_CHARS = 300  # an error's detail on the pill; History keeps all of it
 # Room for the Dictionary page and its audio dialog; smaller screens get most of their
 # visible area instead.
 WIDTH, HEIGHT = 1120, 800
@@ -230,6 +231,8 @@ class _Tray:
         self._platform.call_later(seconds, hide)
 
     def alert(self, title: str, body: str, retry: Callable[[], None] | None) -> None:
+        if len(body) > ALERT_CHARS:  # a proxy's HTML page, say: the pill stays readable
+            body = body[:ALERT_CHARS].rstrip() + "… The full message is in History."
         self._kept = True
         indicator = self._indicator()
         if indicator is not None:

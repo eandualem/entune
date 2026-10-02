@@ -47,6 +47,15 @@ class ShortcutEngine:
         with self._lock:
             self._release(key)
 
+    def forget_keys(self) -> None:
+        """The listener can miss a release (secure input, a skipped event), and a key it
+        still counts as held would block every paste and, as part of Cancel, every start.
+        Called once a dictation is done, so stale keys block nothing; never mid-recording."""
+        with self._lock:
+            if not self.recording:
+                self.pressed.clear()
+                self._cancelled = self._chord_fired = self._hold_stop_pending = False
+
     def start_failed(self, start: int) -> None:
         """Start number `start` did not record. When the key has been pressed again since,
         that newer start owns the state and its release must still stop it."""

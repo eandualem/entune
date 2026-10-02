@@ -731,6 +731,13 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
   .intro-mark rect[rx="16.25"], .intro-mark::before, .intro-mark::after, .intro-name::after, .intro-light { animation: none; }
   .intro-mark::after, .intro-name::after { opacity: 0; }
   .intro-steps li, .intro-lines { transform: none; }
+  .intro[data-phase="steps"] .intro-lines { transform: none; }
+}
+/* A narrow window lists the steps one under another. */
+@media (max-width: 44rem) {
+  .intro-steps { flex-direction: column; gap: 0.75rem; }
+  .intro-steps li { flex-direction: row; width: auto; gap: 0.75rem; text-align: left; }
+  .intro-steps li:not(:last-child)::after { display: none; }
 }
 @keyframes intro-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes intro-fade-out { from { opacity: 1; } to { opacity: 0; } }

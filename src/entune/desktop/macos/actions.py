@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 import ApplicationServices as AX
+import Quartz
 from AppKit import NSWorkspace
 
 from entune.desktop.platform import Delivery
@@ -125,6 +126,13 @@ def paste_into_focused_app(text: str, check: Callable[[], None] | None = None) -
     """
     if not _trusted():
         return "no_permission"  # never reported as a missing text field
+    # A modifier still down would turn Cmd+V into another shortcut. Ask the system, not
+    # the shortcut listener, which can miss a release and would then block every paste.
+    deadline = time.monotonic() + KEYS_UP_SECONDS
+    while _modifiers_down():
+        if time.monotonic() >= deadline:
+            return "keys_held"
+        time.sleep(0.02)
     target = _focused()
     expected: str | None = None
     caret: tuple[int, int] | None = None
@@ -159,6 +167,22 @@ def paste_into_focused_app(text: str, check: Callable[[], None] | None = None) -
             return "inserted"
         time.sleep(0.02)
     return "unverified"
+
+
+KEYS_UP_SECONDS = 0.5
+MODIFIERS = (
+    Quartz.kCGEventFlagMaskCommand
+    | Quartz.kCGEventFlagMaskControl
+    | Quartz.kCGEventFlagMaskAlternate
+    | Quartz.kCGEventFlagMaskShift
+    | Quartz.kCGEventFlagMaskSecondaryFn
+)
+
+
+def _modifiers_down() -> bool:
+    """Whether Command, Control, Option, Shift or Fn is physically held right now."""
+    flags = Quartz.CGEventSourceFlagsState(Quartz.kCGEventSourceStateHIDSystemState)
+    return bool(int(flags) & MODIFIERS)
 
 
 def notify(title: str, message: str) -> None:

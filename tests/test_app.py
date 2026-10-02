@@ -7,6 +7,7 @@ import threading
 import time
 import weakref
 from collections.abc import Callable
+from concurrent.futures import CancelledError
 from pathlib import Path
 
 import httpx
@@ -453,6 +454,18 @@ def test_a_modifier_still_held_skips_the_paste_and_says_how_to_paste(tmp_path: P
     assert "Release the shortcut keys" in message
 
 
+def test_a_key_whose_release_was_missed_never_blocks_the_paste(tmp_path: Path) -> None:
+    app, platform, entune = make(tmp_path)
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_shortcuts("alt_r", None)
+    app.engine.press("v")  # type: ignore[union-attr]  # its release never arrives
+    app.engine.press("alt_r")  # type: ignore[union-attr]
+    app.engine.release("alt_r")  # type: ignore[union-attr]
+    wait_for(lambda: platform.actions.pasted == 1)
+    assert not app.engine.pressed  # type: ignore[union-attr]
+
+
 def test_a_failed_transcription_stays_on_the_pill_with_retry(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
     entune.settings.set_key("stub", "k")
@@ -473,6 +486,32 @@ def test_a_failed_transcription_stays_on_the_pill_with_retry(tmp_path: Path) -> 
     wait_for(lambda: platform.actions.pasted == 1)
     assert platform.actions.clipboard == "hello from the fake"
     assert len(entune.store.get_recording(recording.id).transcriptions) == 2  # type: ignore[union-attr]
+
+
+def test_a_canceled_retry_leaves_the_failure_it_retried_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, platform, entune = make(tmp_path)
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/bad")
+    entune.settings.set_shortcuts("alt_r", None)
+    app.engine.press("alt_r")  # type: ignore[union-attr]
+    app.engine.release("alt_r")  # type: ignore[union-attr]
+    wait_for(lambda: bool(platform.tray.retries) and entune.operations.status() is None)
+    (recording,) = entune.store.list_recordings()
+
+    def canceled(*args: object, **kwargs: object) -> None:
+        raise CancelledError("Cancelled; recorded audio is saved")
+
+    monkeypatch.setattr(entune.dictation, "transcribe_recording", canceled)
+    retry = platform.tray.retries[0]
+    assert retry is not None
+    retry()
+    wait_for(
+        lambda: entune.operations.status() is None and platform.tray.notices[-1][0] == "Canceled"
+    )
+    (failure,) = entune.store.get_recording(recording.id).transcriptions  # type: ignore[union-attr]
+    assert failure.status == "error" and failure.processing_state != "cancelled"
 
 
 def test_no_default_model_is_told_not_hidden(tmp_path: Path) -> None:

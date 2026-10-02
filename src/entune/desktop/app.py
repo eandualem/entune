@@ -60,6 +60,7 @@ class EntuneApp:
         self._closed = False
         self._close_lock = threading.RLock()
         self._operation: Operation | None = None
+        self._earlier: dict[int, set[int]] = {}  # id(operation): a retry's earlier attempts
         self._captures: queue.Queue[tuple[Capture, Upload | None, Operation]] = queue.Queue()
         self._jobs: queue.Queue[tuple[Recording, float, Upload | None, Operation]] = queue.Queue()
         threading.Thread(target=self._persist, daemon=True, name="entune-persist").start()
@@ -436,6 +437,7 @@ class EntuneApp:
         except Busy as exc:
             self._tell("Entune is busy", str(exc))
             return
+        self._earlier[id(operation)] = {attempt.id for attempt in recording.transcriptions}
         self._refresh_state()
         self._jobs.put((recording, seconds, None, operation))
 
@@ -488,13 +490,17 @@ class EntuneApp:
         self.platform.call_later(WATCH_SECONDS, lambda: self._watch(operation))
 
     def _finish(self, operation: Operation) -> None:
+        self._earlier.pop(id(operation), None)
         if self._operation is operation:
             self._operation = None
         self.entune.operations.finish(operation)
 
     def _cancelled(self, operation: Operation, recording: Recording) -> None:
         saved = self.entune.store.get_recording(recording.id)
-        attempt = saved.transcriptions[0].id if saved and saved.transcriptions else None
+        # Only an attempt this operation made: a retry leaves the failure it retried readable.
+        earlier = self._earlier.get(id(operation), set())
+        attempts = saved.transcriptions if saved else []
+        attempt = next((t.id for t in attempts if t.id not in earlier), None)
         self.entune.store.cancel_recording(recording.id, attempt)
         self._tell_later("Canceled", "The audio is saved; transcribe it again from History.")
         self._finish(operation)
@@ -567,9 +573,7 @@ class EntuneApp:
                 f"Allow Accessibility in {permissions.settings_hint} to paste. "
                 f"{PASTE_KEYS} for now."
             )
-            if self.engine is not None and self.engine.pressed:
-                body = keys_held
-            elif permissions.can_post():
+            if permissions.can_post():
                 operation.check()
                 outcome = actions.paste_into_focused_app(text, operation.check)
                 if outcome == "keys_held":
@@ -582,8 +586,8 @@ class EntuneApp:
                     permissions.request_post()
                     title, body, error = "Copied, not pasted", not_allowed, True
                 elif outcome == "sent":
-                    # Windows and Linux cannot confirm arrival.
-                    title, body = f"Pasted with {PASTE_KEYS}", "Also on the clipboard."
+                    # Windows and Linux cannot confirm arrival: say what was done, no more.
+                    title, body = f"{PASTE_KEYS} sent to the app in front", "Also on the clipboard."
                 elif outcome == "unverified":
                     body = "The paste was sent, but could not be confirmed."
                 else:
@@ -610,6 +614,10 @@ class EntuneApp:
         while self.engine is not None and self.engine.pressed and time.monotonic() < deadline:
             operation.check()
             time.sleep(0.02)
+        if self.engine is not None:
+            # Still counted as held: a release the listener missed. The paste asks the
+            # system which keys are really down, so these are forgotten, not obeyed.
+            self.engine.forget_keys()
 
     def _later(self, action: Callable[[], None]) -> None:
         def run() -> None:

@@ -281,6 +281,8 @@ class Indicator(QWidget):
         self._place(width, height)
 
     def _place(self, width: int, height: int) -> None:
+        # Clicks reach the pill only while it has buttons; otherwise they pass through.
+        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, not self._buttons)
         self.resize(width, height)
         screen = QApplication.primaryScreen()
         if screen is not None:
