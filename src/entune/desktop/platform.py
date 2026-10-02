@@ -1,7 +1,7 @@
 """What the desktop app needs from an operating system, as small protocols.
 
 The orchestration in `app.py` is written against these and nothing else. Each
-platform implements them under its own package (`desktop/macos/` today); tests use
+platform implements them under its own package (`desktop/macos/`, `windows/`, `linux/`); tests use
 fakes. Keep them minimal: a method earns its place only when the orchestration
 calls it.
 """
@@ -119,7 +119,7 @@ def create_platform(url: str) -> Platform | None:
 
         name_this_process()
         return WebviewPlatform(url)
-    if sys.platform == "win32":
+    if sys.platform in ("win32", "linux"):
         from entune.desktop.webview.shell import WebviewPlatform
 
         return WebviewPlatform(url)

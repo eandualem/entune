@@ -16,7 +16,8 @@ In Windows PowerShell, use `uv tool install entune; entune`. If the terminal
 cannot find `entune`, open a new one and run `entune` again.
 
 On macOS, `entune` puts **Entune** in your Applications folder and opens it. On
-Windows, it adds **Entune** to the Start menu and opens it. On macOS, the first
+Windows, it adds **Entune** to the Start menu and opens it. On Linux, it adds
+**Entune** to your applications menu and opens it. On macOS, the first
 time, it prepares Entune for up to a minute before opening it. You can close the
 terminal: from now on, open Entune like any other app, from Applications,
 Spotlight or Launchpad, or from the Start menu and Windows search.
@@ -32,7 +33,8 @@ Entune opens on **Get started**, three steps in order:
    installed engine; see [Speech models and cost](#speech-models-and-cost).
 2. **Allow permissions.** On macOS: Microphone, Accessibility and Input
    Monitoring, each with its own button; see [Permissions (macOS)](#permissions-macos).
-   On Windows only the microphone matters; see [Windows](#windows).
+   On Windows only the microphone matters; see [Windows](#windows). On Linux,
+   keyboard access, one command run once; see [Linux](#linux).
 3. **Set a shortcut and dictate.** Choose the key you hold while speaking, then
    hold it in any app and speak. Release it to transcribe and paste. The
    recording and result also appear in History.
@@ -92,6 +94,46 @@ offers no general way to confirm the text arrived, so completion says the paste
 was sent. Windows does not let an ordinary app type into a window running as
 administrator; paste there yourself with Ctrl+V. The recording pill sits in the
 bottom-left corner and never takes the keyboard focus.
+
+## Linux
+
+Entune runs as its own app on Linux, with its own window, icon and tray item, on
+X11 and on Wayland. It needs two system libraries that Python packages cannot
+bring: PortAudio for the microphone and the X cursor library for its window. If
+one is missing, `entune` prints the command that installs it, for example on
+Ubuntu or Debian:
+
+```sh
+sudo apt install libportaudio2 libxcb-cursor0
+```
+
+Get started then asks for **keyboard access**, Linux's counterpart of the Mac's
+Input Monitoring and Accessibility. Entune reads your shortcut from the keyboard
+devices in `/dev/input`, and types the transcript through a virtual keyboard made
+with `/dev/uinput`, which works the same on X11 and on Wayland. Run this once in a
+terminal (**Copy command** in Entune copies it):
+
+```sh
+echo 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/70-entune-uinput.rules && sudo modprobe uinput && sudo udevadm control --reload-rules && sudo udevadm trigger --sysname-match=uinput && sudo usermod -aG input "$USER"
+```
+
+It adds you to the `input` group and lets that group use `/dev/uinput`. Linux
+applies a new group at your next login, so log out and back in; Get started then
+shows both as allowed. Membership of `input` lets any program you run read the
+keyboard, as Input Monitoring does for one app on a Mac; to undo it, run
+`sudo gpasswd -d "$USER" input` and delete the rule file.
+
+The final text goes on the clipboard and on the primary selection, and Entune
+presses Shift+Insert. Most apps paste the clipboard on Shift+Insert, and terminals
+(GNOME Terminal, Konsole, xterm, kitty) paste the primary selection, so the same
+keystroke pastes everywhere. Linux offers no general way to confirm the text
+arrived, so completion says the paste was sent.
+
+The tray item appears where the desktop shows tray icons: KDE, and GNOME with the
+AppIndicator extension (Ubuntu includes it). Without one, closing the window keeps
+Entune running for your shortcut; open Entune from the applications menu to bring
+the window back. Under Wayland, Entune's window runs through XWayland, so it can
+set the clipboard and show the recording pill while another app has the focus.
 
 ## Dictating
 

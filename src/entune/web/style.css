@@ -204,6 +204,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .step .what { flex: 1; min-width: 0; }
 .step .how { display: block; font-size: var(--fs-12); color: var(--text-dim); line-height: var(--lh-caption); margin-top: 2px; }
 .permission-steps { display: flex; flex-direction: column; gap: var(--sp-4); margin-top: var(--sp-8); }
+.permission-steps > .btn { align-self: flex-start; }
 .permission-step { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); font-size: var(--fs-12-5); }
 .step.done .how { display: none; }
 
@@ -527,6 +528,7 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .engine code { font-size: var(--fs-12); }
 .engine-steps { padding: 0 var(--sp-16) var(--sp-14); display: grid; grid-template-columns: 1.25rem 1fr; gap: var(--sp-8) var(--sp-10); font-size: var(--fs-12-5); color: var(--text-secondary); line-height: 1.5; }
 .engine-steps .n { color: var(--text-faint); }
+.setup-command { display: block; margin: var(--sp-10) var(--sp-16) 0; }
 .engine-steps pre { margin: var(--sp-6) 0 0; padding: var(--sp-8) var(--sp-10); border-radius: var(--r-7); background: var(--well); font: var(--fs-12)/1.5 var(--mono); color: var(--text); -webkit-user-select: text; user-select: text; white-space: pre-wrap; }
 .engine-steps b { color: var(--text); }
 

@@ -1,7 +1,8 @@
 """The desktop shell: pywebview for the window, pystray for the tray icon.
 
-Wired for macOS and Windows. Cocoa compatibility hooks live in macos/webview.py; the
-Windows pieces (shortcuts, paste, the recording pill, permissions) in windows/.
+Wired for macOS, Windows and Linux. Cocoa compatibility hooks live in macos/webview.py;
+the Windows pieces (shortcuts, paste, the recording pill, permissions) in windows/; the
+Linux ones in linux/, where Qt draws the window and the tray icon instead of pystray.
 """
 
 from __future__ import annotations
@@ -11,11 +12,12 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pystray
 import webview
-from PIL import Image
+
+if TYPE_CHECKING:
+    import pystray
 
 from entune.desktop.platform import Actions, Hotkeys, Permissions, State, Tray, Window
 
@@ -48,24 +50,32 @@ def _window_size() -> tuple[int, int]:
 
 
 def _on_ui_thread(action: Callable[[], None]) -> None:
-    """Run on the thread that owns the UI where that matters (Cocoa); inline elsewhere."""
+    """Run on the thread that owns the UI where that matters (Cocoa, Qt); inline elsewhere."""
     if sys.platform == "darwin":
         from PyObjCTools import AppHelper
 
         AppHelper.callAfter(action)
+    elif sys.platform == "linux":
+        from entune.desktop.linux.qt import on_ui_thread
+
+        on_ui_thread(action)
     else:
         action()
 
 
 class WebviewPlatform:
     def __init__(self, url: str) -> None:
+        if sys.platform == "linux":
+            from entune.desktop.linux.qt import setup
+
+            setup()  # the QApplication, on this (the main) thread, before anything uses Qt
         self.url = url
         self.tray: Tray = _Tray(self)
         self.window: Window = _Window(url)
         self.hotkeys: Hotkeys = _hotkeys()
-        self.actions: Actions = _actions(self.tray)
+        self.actions: Actions = _actions(self.tray, self.hotkeys)
         self.permissions: Permissions = _permissions()
-        self._icon: pystray.Icon | None = None
+        self._icon: Any = None  # pystray's icon, or Qt's on Linux
         self._quitting = False
 
     # Scheduling
@@ -109,6 +119,9 @@ class WebviewPlatform:
         webview.settings["ALLOW_DOWNLOADS"] = True  # WebKit presents a native Save panel
         webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
         window.create()
+        if sys.platform == "linux":
+            webview.start(gui="qt", private_mode=False, icon=str(ASSETS / "icon-512.png"))
+            return
         if sys.platform != "darwin":
             _windows_identity()
             # The page keeps its appearance choice (not private); Entune's icon, not Python's.
@@ -142,9 +155,22 @@ class _Tray:
         self._open_settings: Callable[[], None] = lambda: None
         self._quit: Callable[[], None] = lambda: None
         self._pill: Any = None
-        self._icon: pystray.Icon | None = None
+        self._icon: Any = None
 
-    def build(self) -> pystray.Icon:
+    def build(self) -> Any:
+        if sys.platform == "linux":
+            from entune.desktop.linux.qt import TrayIcon
+
+            self._icon = TrayIcon(
+                lambda: self._status,
+                lambda: self._open_window(),
+                lambda: self._open_settings(),
+                lambda: self._quit(),
+            )
+            return self._icon
+        import pystray
+        from PIL import Image
+
         image = Image.open(ASSETS / "icon-512.png").resize((64, 64))
         menu = pystray.Menu(
             pystray.MenuItem(lambda _: self._status or "Entune", None, enabled=False),
@@ -199,10 +225,15 @@ class _Tray:
                 from entune.desktop.windows.indicator import Indicator as WindowsIndicator
 
                 self._pill = WindowsIndicator()
+            elif sys.platform == "linux":
+                from entune.desktop.linux.qt import Indicator as LinuxIndicator
+                from entune.desktop.linux.qt import on_ui_thread_wait
+
+                self._pill = on_ui_thread_wait(LinuxIndicator)
         return self._pill
 
     def notify(self, title: str, message: str) -> None:
-        """A notification from the tray icon (Windows shows it as a toast)."""
+        """A notification from the tray icon (Windows shows it as a toast, Linux as a popup)."""
         if self._icon is not None:
             self._icon.notify(message, title)
 
@@ -246,6 +277,10 @@ class _Window:
         )
         self._window.events.closing += self._on_closing
         self._window.events.shown += self._on_shown
+        if sys.platform == "linux":
+            from entune.desktop.linux.qt import allow_clipboard
+
+            self._window.events.shown += lambda: allow_clipboard(self._window.native)
         if sys.platform == "darwin":
             # Frameless fills the title area; restore and align the real Mac controls.
             self._window.events.before_show += self._layout_titlebar
@@ -356,10 +391,14 @@ def _hotkeys() -> Hotkeys:
         from entune.desktop.windows.hotkeys import HotkeyListener as WindowsHotkeys
 
         return WindowsHotkeys()
-    raise NotImplementedError("Global shortcuts exist for macOS and Windows only")
+    if sys.platform == "linux":
+        from entune.desktop.linux.hotkeys import HotkeyListener as LinuxHotkeys
+
+        return LinuxHotkeys()
+    raise NotImplementedError("Global shortcuts exist for macOS, Windows and Linux only")
 
 
-def _actions(tray: Tray) -> Actions:
+def _actions(tray: Tray, hotkeys: Hotkeys) -> Actions:
     if sys.platform == "darwin":
         from entune.desktop.macos.adapters import _Actions
 
@@ -369,7 +408,13 @@ def _actions(tray: Tray) -> Actions:
 
         assert isinstance(tray, _Tray)
         return WindowsActions(tray.notify)
-    raise NotImplementedError("Clipboard, paste and notifications exist for macOS and Windows")
+    if sys.platform == "linux":
+        from entune.desktop.linux.actions import Actions as LinuxActions
+        from entune.desktop.linux.hotkeys import HotkeyListener as LinuxHotkeys
+
+        assert isinstance(tray, _Tray) and isinstance(hotkeys, LinuxHotkeys)
+        return LinuxActions(tray.notify, lambda: set(hotkeys.held))
+    raise NotImplementedError("Clipboard, paste and notifications exist for macOS, Windows, Linux")
 
 
 def _permissions() -> Permissions:
@@ -381,4 +426,8 @@ def _permissions() -> Permissions:
         from entune.desktop.windows.permissions import Permissions as WindowsPermissions
 
         return WindowsPermissions()
-    raise NotImplementedError("Native permissions exist for macOS and Windows only")
+    if sys.platform == "linux":
+        from entune.desktop.linux.permissions import Permissions as LinuxPermissions
+
+        return LinuxPermissions()
+    raise NotImplementedError("Native permissions exist for macOS, Windows and Linux only")

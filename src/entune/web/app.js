@@ -6,7 +6,7 @@ import { createHistory } from "./history.js";
 import { placeDetails, renderCard } from "./history-card.js";
 import { createDictionary } from "./dictionary-view.js";
 import { createSettings } from "./settings-view.js";
-import { createPermissions } from "./permissions-view.js";
+import { LINUX_LABELS, LINUX_SETUP, copySetup, createPermissions } from "./permissions-view.js";
 import { initRecording } from "./recording.js";
 import { ICON, THIS_DEVICE, api, el, errorText, figure, fillModels, segmentedGroup } from "./ui.js";
 
@@ -24,7 +24,7 @@ let settings = null; // the last /api/settings answer
 let shortcuts = { hold: null, toggle: null };
 let recordingsCount = 0;
 let desktop = null; // the desktop app (true) or a browser page (false), once /api/status answers
-let system = null; // "macos", "windows" or "other"
+let system = null; // "macos", "windows", "linux" or "other"
 let permissionStates = {};
 
 // The Mac's real window controls share the toolbar. Browser windows keep their
@@ -270,7 +270,9 @@ function renderStart() {
     const allowed = Object.keys(permissionStates).every((name) => permissionStates[name] === "granted");
     const li = system === "macos"
       ? step(allowed, "Allow Entune on this Mac", ["The microphone to record; Accessibility and Input Monitoring so your shortcut works in any app and the text is typed there."], null)
-      : step(allowed, "Allow the microphone", ["Windows lets desktop apps use the microphone unless it is turned off in Privacy settings."], null);
+      : system === "linux"
+        ? step(allowed, "Allow keyboard access", ["So your shortcut works in any app and the text is typed there. Run this once in a terminal, then log out and back in:"], null)
+        : step(allowed, "Allow the microphone", ["Windows lets desktop apps use the microphone unless it is turned off in Privacy settings."], null);
     if (!allowed) li.querySelector(".what").append(permissionRows());
     steps.push(li);
   }
@@ -295,14 +297,22 @@ function renderStart() {
 function permissionRows() {
   const rows = document.createElement("span");
   rows.className = "permission-steps";
+  if (system === "linux") {
+    const command = Object.assign(document.createElement("pre"), { className: "code-block", textContent: LINUX_SETUP });
+    const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn ghost sm", textContent: "Copy command" });
+    copy.addEventListener("click", () => copySetup(copy));
+    rows.append(command, copy);
+  }
   for (const [name, label] of Object.entries(PERMISSIONS)) {
     if (!(name in permissionStates)) continue; // not something this system asks for
     const row = document.createElement("span");
     row.className = "permission-step";
-    row.append(label);
+    row.append(system === "linux" ? LINUX_LABELS[name] : label);
     const state = permissionStates[name];
     if (state === "granted") {
       row.append(Object.assign(document.createElement("span"), { className: "caption", textContent: "Allowed" }));
+    } else if (system === "linux") {
+      row.append(Object.assign(document.createElement("span"), { className: "caption", textContent: "Not yet allowed" }));
     } else {
       const button = Object.assign(document.createElement("button"), {
         type: "button", className: "btn ghost sm",

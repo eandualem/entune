@@ -27,7 +27,7 @@ from entune.storage.records import Recording
 
 MIN_CLIP_SECONDS = 0.25  # a tap on the hold key is not a dictation
 KEYS_UP_WAIT_SECONDS = 1.0  # let chord keys come up before pasting so Cmd+V is just Cmd+V
-PASTE_KEYS = "Cmd+V" if sys.platform == "darwin" else "Ctrl+V"
+PASTE_KEYS = {"darwin": "Cmd+V", "linux": "Shift+Insert"}.get(sys.platform, "Ctrl+V")
 QUIT_FLUSH_SECONDS = 3.0  # bound on waiting for a just-stopped clip to reach disk at quit
 PERMISSION_POLL_SECONDS = 5.0  # permissions are granted in System Settings; notice when they are
 SERVER_WAIT_SECONDS = 10.0  # the page is served from a thread that may still be starting
