@@ -57,7 +57,7 @@ A failure is data the user reads and acts on; that is the retry feature.
 
 ## Design constraints
 
-- One process, one command to run, opens in the browser. No cloud, no
+- One process, one command to run, opens as its own app. No cloud, no
   accounts, no telemetry.
 - API keys are entered in the app and stored locally; they never leave the
   machine except to the provider they belong to. They are never rendered
@@ -122,11 +122,13 @@ performance table built from every transcription's timing.
 In scope since 2026-10-01 (issue #36): the same desktop experience on Windows,
 and one install for both systems: `uv tool install entune`, then `entune`
 installs the app (Applications, or the Start menu) and opens it, with no
-certificate or terminal permissions needed.
+certificate or terminal permissions needed. Since 2026-10-02 the same on Linux:
+its own window, icon and tray, shortcuts and paste on X11 and Wayland, and no
+browser on any system.
 
 Out of scope for now: streaming endpoints, generative cleanup or rewriting passes,
-multi-user, authentication, cloud storage, platforms other than macOS and
-Windows. Simplicity is a requirement, not a preference.
+multi-user, authentication, cloud storage, platforms other than macOS, Windows
+and Linux. Simplicity is a requirement, not a preference.
 
 ## Where the work stands
 

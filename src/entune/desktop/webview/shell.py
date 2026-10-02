@@ -7,6 +7,7 @@ Linux ones in linux/, where Qt draws the window and the tray icon instead of pys
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -124,6 +125,12 @@ class WebviewPlatform:
             return
         if sys.platform != "darwin":
             _windows_identity()
+            # The first launch's introduction has a chime: let it play before any click.
+            # pywebview's own argument is repeated, as WebView2 may take only one source.
+            os.environ.setdefault(
+                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                "--disable-features=ElasticOverscroll --autoplay-policy=no-user-gesture-required",
+            )
             # The page keeps its appearance choice (not private); Entune's icon, not Python's.
             webview.start(private_mode=False, icon=str(ASSETS / "Entune.ico"))
             return
