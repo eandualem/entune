@@ -706,7 +706,10 @@ def test_audio_response_cannot_execute_uploaded_or_legacy_html(
         assert response.content == body
         assert response.headers["content-type"] == "application/octet-stream"
         assert response.headers["x-content-type-options"] == "nosniff"
-        assert response.headers["content-security-policy"] == "sandbox"
+        assert response.headers.get_list("content-security-policy") == [
+            "sandbox",
+            "frame-ancestors 'none'",
+        ]
     store.close()
 
 
@@ -742,6 +745,16 @@ def test_requests_from_other_origins_are_refused(client: TestClient) -> None:
     # A sandboxed frame sends an opaque origin: refused too.
     opaque = client.put("/api/settings", json={"keys": {}}, headers={"origin": "null"})
     assert opaque.status_code == 403
+
+
+def test_other_sites_can_neither_frame_the_page_nor_load_its_audio(client: TestClient) -> None:
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
+    for path in ("/", f"/api/recordings/{rec['id']}/audio"):
+        headers = client.get(path).headers
+        assert headers["cross-origin-resource-policy"] == "same-origin"
+        assert "frame-ancestors 'none'" in headers.get_list("content-security-policy")
+        assert headers["x-frame-options"] == "DENY"
 
 
 def test_a_clip_missing_from_disk_becomes_a_stored_error(
