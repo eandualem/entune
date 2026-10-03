@@ -63,6 +63,41 @@ APT = {
 }
 
 
+# Arch Linux package names for the same libraries, checked against the core and extra
+# repositories on 2026-10-03.
+PACMAN = {
+    PORTAUDIO: "portaudio",
+    WL_COPY: "wl-clipboard",
+    "libsnappy.so.1": "snappy",
+    "libminizip.so.1": "minizip",
+    "libasound.so.2": "alsa-lib",
+    "libglib-2.0.so.0": "glib2",
+    "libnss3.so": "nss",
+    "libnssutil3.so": "nss",
+    "libsmime3.so": "nss",
+    "libnspr4.so": "nspr",
+    "libxkbfile.so.1": "libxkbfile",
+    "libxkbcommon.so.0": "libxkbcommon",
+    "libxkbcommon-x11.so.0": "libxkbcommon-x11",
+    "libxcb-cursor.so.0": "xcb-util-cursor",
+    "libxcb-icccm.so.4": "xcb-util-wm",
+    "libxcb-image.so.0": "xcb-util-image",
+    "libxcb-keysyms.so.1": "xcb-util-keysyms",
+    "libxcb-render-util.so.0": "xcb-util-renderutil",
+    "libxcb-dri3.so.0": "libxcb",
+    "libopus.so.0": "opus",
+    "libwebp.so.7": "libwebp",
+    "libwebpdemux.so.2": "libwebp",
+    "libwebpmux.so.3": "libwebp",
+    "liblcms2.so.2": "lcms2",
+    "libgbm.so.1": "mesa",
+    "libexpat.so.1": "expat",
+    "libfreetype.so.6": "freetype2",
+    "libfontconfig.so.1": "fontconfig",
+    "libdbus-1.so.3": "dbus",
+}
+
+
 def data_home() -> Path:
     base = os.environ.get("XDG_DATA_HOME")
     return Path(base) if base else Path.home() / ".local" / "share"
@@ -131,7 +166,8 @@ def _apt_knows(package: str) -> bool:
 
 
 def install_command(missing: list[str]) -> str:
-    """The command that installs them on this distribution, or the list to look up."""
+    """The command that installs them on this distribution (apt, pacman, dnf), or the
+    list to look up."""
     if shutil.which("apt-get") and all(name in APT for name in missing):
         packages: list[str] = []
         for name in missing:
@@ -139,6 +175,8 @@ def install_command(missing: list[str]) -> str:
             if known[0] not in packages:
                 packages.append(known[0])
         return "sudo apt install " + " ".join(packages)
+    if shutil.which("pacman") and all(name in PACMAN for name in missing):
+        return "sudo pacman -S --needed " + " ".join(dict.fromkeys(PACMAN[n] for n in missing))
     if shutil.which("dnf"):
         bits = "(64bit)" if sys.maxsize > 2**32 else ""
         return "sudo dnf install " + " ".join(

@@ -37,6 +37,11 @@ def test_missing_libraries_become_one_install_command(monkeypatch: pytest.Monkey
     monkeypatch.setattr(install, "_apt_knows", lambda package: package != "libminizip1t64")
     command = install.install_command(["libminizip.so.1", "libnss3.so", "libsmime3.so"])
     assert command == "sudo apt install libminizip1 libnss3"
+    tools = {"pacman"}
+    assert (
+        install.install_command(["libsnappy.so.1", "libnss3.so", "libsmime3.so", "wl-copy"])
+        == "sudo pacman -S --needed snappy nss wl-clipboard"
+    )
     tools = {"dnf"}
     assert install.install_command(["libsnappy.so.1"]).startswith(
         "sudo dnf install 'libsnappy.so.1()"
