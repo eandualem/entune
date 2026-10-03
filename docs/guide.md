@@ -108,6 +108,13 @@ in a Wayland session that is:
 sudo apt install libminizip1t64 libportaudio2 libsnappy1v5 libxcb-cursor0 wl-clipboard
 ```
 
+On Arch and other rolling-release distributions, install with uv's own Python, so a
+system Python upgrade cannot break Entune's environment:
+
+```sh
+uv tool install --managed-python entune && entune
+```
+
 Get started then asks for **keyboard access**, Linux's counterpart of the Mac's
 Input Monitoring and Accessibility. Entune reads your shortcut from the keyboard
 devices in `/dev/input`, and types the transcript through a virtual keyboard made
