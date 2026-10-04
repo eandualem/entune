@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -164,6 +165,11 @@ class Tracing:
                 return
             if not installed():
                 self.state, self.detail = "missing", f"Install tracing support: {INSTALL}"
+                return
+            # OpenTelemetry then hands out tracers that record nothing: say so, not "on".
+            if os.environ.get("OTEL_SDK_DISABLED", "").strip().lower() == "true":
+                self.state = "failed"
+                self.detail = "OTEL_SDK_DISABLED is set in Entune's environment"
                 return
             self.state, self.detail = "connecting", ""
             host = self._store.get_setting(HOST) or DEFAULT_HOST

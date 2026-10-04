@@ -281,3 +281,13 @@ def test_a_stopped_reply_keeps_what_it_sent_on_its_trace(
         t._provider.force_flush()
         body = langfuse.sent()
         assert b"entune.partial_reply" in body and b'"new_cloud"' in body
+
+
+def test_an_sdk_disabled_by_the_environment_is_reported_not_on(
+    tmp_path: Path, langfuse: Langfuse, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    with closing(Store(tmp_path)) as store:
+        t = tracing.Tracing(store)
+        t.save("pk", "sk", None)
+        assert t.state == "failed" and "OTEL_SDK_DISABLED" in t.detail
