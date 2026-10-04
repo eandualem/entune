@@ -361,17 +361,19 @@ document.addEventListener("visibilitychange", () => {
 // until it is copied. Both choices are remembered in this window.
 const anonymous = el("anonymous");
 const remembered = (key, value) => { try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); } catch { return null; } };
+const newestCard = () => el("history-newer").hidden ? historyList.querySelector(".card") : null;
 function revealNewest() {
   const on = anonymous.checked;
   document.documentElement.toggleAttribute("data-anonymous", on);
-  const newest = el("history-newer").hidden ? historyList.querySelector(".card") : null;
+  const newest = newestCard();
   for (const card of historyList.querySelectorAll(".card")) {
     card.toggleAttribute("data-reveal", on && card === newest && card.dataset.id !== remembered("entune.anonymous.copied"));
   }
 }
-// The newest dictation blurs once it has been copied, by any copy action.
+// The newest dictation blurs once it has been copied, by any copy action, also one made
+// before anonymous mode was switched on.
 function copiedNewest(card) {
-  if (card.hasAttribute("data-reveal")) { remembered("entune.anonymous.copied", card.dataset.id); revealNewest(); }
+  if (card === newestCard()) { remembered("entune.anonymous.copied", card.dataset.id); revealNewest(); }
 }
 anonymous.checked = remembered("entune.anonymous") === "on";
 anonymous.addEventListener("change", () => { remembered("entune.anonymous", anonymous.checked ? "on" : "off"); revealNewest(); });
