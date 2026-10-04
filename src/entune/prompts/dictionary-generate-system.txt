@@ -8,10 +8,70 @@ it; in this task you cannot change or remove anything in it.
 
 Look broadly: names of people, products, companies, tools and projects; technical terms;
 acronyms; words the recognizer splits or merges; phrases it breaks the same way. For each
-credible confusion, add a group with the intended meaning, the literal meaning when the
-recognized form is itself a real word or name, and the recognized form linked to both.
-To attach a new form to a meaning that already exists, add a group whose form links to
-that meaning's id, without defining the meaning again.
+credible confusion, add a group with the intended meaning and the recognized form linked
+to it. Add the literal meaning, linked from the same form, only when one of these
+transcripts shows the form used correctly as written; quote that use in its
+personal_context. When the current dictionary already has a confusion for a form and one
+of these transcripts shows that form used correctly, add a group with the literal meaning
+and the form linked to it. To attach a new form to a meaning that already exists, add a
+group whose form links to that meaning's id, without defining the meaning again.
+
+Before drafting, examine contextually suspicious recurring phrases and related recognition
+variants even when the intended spelling never occurs correctly in these transcripts.
+Use contextual fit and plausible sound similarity together. Recognizing that a phrase is
+probably confused is different from knowing its replacement: do not invent the official
+spelling of a private name when the supplied evidence cannot determine it. Add an entry
+only when the intended spelling is supported, and retain uncertainty by omitting an
+unsupported replacement rather than guessing.
+
+Be exhaustive. This request carries many transcripts at once, often hundreds, and a
+person's dictation typically shows dozens of distinct confusions. Work through every
+transcript from the first to the last and collect every learnable confusion before you
+reply; do not stop after the most obvious or most frequent ones, and do not summarize.
+Add one group per distinct intended term, with every recognized form you found for it.
+A complete reply for this much text is long: output as many groups as the transcripts
+support. The evidence rules still apply to every one of them.
+
+After drafting, make a separate coverage pass through every supplied transcript. Look
+for recurring confusions you have not represented and additional recognized variants of
+terms you already identified, including terms in the current dictionary. Check the draft
+against these findings before finalizing; do not stop because the draft is already long.
+
+Before finalizing each recognized form, inspect its other occurrences throughout the
+supplied transcripts, not just the occurrence that motivated the correction. The matcher
+ignores case, accepts whitespace between words, and requires non-word boundaries; a
+punctuation mark or apostrophe can therefore bound a match inside a larger written
+expression. Check such occurrences too. If a form is used correctly as written, include
+its literal meaning linked from that form, with the actual correct-use quotation in
+personal_context. Do not manufacture a literal competitor without correct-use evidence.
+Apply this check to existing dictionary forms as well, adding an evidenced literal
+meaning when this batch supplies one. Earlier transcripts that are not supplied in this
+request are not evidence you can inspect: do not claim to have checked them. Keep the
+schema unchanged and return additions only.
+
+What is worth an entry. A confusion is learnable when an entry for it will help in later
+dictations: a name (a person, product, company, tool, project or place), a technical term
+or acronym, or any confusion the recognizer repeats. A name or term is worth an entry even
+from a single occurrence. Skip one-off garbles, where so many words came out wrong that
+the entry would never match again, and one-off slips on everyday words that are usually
+right as written: such an entry would only change correct words later.
+
+What the recognized form is. It is the words the recognizer actually got wrong, exactly as
+written. Do not add correctly recognized words next to them, even when the intended words
+form a common phrase with those neighbours; join a neighbouring word only when the intended
+term is itself a multiword name that spans it. When two separate words are wrong in one
+place, they are two confusions, each with its own form.
+
+How the intended term is spelled. Spell what the speaker said, in the form said: keep the
+plural, the tense or the derived word the context shows, not a base word. Names take their
+official spelling. When the transcripts show several spoken forms of one term (singular
+and plural, a verb and its noun), each gets its own meaning and spelling, linked from the
+recognized forms that stand for it.
+
+Keep every entry within the dictionary's rules: a form is whole words; each evidence span
+is exactly the recognized form as whole words in the source cited, so cite only a source
+whose text contains it; a literal meaning only when a transcript shows the form used
+correctly as written.
 
 Reply with JSON only, in exactly this shape:
 {"additions": [group, ...]}
@@ -33,17 +93,17 @@ groups:
 
 Transcripts (JSON). Each has an id, a kind and its text.
 [
-{"id": "s_2c1fd6cd1dd864bc79c0c2f6", "kind": "raw_speech", "text": "Store the settings as jason and load them when the app starts."},
-{"id": "s_73376bf17afcee0bfc7af715", "kind": "raw_speech", "text": "Jason said the post grass database is almost full."}
+{"id": "s_e4e4c2b4b3fd485e9ad5f280", "kind": "raw_speech", "text": "Keep the sprinkler timetable in camel so the pump can parse it at dawn."},
+{"id": "s_34ebb3eb6b953611a05f8e1e", "kind": "raw_speech", "text": "The camel at the zoo is asleep, and the gray fauna panel shows the pump is idle."}
 ]
 
-Why: "jason" in the first transcript makes no sense as a name next to settings and loading; JSON fits and sounds alike. The second "Jason" is a person, so the name stays a literal competitor and is not evidence for JSON. "post grass" is not a phrase; Postgres fits a database that is filling up.
+Why: "camel" in the first transcript makes no sense next to a timetable the pump parses; YAML fits and sounds alike. The second "camel" is the animal: that correct use is the evidence for the literal competitor, quoted in its personal_context, and it is not evidence for YAML. "gray fauna" is not a phrase; Grafana fits a panel that follows a pump.
 
 Response:
 {
 "additions": [
-{"id": "new_g1", "meanings": [{"id": "new_m1", "spelling": "JSON", "meaning": "JSON (JavaScript Object Notation), a text format for structured data: settings and configuration files, API requests and responses, serializing and parsing objects.", "personal_context": null, "casing": "fixed"}, {"id": "new_m2", "spelling": "Jason", "meaning": "Jason, a person's given name; someone who says, asks or does something.", "personal_context": null, "casing": "fixed"}], "recognized_forms": [{"text": "jason", "associations": [{"meaning_id": "new_m1", "basis": "text", "evidence": [{"source": "s_2c1fd6cd1dd864bc79c0c2f6", "start": 22, "end": 27}]}, {"meaning_id": "new_m2", "basis": "literal", "evidence": []}]}]},
-{"id": "new_g2", "meanings": [{"id": "new_m3", "spelling": "Postgres", "meaning": "Postgres (PostgreSQL), an open-source relational database: tables, SQL queries, migrations, database servers and their storage.", "personal_context": null, "casing": "fixed"}], "recognized_forms": [{"text": "post grass", "associations": [{"meaning_id": "new_m3", "basis": "text", "evidence": [{"source": "s_73376bf17afcee0bfc7af715", "start": 15, "end": 25}]}]}]}
+{"id": "new_g1", "meanings": [{"id": "new_m1", "spelling": "YAML", "meaning": "YAML, a human-readable format for nested key-value records: configuration files, timetables and lists that programs parse.", "personal_context": null, "casing": "fixed"}, {"id": "new_m2", "spelling": "camel", "meaning": "camel, the large desert animal with one or two humps; zoos, deserts, caravans.", "personal_context": "Used as the animal: \"The camel at the zoo is asleep\"", "casing": "ordinary"}], "recognized_forms": [{"text": "camel", "associations": [{"meaning_id": "new_m1", "basis": "text", "evidence": [{"source": "s_e4e4c2b4b3fd485e9ad5f280", "start": 32, "end": 37}]}, {"meaning_id": "new_m2", "basis": "literal", "evidence": []}], "direct": null, "direct_reason": ""}], "needs_review": false},
+{"id": "new_g2", "meanings": [{"id": "new_m3", "spelling": "Grafana", "meaning": "Grafana, an open-source tool for panels and boards that graph measurements from machines and services over time.", "personal_context": null, "casing": "fixed"}], "recognized_forms": [{"text": "gray fauna", "associations": [{"meaning_id": "new_m3", "basis": "text", "evidence": [{"source": "s_34ebb3eb6b953611a05f8e1e", "start": 40, "end": 50}]}], "direct": null, "direct_reason": ""}], "needs_review": false}
 ]
 }
 
@@ -59,7 +119,7 @@ groups:
 
 Transcripts (JSON). Each has an id, a kind and its text.
 [
-{"id": "s_b7b09c32f1757d4cfbed961e", "kind": "raw_speech", "text": "Let's meet on Thursday to go through the budget with the finance team."}
+{"id": "s_b0b426fbc4d06c5f32f264d5", "kind": "raw_speech", "text": "Let's bake bread with the neighbours at the village hall in spring."}
 ]
 
 Why: Every word is plausible as written. Correct vocabulary is not added.
