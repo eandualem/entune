@@ -122,19 +122,20 @@ class Recorder:
     def stop(self, *, discard: bool = False) -> Capture:
         """Stop capturing and release the buffers; cancellation skips the PCM copy.
 
-        The audio is taken before the device is closed, and the close gets a few seconds
-        on its own thread: PortAudio's stop can deadlock inside Core Audio (seen after
-        the input device changed), and neither what was said nor the shortcuts waiting
-        on this call may go down with it."""
+        The close gets a few seconds on its own thread: PortAudio's stop can deadlock
+        inside Core Audio (seen after the input device changed), and neither what was
+        said nor the shortcuts waiting on this call may go down with it. The buffers are
+        taken after the close, so the last chunk reaches both the clip and fast mode's
+        upload; after a hung close, they are taken anyway."""
         with self._lock:
             stream, self._stream = self._stream, None
             if stream is None:
                 return Capture(b"", self._rate)
-            self._sink = None
-            chunks, self._chunks = self._chunks, []
             closing = threading.Thread(target=_close, args=(stream,), daemon=True)
             closing.start()
             closing.join(STOP_TIMEOUT_SECONDS)
+            self._sink = None
+            chunks, self._chunks = self._chunks, []
             if closing.is_alive():
                 logging.getLogger(__name__).error("The microphone did not close; %s", STUCK)
                 self._stuck = True
