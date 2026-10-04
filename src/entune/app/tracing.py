@@ -19,7 +19,7 @@ from __future__ import annotations
 import base64
 import logging
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
@@ -46,9 +46,10 @@ def installed() -> bool:
     return True
 
 
-def _exporter(endpoint: str, authorization: str) -> Any:
+def _exporter(endpoint: str, authorization: str, sent: Callable[[str | None], None]) -> Any:
     """Spans as OTLP protobuf to `endpoint` with only `authorization`: an httpx client that
-    ignores the environment, unlike OpenTelemetry's own exporter."""
+    ignores the environment, unlike OpenTelemetry's own exporter. `sent` hears None after
+    a delivered batch, or why one was lost."""
     from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
     from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
@@ -69,8 +70,10 @@ def _exporter(endpoint: str, authorization: str) -> Any:
                 return SpanExportResult.FAILURE
             try:
                 reply = self._client.post(endpoint, content=encode_spans(spans).SerializeToString())
-            except httpx.HTTPError:
+            except httpx.HTTPError as exc:
+                sent(f"{type(exc).__name__}")
                 return SpanExportResult.FAILURE
+            sent(None if reply.is_success else f"HTTP {reply.status_code}")
             return SpanExportResult.SUCCESS if reply.is_success else SpanExportResult.FAILURE
 
         def shutdown(self) -> None:
@@ -96,6 +99,7 @@ class Tracing:
         self._generation = 0  # a newer configuration wins over a connection still under way
         self.state = "off"  # off | missing | connecting | on | failed
         self.detail = ""
+        self.last_error: str | None = None  # why the latest batch did not reach Langfuse
 
     def start(self) -> None:
         """Apply the saved keys; called once when Entune starts."""
@@ -111,6 +115,7 @@ class Tracing:
             "install": INSTALL,
             "state": self.state,
             "detail": self.detail,
+            "lastError": self.last_error,
         }
 
     def save(self, public: str | None, secret: str | None, host: str | None) -> None:
@@ -144,6 +149,7 @@ class Tracing:
             self._generation += 1
             generation = self._generation
             self._stop(discard=True)  # new or removed keys: nothing more goes to the old ones
+            self.last_error = None
             public, secret = self._store.get_setting(PUBLIC), self._store.get_setting(SECRET)
             if not public or not secret:
                 self.state, self.detail = "off", ""
@@ -184,7 +190,9 @@ class Tracing:
                 return
             try:
                 provider = TracerProvider()
-                exporter = _exporter(f"{host}/api/public/otel/v1/traces", authorization)
+                exporter = _exporter(
+                    f"{host}/api/public/otel/v1/traces", authorization, self._delivered
+                )
                 provider.add_span_processor(
                     BatchSpanProcessor(exporter, export_timeout_millis=int(EXPORT_SECONDS * 1000))
                 )
@@ -194,6 +202,12 @@ class Tracing:
             Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
             self._provider, self._exporter = provider, exporter
             self.state, self.detail = "on", host
+
+    def _delivered(self, error: str | None) -> None:
+        """An export's outcome: a lost batch is shown in Settings and logged."""
+        if error is not None and error != self.last_error:
+            logging.getLogger(__name__).warning("Langfuse did not take traces: %s", error)
+        self.last_error = error
 
     def _stop(self, *, discard: bool) -> None:
         """Under the lock: stop instrumenting and shut the provider down, so a request
@@ -230,13 +244,13 @@ class Tracing:
             yield
 
     def close(self, timeout: float = QUIT_SECONDS) -> None:
-        """On quit: send what is pending, waiting at most `timeout` seconds for it."""
-        with self._lock:
-            self._generation += 1
+        """On quit: send what is pending, waiting at most `timeout` seconds in all, also when
+        a Save or Turn off is still stopping an earlier configuration."""
         stopping = threading.Thread(target=self._quit, daemon=True, name="entune-tracing")
         stopping.start()
         stopping.join(timeout)
 
     def _quit(self) -> None:
         with self._lock:
+            self._generation += 1
             self._stop(discard=False)

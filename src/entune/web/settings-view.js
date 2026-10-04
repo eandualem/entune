@@ -701,7 +701,8 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     el("tracing-host").placeholder = t.host;
     el("tracing-off").hidden = !t.publicKeyHint && !t.secretKeyHint;
     el("tracing-state").textContent = {
-      off: "Off.", connecting: "Connecting to Langfuse…", on: `On: sending to ${t.detail}.`,
+      off: "Off.", connecting: "Connecting to Langfuse…",
+      on: `On: sending to ${t.detail}.${t.lastError ? ` The last traces did not arrive (${t.lastError}).` : ""}`,
       failed: `Not connected: ${t.detail}`, missing: t.detail,
     }[t.state] ?? t.state;
     // Connecting settles in a moment: look again until it does.

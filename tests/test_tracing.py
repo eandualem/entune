@@ -26,6 +26,7 @@ class Langfuse:
     def __init__(self) -> None:
         self.accept = True
         self.delay = 0.0  # seconds each export takes to answer
+        self.status = 200  # what each export is answered with
         self.posts: list[httpx.Request] = []
 
     def sent(self) -> bytes:
@@ -44,7 +45,7 @@ def langfuse(monkeypatch: pytest.MonkeyPatch) -> Iterator[Langfuse]:
         def answer(request: httpx.Request) -> httpx.Response:
             time.sleep(fake.delay)
             fake.posts.append(request)
-            return httpx.Response(200)
+            return httpx.Response(fake.status)
 
         return real_client(transport=httpx.MockTransport(answer), **kwargs)
 
@@ -209,4 +210,40 @@ def test_quitting_waits_only_briefly_for_a_slow_langfuse(
             asyncio.run(Agent(TestModel()).run("not yet sent"))
         started = time.monotonic()
         t.close(timeout=0.3)
+        assert time.monotonic() - started < 1
+
+
+def test_a_lost_batch_shows_in_the_status(tmp_path: Path, langfuse: Langfuse) -> None:
+    with closing(Store(tmp_path)) as store:
+        t = tracing.Tracing(store)
+        t.save("pk", "sk", None)
+        settle(t)
+        langfuse.status = 503
+        ask(t, "lost")
+        assert t.status()["lastError"] == "HTTP 503"
+        langfuse.status = 200
+        ask(t, "sent")
+        assert t.status()["lastError"] is None
+
+
+def test_quitting_during_turn_off_still_waits_only_briefly(
+    tmp_path: Path, langfuse: Langfuse
+) -> None:
+    import threading
+
+    with closing(Store(tmp_path)) as store:
+        t = tracing.Tracing(store)
+        t.save("pk", "sk", None)
+        settle(t)
+        with t.run("pending"):
+            asyncio.run(Agent(TestModel()).run("not yet sent"))
+        langfuse.delay = 3
+        provider = t._provider
+        assert provider is not None
+        threading.Thread(target=provider.force_flush, daemon=True).start()
+        time.sleep(0.1)  # an export under way, Langfuse not answering
+        threading.Thread(target=t.clear, daemon=True).start()  # Turn off waits for it
+        time.sleep(0.1)
+        started = time.monotonic()
+        t.close(timeout=0.2)
         assert time.monotonic() - started < 1
