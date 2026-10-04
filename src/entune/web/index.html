@@ -522,6 +522,14 @@
                 <div id="corrections-rows"></div>
                 <div class="srow foot"><span class="caption">Newest first. Each one is already in Pinned; remove it there if it's wrong.</span></div>
               </div>
+              <h2 class="sec-label">Tracing</h2>
+              <form class="scard" id="tracing-form">
+                <div class="scard-head"><div class="caption">See exactly what the suggestion model received and answered: each dictionary-suggestion request and reply goes to Langfuse, transcript text included. Off until both keys are saved. <a href="https://cloud.langfuse.com" target="_blank" rel="noopener">Get keys</a></div></div>
+                <div class="srow"><label class="name" for="tracing-public">Public key</label><input class="input field" id="tracing-public" type="password" autocomplete="off" /></div>
+                <div class="srow"><label class="name" for="tracing-secret">Secret key</label><input class="input field" id="tracing-secret" type="password" autocomplete="off" /></div>
+                <div class="srow"><label class="name" for="tracing-host">Host</label><input class="input field" id="tracing-host" type="url" autocomplete="off" /></div>
+                <div class="srow foot"><div><button type="submit" class="btn">Save</button> <button type="button" class="btn ghost" id="tracing-off">Turn off</button></div><span class="caption" id="tracing-state" role="status"></span></div>
+              </form>
             </div>
 
             <div class="section" id="settings-privacy">
@@ -534,6 +542,7 @@
                 <div class="srow summary"><div><div class="name">Speech recognition</div><div class="caption">Audio goes to the cloud service you pick. Models on this Mac keep it here.</div></div></div>
                 <div class="srow summary"><div><div class="name">Corrections &amp; formatting</div><div class="caption">When on, transcript text, the words in question and relevant dictionary meanings go to TypeSafe if Jev is your decision model. With Laya they stay on this Mac.</div></div></div>
                 <div class="srow summary"><div><div class="name">Dictionary suggestions</div><div class="caption">When you ask, transcripts and your dictionary go to your suggestion model. Transcripts made only for a suggestion run are not saved by Entune.</div></div></div>
+                <div class="srow summary"><div><div class="name">Tracing</div><div class="caption">Off unless you save Langfuse keys under Integrations. Then each suggestion request and reply, transcript text included, also goes to the Langfuse host you set.</div></div></div>
                 <div class="srow foot"><span class="caption">Each service's own retention rules apply.</span></div>
               </div>
               <h2 class="sec-label">Your data stays yours</h2>
@@ -601,6 +610,8 @@
                   <p>With Jev, the text goes to TypeSafe, even when speech recognition runs on this Mac. With Laya, it stays on this Mac; its first start fetches the model from Hugging Face.</p>
                   <h3>Dictionary suggestions</h3>
                   <p>Only when you choose Get suggestions, the transcripts it reads and your dictionary are sent to your suggestion model (Anthropic, OpenAI through an API key or a ChatGPT subscription, Google Gemini, Groq or Mistral). With Learn from audio, the chosen audio is first transcribed by your speech model as above. Transcripts made only for a suggestion run are not saved.</p>
+                  <h3>Tracing</h3>
+                  <p>Off unless you save Langfuse keys under Settings › Integrations. When on, each dictionary-suggestion request and reply, with the transcript text and dictionary it carries, is also sent to the Langfuse host you set, so you can see exactly what the suggestion model received and answered. Turn off removes the keys and stops sending.</p>
                   <h3>Keeping and deleting</h3>
                   <p>Entune never deletes recordings or transcripts on its own. Exports are created on this Mac and leave out your keys and settings.</p>
                   <p>What a cloud service keeps, and for how long, is up to that service and your account with it. Deleting data in Entune can't remove copies a service kept, exports you saved, or copies in Time Machine or other backups of this Mac.</p>

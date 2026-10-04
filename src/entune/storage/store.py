@@ -111,6 +111,28 @@ class Store:
             row = self._db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         return None if row is None else str(row["value"])
 
+    def get_settings(self, *keys: str) -> tuple[str | None, ...]:
+        """Several settings read together: a reset never falls between them."""
+        with self._lock:
+            rows = [
+                self._db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+                for key in keys
+            ]
+        return tuple(None if row is None else str(row["value"]) for row in rows)
+
+    def set_settings(self, values: dict[str, str | None]) -> None:
+        """Several settings in one transaction: a reset never leaves only some of them."""
+        with self._lock, self._db:
+            for key, value in values.items():
+                if value is None:
+                    self._db.execute("DELETE FROM settings WHERE key = ?", (key,))
+                else:
+                    self._db.execute(
+                        "INSERT INTO settings (key, value) VALUES (?, ?)"
+                        " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (key, value),
+                    )
+
     def set_setting(self, key: str, value: str | None) -> None:
         with self._lock, self._db:
             if value is None:

@@ -539,3 +539,26 @@ def test_a_resumed_long_transcript_keeps_each_later_pieces_dictionary_results(
     # Only the piece the straddling edit touches loses its share; the later one keeps it.
     assert pieces[1].result is not None
     assert [(c.start, c.end, c.after) for c in pieces[1].result.changes] == [(0, 4, "DDDD")]
+
+
+def test_each_part_is_traced_under_its_run(app: Entune, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contextlib import nullcontext
+
+    traced: list[tuple[str, dict[str, object]]] = []
+
+    def trace(session: str, **metadata: object) -> nullcontext[None]:
+        traced.append((session, metadata))
+        return nullcontext()
+
+    async def fake(_: Request) -> str:
+        return '{"additions": []}'
+
+    monkeypatch.setattr(app.builds, "_trace", trace)
+    monkeypatch.setattr(app.builds, "_call", fake)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    job = client.post(
+        "/api/dictionary/build", json={"mode": "generate", "source": "history", "effort": "low"}
+    ).json()
+    wait_for_build(client)
+    assert traced and traced[0][0] == job["id"]
+    assert traced[0][1]["part"] == 1 and traced[0][1]["effort"] == "low"

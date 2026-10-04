@@ -464,6 +464,24 @@ approved direct mappings; ambiguous spans remain untouched.
 Details: [the dictionary file](dictionary.md) and
 [the agents' API](agents-api.md).
 
+### Tracing dictionary suggestions
+
+To see exactly what the suggestion model received and answered, connect
+[Langfuse](https://langfuse.com). Install Entune with tracing support:
+
+```sh
+uv tool install --force "entune[tracing]" && entune
+```
+
+Then, under **Settings → Integrations → Tracing**, enter a Langfuse project's public
+and secret keys, and a host if it isn't Langfuse Cloud (`https://cloud.langfuse.com`):
+`https://`, or `http://` only for a Langfuse running on this machine.
+The line under the form says when tracing is on. Each suggestion run appears in
+Langfuse as one session, with every part's request, streamed reply, timing and errors,
+tagged with the speech model, suggestion model, reasoning and part size. Nothing is
+traced until both keys are saved; **Turn off** removes them. Traces include your
+transcripts, so use a Langfuse project you trust with them.
+
 ## Entune.app
 
 `entune` (or `entune install-app`) writes `Entune.app` to /Applications, or to
@@ -518,6 +536,9 @@ Enabled features determine what is sent out:
   transcripts (for refinement, beside the dictionary step's recorded result) and the
   pinned/working confusion groups, including definitions and personal context. Each
   chunk sends the current working dictionary again.
+- **Tracing (off by default):** with Langfuse keys saved under **Settings →
+  Integrations**, each dictionary-suggestion request and reply, including its
+  transcripts and dictionary, also goes to the Langfuse host you set.
 - **Decision model:** for contextual correction it receives up to 160 characters of the
   original transcript either side of each matched occurrence, and each eligible
   meaning's spelling, definition and personal context. Filler reduction sends its input

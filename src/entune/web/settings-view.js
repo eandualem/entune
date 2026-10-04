@@ -693,9 +693,38 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     });
   }
 
+  // Langfuse tracing: keys stay masked; the line under the form says whether it is on.
+  const tracingForm = el("tracing-form");
+  function showTracing(t) {
+    el("tracing-public").placeholder = t.publicKeyHint ? `saved ${t.publicKeyHint} · type to replace` : "Not set";
+    el("tracing-secret").placeholder = t.secretKeyHint ? `saved ${t.secretKeyHint} · type to replace` : "Not set";
+    el("tracing-host").placeholder = t.host;
+    el("tracing-off").hidden = !t.publicKeyHint && !t.secretKeyHint;
+    el("tracing-state").textContent = {
+      off: "Off.", connecting: "Connecting to Langfuse…",
+      on: `On: sending to ${t.detail}.${t.lastError ? ` The last traces did not arrive (${t.lastError}).` : ""}`,
+      failed: `Not connected: ${t.detail}`, missing: t.detail,
+    }[t.state] ?? t.state;
+    // Connecting settles in a moment: look again until it does.
+    if (t.state === "connecting") setTimeout(() => loadTracing().catch(() => {}), 1500);
+  }
+  async function loadTracing() { showTracing(await api("/api/tracing")); }
+  tracingForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = { publicKey: el("tracing-public").value, secretKey: el("tracing-secret").value, host: el("tracing-host").value };
+    try {
+      showTracing(await api("/api/tracing", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+      for (const id of ["tracing-public", "tracing-secret", "tracing-host"]) el(id).value = "";
+    } catch (err) { el("tracing-state").textContent = errorText(err); }
+  });
+  el("tracing-off").addEventListener("click", async () => {
+    try { showTracing(await api("/api/tracing", { method: "DELETE" })); }
+    catch (err) { el("tracing-state").textContent = errorText(err); }
+  });
+
   return {
     load: loadSettings, save: saveSetting,
-    refreshCorrections: () => loadCorrections().catch((err) => onError(errorText(err))),
+    refreshCorrections: () => Promise.all([loadCorrections(), loadTracing()]).catch((err) => onError(errorText(err))),
     async refreshJev() { if (settings) { settings.jev.summary = (await api("/api/settings")).jev.summary; renderJevSummary(); } },
   };
 }
