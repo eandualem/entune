@@ -53,9 +53,9 @@ Choose **OpenAI** in dictionary setup, then choose how to access it:
 Then choose the dictionary model on the Dictionary page. If it is missing from
 the suggested list, open **Settings → Dictionary setup → Custom** and enter
 just `gpt-6.1-sol`, for either access option. Entune adds the provider prefix
-automatically. The selected account must have access to the model. Entune requests medium thinking where
-supported and automatically splits inputs into approximately 24,000-character
-batches; these are not additional UI settings.
+automatically. The selected account must have access to the model. The suggestions
+setup chooses the reasoning (Faster asks for low, Thorough for medium, where supported)
+and the part size (about 8,000 or 24,000 characters per request).
 
 **Current sign-in limitation:** the ChatGPT integration is experimental. It
 predates OpenAI's documented open-source sign-in route and does not yet implement

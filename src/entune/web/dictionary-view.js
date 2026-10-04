@@ -284,7 +284,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("pin-all-label").textContent = model ? `Pin all learned for ${shortName(model)}` : "Pin all learned";
     el("pin-all-count").textContent = learned ? plural(learned, "entry", "entries") : "";
     el("learn-source").textContent = !model ? "Choose a speech model first."
-      : `Reads your newest transcripts that no earlier run has read, and suggests ${mode() === "generate" ? "entries for the words your speech model gets wrong" : "fixes and missing entries"}.`;
+      : `Reads your newest transcripts not yet used by suggestions you applied, and suggests ${mode() === "generate" ? "entries for the words your speech model gets wrong" : "fixes and missing entries"}.`;
     if (proposalModel) proposalTitle();
     renderRows();
     fillModels();
