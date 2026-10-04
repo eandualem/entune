@@ -116,6 +116,27 @@ def test_a_microphone_that_hangs_on_stop_still_hands_over_its_audio(
     release.set()
 
 
+def test_audio_delivered_while_the_microphone_starts_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = Recorder()
+    stream = Mock()
+    stream.start.side_effect = lambda: recorder._on_audio(b"\x01\x00" * 50, 50, None, None)
+    monkeypatch.setitem(
+        sys.modules,
+        "sounddevice",
+        SimpleNamespace(
+            _initialized=1,
+            _terminate=Mock(),
+            _initialize=Mock(),
+            query_devices=lambda **kw: {"index": 0, "name": "Mic", "default_samplerate": 48_000},
+            RawInputStream=lambda **kw: stream,
+        ),
+    )
+    recorder.start()
+    assert recorder.stop().pcm == b"\x01\x00" * 50  # the first words are not lost
+
+
 def test_microphone_open_failure_releases_the_upload_sink(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(
         sys.modules,

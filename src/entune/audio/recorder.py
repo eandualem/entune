@@ -108,17 +108,18 @@ class Recorder:
                     callback=self._on_audio,
                 )
                 self._sink = sink_for_rate(self._rate) if sink_for_rate else None
+                self._collecting = True  # before start: the first callbacks can come during it
                 stream.start()
             except Exception:
                 # A device mid-switch (Bluetooth) can refuse; nothing must be left half
                 # open, or the next attempt would think it is already recording.
                 if stream is not None:
                     stream.close()
+                self._collecting = False
                 self._sink = None
                 self._chunks = []
                 raise
             self._stream = stream
-            self._collecting = True
             print(f"recording from {device['name']} at {self._rate} Hz", flush=True)
 
     def stop(self, *, discard: bool = False) -> Capture:
