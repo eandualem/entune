@@ -27,6 +27,10 @@ dependencies = [
   "uvicorn>=0.30",
 ]
 
+[project.optional-dependencies]
+# Opt-in Langfuse tracing of dictionary-suggestion requests (entune/app/tracing.py).
+tracing = ["langfuse>=4"]
+
 [project.urls]
 Homepage = "https://github.com/eandualem/entune"
 Documentation = "https://github.com/eandualem/entune#readme"

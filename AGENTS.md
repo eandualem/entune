@@ -126,6 +126,11 @@ certificate or terminal permissions needed. Since 2026-10-02 the same on Linux:
 its own window, icon and tray, shortcuts and paste on X11 and Wayland, and no
 browser on any system.
 
+In scope since 2026-10-04, the owner's decision: opt-in Langfuse tracing of the
+suggestion model's requests and replies, off unless Langfuse keys are saved in
+Settings, installed with the `entune[tracing]` extra. It is the only data sent
+anywhere besides the providers the person chose, and only by their choice.
+
 Out of scope for now: streaming endpoints, generative cleanup or rewriting passes,
 multi-user, authentication, cloud storage, platforms other than macOS, Windows
 and Linux. Simplicity is a requirement, not a preference.

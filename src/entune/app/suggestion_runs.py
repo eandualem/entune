@@ -15,7 +15,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from concurrent.futures import CancelledError
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -61,9 +61,14 @@ class BuildInput:
 
 class DictionaryBuilds:
     def __init__(
-        self, speech: SpeechResources, call: suggestion_model.Caller, operations: Operations
+        self,
+        speech: SpeechResources,
+        call: suggestion_model.Caller,
+        operations: Operations,
+        trace: Callable[..., AbstractContextManager[None]] = lambda *a, **k: nullcontext(),
     ) -> None:
         self._speech, self._call, self._operations = speech, call, operations
+        self._trace = trace  # groups a run's requests in Langfuse when tracing is on
         self._lock = threading.RLock()
         self._state: dict[str, Any] = {"phase": "idle"}
         self._proposal: Proposal | None = None
@@ -289,30 +294,40 @@ class DictionaryBuilds:
         began = time.monotonic()
         try:
             self._checkpoint()
-            groups = await generate.propose_part(
-                *spec.builder,
-                current,
-                current.effective(spec.speech.id) if working is None else working,
-                step,
-                spec.speech.id,
-                f"Part {number}",
-                self._call,
+            # One Langfuse session per run, each part's request and reply inside it.
+            with self._trace(
+                str(self._state.get("id")),
+                part=number,
+                speech_model=spec.speech.id,
+                suggestion_model=spec.builder[2],
                 mode=spec.mode,
                 effort=spec.effort,
-                started=lambda size: self._progress(
-                    step=number,
-                    inputCharacters=size,
-                    stepStartedAt=time.time(),  # the page shows how long this part has run
-                    attempt=1,
-                    brokenRule=None,
-                    partAttempt=1,
-                    retryReason=None,
-                ),
-                # A reply broke a rule and the model is asked to fix it: say so, with the
-                # rule, so the person can stop instead.
-                retrying=self._retrying,
-                retrying_part=self._retrying_part,
-            )
+                part_chars=_limit(spec),
+            ):
+                groups = await generate.propose_part(
+                    *spec.builder,
+                    current,
+                    current.effective(spec.speech.id) if working is None else working,
+                    step,
+                    spec.speech.id,
+                    f"Part {number}",
+                    self._call,
+                    mode=spec.mode,
+                    effort=spec.effort,
+                    started=lambda size: self._progress(
+                        step=number,
+                        inputCharacters=size,
+                        stepStartedAt=time.time(),  # the page shows how long this part has run
+                        attempt=1,
+                        brokenRule=None,
+                        partAttempt=1,
+                        retryReason=None,
+                    ),
+                    # A reply broke a rule and the model is asked to fix it: say so, with the
+                    # rule, so the person can stop instead.
+                    retrying=self._retrying,
+                    retrying_part=self._retrying_part,
+                )
         finally:
             with self._lock:
                 self._loop = self._task = None

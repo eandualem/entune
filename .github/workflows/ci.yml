@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install
-        run: uv sync --frozen
+        run: uv sync --frozen --extra tracing
       - name: Lint
         run: uv run ruff check . && uv run ruff format --check .
       - name: Types

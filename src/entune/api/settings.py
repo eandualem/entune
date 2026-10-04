@@ -244,7 +244,24 @@ def routes(app: Entune) -> list[Route]:
         user_code = body.get("userCode") if isinstance(body, dict) else None
         return await run_in_threadpool(check_sign_in, user_code)
 
+    async def tracing(request: Request) -> Response:
+        """Langfuse tracing: its keys (masked), host and state. PUT saves keys (blank keeps
+        the saved one) and a host; DELETE removes them and turns tracing off."""
+        if request.method == "PUT":
+            try:
+                body = await request.json()
+                if not isinstance(body, dict) or set(body) - {"publicKey", "secretKey", "host"}:
+                    raise ValueError("Send publicKey, secretKey and host")
+                values = [optional_text(body.get(k), k) for k in ("publicKey", "secretKey", "host")]
+                await run_in_threadpool(app.tracing.save, *values)
+            except ValueError as exc:
+                return bad(str(exc))
+        elif request.method == "DELETE":
+            await run_in_threadpool(app.tracing.clear)
+        return JSONResponse(app.tracing.status())
+
     return [
+        Route("/api/tracing", tracing, methods=["GET", "PUT", "DELETE"]),
         Route("/api/settings", get_settings, methods=["GET"]),
         Route("/api/settings", put_settings, methods=["PUT"]),
         Route("/api/chatgpt/sign-in", chatgpt_sign_in, methods=["POST", "DELETE"]),
