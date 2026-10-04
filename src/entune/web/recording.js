@@ -82,7 +82,7 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   });
   async function transcribeDropped() {
     dropping = uploading = true; // the status line stays on the files until they are done
-    const tally = { ok: 0, failed: 0, cancelled: 0, other: 0 };
+    const tally = { ok: 0, failed: 0, cancelled: 0, other: 0, refused: [], stopped: null, left: 0 };
     let number = 0;
     while (dropped.length) {
       const file = dropped.shift();
@@ -90,24 +90,38 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
       onStatus(`Transcribing ${number} of ${number + dropped.length}: ${file.name}…`);
       const form = new FormData();
       form.append("audio", file, file.name);
+      // A file the server refuses (empty, too large) is reported and skipped; the rest go
+      // on. A busy Entune or a lost connection stops the queue and says what is left.
+      let response;
       try {
-        const recording = await api("/api/recordings", { method: "POST", body: form });
-        // A saved recording can still carry a failed transcription: count what happened.
-        const attempt = recording.transcriptions?.[0];
-        tally[attempt?.processing_state === "cancelled" ? "cancelled" : attempt?.status === "ok" ? "ok" : attempt?.status === "error" ? "failed" : "other"]++;
-        await onUploaded();
+        response = await fetch("/api/recordings", { method: "POST", body: form });
       } catch (err) {
-        dropped.length = 0;
-        dropping = uploading = false;
-        onStatus(`${file.name}: ${errorText(err)}`);
-        return;
+        response = null;
+        tally.stopped = `${errorText(err)}`;
       }
+      if (response && response.status === 409) tally.stopped = await response.text();
+      if (tally.stopped) {
+        tally.left = dropped.length + 1;
+        dropped.length = 0;
+        break;
+      }
+      if (!response.ok) {
+        tally.refused.push(`${file.name}: ${await response.text()}`);
+        continue;
+      }
+      const attempt = (await response.json()).transcriptions?.[0];
+      // A saved recording can still carry a failed or cancelled transcription.
+      tally[attempt?.processing_state === "cancelled" ? "cancelled" : attempt?.status === "ok" ? "ok" : attempt?.status === "error" ? "failed" : "other"]++;
+      await onUploaded();
     }
     dropping = uploading = false;
     previous = null; // the summary below stays; the poll has nothing newer to say
-    const parts = [`Transcribed ${tally.ok} of ${number} file${number === 1 ? "" : "s"}`];
+    const total = number + (tally.stopped ? tally.left - 1 : 0);
+    const parts = [`Transcribed ${tally.ok} of ${total} file${total === 1 ? "" : "s"}`];
     if (tally.failed) parts.push(`${tally.failed} failed, see History`);
     if (tally.cancelled) parts.push(`${tally.cancelled} cancelled`);
+    if (tally.refused.length) parts.push(`not accepted: ${tally.refused.join("; ")}`);
+    if (tally.stopped) parts.push(`${tally.left} not transcribed: ${tally.stopped}`);
     if (tally.other) parts.push(`${tally.other} saved without text`);
     onStatus(`${parts.join("; ")}.`);
   }
