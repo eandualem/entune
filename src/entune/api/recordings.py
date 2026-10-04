@@ -90,7 +90,7 @@ def routes(app: Entune) -> list[Route]:
             or current["source"] == "web"
         ):
             return bad("No shortcut recording is running", 409)
-        if not app.desktop.stop_recording():
+        if not app.desktop.stop_recording(current["id"]):
             return bad("No desktop app is running", 409)
         return JSONResponse(current, status_code=202)
 

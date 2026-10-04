@@ -141,7 +141,7 @@ def test_the_window_can_stop_only_a_shortcut_recording(tmp_path: Path) -> None:
     stops: list[bool] = []
     shortcut = app.operations.begin("dictation", "recording")
     assert client.post(f"/api/operations/{shortcut.id}/stop").status_code == 409  # no desktop
-    app.desktop.on_stop_recording(lambda: stops.append(True))
+    app.desktop.on_stop_recording(lambda operation: stops.append(operation == shortcut.id))
     assert client.post("/api/operations/other/stop").status_code == 409
     assert client.post(f"/api/operations/{shortcut.id}/stop").status_code == 202
     assert stops == [True]
