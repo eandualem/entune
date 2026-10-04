@@ -86,6 +86,7 @@ def test_a_run_is_sent_to_the_saved_host_only(
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "https://elsewhere.test/v1/traces")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-other-service=other-secret")
     monkeypatch.setenv("OTEL_TRACES_SAMPLER", "always_off")
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "api.key=other-service-secret")
     with closing(Store(tmp_path)) as store:
         t = tracing.Tracing(store)
         t.save("pk-lf-1234", "sk-lf-5678", "https://langfuse.example.test/")
@@ -96,6 +97,7 @@ def test_a_run_is_sent_to_the_saved_host_only(
         assert str(post.url) == "https://langfuse.example.test/api/public/otel/v1/traces"
         assert post.headers["authorization"].startswith("Basic ")
         assert "x-other-service" not in post.headers
+        assert b"other-service-secret" not in post.content
         assert post.headers["content-type"] == "application/x-protobuf"
         body = langfuse.sent()
         assert b"langfuse.session.id" in body and b"run-1" in body

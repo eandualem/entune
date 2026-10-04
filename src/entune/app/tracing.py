@@ -182,6 +182,7 @@ class Tracing:
         ).start()
 
     def _connect(self, generation: int, public: str, secret: str, host: str) -> None:
+        from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.sdk.trace.sampling import ALWAYS_ON
@@ -208,8 +209,11 @@ class Tracing:
                 self.state, self.detail = "failed", detail
                 return
             try:
-                # Every request is traced: OTEL_TRACES_SAMPLER in the environment does not apply.
-                provider = TracerProvider(sampler=ALWAYS_ON)
+                # Every request is traced, OTEL_TRACES_SAMPLER notwithstanding, and the
+                # resource is only Entune's name: OTEL_RESOURCE_ATTRIBUTES is not sent.
+                provider = TracerProvider(
+                    sampler=ALWAYS_ON, resource=Resource({"service.name": "entune"})
+                )
                 exporter = _exporter(
                     f"{host}/api/public/otel/v1/traces", authorization, self._delivered
                 )
