@@ -149,6 +149,11 @@ text on the Wayland clipboard for the app you are in.
 In Entune's window, click **Record**, speak, then click **Stop** to transcribe. Copy
 the result from History into another app.
 
+To transcribe audio you already have, such as a recording another dictation app could
+not transcribe, drop the files anywhere on Entune's window. Each one is transcribed
+with your default model, one after another, and appears in History like a dictation.
+Files that are not audio are skipped.
+
 In the desktop app on macOS, Windows and Linux, you can also dictate with global shortcuts. Set a shortcut once in Settings, or from Get started. Click
 "Set…", press the key or combination, let go. Two recording shortcuts, and both
 can be set:
@@ -234,7 +239,8 @@ A speech model turns a recording into text. These are the ones Entune can use:
 | Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
 | Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
 
-Enter a provider's API key on the Models page and its model appears in the
+Enter a provider's API key on the Models page (**Get a key** beside each provider opens
+its API key page in your browser) and its model appears in the
 model list; pick one as the default. You pay each provider directly, per minute
 of audio, at its own published rate:
 [AssemblyAI](https://www.assemblyai.com/pricing),
@@ -288,6 +294,11 @@ Every recording and every transcription attempt is kept: the audio is
 playable and downloadable, the transcript copies with a click, and any
 recording can be transcribed again with another model. Failures show the
 provider's response verbatim.
+
+**Anonymous mode**, the eye switch in the toolbar, blurs every transcript in History
+without changing the layout, for recording your screen or sharing it. The newest
+dictation stays readable until you copy it, then it blurs too. The switch is remembered
+in this window.
 
 ## Personal dictionary
 

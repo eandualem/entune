@@ -500,6 +500,9 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .name .caption { display: inline; font-weight: 400; }
 .srow { display: grid; grid-template-columns: var(--label-col) minmax(0, 1fr); gap: var(--sp-16); align-items: center; padding: var(--sp-14) var(--sp-16); border-bottom: 1px solid var(--line-faint); }
 .srow:last-child { border-bottom: 0; }
+.srow.key-row { grid-template-columns: var(--label-col) minmax(0, 1fr) auto; }
+.key-link { font-size: var(--fs-12-5); color: var(--accent-text); text-decoration: none; white-space: nowrap; }
+.key-link:hover { text-decoration: underline; }
 .srow.top { align-items: start; }
 .srow .caption { margin-top: 3px; }
 .srow.check { display: grid; cursor: default; grid-template-columns: minmax(0, 1fr) auto; }
@@ -754,3 +757,13 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 }
 @keyframes intro-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes intro-fade-out { from { opacity: 1; } to { opacity: 0; } }
+
+/* Anonymous mode: transcripts keep their size and place but cannot be read. The newest
+   dictation stays readable until it is copied (data-reveal). */
+html[data-anonymous] .card:not([data-reveal]) :is(.transcript, .failed, .attempt),
+html[data-anonymous] .details-popover .changes { filter: blur(6px); user-select: none; }
+
+/* Dropping audio anywhere in the window transcribes it into History. */
+.drop-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: color-mix(in srgb, var(--surface) 80%, transparent); border: 2px dashed var(--accent); pointer-events: none; }
+.drop-overlay[hidden] { display: none; }
+.drop-overlay p { margin: 0; font-size: var(--fs-15); color: var(--text); }

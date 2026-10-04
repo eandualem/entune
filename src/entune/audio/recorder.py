@@ -59,6 +59,7 @@ class Recorder:
         self._sink: Sink | None = None
         self._lock = threading.Lock()
         self._stuck = False  # a stream never finished closing; PortAudio is not safe to touch
+        self._collecting = False  # audio arriving after a stop, from a stream that hung, is ignored
         self._started = 0.0
         self._last_signal: float | None = None  # None: nothing heard yet in this recording
         self.level = 0.0  # 0..1, the latest chunk's peak, for the recording pill
@@ -107,12 +108,14 @@ class Recorder:
                     callback=self._on_audio,
                 )
                 self._sink = sink_for_rate(self._rate) if sink_for_rate else None
+                self._collecting = True  # before start: the first callbacks can come during it
                 stream.start()
             except Exception:
                 # A device mid-switch (Bluetooth) can refuse; nothing must be left half
                 # open, or the next attempt would think it is already recording.
                 if stream is not None:
                     stream.close()
+                self._collecting = False
                 self._sink = None
                 self._chunks = []
                 raise
@@ -134,6 +137,7 @@ class Recorder:
             closing = threading.Thread(target=_close, args=(stream,), daemon=True)
             closing.start()
             closing.join(STOP_TIMEOUT_SECONDS)
+            self._collecting = False
             self._sink = None
             chunks, self._chunks = self._chunks, []
             if closing.is_alive():
@@ -146,6 +150,8 @@ class Recorder:
             return Capture(b"" if discard else b"".join(chunks), self._rate)
 
     def _on_audio(self, indata: Any, frames: int, time: Any, status: Any) -> None:
+        if not self._collecting:
+            return
         chunk = bytes(indata)
         self._chunks.append(chunk)
         samples = memoryview(chunk).cast("h")
