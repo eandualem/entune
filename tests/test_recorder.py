@@ -108,6 +108,8 @@ def test_a_microphone_that_hangs_on_stop_still_hands_over_its_audio(
     assert recorder.stop().pcm == b"\x01\x00" * 100
     assert not recorder.recording
     unregister.assert_called_once_with(backend._exit_handler)
+    recorder._on_audio(b"\x02\x00" * 100, 100, None, None)  # the hung stream still delivers
+    assert recorder._chunks == []  # nothing is kept after the stop
     with pytest.raises(RuntimeError, match="Quit and reopen Entune"):
         recorder.start()  # never touch PortAudio again while a stream is stuck in it
     backend._terminate.assert_called_once()  # by the first start only
@@ -180,6 +182,7 @@ def test_silence_at_the_start_shows_soon_and_a_pause_after_speech_much_later(
     recorder = Recorder()
     recorder._stream = Mock()
     recorder._started = 0.0
+    recorder._collecting = True  # as start() leaves it
     quiet = b"\x01\x00" * 100
     recorder._on_audio(quiet, 100, None, None)
     now = START_QUIET_SECONDS - 0.5
