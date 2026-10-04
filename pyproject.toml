@@ -10,6 +10,7 @@ dependencies = [
   "httpx>=0.27",
   "httpx2",
   "numpy",
+  "opentelemetry-api>=1.28",  # an interrupted reply's text goes on its trace (call.py)
   "pillow",
   "pydantic>=2",
   "pydantic-ai-slim[anthropic,google,groq,mistral,openai]>=2.48",

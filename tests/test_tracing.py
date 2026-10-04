@@ -246,8 +246,38 @@ def test_quitting_during_turn_off_still_waits_only_briefly(
         assert provider is not None
         threading.Thread(target=provider.force_flush, daemon=True).start()
         time.sleep(0.1)  # an export under way, Langfuse not answering
-        threading.Thread(target=t.clear, daemon=True).start()  # Turn off waits for it
+        turning_off = threading.Thread(target=t.clear, daemon=True)  # waits for that export
+        turning_off.start()
         time.sleep(0.1)
         started = time.monotonic()
         t.close(timeout=0.2)
         assert time.monotonic() - started < 1
+        turning_off.join(10)  # done before the store closes
+
+
+def test_a_stopped_reply_keeps_what_it_sent_on_its_trace(
+    tmp_path: Path, langfuse: Langfuse
+) -> None:
+    from collections.abc import AsyncIterator
+
+    from pydantic_ai.messages import ModelMessage
+    from pydantic_ai.models.function import AgentInfo
+
+    from entune.learning import suggestion_model
+    from tests.test_suggestions import Finished, request
+
+    async def runaway(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield '{"additions": [{"id": "new_cloud", "meanings": ['
+        while True:
+            yield " " * 100  # blank space, never the rest of the reply
+
+    with closing(Store(tmp_path)) as store:
+        t = tracing.Tracing(store)
+        t.save("pk", "sk", None)
+        settle(t)
+        with t.run("stopped"), pytest.raises(suggestion_model.ReplyStopped):
+            asyncio.run(suggestion_model.call_model(request(), Finished(stream_function=runaway)))
+        assert t._provider is not None
+        t._provider.force_flush()
+        body = langfuse.sent()
+        assert b"entune.partial_reply" in body and b'"new_cloud"' in body

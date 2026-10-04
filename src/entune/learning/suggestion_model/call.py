@@ -18,6 +18,7 @@ from typing import Literal
 import httpx
 import httpx2
 import pydantic_ai
+from opentelemetry import trace
 from pydantic import BaseModel
 from pydantic_ai import Agent, ModelRetry, NativeOutput, PromptedOutput, RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
@@ -113,16 +114,22 @@ async def _run(request: Request, chosen: Model) -> str:
                 try:
                     async with asyncio.timeout(allowed), node.stream(run.ctx) as stream:
                         blank = 0  # whitespace characters the reply's text ends in
-                        async for event in stream:
-                            text = _text(event)
-                            kept = text.rstrip()
-                            blank = blank + len(text) if not kept else len(text) - len(kept)
-                            if blank > RUNAWAY:
-                                raise ReplyStopped(
-                                    "the reply ran into empty output",
-                                    f"The reply ran into empty output: more than {RUNAWAY}"
-                                    " whitespace characters in a row, so it was stopped",
-                                )
+                        received: list[str] = []  # the reply so far, for a trace if it stops
+                        try:
+                            async for event in stream:
+                                text = _text(event)
+                                received.append(text)
+                                kept = text.rstrip()
+                                blank = blank + len(text) if not kept else len(text) - len(kept)
+                                if blank > RUNAWAY:
+                                    raise ReplyStopped(
+                                        "the reply ran into empty output",
+                                        f"The reply ran into empty output: more than {RUNAWAY}"
+                                        " whitespace characters in a row, so it was stopped",
+                                    )
+                        except BaseException:
+                            _keep_partial(received, blank)  # stopped, timed out or cut off
+                            raise
                         finish = stream.response.finish_reason
                 except TimeoutError as exc:
                     raise ReplyTimedOut(
@@ -165,6 +172,21 @@ def passing(error: Exception) -> str | None:
     if isinstance(error, ModelAPIError | httpx.TransportError | httpx2.TransportError):
         return "the connection failed"
     return None
+
+
+PARTIAL = 50_000  # characters of an interrupted reply kept on its trace
+
+
+def _keep_partial(received: list[str], blank: int) -> None:
+    """When tracing is on, put what an interrupted reply had sent on its request's trace;
+    the instrumentation records only finished replies."""
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return
+    text = "".join(received).rstrip()
+    span.set_attribute("entune.partial_reply", text[-PARTIAL:])
+    span.set_attribute("entune.partial_reply_characters", len(text))
+    span.set_attribute("entune.trailing_blank_characters", blank)
 
 
 def _effort(value: str) -> Literal["low", "medium"]:
