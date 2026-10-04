@@ -291,3 +291,11 @@ def test_an_sdk_disabled_by_the_environment_is_reported_not_on(
         t = tracing.Tracing(store)
         t.save("pk", "sk", None)
         assert t.state == "failed" and "OTEL_SDK_DISABLED" in t.detail
+
+
+def test_keys_and_host_are_written_and_read_together(tmp_path: Path) -> None:
+    with closing(Store(tmp_path)) as store:
+        store.set_settings({"a": "1", "b": "2", "c": None})
+        assert store.get_settings("a", "b", "c") == ("1", "2", None)
+        store.set_settings({"a": None, "b": "3"})
+        assert store.get_settings("a", "b") == (None, "3")

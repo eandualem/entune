@@ -133,18 +133,20 @@ class Tracing:
             # Keys and transcripts travel unencrypted over http: only to this machine.
             if url.scheme == "http" and url.host not in ("localhost", "127.0.0.1", "::1"):
                 raise ValueError("Use https:// for a Langfuse host that is not on this machine")
+        changes: dict[str, str | None] = {}
+        if host is not None and host.strip():
+            changes[HOST] = host.strip().rstrip("/")
+        for name, value in ((PUBLIC, public), (SECRET, secret)):
+            if value is not None and value.strip():
+                changes[name] = value.strip()
         with self._lock:
-            if host is not None and host.strip():
-                self._store.set_setting(HOST, host.strip().rstrip("/"))
-            for name, value in ((PUBLIC, public), (SECRET, secret)):
-                if value is not None and value.strip():
-                    self._store.set_setting(name, value.strip())
+            # One transaction, so Delete everything never leaves keys without their host.
+            self._store.set_settings(changes)
             self._configure()
 
     def clear(self) -> None:
         with self._lock:
-            for name in (PUBLIC, SECRET, HOST):
-                self._store.set_setting(name, None)
+            self._store.set_settings({PUBLIC: None, SECRET: None, HOST: None})
             self._configure()
 
     def sync(self) -> None:
@@ -159,7 +161,9 @@ class Tracing:
             generation = self._generation
             self._stop(discard=True)  # new or removed keys: nothing more goes to the old ones
             self.last_error = None
-            public, secret = self._store.get_setting(PUBLIC), self._store.get_setting(SECRET)
+            # Keys and host read together: a reset in between could pair keys with the
+            # default host.
+            public, secret, saved_host = self._store.get_settings(PUBLIC, SECRET, HOST)
             if not public or not secret:
                 self.state, self.detail = "off", ""
                 return
@@ -172,7 +176,7 @@ class Tracing:
                 self.detail = "OTEL_SDK_DISABLED is set in Entune's environment"
                 return
             self.state, self.detail = "connecting", ""
-            host = self._store.get_setting(HOST) or DEFAULT_HOST
+            host = saved_host or DEFAULT_HOST
         threading.Thread(
             target=self._connect, args=(generation, public, secret, host), daemon=True
         ).start()
