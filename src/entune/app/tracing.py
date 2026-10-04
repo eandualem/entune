@@ -129,6 +129,9 @@ class Tracing:
                 raise ValueError(f"The Langfuse host is not a valid address: {exc}") from exc
             if url.scheme not in ("https", "http") or not url.host:
                 raise ValueError("The Langfuse host must start with https:// or http://")
+            # Keys and transcripts travel unencrypted over http: only to this machine.
+            if url.scheme == "http" and url.host not in ("localhost", "127.0.0.1", "::1"):
+                raise ValueError("Use https:// for a Langfuse host that is not on this machine")
         with self._lock:
             if host is not None and host.strip():
                 self._store.set_setting(HOST, host.strip().rstrip("/"))

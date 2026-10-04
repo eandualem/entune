@@ -152,6 +152,9 @@ def test_refused_keys_and_missing_packages_say_so(
             t.save(None, None, "cloud.langfuse.com")
         with pytest.raises(ValueError, match="not a valid address"):
             t.save(None, None, "https://example.com:abc")
+        with pytest.raises(ValueError, match="https://"):
+            t.save(None, None, "http://langfuse.example.test")  # unencrypted, off this machine
+        t.save(None, None, "http://localhost:3000")  # a Langfuse on this machine may use http
 
 
 def test_the_tracing_api_masks_keys_and_turns_off(tmp_path: Path, langfuse: Langfuse) -> None:

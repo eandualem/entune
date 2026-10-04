@@ -474,7 +474,8 @@ uv tool install --force "entune[tracing]" && entune
 ```
 
 Then, under **Settings → Integrations → Tracing**, enter a Langfuse project's public
-and secret keys, and a host if it isn't Langfuse Cloud (`https://cloud.langfuse.com`).
+and secret keys, and a host if it isn't Langfuse Cloud (`https://cloud.langfuse.com`):
+`https://`, or `http://` only for a Langfuse running on this machine.
 The line under the form says when tracing is on. Each suggestion run appears in
 Langfuse as one session, with every part's request, streamed reply, timing and errors,
 tagged with the speech model, suggestion model, reasoning and part size. Nothing is
