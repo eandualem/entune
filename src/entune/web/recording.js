@@ -11,6 +11,7 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   let uploading = false;
   let operationId = null;
   let active = null;
+  let dropping = false; // dropped audio files are being transcribed, one after another
   let shortcut = false; // a recording the shortcut started: this button stops it too
   const cancel = document.createElement("button");
   cancel.type = "button"; cancel.className = "btn ghost";
@@ -23,7 +24,8 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
       active = await api("/api/operations");
       const key = active ? `${active.id}:${active.stage}` : null;
       if (key !== previous) {
-        if (active) onStatus(labels[active.stage] ?? active.stage);
+        // Dropped files keep their own progress line ("Transcribing 2 of 5: name").
+        if (active && !dropping) onStatus(labels[active.stage] ?? active.stage);
         else if (previous && !uploading) onStatus("Ready");
         previous = key;
       }
@@ -66,7 +68,6 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; overlay.hidden = true; } });
   // Drops queue up: files dropped while others are transcribing wait their turn.
   const dropped = [];
-  let dropping = false;
   addEventListener("drop", (event) => {
     if (!hasFiles(event)) return;
     event.preventDefault(); // never open the file in place of the app
@@ -81,7 +82,7 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   });
   async function transcribeDropped() {
     dropping = uploading = true; // the status line stays on the files until they are done
-    const tally = { ok: 0, failed: 0, other: 0 };
+    const tally = { ok: 0, failed: 0, cancelled: 0, other: 0 };
     let number = 0;
     while (dropped.length) {
       const file = dropped.shift();
@@ -92,8 +93,8 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
       try {
         const recording = await api("/api/recordings", { method: "POST", body: form });
         // A saved recording can still carry a failed transcription: count what happened.
-        const status = recording.transcriptions?.[0]?.status;
-        tally[status === "ok" ? "ok" : status === "error" ? "failed" : "other"]++;
+        const attempt = recording.transcriptions?.[0];
+        tally[attempt?.processing_state === "cancelled" ? "cancelled" : attempt?.status === "ok" ? "ok" : attempt?.status === "error" ? "failed" : "other"]++;
         await onUploaded();
       } catch (err) {
         dropped.length = 0;
@@ -106,6 +107,7 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
     previous = null; // the summary below stays; the poll has nothing newer to say
     const parts = [`Transcribed ${tally.ok} of ${number} file${number === 1 ? "" : "s"}`];
     if (tally.failed) parts.push(`${tally.failed} failed, see History`);
+    if (tally.cancelled) parts.push(`${tally.cancelled} cancelled`);
     if (tally.other) parts.push(`${tally.other} saved without text`);
     onStatus(`${parts.join("; ")}.`);
   }
