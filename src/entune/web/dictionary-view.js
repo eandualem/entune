@@ -40,7 +40,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const onboarding = createAudioOnboarding({
     getModel, getSettings, getRunSettings: runSettings,
     getDictionaryModelName: () => missingKey ? null : languageName(getSettings()?.dictionaryModel),
-    onBuild(selection) { return builds.start("audio", { mode: mode(), ...selection, ...runSettings() }); },
+    // Fresh transcripts from audio carry no record of what the dictionary did, so there is
+    // nothing for refinement to judge: audio always looks for new entries.
+    onBuild(selection) { return builds.start("audio", { mode: "generate", ...selection, ...runSettings() }); },
     onBusy(value) { importing = value; gate(); },
   });
 
@@ -67,7 +69,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       : "Standard parts: about 24,000 characters per request.";
     const replies = effort === "low" ? "Faster replies reason less." : "Thorough replies reason more and take longer.";
     const plan = model.startsWith("chatgpt:")
-      ? ` On a ChatGPT plan each reply must finish within about 15 minutes${model === "chatgpt:gpt-6-astra" && effort === "medium" ? "; GPT-6 Astra often needs Faster to stay within it" : ""}.`
+      ? " On a ChatGPT plan each reply must finish within about 15 minutes."
       : "";
     el("run-effect").textContent = `${replies} ${parts}${plan}`;
   }

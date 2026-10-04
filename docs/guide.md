@@ -346,6 +346,8 @@ audio file in `dictionary-audio/`, separate from recording history, and can reus
 it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
 up to 199 MB can be uploaded; the chosen provider must support the audio format
 and length. A build uses the speech and dictionary models selected when it starts.
+Learning from audio always looks for new entries: freshly transcribed audio carries no
+record of what the dictionary did, so there is nothing for refinement to judge.
 A cloud speech model transcribes four recordings at a time; a local model takes one at a
 time. Suggestions start as soon as one part's worth of text is transcribed, while the
 rest is still being transcribed. A recording that will not transcribe is tried once
