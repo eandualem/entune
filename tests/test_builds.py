@@ -454,3 +454,35 @@ def test_continue_reads_only_the_unread_rest_of_a_long_transcript(
     # Each part is timed under the settings it actually ran with.
     assert timing[f"{model}|medium|40"]["parts"] == 1
     assert timing[f"{model}|low|40"]["parts"] == done["completedBatches"] - 1
+
+
+def test_a_stopped_run_waits_for_every_transcription_under_way(
+    app: Entune, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = wav_bytes(bytes([0, 0]) * 16)
+    entered = {0: threading.Event(), 1: threading.Event()}
+    stopping, release = threading.Event(), threading.Event()
+
+    def transcribe(clip: Clip, model: str, key: str) -> Transcript:
+        if clip.data == first:
+            entered[0].set()
+            assert stopping.wait(5)
+            raise RuntimeError("connection reset")  # gives up once Stop is pressed
+        entered[1].set()
+        assert release.wait(5)  # still answering after Stop
+        return Transcript("late but kept")
+
+    monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    job = client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"}).json()
+    try:
+        assert entered[0].wait(2) and entered[1].wait(2)
+        client.post(f"/api/dictionary/build/{job['id']}/cancel")
+        stopping.set()
+        time.sleep(0.5)
+        # The run is not over while a recording is still being transcribed.
+        assert client.get("/api/dictionary/build").json()["phase"] == "cancelling"
+    finally:
+        release.set()
+    stopped = wait_for_build(client)
+    assert stopped["phase"] == "cancelled" and stopped["cachedTranscripts"] == 1

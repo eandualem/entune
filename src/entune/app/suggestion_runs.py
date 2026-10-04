@@ -350,10 +350,11 @@ class DictionaryBuilds:
             )
 
     def _transcribe_clip(
-        self, spec: BuildInput, item: DictionaryAudio, path: Path
+        self, spec: BuildInput, item: DictionaryAudio, path: Path, cancel: threading.Event
     ) -> learning_inputs.LearningText:
-        with self._speech.use(spec.speech, background=True, cancel=self._cancel):
-            self._checkpoint()
+        with self._speech.use(spec.speech, background=True, cancel=cancel):
+            if self._closed or cancel.is_set():
+                raise CancelledError()
             data = path.read_bytes()
             if not item.id.startswith("recording:") and hashlib.sha256(data).hexdigest() != item.id:
                 raise ValueError("The imported audio changed; import it again")
@@ -371,15 +372,20 @@ class DictionaryBuilds:
         return text
 
     def _transcribe_one(
-        self, spec: BuildInput, item: DictionaryAudio, path: Path
+        self,
+        spec: BuildInput,
+        item: DictionaryAudio,
+        path: Path,
+        halt: threading.Event,
+        cancel: threading.Event,
     ) -> learning_inputs.LearningText | None:
         """One recording, tried once more if it fails, then skipped (None): the others
-        still teach the dictionary."""
+        still teach the dictionary. `halt` and `cancel` are this run's own."""
         for attempt in (1, 2):
-            if self._halt.is_set():
+            if halt.is_set():
                 raise CancelledError()
             try:
-                return self._transcribe_clip(spec, item, path)
+                return self._transcribe_clip(spec, item, path, cancel)
             except CancelledError:
                 raise
             except Exception as exc:
@@ -395,8 +401,11 @@ class DictionaryBuilds:
 
     def _transcribe(self, spec: BuildInput, ready: queue.Queue[object]) -> None:
         """Transcribe the selection on worker threads, handing each text to `ready` as
-        it arrives; DONE goes last, also after a stop or failure. The workers are daemon
-        threads, so quitting never waits for a transcription still under way."""
+        it arrives; DONE goes last, also after a stop or failure, once every worker has
+        finished the recording it had, so nothing from this run arrives after it ends.
+        The workers are daemon threads, so quitting never waits for them."""
+        halt, cancel = self._halt, self._cancel  # this run's, never a later run's
+        workers: list[threading.Thread] = []
         try:
             todo: queue.Queue[tuple[DictionaryAudio, Path]] = queue.Queue()
             done = 0
@@ -411,13 +420,13 @@ class DictionaryBuilds:
             results: queue.Queue[object] = queue.Queue()
 
             def work() -> None:
-                while not self._halt.is_set():
+                while not halt.is_set():
                     try:
                         item, path = todo.get_nowait()
                     except queue.Empty:
                         return
                     try:
-                        results.put(self._transcribe_one(spec, item, path))
+                        results.put(self._transcribe_one(spec, item, path, halt, cancel))
                     except BaseException as exc:
                         results.put(exc)
                         return
@@ -444,8 +453,11 @@ class DictionaryBuilds:
                 with self._lock:
                     self._state.update(completed=done, skipped=len(self._skipped))
         except BaseException as exc:
+            halt.set()  # the other workers take no further recordings
             ready.put(exc)
         finally:
+            for worker in workers:
+                worker.join()
             ready.put(DONE)
 
     def _run(self) -> None:
