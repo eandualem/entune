@@ -100,8 +100,8 @@ class Entune:
         # Signal both owners before waiting; no new work can race shutdown. The decision client
         # owns a separate two-second close; builds/resources share two more seconds.
         self.builds.close(0)
-        self.tracing.close()
         self.speech.close(0)
+        self.tracing.close()  # pending traces get two seconds at most
         try:
             self.decisions.close()
         except Exception as exc:

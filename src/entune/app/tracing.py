@@ -6,10 +6,12 @@ dictionary-suggestion request and reply, transcript text included, goes to the L
 host the person chose, grouped by suggestion run. Nothing else is traced, and nothing is
 sent while it is off.
 
-Spans go straight to Langfuse's OpenTelemetry endpoint through a tracer provider this
-module owns: the endpoint and keys come only from Settings (never the environment), new
-keys apply without a restart, and turning tracing off shuts the provider down, so even a
-request already under way sends nothing more.
+Spans go straight to Langfuse's OpenTelemetry endpoint through a tracer provider and an
+exporter this module owns: the endpoint and keys come only from Settings, and nothing is
+taken from the environment (no OTEL_* headers, certificates or proxies), so no other
+service's credentials can reach Langfuse. New keys apply without a restart, and turning
+tracing off shuts the provider down, so even a request already under way sends nothing
+more.
 """
 
 from __future__ import annotations
@@ -31,13 +33,54 @@ PUBLIC, SECRET, HOST = "langfuse_public_key", "langfuse_secret_key", "langfuse_h
 INSTALL = 'uv tool install --force "entune[tracing]" && entune'
 
 
+EXPORT_SECONDS = 5.0  # one export request; a slow Langfuse never holds Entune up for long
+QUIT_SECONDS = 2.0  # what quitting waits for pending traces
+
+
 def installed() -> bool:
     try:
-        import opentelemetry.exporter.otlp.proto.http.trace_exporter
+        import opentelemetry.exporter.otlp.proto.common.trace_encoder
         import opentelemetry.sdk.trace  # noqa: F401
     except ImportError:
         return False
     return True
+
+
+def _exporter(endpoint: str, authorization: str) -> Any:
+    """Spans as OTLP protobuf to `endpoint` with only `authorization`: an httpx client that
+    ignores the environment, unlike OpenTelemetry's own exporter."""
+    from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+
+    class Exporter(SpanExporter):
+        def __init__(self) -> None:
+            self._client = httpx.Client(
+                timeout=EXPORT_SECONDS,
+                trust_env=False,
+                headers={
+                    "Authorization": authorization,
+                    "Content-Type": "application/x-protobuf",
+                },
+            )
+            self._shut = False
+
+        def export(self, spans: Any) -> Any:
+            if self._shut:
+                return SpanExportResult.FAILURE
+            try:
+                reply = self._client.post(endpoint, content=encode_spans(spans).SerializeToString())
+            except httpx.HTTPError:
+                return SpanExportResult.FAILURE
+            return SpanExportResult.SUCCESS if reply.is_success else SpanExportResult.FAILURE
+
+        def shutdown(self) -> None:
+            self._shut = True
+            self._client.close()
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            return True
+
+    return Exporter()
 
 
 def _authorization(public: str, secret: str) -> str:
@@ -73,7 +116,11 @@ class Tracing:
     def save(self, public: str | None, secret: str | None, host: str | None) -> None:
         """Blank keys keep the saved ones; a host must be an http(s) address."""
         if host is not None and host.strip():
-            if not host.strip().startswith(("https://", "http://")):
+            try:
+                url = httpx.URL(host.strip())
+            except (httpx.InvalidURL, ValueError) as exc:
+                raise ValueError(f"The Langfuse host is not a valid address: {exc}") from exc
+            if url.scheme not in ("https", "http") or not url.host:
                 raise ValueError("The Langfuse host must start with https:// or http://")
             self._store.set_setting(HOST, host.strip().rstrip("/"))
         for name, value in ((PUBLIC, public), (SECRET, secret)):
@@ -111,7 +158,6 @@ class Tracing:
         ).start()
 
     def _connect(self, generation: int, public: str, secret: str, host: str) -> None:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from pydantic_ai import Agent
@@ -128,7 +174,7 @@ class Tracing:
             )
             ok = reply.status_code == 200
             detail = "" if ok else f"Langfuse refused the keys (HTTP {reply.status_code})"
-        except httpx.HTTPError as exc:
+        except Exception as exc:  # a bad address too, so it never stays "connecting"
             ok, detail = False, f"Could not reach {host}: {type(exc).__name__}"
         with self._lock:
             if generation != self._generation:
@@ -136,14 +182,15 @@ class Tracing:
             if not ok:
                 self.state, self.detail = "failed", detail
                 return
-            provider = TracerProvider()
-            # The endpoint and keys are passed explicitly, so OTEL_* environment variables
-            # cannot send traces anywhere else.
-            exporter = OTLPSpanExporter(
-                endpoint=f"{host}/api/public/otel/v1/traces",
-                headers={"Authorization": authorization},
-            )
-            provider.add_span_processor(BatchSpanProcessor(exporter))
+            try:
+                provider = TracerProvider()
+                exporter = _exporter(f"{host}/api/public/otel/v1/traces", authorization)
+                provider.add_span_processor(
+                    BatchSpanProcessor(exporter, export_timeout_millis=int(EXPORT_SECONDS * 1000))
+                )
+            except Exception as exc:  # never left "connecting"
+                self.state, self.detail = "failed", f"{type(exc).__name__}: {exc}"
+                return
             Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
             self._provider, self._exporter = provider, exporter
             self.state, self.detail = "on", host
@@ -182,7 +229,14 @@ class Tracing:
         with tracer.start_as_current_span("dictionary part", attributes=attributes):
             yield
 
-    def close(self) -> None:
+    def close(self, timeout: float = QUIT_SECONDS) -> None:
+        """On quit: send what is pending, waiting at most `timeout` seconds for it."""
         with self._lock:
             self._generation += 1
+        stopping = threading.Thread(target=self._quit, daemon=True, name="entune-tracing")
+        stopping.start()
+        stopping.join(timeout)
+
+    def _quit(self) -> None:
+        with self._lock:
             self._stop(discard=False)

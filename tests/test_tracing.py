@@ -9,7 +9,6 @@ from typing import Any
 
 import httpx
 import pytest
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
@@ -22,32 +21,35 @@ from tests.test_server import StubProvider
 
 
 class Langfuse:
-    """Stands in for the network: the key check's answer, and every exporter made."""
+    """Stands in for the network: the key check's answer, and every export request."""
 
     def __init__(self) -> None:
         self.accept = True
-        self.exporters: list[tuple[dict[str, Any], InMemorySpanExporter]] = []
+        self.delay = 0.0  # seconds each export takes to answer
+        self.posts: list[httpx.Request] = []
 
-    def spans(self) -> list[Any]:
-        return [s for _, exporter in self.exporters for s in exporter.get_finished_spans()]
+    def sent(self) -> bytes:
+        return b"".join(request.content for request in self.posts)
 
 
 @pytest.fixture
 def langfuse(monkeypatch: pytest.MonkeyPatch) -> Iterator[Langfuse]:
     fake = Langfuse()
+    real_client = httpx.Client
 
     def get(url: str, **kwargs: Any) -> httpx.Response:
         return httpx.Response(200 if fake.accept else 401)
 
-    def exporter(**kwargs: Any) -> InMemorySpanExporter:
-        made = InMemorySpanExporter()
-        fake.exporters.append((kwargs, made))
-        return made
+    def client(**kwargs: Any) -> httpx.Client:
+        def answer(request: httpx.Request) -> httpx.Response:
+            time.sleep(fake.delay)
+            fake.posts.append(request)
+            return httpx.Response(200)
+
+        return real_client(transport=httpx.MockTransport(answer), **kwargs)
 
     monkeypatch.setattr("entune.app.tracing.httpx.get", get)
-    monkeypatch.setattr(
-        "opentelemetry.exporter.otlp.proto.http.trace_exporter.OTLPSpanExporter", exporter
-    )
+    monkeypatch.setattr("entune.app.tracing.httpx.Client", client)
     yield fake
     Agent.instrument_all(False)
 
@@ -73,29 +75,29 @@ def test_tracing_is_off_until_both_keys_are_saved(tmp_path: Path, langfuse: Lang
         t.save("pk-lf-1", None, None)  # a public key alone sends nothing
         assert t.state == "off"
         ask(t, "run-0")
-        assert not langfuse.exporters
+        assert not langfuse.posts
 
 
 def test_a_run_is_sent_to_the_saved_host_only(
     tmp_path: Path, langfuse: Langfuse, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Settings meant for another telemetry service never reach Langfuse.
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "https://elsewhere.test/v1/traces")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-other-service=other-secret")
     with closing(Store(tmp_path)) as store:
         t = tracing.Tracing(store)
         t.save("pk-lf-1234", "sk-lf-5678", "https://langfuse.example.test/")
         settle(t)
         assert t.state == "on"
         ask(t, "run-1")
-        settings, _ = langfuse.exporters[-1]
-        # The saved host, never the environment's endpoint.
-        assert settings["endpoint"] == "https://langfuse.example.test/api/public/otel/v1/traces"
-        assert settings["headers"]["Authorization"].startswith("Basic ")
-        spans = langfuse.spans()
-        root = next(s for s in spans if s.name == "dictionary part")
-        assert root.attributes["langfuse.session.id"] == "run-1"
-        assert root.attributes["langfuse.trace.metadata.effort"] == "low"
-        content = " ".join(str(v) for s in spans for v in (s.attributes or {}).values())
-        assert "transcript part" in content and "reply" in content  # request and reply
+        [post] = langfuse.posts
+        assert str(post.url) == "https://langfuse.example.test/api/public/otel/v1/traces"
+        assert post.headers["authorization"].startswith("Basic ")
+        assert "x-other-service" not in post.headers
+        assert post.headers["content-type"] == "application/x-protobuf"
+        body = langfuse.sent()
+        assert b"langfuse.session.id" in body and b"run-1" in body
+        assert b"transcript part" in body and b"reply" in body  # request and reply
         assert t.status()["publicKeyHint"] == "••••1234"
 
 
@@ -107,13 +109,15 @@ def test_saving_again_and_turning_off_and_on_keep_tracing_working(
         for _ in range(2):
             t.save("pk", "sk", None)
             settle(t)
+            before = len(langfuse.posts)
             ask(t, "run")
-            assert langfuse.exporters[-1][1].get_finished_spans()  # the new one sends
+            assert len(langfuse.posts) > before  # the new configuration sends
         t.clear()
         t.save("pk", "sk", None)
         settle(t)
+        before = len(langfuse.posts)
         ask(t, "run")
-        assert langfuse.exporters[-1][1].get_finished_spans()
+        assert len(langfuse.posts) > before
 
 
 def test_turning_off_stops_even_a_request_under_way(tmp_path: Path, langfuse: Langfuse) -> None:
@@ -125,9 +129,9 @@ def test_turning_off_stops_even_a_request_under_way(tmp_path: Path, langfuse: La
         span = t._provider.get_tracer("test").start_span("under way")
         t.clear()
         span.end()  # finishes after consent was withdrawn
-        assert t.state == "off" and not langfuse.spans()
+        assert t.state == "off" and not langfuse.posts
         ask(t, "after")
-        assert not langfuse.spans()
+        assert not langfuse.posts
 
 
 def test_refused_keys_and_missing_packages_say_so(
@@ -138,12 +142,14 @@ def test_refused_keys_and_missing_packages_say_so(
         langfuse.accept = False
         t.save("pk", "sk", None)
         settle(t)
-        assert t.state == "failed" and "refused" in t.detail and not langfuse.exporters
+        assert t.state == "failed" and "refused" in t.detail and not langfuse.posts
         monkeypatch.setattr(tracing, "installed", lambda: False)
         t.save(None, None, None)
         assert t.state == "missing" and "entune[tracing]" in t.detail
         with pytest.raises(ValueError, match="https://"):
             t.save(None, None, "cloud.langfuse.com")
+        with pytest.raises(ValueError, match="not a valid address"):
+            t.save(None, None, "https://example.com:abc")
 
 
 def test_the_tracing_api_masks_keys_and_turns_off(tmp_path: Path, langfuse: Langfuse) -> None:
@@ -170,13 +176,13 @@ def test_turning_off_drops_queued_spans_but_quitting_sends_them(
         with t.run("queued"):
             asyncio.run(Agent(TestModel()).run("waiting to be sent"))
         t.clear()  # consent withdrawn before the batch went out
-        assert not langfuse.spans()
+        assert not langfuse.posts
         t.save("pk", "sk", None)
         settle(t)
         with t.run("quitting"):
             asyncio.run(Agent(TestModel()).run("sent on quit"))
         t.close()  # an ordinary quit sends what is pending
-        assert langfuse.spans()
+        assert b"sent on quit" in langfuse.sent()
 
 
 def test_deleting_all_data_turns_tracing_off(tmp_path: Path, langfuse: Langfuse) -> None:
@@ -187,5 +193,20 @@ def test_deleting_all_data_turns_tracing_off(tmp_path: Path, langfuse: Langfuse)
     app.data.reset_data()
     assert app.tracing.state == "off" and app.tracing._provider is None
     ask(app.tracing, "after reset")
-    assert not langfuse.spans()
+    assert not langfuse.posts
     app.close()
+
+
+def test_quitting_waits_only_briefly_for_a_slow_langfuse(
+    tmp_path: Path, langfuse: Langfuse
+) -> None:
+    langfuse.delay = 3  # Langfuse not answering
+    with closing(Store(tmp_path)) as store:
+        t = tracing.Tracing(store)
+        t.save("pk", "sk", None)
+        settle(t)
+        with t.run("pending"):
+            asyncio.run(Agent(TestModel()).run("not yet sent"))
+        started = time.monotonic()
+        t.close(timeout=0.3)
+        assert time.monotonic() - started < 1
