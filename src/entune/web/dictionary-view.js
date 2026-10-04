@@ -29,9 +29,18 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const entryDrawer = el("entry-drawer");
   const suggestDrawer = el("suggest-drawer");
   const jsonBox = el("dictionary");
+  // How a run works: the suggestion model's reasoning and the part size, remembered in
+  // this browser. Both shape how long each reply takes; see drawEffect.
+  const effortSelect = el("suggest-effort"), partSelect = el("suggest-part");
+  try {
+    effortSelect.value = localStorage.getItem("entune.suggest.effort") ?? "medium";
+    partSelect.value = localStorage.getItem("entune.suggest.part") ?? "standard";
+  } catch { /* storage unavailable: the defaults stand */ }
+  const runSettings = () => ({ effort: effortSelect.value || "medium", part: partSelect.value || "standard" });
   const onboarding = createAudioOnboarding({
-    getModel, getSettings, getDictionaryModelName: () => missingKey ? null : languageName(getSettings()?.dictionaryModel),
-    onBuild(selection) { return builds.start("audio", { mode: mode(), ...selection }); },
+    getModel, getSettings, getRunSettings: runSettings,
+    getDictionaryModelName: () => missingKey ? null : languageName(getSettings()?.dictionaryModel),
+    onBuild(selection) { return builds.start("audio", { mode: mode(), ...selection, ...runSettings() }); },
     onBusy(value) { importing = value; gate(); },
   });
 
@@ -41,6 +50,40 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     onProposal(value) { if (value) renderProposal(value); else { proposalChanges = []; el("proposal").hidden = true; } },
     onAccepted: () => loadDictionary(false),
     getSelected: () => proposalChanges.filter(c => c.included).map(c => ({id: c.id, after: c.after})),
+    getRunSettings: runSettings,
+  });
+  for (const [select, key] of [[effortSelect, "effort"], [partSelect, "part"]]) {
+    select.addEventListener("change", () => {
+      try { localStorage.setItem(`entune.suggest.${key}`, select.value); } catch { /* not remembered */ }
+      drawEffect();
+      onboarding.redraw();
+    });
+  }
+  // What the two choices do, in one line; on a ChatGPT plan, also its limit per reply.
+  function drawEffect() {
+    const model = getSettings()?.dictionaryModel ?? "";
+    const { effort, part } = runSettings();
+    const parts = part === "small" ? "Smaller parts: about 8,000 characters per request, so more requests that each finish sooner."
+      : "Standard parts: about 24,000 characters per request.";
+    const replies = effort === "low" ? "Faster replies reason less." : "Thorough replies reason more and take longer.";
+    const plan = model.startsWith("chatgpt:")
+      ? ` On a ChatGPT plan each reply must finish within about 15 minutes${model === "chatgpt:gpt-6-astra" && effort === "medium" ? "; GPT-6 Astra often needs Faster to stay within it" : ""}.`
+      : "";
+    el("run-effect").textContent = `${replies} ${parts}${plan}`;
+  }
+  // The speech model the dictionary is for: the same choice as the toolbar's default model.
+  const speechSelect = el("suggest-speech");
+  function fillSpeech() {
+    const toolbar = el("model");
+    // "Pick a model" stays while no default is set, so the picker never shows one as chosen.
+    speechSelect.replaceChildren(...[...toolbar.options].filter((o) => o.value || !toolbar.value).map((o) => new Option(o.textContent, o.value, false, o.value === toolbar.value)));
+    speechSelect.disabled = building || !speechSelect.options.length;
+  }
+  speechSelect.addEventListener("change", () => {
+    const toolbar = el("model");
+    if (!speechSelect.value) return;
+    toolbar.value = speechSelect.value;
+    toolbar.dispatchEvent(new Event("change"));
   });
 
   const node = (tag, text = "", cls = "") => Object.assign(document.createElement(tag), { textContent: text, className: cls });
@@ -136,7 +179,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     if (!keyed.length) modelSelect.add(new Option("No key yet", ""));
     modelSelect.disabled = building || !keyed.length;
     gate();
-    onboarding.redraw(); // the audio start names the suggestion model and needs its key
+    drawEffect();
+    onboarding.redraw(); // the audio estimate depends on the suggestion model
   }
   modelSelect.addEventListener("change", async () => {
     try {
@@ -152,7 +196,12 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   }
 
   // ---- Loading and saving ----
+  let shownModel; // the speech model the audio list was last filtered for
   async function loadDictionary(pollBuild = true) {
+    if (getModel()?.id !== shownModel) {
+      shownModel = getModel()?.id;
+      onboarding.modelChanged();
+    }
     dictVersion = null;
     const res = await fetch("/api/dictionary");
     const text = await res.text();
@@ -234,10 +283,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("legend-model").textContent = shortName(model);
     el("pin-all-label").textContent = model ? `Pin all learned for ${shortName(model)}` : "Pin all learned";
     el("pin-all-count").textContent = learned ? plural(learned, "entry", "entries") : "";
-    el("learn-source").textContent = !model ? "Choose a speech model in the toolbar first."
-      : `Reads up to 300 of ${speechName(model)}'s newest transcripts that no earlier run has read, plus your dictionary, and `
-        + (mode() === "generate" ? "suggests first entries for the words it gets wrong." : "suggests fixes and missing entries.")
-        + " Nothing changes until you review them.";
+    el("learn-source").textContent = !model ? "Choose a speech model first."
+      : `Reads your newest transcripts not yet used by suggestions you applied, and suggests ${mode() === "generate" ? "entries for the words your speech model gets wrong" : "fixes and missing entries"}.`;
     if (proposalModel) proposalTitle();
     renderRows();
     fillModels();
@@ -975,7 +1022,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   }
   el("help-toggle").addEventListener("click", () => showHelp());
   el("legend-help").addEventListener("click", () => showHelp());
-  el("audio-help").addEventListener("click", () => showHelp("guide-audio"));
+  el("suggest-help").addEventListener("click", () => showHelp("guide-suggestions"));
 
   // ---- Suggestions: a side panel, and a banner above the list while a run is open ----
   const RUNNING = ["queued", "transcribing", "building", "cancelling", "cleaning"];
@@ -986,12 +1033,12 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   let setupSource = "history";
   const SETUP_TITLES = { history: "Get suggestions", entune: "Learn from your other models' recordings",
     provider: "Learn from another dictation app", folder: "Learn from an audio folder" };
+  // What the source is; how it becomes suggestions is the same for all three.
   function audioIntro(source) {
-    const speech = speechName(getModel());
     return {
-      entune: `Your Entune recordings transcribed with other speech models. Transcribing them again with ${speech} teaches it your words without dictating them again.`,
-      provider: `Recordings another dictation app keeps on ${THIS_DEVICE}, transcribed with ${speech} so it learns from all of them at once.`,
-      folder: `Any folder of audio of you talking, such as meetings, voice notes or exports, transcribed with ${speech} and then turned into suggestions.`,
+      entune: "Your Entune recordings made with other speech models. Entune transcribes them again with this one, then suggests entries.",
+      provider: `Recordings another dictation app keeps on ${THIS_DEVICE}. Entune transcribes them, then suggests entries.`,
+      folder: "Audio of you talking, such as meetings or voice notes. Entune transcribes it, then suggests entries.",
     }[source];
   }
   function openSuggestions(source) {
@@ -1028,13 +1075,19 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("suggest-title").textContent = titles[now];
     if (now === "review") proposalTitle();
     const model = getModel();
-    el("suggest-sub").textContent = now === "setup" ? `For ${speechName(model)}. Suggestions land here for review; nothing is saved before you apply.`
+    el("suggest-sub").textContent = now === "setup" ? ""
       : `${plural(state.total ?? 0, state.source === "audio" ? "recording" : "transcript")} · ${modelName(state.model ?? "", model ? [model] : [])} → ${languageName(state.dictionaryModel) ?? "suggestion model"}`;
     const audio = setupSource !== "history";
     el("suggest-setup").hidden = now !== "setup" || audio;
     el("suggest-audio").hidden = now !== "setup" || !audio;
     if (audio) el("audio-intro").textContent = audioIntro(setupSource);
-    el("suggest-shared").hidden = now !== "setup";
+    // The settings stay open after a stop or failure: Continue can use smaller parts or
+    // faster replies. The speech model is only chosen before a run.
+    const resumable = now === "halted" || (now === "review" && ["failed", "stopped"].includes(state.outcome));
+    el("suggest-shared").hidden = now !== "setup" && !resumable;
+    el("speech-field").hidden = now !== "setup";
+    el("audio-generation-estimate").hidden = now !== "setup" || !audio;
+    if (now === "setup") fillSpeech();
     if (now === "setup") el("learn-status").hidden = true;
     el("run-note").hidden = now !== "running";
     el("proposal").hidden = now !== "review";
@@ -1049,13 +1102,14 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     banner.classList.toggle("err", state.phase === "failed" || (now === "review" && state.outcome === "failed"));
     el("banner-spinner").hidden = now !== "running";
     el("banner-dot").hidden = now === "running";
-    const progress = state.phase === "transcribing" ? `Transcribing recording ${state.completed} of ${state.total}`
+    const done = state.completedBatches ? ` · ${plural(state.completedBatches, "part")} of suggestions done` : "";
+    const progress = state.phase === "transcribing" ? `Transcribed ${state.completed} of ${state.total} recordings${done}`
       : state.phase === "cancelling" ? "Stopping"
-        : state.steps > 1 ? `Getting suggestions · part ${state.step} of ${state.steps} · ${state.completedBatches ?? 0} done` : "Getting suggestions";
-    el("banner-text").textContent = now === "running" ? `${progress}. Editing and dictation are paused until the suggestions are applied or discarded.`
-      : now === "review" ? `${state.outcome === "stopped" || state.outcome === "failed" ? "The run stopped early. " : ""}${plural(proposalChanges.length, "suggestion")} waiting for review. Editing and dictation are paused until you apply or discard.`
-        : state.phase === "failed" ? "The suggestion run stopped with an error. Your dictionary is unchanged; retry or discard."
-          : `The suggestion run was stopped after ${state.completedBatches ?? 0} of ${state.steps ?? 0} parts. Retry the rest, or discard.`;
+        : state.step ? `Getting suggestions · part ${state.step}${state.steps ? ` of ${state.steps}` : ""}${done}` : "Getting suggestions";
+    el("banner-text").textContent = now === "running" ? `${progress}. Dictionary editing waits until the suggestions are applied or discarded.`
+      : now === "review" ? `${state.outcome === "stopped" || state.outcome === "failed" ? "The run stopped early. " : ""}${plural(proposalChanges.length, "suggestion")} waiting for review. Dictionary editing waits until you apply or discard.`
+        : state.phase === "failed" ? "The suggestion run stopped with an error. Your dictionary is unchanged; continue or discard."
+          : `The suggestion run was stopped after ${plural(state.completedBatches ?? 0, "part")}. Continue, or discard.`;
     el("banner-action").textContent = now === "running" ? "Details" : now === "review" ? "Review" : "Open";
     // A finished review closes the panel and says what happened.
     if ((before === "review" || before === "halted") && now === "setup") {
@@ -1209,7 +1263,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     if (!proposalChanges.length) proposalBody.append(node("p", "No changes suggested. Finish to close this review; the same dictations can be used again later.", "caption"));
   }
   const scope = () => reuse.checked ? "all" : "new";
-  el("build-dictionary").addEventListener("click", () => builds.start("history", {mode: mode(), scope: scope()}));
+  el("build-dictionary").addEventListener("click", () => builds.start("history", {mode: mode(), scope: scope(), ...runSettings()}));
 
   return { load: loadDictionary, refreshAudio: () => onboarding.load(), refreshModels: fillModels };
 }

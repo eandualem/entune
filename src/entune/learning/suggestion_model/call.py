@@ -5,13 +5,15 @@ enforced by the provider itself. Rules a schema cannot express run as a check; w
 reply breaks one, the model is shown the rule and asked for a corrected reply, at most
 MAX_FIXES times, and the caller is told before each attempt so the person can stop it.
 Nothing else is retried: the provider SDKs' own retries are off, and a failed request,
-a refusal or a reply cut at the output limit ends the call at once. `passing` tells the
-caller which failures another attempt of the same request may overcome.
+a refusal, a reply cut at the output limit or one past its time limit ends the call at
+once. `passing` tells the caller which failures another attempt of the same request may
+overcome.
 """
 
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 import httpx
 import httpx2
@@ -35,6 +37,8 @@ from entune.learning.suggestion_model.request import (
     MAX_FIXES,
     BrokenReply,
     ReplyStopped,
+    ReplyTimedOut,
+    ReplyTooLong,
     Request,
 )
 
@@ -72,9 +76,9 @@ async def _run(request: Request, chosen: Model) -> str:
         # No timeout here: it would replace each provider client's five-second connect limit.
         # A ChatGPT plan's endpoint takes no output limit; the plan applies its own.
         model_settings=(
-            ModelSettings(thinking="medium")
+            ModelSettings(thinking=_effort(request.effort))
             if plan
-            else ModelSettings(max_tokens=MAX_OUTPUT_TOKENS, thinking="medium")
+            else ModelSettings(max_tokens=MAX_OUTPUT_TOKENS, thinking=_effort(request.effort))
         ),
     )
 
@@ -117,14 +121,14 @@ async def _run(request: Request, chosen: Model) -> str:
                                 )
                         finish = stream.response.finish_reason
                 except TimeoutError as exc:
-                    raise ReplyStopped(
+                    raise ReplyTimedOut(
                         f"the reply ran past its {allowed / 60:g}-minute limit",
                         f"The reply timed out: still streaming after {allowed / 60:g} minutes"
                         + (", just before the ChatGPT plan would cut it" if plan else ""),
                     ) from exc
                 if finish == "length":
                     limit = "plan's" if plan else f"{MAX_OUTPUT_TOKENS}-token"
-                    raise ValueError(
+                    raise ReplyTooLong(
                         f"The reply reached the {limit} output limit,"
                         " which includes reasoning; nothing from this step was used"
                     )
@@ -147,6 +151,8 @@ def passing(error: Exception) -> str | None:
     """Why another attempt of the same request may succeed, or None when it would fail the
     same way: Entune stopped the reply, the connection failed or the service had a server
     error. A refused key, a limit or quota (401, 403, 429) and anything else do not pass."""
+    if isinstance(error, ReplyTimedOut):
+        return None  # the same part would most likely run as long again
     if isinstance(error, ReplyStopped):
         return error.reason
     if isinstance(error, ModelHTTPError):
@@ -155,6 +161,10 @@ def passing(error: Exception) -> str | None:
     if isinstance(error, ModelAPIError | httpx.TransportError | httpx2.TransportError):
         return "the connection failed"
     return None
+
+
+def _effort(value: str) -> Literal["low", "medium"]:
+    return "low" if value == "low" else "medium"
 
 
 def _text(event: object) -> str:

@@ -153,17 +153,19 @@ model's history. Or choose **Learn from audio** to import recordings from
 another dictation app or an audio folder. Entune transcribes imported audio
 with your chosen speech model, then proposes entries for review.
 
-**Dictionary generation takes time.** It runs sequentially in batches, with
-the growing dictionary included in each request. Large histories can take
-minutes to hours; our 540-transcript Sol build took about **2 hours 15 minutes**,
-including recovery from a failed request. Importing audio adds transcription
-time. The audio selector shows a rough estimate as you choose recordings:
-allow about **10–20 minutes per audio hour** with Sol, plus transcription.
-This is separate from the fast decision step on each new dictation.
+**Dictionary generation takes time.** Text goes to the suggestion model in parts,
+one after another, with the growing dictionary included in each request. Large
+histories can take minutes to hours; our 540-transcript Sol build took about
+**2 hours 15 minutes**. Imported audio is transcribed first, several recordings at a
+time with a cloud speech model, and parts start as soon as enough text is ready. The
+setup lets you choose faster replies and smaller parts, and estimates the time from
+what Entune has measured. This is separate from the fast decision step on each new
+dictation.
 
-Review the proposed entries before applying them. You can stop a build and
-review completed batches, or retry from its checkpoint. Entune pauses dictation
-and separate dictionary editing while learning or proposal review is active.
+Review the proposed entries before applying them. You can stop a build and review
+completed parts, or continue from where it stopped, with other settings if a part
+was too slow. Dictation keeps working throughout; only separate dictionary editing
+waits until the proposal is applied or discarded.
 
 Learned entries belong to their speech model: a Parakeet dictionary is not
 automatically an AssemblyAI dictionary. Pin entries you deliberately want to

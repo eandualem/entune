@@ -103,19 +103,22 @@ def test_apply_consumes_only_examined_model_inputs_and_new_review_data_stays_eli
         newer = source(store, "made during review")
         current = client.get("/api/dictionary").json()
         assert client.put("/api/dictionary", json=current).status_code == 409
-        assert (
-            client.post("/api/recordings", files={"audio": ("c", WEBM_HEADER)}).status_code == 409
-        )
-        assert (
-            client.post("/api/recordings/1/transcriptions", json={"model": "stub/good"}).status_code
-            == 409
-        )
+        # Dictation and retries go on while suggestions wait for review, and what they
+        # transcribe stays eligible for a later run.
+        dictated = client.post("/api/recordings", files={"audio": ("c", WEBM_HEADER)})
+        retried = client.post("/api/recordings/1/transcriptions", json={"model": "stub/good"})
+        assert dictated.status_code == retried.status_code == 200
+        during = {
+            str(dictated.json()["transcriptions"][0]["id"]),
+            str(retried.json()["transcriptions"][0]["id"]),
+        }
         assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200
-        assert [i.id for i in store.learning_inputs("stub", "good")] == [str(newer)]
+        assert {i.id for i in store.learning_inputs("stub", "good")} == {str(newer), *during}
         assert [i.id for i in store.learning_inputs("stub", "bad")] == [str(other)]
         assert {i.id for i in store.learning_inputs("stub", "good", scope="all")} == {
             str(first),
             str(newer),
+            *during,
         }
         assert store.learning_history("stub/good")[0]["outcome"] == "applied"
         assert (
@@ -181,7 +184,9 @@ def test_partial_generation_keeps_validated_proposal_and_only_fully_covered_inpu
         assert job["completedBatches"] == 2 and job["steps"] > 2
         assert job["coveredInputs"] == 1 and job["total"] == 2
         assert len(job["proposal"]["changes"]) == 1
-        assert app.operations.status()["stage"] == "review"  # type: ignore[index]
+        assert app.operations.learning is not None
+        assert app.operations.learning.stage == "review"
+        assert app.operations.status() is None  # dictation is free meanwhile
         assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200
         assert [i.id for i in store.learning_inputs("stub", "good")] == [str(split)]
         assert str(full) in store.learning_history("stub/good")[0]["details"]["coveredInputIds"]  # type: ignore[index]
@@ -338,7 +343,7 @@ def test_old_saved_recordings_are_selectable_with_duration_and_never_gain_learni
         app.close()
 
 
-def test_learning_is_rejected_while_speech_is_running(
+def test_learning_starts_while_speech_is_running(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     entered, release = threading.Event(), threading.Event()
@@ -349,9 +354,10 @@ def test_learning_is_rejected_while_speech_is_running(
         return Transcript("cloud code")
 
     async def call(_: Request) -> str:
-        pytest.fail("Busy learning must not call generation")
+        return '{"additions": []}'
 
     with closing(Store(tmp_path)) as store:
+        source(store, "cloud code")
         app, client = setup(store, call)
         monkeypatch.setattr(app.providers[0], "transcribe", speech)
         with ThreadPoolExecutor(1) as pool:
@@ -361,7 +367,8 @@ def test_learning_is_rejected_while_speech_is_running(
                 result = client.post(
                     "/api/dictionary/build", json={"mode": "generate", "source": "history"}
                 )
-                assert result.status_code == 409 and "current dictation" in result.text
+                assert result.status_code == 202
+                assert wait_for_build(client)["outcome"] == "complete"
             finally:
                 release.set()
             assert future.result().transcriptions[0].status == "ok"
@@ -417,6 +424,7 @@ def test_stop_during_audio_keeps_its_success_for_retry_and_discard_clears_it(
     async def call(_: Request) -> str:
         return json.dumps(proposed("temporary cloud code"))
 
+    monkeypatch.setattr("entune.app.suggestion_runs.TRANSCRIBE_WORKERS", 1)  # one at a time
     with closing(Store(tmp_path)) as store:
         app, client = setup(store, call)
         monkeypatch.setattr(app.providers[0], "transcribe", speech)

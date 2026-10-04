@@ -2,7 +2,7 @@ import { api, el, errorText, flash } from "./ui.js";
 
 // Both sources use the same server-owned job. Poll small status records; fetch a
 // potentially large proposal once per job, and name that job on every action.
-export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted, getSelected }) {
+export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted, getSelected, getRunSettings }) {
   const progress = el("dictionary-build-status");
   const cancel = el("cancel-dictionary-build");
   let state = { phase: "idle" };
@@ -32,33 +32,35 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
     const clock = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
     const partElapsed = state.stepStartedAt ? clock(Math.max(0, Date.now() / 1000 - state.stepStartedAt)) : null;
     // A reply that broke a rule goes back to the model for a fix; say so, never silently.
-    const fixing = state.phase === "building" && state.attempt > 1 && state.brokenRule;
+    const suggesting = ["building", "transcribing"].includes(state.phase); // parts run alongside transcription
+    const fixing = suggesting && state.attempt > 1 && state.brokenRule;
     // A part that failed in a way that may pass starts over; say why and which attempt.
-    const again = state.phase === "building" && state.partAttempt > 1 && state.retryReason;
-    const building = (state.steps > 1
-      ? `${task} · part ${state.step} of ${state.steps} · ${state.completedBatches ?? 0} done${partElapsed ? ` · this part ${partElapsed}` : ""}`
-      : `${task}${partElapsed ? ` · ${partElapsed}` : ""}`)
+    const again = suggesting && state.partAttempt > 1 && state.retryReason;
+    // While audio is still being transcribed, parts already run alongside.
+    const part = state.step && state.stepStartedAt ? ` · part ${state.step}${state.steps ? ` of ${state.steps}` : ""}${partElapsed ? ` running ${partElapsed}` : ""}` : "";
+    const finished = state.completedBatches ? ` · ${state.completedBatches} done` : "";
+    const building = `${task}${part}${finished}`
       + (again ? `. Retrying this part (${state.retryReason}), attempt ${state.partAttempt} of ${state.partAttempts}` : "")
       + (fixing ? `. The model's reply broke a dictionary rule, so it is asked to fix it: attempt ${state.attempt} of ${state.attempts}. Stop if you'd rather not wait.` : "");
     // A recording that would not transcribe, even on a second try, is skipped; say how many.
     const skippedNote = state.skipped ? ` ${state.skipped} could not be transcribed and ${state.skipped === 1 ? "was" : "were"} skipped.` : "";
     const messages = {
       idle: "", queued: `Getting ready to read your ${from === "audio" ? "audio" : "transcripts"}…`,
-      transcribing: `Transcribing recording ${state.completed} of ${state.total}…${skippedNote}`,
+      transcribing: `Transcribed ${state.completed} of ${state.total} recordings${state.stepStartedAt || state.completedBatches ? `. ${building}` : "…"}${skippedNote}`,
       building,
       cancelling: "Stopping… a transcription already under way may need to finish.",
       cleaning: "Finishing…", ready: "Suggestions are ready to review.",
-      cancelled: `Stopped after ${state.completedBatches ?? 0} of ${state.steps ?? 0} parts. Retry to continue, or discard.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept for Retry.` : ""}`,
-      failed: `Something went wrong: ${state.error} Your dictionary is unchanged.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept for Retry; your audio is kept.` : ""}`,
+      cancelled: `Stopped after ${state.completedBatches ?? 0} part${state.completedBatches === 1 ? "" : "s"}. Continue, or discard.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept.` : ""}`,
+      failed: `${state.error} Your dictionary is unchanged.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept; your audio is kept.` : ""}`,
       accepted: state.applied ? "Applied. Your dictionary is updated." : "Closed without changes.",
       discarded: from === "audio" ? "Proposal discarded. Original audio is kept." : "Proposal discarded.",
     };
     let message = messages[state.phase] ?? state.phase;
     if (state.phase === "ready") {
       const coverage = `${state.coveredInputs} of ${state.total} ${from === "audio" ? "recordings" : "dictations"} read`;
-      message = state.outcome === "stopped" ? `Stopped with ${coverage}. Review what's ready, retry the rest, or discard.`
-        : state.outcome === "failed" ? `${state.error} ${coverage}. Review what's ready, retry the rest, or discard.`
-        : `Suggestions are ready (${coverage}).${skippedNote} Review them, then apply or discard to resume dictation.`;
+      message = state.outcome === "stopped" ? `Stopped with ${coverage}. Review what's ready, continue with the rest, or discard.`
+        : state.outcome === "failed" ? `${state.error} ${coverage}. Review what's ready, continue with the rest, or discard.`
+        : `Suggestions are ready (${coverage}).${skippedNote} Review them, then apply or discard.`;
     }
     progress.textContent = message;
     el("build-spinner").hidden = !running();
@@ -107,9 +109,10 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
     version++;
     clearFeedback();
     try {
+      const body = name === "accept" ? { selected: getSelected() } : name === "retry" ? getRunSettings() : null;
       state = await api(`/api/dictionary/build/${id}${name === "discard" ? "" : `/${name}`}`, {
         method: name === "discard" ? "DELETE" : "POST",
-        ...(name === "accept" ? {headers: {"content-type": "application/json"}, body: JSON.stringify({selected: getSelected()})} : {}),
+        ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}),
       });
       await render();
     } catch (err) {

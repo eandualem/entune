@@ -38,7 +38,7 @@ def source_id(text: str) -> str:
     return "s_" + hashlib.sha256(text.encode()).hexdigest()[:24]
 
 
-def _within(result: DictionaryResult, start: int, end: int) -> DictionaryResult | None:
+def within(result: DictionaryResult, start: int, end: int) -> DictionaryResult | None:
     """The part of a recorded result inside one snippet, or None when an edit straddles it."""
     changes = []
     for c in result.changes:
@@ -57,8 +57,10 @@ def _within(result: DictionaryResult, start: int, end: int) -> DictionaryResult 
     return DictionaryResult(tuple(changes), None if selections is None else tuple(selections))
 
 
-def learning_batches(inputs: Sequence[LearningText]) -> list[Batch]:
-    """Keep identity through splitting; only a final segment completes its source."""
+def learning_batches(inputs: Sequence[LearningText], limit: int | None = None) -> list[Batch]:
+    """Keep identity through splitting; only a final segment completes its source. Each
+    batch holds up to `limit` characters, BATCH_CHARS by default."""
+    limit = BATCH_CHARS if limit is None else limit
     result: list[Batch] = []
     snippets: list[Snippet] = []
     completed: list[str] = []
@@ -68,19 +70,19 @@ def learning_batches(inputs: Sequence[LearningText]) -> list[Batch]:
         offset = len(item.text) - len(remaining)
         while remaining:
             end = len(remaining)
-            if end > BATCH_CHARS:
+            if end > limit:
                 end = max(
-                    remaining.rfind(" ", 0, BATCH_CHARS + 1),
-                    remaining.rfind("\n", 0, BATCH_CHARS + 1),
+                    remaining.rfind(" ", 0, limit + 1),
+                    remaining.rfind("\n", 0, limit + 1),
                 )
                 if end <= 0:
-                    end = BATCH_CHARS
+                    end = limit
             text, tail = remaining[:end], remaining[end:]
             remaining = tail.lstrip()
-            if snippets and used + len(text) > BATCH_CHARS:
+            if snippets and used + len(text) > limit:
                 result.append(Batch(tuple(snippets), tuple(completed)))
                 snippets, completed, used = [], [], 0
-            part = item.result and _within(item.result, offset, offset + len(text))
+            part = item.result and within(item.result, offset, offset + len(text))
             snippets.append(Snippet(source_id(text), item.kind, text, part))
             used += len(text)
             offset += len(text) + len(tail) - len(remaining)

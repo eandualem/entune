@@ -4,10 +4,6 @@ import { THIS_DEVICE, api, el, errorText } from "./ui.js";
 // contiguous span chosen on a range over recorded time (oldest to newest, without calendar
 // gaps), whole recordings only.
 const PAGE = 60;
-const NOTES = {
-  entune: "",
-  folder: "WAV, MP3, M4A, FLAC, OGG or WebM files, up to 199 MB each, dated by when they were modified.",
-};
 
 export function duration(seconds) {
   const minutes = Math.round(seconds / 60);
@@ -15,27 +11,44 @@ export function duration(seconds) {
   if (minutes < 60) return `${minutes} min`;
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
 }
-// Planning allowance, not a measured confidence interval: a 12.3-hour sample
-// took 135 minutes with GPT-6.1 Sol, medium effort, 24k-character requests.
-// See docs/models.md. Transcription is additional; other models are uncalibrated.
-export function generationEstimate(seconds, unknown, model) {
-  if (unknown) return "Time estimate unavailable: some selected recordings have no known duration. Dictionary generation can take minutes to hours, plus transcription.";
-  if (!(seconds > 0)) return "Select audio to see an estimated generation time.";
-  const hours = seconds / 3600;
-  const low = Math.max(1, Math.ceil(hours * 10));
-  const high = Math.max(low + 1, Math.ceil(hours * 20));
-  const interval = `${duration(low * 60)}–${duration(high * 60)}`;
-  const calibrated = ["chatgpt:gpt-6.1-sol", "openai:gpt-6.1-sol"].includes(model);
-  return `${calibrated ? "Estimated dictionary generation" : "GPT-6.1 Sol reference estimate"}: ${interval}, plus audio transcription. Based on a small Sol benchmark at medium effort; ${calibrated ? "large dictionaries and retries can take longer" : "the selected model has not been timed and may differ"}.`;
+// What the selected audio will take, from measurements only. Transcription uses the
+// speech model's measured wait per minute of audio, several recordings at a time for a
+// cloud model. Suggestions are counted in parts: about 37,000 characters of transcript per
+// hour of speech (452,400 characters in a 12.3-hour dictation sample), divided by
+// the part size, at the seconds per part measured for this model and these settings. The
+// one reference without a measurement: GPT-6.1 Sol, thorough, standard parts, took 135
+// minutes for 20 parts (docs/models.md). Both steps run side by side.
+const CHARS_PER_HOUR = 37_000;
+const SOL_SECONDS_PER_PART = 405;
+export const PART_CHARS = { small: 8_000, standard: 24_000 };
+export function workEstimate({ durations, unknown, speech, local, timing, dictionaryModel, effort, part }) {
+  if (unknown) return "Some recordings have no known length, so there is no time estimate.";
+  const seconds = durations.reduce((sum, d) => sum + d, 0);
+  if (!(seconds > 0)) return "";
+  const rate = timing?.speech?.[speech];
+  // Whole recordings go to the workers: never more at once than recordings, and never
+  // shorter than the longest recording alone.
+  const workers = Math.min(local ? 1 : timing?.workers ?? 1, durations.length);
+  const wall = Math.max(seconds / workers, ...durations);
+  const transcribe = rate ? `about ${duration((wall / 60) * rate)}${workers > 1 ? `, ${workers} recordings at a time` : ""}`
+    : "not measured yet for this speech model";
+  const parts = Math.max(1, Math.ceil((seconds / 3600) * CHARS_PER_HOUR / PART_CHARS[part]));
+  const measured = timing?.suggestion?.[`${dictionaryModel}|${effort}|${PART_CHARS[part]}`];
+  const sol = !measured && /:gpt-6\.1-sol$/.test(dictionaryModel ?? "") && effort === "medium" && part === "standard";
+  const per = measured?.secondsPerPart ?? (sol ? SOL_SECONDS_PER_PART : null);
+  const each = per ? `, about ${duration(per)} each${sol ? " (measured once)" : ""}, about ${duration(parts * per)} in all`
+    : "; not timed yet with these settings";
+  return `Transcribing: ${transcribe}\nSuggestions: about ${parts} part${parts === 1 ? "" : "s"}${each}, starting while transcription runs`;
 }
 const day = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "Undated";
 const moment = (iso) => iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "Undated";
 
-export function createAudioOnboarding({ getModel, getSettings, getDictionaryModelName, onBuild, onBusy }) {
+export function createAudioOnboarding({ getModel, getSettings, getDictionaryModelName, getRunSettings, onBuild, onBusy }) {
   const folder = el("audio-folder");
   const start = el("audio-range-start"), end = el("audio-range-end");
   const player = new Audio();
   let items = [];
+  let timing = null;      // measured speeds, for the estimate
   let apps = [];          // dictation apps with an importer, from the server; the stored source is the id
   let source = "entune";
   let list = [];          // this source's recordings, oldest first
@@ -68,12 +81,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
       option.className = "app-option";
       const input = Object.assign(document.createElement("input"), { type: "radio", name: "audio-provider", value: app.id, checked: index === 0 });
       input.addEventListener("change", () => { el("audio-import-status").textContent = ""; choose(); });
-      const text = document.createElement("span");
-      text.append(
-        Object.assign(document.createElement("span"), { className: "app-name", textContent: app.name }),
-        Object.assign(document.createElement("span"), { className: "caption", textContent: app.note }),
-      );
-      option.append(input, text);
+      option.append(input, Object.assign(document.createElement("span"), { className: "app-name", textContent: app.name }));
       return option;
     }));
   }
@@ -93,7 +101,6 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   function draw() {
     el("audio-provider-pick").hidden = source !== "provider";
     const app = source === "provider" ? pickedApp() : null;
-    el("audio-source-note").textContent = app ? `Entune copies the audio only, never ${app.name}'s transcripts.` : NOTES[source] ?? "";
     el("import-app").hidden = !app;
     el("choose-audio-folder").hidden = source !== "folder";
     const some = items.some((item) => item.source === shownSource());
@@ -123,12 +130,14 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     if (el("audio-detail").open) drawList(chosen);
     const speech = getModel();
     const language = getDictionaryModelName();
-    el("audio-generation-estimate").textContent = generationEstimate(seconds(chosen), unknown, getSettings()?.dictionaryModel);
-    el("audio-models").textContent = !speech
-      ? "Choose a speech model in the toolbar first."
-      : !language
-        ? (el("dictionary-model-note").hidden ? "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral in Settings › Dictionary setup to choose a suggestion model." : el("dictionary-model-note").textContent)
-        : `Transcribe ${duration(seconds(chosen))} (${chosen.length} recording${chosen.length === 1 ? "" : "s"}) with ${speech.label}, then suggest with ${language}.`;
+    const { effort, part } = getRunSettings();
+    el("audio-generation-estimate").textContent = workEstimate({
+      durations: chosen.map((item) => item.seconds ?? 0), unknown, speech: speech?.id, local: (timing?.local ?? []).includes(speech?.id.split("/")[0]),
+      timing, dictionaryModel: getSettings()?.dictionaryModel, effort, part,
+    });
+    // The footer speaks only when something stops the start.
+    el("audio-models").textContent = !speech ? "Choose a speech model first."
+      : !language ? "Choose a suggestion model with a key first." : "";
     const blocked = importing || buildBusy || !chosen.length || !speech || !language;
     el("build-audio-dictionary").disabled = blocked;
     for (const control of [start, end, el("import-app"), el("choose-audio-folder")]) control.disabled = importing || buildBusy;
@@ -193,7 +202,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   el("suggest-drawer").addEventListener("close", stop);
 
   async function refresh() {
-    ({ items, apps } = await api("/api/dictionary/audio"));
+    [{ items, apps }, timing] = await Promise.all([api("/api/dictionary/audio"), api("/api/dictionary/timing").catch(() => null)]);
     drawApps();
     loaded = true;
     choose();
@@ -261,5 +270,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     // Status polls repeat the same value; redraw only on a change, keeping focus in the list.
     setBuildBusy(value) { if (value !== buildBusy) { buildBusy = value; draw(); } },
     redraw: draw,
+    // Another speech model hears different recordings as new: filter the list again.
+    modelChanged() { if (loaded) choose(); },
   };
 }

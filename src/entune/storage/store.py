@@ -337,6 +337,10 @@ class Store:
                 "coveredInputIds",
                 "outcome",
                 "retries",
+                "effort",
+                "partChars",
+                "parts",  # seconds and character counts per part, which time the model
+                "skipped",
             }
         }
         with self._lock, self._db:
@@ -349,6 +353,12 @@ class Store:
                     "INSERT OR REPLACE INTO learning_coverage VALUES (?, ?, ?, ?)",
                     [(model, source, identity, run_id) for identity in covered],
                 )
+
+    def learning_details(self) -> list[dict[str, object]]:
+        """Every finished run's receipt, for timing the suggestion models."""
+        with self._lock:
+            rows = self._db.execute("SELECT details FROM learning_runs").fetchall()
+        return [json.loads(row["details"]) for row in rows]
 
     def learning_history(self, model: str) -> list[dict[str, object]]:
         with self._lock:
