@@ -150,10 +150,12 @@ class Tracing:
             self._configure()
 
     def sync(self) -> None:
-        """After any settings change: keys that are gone (Delete everything) turn it off."""
-        saved = self._store.get_setting(PUBLIC) and self._store.get_setting(SECRET)
-        if self.state != "off" and not saved:
-            self._configure()
+        """After any settings change: keys that are gone (Delete everything) turn it off,
+        including a connection still pending, which the new configuration cancels."""
+        with self._lock:
+            public, secret = self._store.get_settings(PUBLIC, SECRET)
+            if self.state != "off" and not (public and secret):
+                self._configure()
 
     def _configure(self) -> None:
         with self._lock:
