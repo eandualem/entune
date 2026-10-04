@@ -1,21 +1,27 @@
 """Opt-in Langfuse tracing of the suggestion model's requests and replies.
 
 Off unless both Langfuse keys are saved (Settings, Integrations) and the optional
-`langfuse` package is installed (`entune[tracing]`). When on, every dictionary-suggestion
-request and reply, transcript text included, goes to the Langfuse host the person chose,
-grouped by suggestion run. Nothing else is traced, and nothing is sent while it is off.
+OpenTelemetry packages are installed (`entune[tracing]`). When on, every
+dictionary-suggestion request and reply, transcript text included, goes to the Langfuse
+host the person chose, grouped by suggestion run. Nothing else is traced, and nothing is
+sent while it is off.
 
-Each configuration gets its own OpenTelemetry tracer provider, shared by the Langfuse
-client and Pydantic AI's instrumentation, so new keys apply without a restart.
+Spans go straight to Langfuse's OpenTelemetry endpoint through a tracer provider this
+module owns: the endpoint and keys come only from Settings (never the environment), new
+keys apply without a restart, and turning tracing off shuts the provider down, so even a
+request already under way sends nothing more.
 """
 
 from __future__ import annotations
 
+import base64
 import logging
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
+
+import httpx
 
 from entune.app.settings import mask_key
 from entune.storage.store import Store
@@ -27,17 +33,22 @@ INSTALL = 'uv tool install --force "entune[tracing]" && entune'
 
 def installed() -> bool:
     try:
-        import langfuse  # noqa: F401
+        import opentelemetry.exporter.otlp.proto.http.trace_exporter
+        import opentelemetry.sdk.trace  # noqa: F401
     except ImportError:
         return False
     return True
+
+
+def _authorization(public: str, secret: str) -> str:
+    return "Basic " + base64.b64encode(f"{public}:{secret}".encode()).decode()
 
 
 class Tracing:
     def __init__(self, store: Store) -> None:
         self._store = store
         self._lock = threading.Lock()
-        self._client: Any = None
+        self._provider: Any = None  # the TracerProvider while tracing is on
         self._generation = 0  # a newer configuration wins over a connection still under way
         self.state = "off"  # off | missing | connecting | on | failed
         self.detail = ""
@@ -93,54 +104,71 @@ class Tracing:
         ).start()
 
     def _connect(self, generation: int, public: str, secret: str, host: str) -> None:
-        from langfuse import Langfuse
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from pydantic_ai import Agent
         from pydantic_ai.models.instrumented import InstrumentationSettings
 
-        provider = TracerProvider()
-        client = Langfuse(public_key=public, secret_key=secret, host=host, tracer_provider=provider)
+        authorization = _authorization(public, secret)
         try:
-            ok, detail = bool(client.auth_check()), "Langfuse refused the keys"
-        except Exception as exc:
-            ok, detail = False, f"{type(exc).__name__}: {exc}"
+            # Langfuse's public API answers 200 only for a valid key pair.
+            reply = httpx.get(
+                f"{host}/api/public/projects",
+                headers={"Authorization": authorization},
+                timeout=10,
+                trust_env=False,
+            )
+            ok = reply.status_code == 200
+            detail = "" if ok else f"Langfuse refused the keys (HTTP {reply.status_code})"
+        except httpx.HTTPError as exc:
+            ok, detail = False, f"Could not reach {host}: {type(exc).__name__}"
         with self._lock:
-            if generation != self._generation or not ok:
-                client.shutdown()
-                if generation == self._generation:
-                    self.state, self.detail = "failed", detail
+            if generation != self._generation:
                 return
+            if not ok:
+                self.state, self.detail = "failed", detail
+                return
+            provider = TracerProvider()
+            # The endpoint and keys are passed explicitly, so OTEL_* environment variables
+            # cannot send traces anywhere else.
+            exporter = OTLPSpanExporter(
+                endpoint=f"{host}/api/public/otel/v1/traces",
+                headers={"Authorization": authorization},
+            )
+            provider.add_span_processor(BatchSpanProcessor(exporter))
             Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
-            self._client = client
+            self._provider = provider
             self.state, self.detail = "on", host
 
     def _stop(self) -> None:
-        """Under the lock: stop instrumenting and send what is pending."""
-        if self._client is None:
+        """Under the lock: stop instrumenting and shut the provider down, so a request
+        already under way sends nothing more."""
+        if self._provider is None:
             return
         from pydantic_ai import Agent
 
         Agent.instrument_all(False)
-        client, self._client = self._client, None
+        provider, self._provider = self._provider, None
         try:
-            client.flush()
-            client.shutdown()
+            provider.shutdown()
         except Exception:
-            logging.getLogger(__name__).exception("Langfuse did not shut down cleanly")
+            logging.getLogger(__name__).exception("Tracing did not shut down cleanly")
 
     @contextmanager
     def run(self, session: str, **metadata: object) -> Iterator[None]:
         """Group the requests made inside under one Langfuse session, with metadata."""
-        if self._client is None:
+        provider = self._provider
+        if provider is None:
             yield
             return
-        from langfuse import propagate_attributes
-
-        with propagate_attributes(
-            session_id=session,
-            trace_name="dictionary suggestions",
-            metadata={key: str(value) for key, value in metadata.items()},
-        ):
+        attributes: dict[str, str] = {
+            "langfuse.session.id": session,
+            "langfuse.trace.name": "dictionary suggestions",
+            **{f"langfuse.trace.metadata.{key}": str(value) for key, value in metadata.items()},
+        }
+        tracer = provider.get_tracer("entune")
+        with tracer.start_as_current_span("dictionary part", attributes=attributes):
             yield
 
     def close(self) -> None:

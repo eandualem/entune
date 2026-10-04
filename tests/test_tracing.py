@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-import sys
+import asyncio
 import time
 from collections.abc import Iterator
-from contextlib import closing, contextmanager
+from contextlib import closing
 from pathlib import Path
-from types import SimpleNamespace
-from typing import ClassVar
+from typing import Any
 
+import httpx
 import pytest
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
 from entune.app import tracing
@@ -18,42 +21,35 @@ from entune.storage.store import Store
 from tests.test_server import StubProvider
 
 
-class FakeLangfuse:
-    accept = True
-    made: ClassVar[list[dict[str, object]]] = []
-    sessions: ClassVar[list[tuple[str, dict[str, str]]]] = []
+class Langfuse:
+    """Stands in for the network: the key check's answer, and every exporter made."""
 
-    def __init__(self, **kwargs: object) -> None:
-        FakeLangfuse.made.append(kwargs)
-        self.closed = False
+    def __init__(self) -> None:
+        self.accept = True
+        self.exporters: list[tuple[dict[str, Any], InMemorySpanExporter]] = []
 
-    def auth_check(self) -> bool:
-        return FakeLangfuse.accept
-
-    def flush(self) -> None:
-        pass
-
-    def shutdown(self) -> None:
-        self.closed = True
-
-
-@contextmanager
-def fake_propagate(**kwargs: object) -> Iterator[None]:
-    FakeLangfuse.sessions.append((str(kwargs["session_id"]), dict(kwargs["metadata"])))  # type: ignore[call-overload]
-    yield
+    def spans(self) -> list[Any]:
+        return [s for _, exporter in self.exporters for s in exporter.get_finished_spans()]
 
 
 @pytest.fixture
-def langfuse(monkeypatch: pytest.MonkeyPatch) -> list[object]:
-    """A fake Langfuse SDK, and a record of what Pydantic AI was told to instrument."""
-    FakeLangfuse.made, FakeLangfuse.sessions, FakeLangfuse.accept = [], [], True
-    module = SimpleNamespace(Langfuse=FakeLangfuse, propagate_attributes=fake_propagate)
-    monkeypatch.setitem(sys.modules, "langfuse", module)
-    instrumented: list[object] = []
+def langfuse(monkeypatch: pytest.MonkeyPatch) -> Iterator[Langfuse]:
+    fake = Langfuse()
+
+    def get(url: str, **kwargs: Any) -> httpx.Response:
+        return httpx.Response(200 if fake.accept else 401)
+
+    def exporter(**kwargs: Any) -> InMemorySpanExporter:
+        made = InMemorySpanExporter()
+        fake.exporters.append((kwargs, made))
+        return made
+
+    monkeypatch.setattr("entune.app.tracing.httpx.get", get)
     monkeypatch.setattr(
-        "pydantic_ai.Agent.instrument_all", lambda setting=True: instrumented.append(setting)
+        "opentelemetry.exporter.otlp.proto.http.trace_exporter.OTLPSpanExporter", exporter
     )
-    return instrumented
+    yield fake
+    Agent.instrument_all(False)
 
 
 def settle(t: tracing.Tracing) -> None:
@@ -62,50 +58,87 @@ def settle(t: tracing.Tracing) -> None:
         time.sleep(0.01)
 
 
-def test_tracing_is_off_until_both_keys_are_saved(tmp_path: Path, langfuse: list[object]) -> None:
+def ask(t: tracing.Tracing, session: str) -> None:
+    """One suggestion-model request inside a traced run, then everything sent."""
+    with t.run(session, part=1, effort="low"):
+        asyncio.run(Agent(TestModel(custom_output_text="reply")).run("transcript part"))
+    if t._provider is not None:
+        t._provider.force_flush()
+
+
+def test_tracing_is_off_until_both_keys_are_saved(tmp_path: Path, langfuse: Langfuse) -> None:
     with closing(Store(tmp_path)) as store:
         t = tracing.Tracing(store)
         t.start()
-        assert t.state == "off" and not FakeLangfuse.made and not langfuse
-        t.save("pk-lf-1", None, None)
-        assert t.state == "off"  # a public key alone sends nothing
+        t.save("pk-lf-1", None, None)  # a public key alone sends nothing
+        assert t.state == "off"
+        ask(t, "run-0")
+        assert not langfuse.exporters
 
 
-def test_saved_keys_connect_instrument_and_group_a_run(
-    tmp_path: Path, langfuse: list[object]
+def test_a_run_is_sent_to_the_saved_host_only(
+    tmp_path: Path, langfuse: Langfuse, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "https://elsewhere.test/v1/traces")
     with closing(Store(tmp_path)) as store:
         t = tracing.Tracing(store)
-        t.save("pk-lf-1234", "sk-lf-5678", "https://eu.example.langfuse.test/")
+        t.save("pk-lf-1234", "sk-lf-5678", "https://langfuse.example.test/")
         settle(t)
         assert t.state == "on"
-        made = FakeLangfuse.made[-1]
-        assert (
-            made["public_key"] == "pk-lf-1234"
-            and made["host"] == "https://eu.example.langfuse.test"
-        )
-        assert len(langfuse) == 1 and langfuse[0] is not False  # Pydantic AI instrumented
-        with t.run("run-1", part=2, effort="low"):
-            pass
-        assert FakeLangfuse.sessions == [("run-1", {"part": "2", "effort": "low"})]
-        status = t.status()
-        assert (
-            status["publicKeyHint"] == "••••1234"
-            and "5678" not in str(status["secretKeyHint"])[:-4]
-        )
-        t.clear()
-        assert t.state == "off" and langfuse[-1] is False  # instrumentation removed
+        ask(t, "run-1")
+        settings, _ = langfuse.exporters[-1]
+        # The saved host, never the environment's endpoint.
+        assert settings["endpoint"] == "https://langfuse.example.test/api/public/otel/v1/traces"
+        assert settings["headers"]["Authorization"].startswith("Basic ")
+        spans = langfuse.spans()
+        root = next(s for s in spans if s.name == "dictionary part")
+        assert root.attributes["langfuse.session.id"] == "run-1"
+        assert root.attributes["langfuse.trace.metadata.effort"] == "low"
+        content = " ".join(str(v) for s in spans for v in (s.attributes or {}).values())
+        assert "transcript part" in content and "reply" in content  # request and reply
+        assert t.status()["publicKeyHint"] == "••••1234"
 
 
-def test_refused_keys_and_a_missing_package_say_so(
-    tmp_path: Path, langfuse: list[object], monkeypatch: pytest.MonkeyPatch
+def test_saving_again_and_turning_off_and_on_keep_tracing_working(
+    tmp_path: Path, langfuse: Langfuse
 ) -> None:
     with closing(Store(tmp_path)) as store:
         t = tracing.Tracing(store)
-        FakeLangfuse.accept = False
+        for _ in range(2):
+            t.save("pk", "sk", None)
+            settle(t)
+            ask(t, "run")
+            assert langfuse.exporters[-1][1].get_finished_spans()  # the new one sends
+        t.clear()
         t.save("pk", "sk", None)
         settle(t)
-        assert t.state == "failed" and "refused" in t.detail and not langfuse
+        ask(t, "run")
+        assert langfuse.exporters[-1][1].get_finished_spans()
+
+
+def test_turning_off_stops_even_a_request_under_way(tmp_path: Path, langfuse: Langfuse) -> None:
+    with closing(Store(tmp_path)) as store:
+        t = tracing.Tracing(store)
+        t.save("pk", "sk", None)
+        settle(t)
+        assert t._provider is not None
+        span = t._provider.get_tracer("test").start_span("under way")
+        t.clear()
+        span.end()  # finishes after consent was withdrawn
+        assert t.state == "off" and not langfuse.spans()
+        ask(t, "after")
+        assert not langfuse.spans()
+
+
+def test_refused_keys_and_missing_packages_say_so(
+    tmp_path: Path, langfuse: Langfuse, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with closing(Store(tmp_path)) as store:
+        t = tracing.Tracing(store)
+        langfuse.accept = False
+        t.save("pk", "sk", None)
+        settle(t)
+        assert t.state == "failed" and "refused" in t.detail and not langfuse.exporters
         monkeypatch.setattr(tracing, "installed", lambda: False)
         t.save(None, None, None)
         assert t.state == "missing" and "entune[tracing]" in t.detail
@@ -113,7 +146,7 @@ def test_refused_keys_and_a_missing_package_say_so(
             t.save(None, None, "cloud.langfuse.com")
 
 
-def test_the_tracing_api_masks_keys_and_turns_off(tmp_path: Path, langfuse: list[object]) -> None:
+def test_the_tracing_api_masks_keys_and_turns_off(tmp_path: Path, langfuse: Langfuse) -> None:
     app = Entune(Store(tmp_path), [StubProvider()])
     client = TestClient(create_app(app), base_url="http://localhost")
     assert client.get("/api/tracing").json()["state"] == "off"

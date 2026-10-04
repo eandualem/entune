@@ -28,8 +28,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Opt-in Langfuse tracing of dictionary-suggestion requests (entune/app/tracing.py).
-tracing = ["langfuse>=4"]
+# Opt-in Langfuse tracing of dictionary-suggestion requests (entune/app/tracing.py), sent
+# to Langfuse's OpenTelemetry endpoint.
+tracing = ["opentelemetry-sdk>=1.30", "opentelemetry-exporter-otlp-proto-http>=1.30"]
 
 [project.urls]
 Homepage = "https://github.com/eandualem/entune"
