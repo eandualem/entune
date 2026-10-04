@@ -38,7 +38,7 @@ def source_id(text: str) -> str:
     return "s_" + hashlib.sha256(text.encode()).hexdigest()[:24]
 
 
-def _within(result: DictionaryResult, start: int, end: int) -> DictionaryResult | None:
+def within(result: DictionaryResult, start: int, end: int) -> DictionaryResult | None:
     """The part of a recorded result inside one snippet, or None when an edit straddles it."""
     changes = []
     for c in result.changes:
@@ -82,7 +82,7 @@ def learning_batches(inputs: Sequence[LearningText], limit: int | None = None) -
             if snippets and used + len(text) > limit:
                 result.append(Batch(tuple(snippets), tuple(completed)))
                 snippets, completed, used = [], [], 0
-            part = item.result and _within(item.result, offset, offset + len(text))
+            part = item.result and within(item.result, offset, offset + len(text))
             snippets.append(Snippet(source_id(text), item.kind, text, part))
             used += len(text)
             offset += len(text) + len(tail) - len(remaining)

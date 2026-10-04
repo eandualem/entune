@@ -139,13 +139,15 @@ class Learning:
         ("model|effort|characters"), from finished runs' receipts."""
         seconds: dict[str, list[float]] = {}
         for details in self._store.learning_details():
-            key = f"{details.get('dictionaryModel')}|{details.get('effort', 'medium')}|" + str(
-                details.get("partChars", batches.BATCH_CHARS)
-            )
             parts = details.get("parts")
             for timing in parts if isinstance(parts, list) else ():
-                if isinstance(timing, dict) and isinstance(timing.get("seconds"), int | float):
-                    seconds.setdefault(key, []).append(float(timing["seconds"]))
+                if not isinstance(timing, dict) or not isinstance(
+                    timing.get("seconds"), int | float
+                ):
+                    continue
+                # Each part names the settings it ran with: Continue can change them.
+                key = f"{timing.get('model')}|{timing.get('effort')}|{timing.get('partChars')}"
+                seconds.setdefault(key, []).append(float(timing["seconds"]))
         return {
             key: {"secondsPerPart": round(statistics.median(values), 1), "parts": len(values)}
             for key, values in seconds.items()

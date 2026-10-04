@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
+from concurrent.futures import CancelledError
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,6 +73,10 @@ class DictionaryBuilds:
         self._covered: set[str] = set()
         self._completed_batches = 0
         self._skipped: list[tuple[str, str]] = []  # recordings that would not transcribe
+        # How far finished parts got into a text longer than one part, by its ID; Continue
+        # starts there, whatever part size it uses.
+        self._consumed: dict[str, int] = {}
+        self._segments: dict[str, tuple[str, int, int]] = {}  # segment ID: (text ID, end, length)
         self._operation: Operation | None = None
         self._cancel = threading.Event()
         self._halt = threading.Event()  # suggestions ended: stop starting transcriptions
@@ -155,6 +159,7 @@ class DictionaryBuilds:
                 self._working = None
                 self._completed_batches = 0
                 self._covered.clear()
+                self._consumed.clear()
             self._spec = fresh
             self._state.update(
                 phase="queued",
@@ -232,6 +237,8 @@ class DictionaryBuilds:
         self._texts.clear()
         self._covered.clear()
         self._skipped.clear()
+        self._consumed.clear()
+        self._segments.clear()
         self._completed_batches = 0
 
     def _release(self) -> None:
@@ -316,11 +323,24 @@ class DictionaryBuilds:
         with self._lock:
             self._working, self._proposal = groups, proposal
             self._completed_batches = number
-            self._covered.update(step.completed)
-            # What each part took, kept with the run: it times this model for the next.
+            for done in step.completed:
+                if done not in self._segments:
+                    self._covered.add(done)
+                    continue
+                source, end, length = self._segments[done]
+                if end >= length:
+                    self._covered.add(source)
+                    self._consumed.pop(source, None)
+                else:
+                    self._consumed[source] = max(end, self._consumed.get(source, 0))
+            # What each part took and with which settings, kept with the run: it times
+            # that model and those settings for the next estimate.
             timing = {
                 "seconds": round(time.monotonic() - began, 1),
                 "characters": sum(len(s.text) for s in step.snippets),
+                "model": spec.builder[2],
+                "effort": spec.effort,
+                "partChars": _limit(spec),
             }
             self._state.update(
                 completedBatches=number,
@@ -375,32 +395,54 @@ class DictionaryBuilds:
 
     def _transcribe(self, spec: BuildInput, ready: queue.Queue[object]) -> None:
         """Transcribe the selection on worker threads, handing each text to `ready` as
-        it arrives; DONE goes last, also after a stop or failure."""
+        it arrives; DONE goes last, also after a stop or failure. The workers are daemon
+        threads, so quitting never waits for a transcription still under way."""
         try:
-            todo = []
+            todo: queue.Queue[tuple[DictionaryAudio, Path]] = queue.Queue()
             done = 0
             for item, path in spec.audio:
                 cached = self._texts.get(item.id)
                 if cached is None:
-                    todo.append((item, path))
+                    todo.put((item, path))
                     continue
                 ready.put(cached)
                 done += 1
             self._progress(completed=done)
+            results: queue.Queue[object] = queue.Queue()
+
+            def work() -> None:
+                while not self._halt.is_set():
+                    try:
+                        item, path = todo.get_nowait()
+                    except queue.Empty:
+                        return
+                    try:
+                        results.put(self._transcribe_one(spec, item, path))
+                    except BaseException as exc:
+                        results.put(exc)
+                        return
+
             local = isinstance(spec.speech.provider, Downloadable)
-            with ThreadPoolExecutor(1 if local else TRANSCRIBE_WORKERS) as pool:
-                futures = [pool.submit(self._transcribe_one, spec, *pair) for pair in todo]
+            workers = [
+                threading.Thread(target=work, daemon=True, name="entune-learning-speech")
+                for _ in range(min(1 if local else TRANSCRIBE_WORKERS, todo.qsize()))
+            ]
+            for worker in workers:
+                worker.start()
+            while done < len(spec.audio):
                 try:
-                    for future in as_completed(futures):
-                        text = future.result()
-                        if text is not None:
-                            ready.put(text)
-                        done += 1
-                        with self._lock:
-                            self._state.update(completed=done, skipped=len(self._skipped))
-                finally:
-                    for future in futures:
-                        future.cancel()
+                    result = results.get(timeout=0.2)
+                except queue.Empty:
+                    if not any(worker.is_alive() for worker in workers) and results.empty():
+                        break  # stopped: the workers took no more recordings
+                    continue
+                if isinstance(result, BaseException):
+                    raise result
+                if isinstance(result, learning_inputs.LearningText):
+                    ready.put(result)
+                done += 1
+                with self._lock:
+                    self._state.update(completed=done, skipped=len(self._skipped))
         except BaseException as exc:
             ready.put(exc)
         finally:
@@ -475,6 +517,36 @@ class DictionaryBuilds:
                     else:
                         self._release()
 
+    def _remaining(
+        self, text: learning_inputs.LearningText, limit: int
+    ) -> list[learning_inputs.LearningText]:
+        """What finished parts have not read of `text`, as pieces of at most one part
+        each; a piece of a longer text is named by where it starts."""
+        start = self._consumed.get(text.id, 0)
+        if not start and len(text.text) <= limit:
+            return [text]
+        rest = learning_inputs.LearningText(
+            text.id,
+            text.text[start:],
+            text.kind,
+            text.result and batches.within(text.result, start, len(text.text)),
+        )
+        pieces = []
+        position = 0
+        snippets = [s for step in batches.learning_batches([rest], limit) for s in step.snippets]
+        for number, snippet in enumerate(snippets, 1):
+            position = rest.text.find(snippet.text, position)
+            piece = f"{text.id}@{start + position}"
+            position += len(snippet.text)
+            # The last piece finishes the text, whatever whitespace follows it.
+            end = len(text.text) if number == len(snippets) else start + position
+            with self._lock:
+                self._segments[piece] = (text.id, end, len(text.text))
+            pieces.append(
+                learning_inputs.LearningText(piece, snippet.text, text.kind, snippet.result)
+            )
+        return pieces
+
     def _suggest(self, spec: BuildInput, ready: queue.Queue[object]) -> None:
         """Run parts while texts arrive: a part starts once a part's worth of text not
         yet covered is waiting, or with what is left once everything has arrived."""
@@ -496,7 +568,7 @@ class DictionaryBuilds:
                     and item.id not in self._covered
                     and item.text.strip()
                 ):
-                    waiting.append(item)
+                    waiting.extend(self._remaining(item, _limit(spec)))
                 try:
                     item = ready.get_nowait()
                 except queue.Empty:

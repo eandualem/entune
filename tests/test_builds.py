@@ -391,3 +391,66 @@ def test_continue_with_smaller_parts_and_faster_replies_after_a_slow_part(
     timing = client.get("/api/dictionary/timing").json()
     assert timing["suggestion"][f"{done['dictionaryModel']}|low|8000"]["parts"] == 1
     assert timing["workers"] > 1
+
+
+def test_a_transcription_under_way_never_keeps_entune_from_closing(
+    app: Entune, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered, release = threading.Event(), threading.Event()
+
+    def transcribe(clip: Clip, model: str, key: str) -> Transcript:
+        entered.set()
+        release.wait(30)  # a provider that does not answer
+        return Transcript("late words")
+
+    monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
+    try:
+        assert entered.wait(2)
+        speech = [t for t in threading.enumerate() if t.name == "entune-learning-speech"]
+        assert speech and all(t.daemon for t in speech)  # the interpreter will not wait
+        started = time.monotonic()
+        app.builds.close(timeout=0.3)
+        assert time.monotonic() - started < 2
+    finally:
+        release.set()
+
+
+def test_continue_reads_only_the_unread_rest_of_a_long_transcript(
+    app: Entune, store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from entune.learning.suggestion_model import ReplyTimedOut
+
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 40)
+    words = [f"w{i:02}" for i in range(30)]  # 119 characters: four pieces of a part each
+    recording = store.create_recording(WEBM_HEADER)
+    store.add_transcription(recording.id, "stub", "good", "ok", " ".join(words), None)
+    sent: list[str] = []
+
+    async def fake(request: Request) -> str:
+        sent.append(request.user)
+        if len(sent) == 2:
+            raise ReplyTimedOut("the reply ran past its 14.5-minute limit", "timed out")
+        return '{"additions": []}'
+
+    monkeypatch.setattr(app.builds, "_call", fake)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    job = client.post(
+        "/api/dictionary/build", json={"mode": "generate", "source": "history", "scope": "all"}
+    ).json()
+    assert wait_for_build(client)["outcome"] == "failed"
+    first = next(text for text in sent if "w00" in text)
+    client.post(f"/api/dictionary/build/{job['id']}/retry", json={"effort": "low"})
+    done = wait_for_build(client)
+    assert done["outcome"] == "complete" and done["coveredInputs"] == done["total"] == 2
+    later = sent[2:]
+    assert not any("w00 " in text for text in later)  # the finished piece is not sent again
+    assert any("w29" in text for text in later)
+    assert sum("w00 " in text for text in sent) == 1 and "w00" in first
+    client.post(f"/api/dictionary/build/{job['id']}/accept")
+    timing = client.get("/api/dictionary/timing").json()["suggestion"]
+    model = done["dictionaryModel"]
+    # Each part is timed under the settings it actually ran with.
+    assert timing[f"{model}|medium|40"]["parts"] == 1
+    assert timing[f"{model}|low|40"]["parts"] == done["completedBatches"] - 1

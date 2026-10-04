@@ -21,12 +21,16 @@ export function duration(seconds) {
 const CHARS_PER_HOUR = 37_000;
 const SOL_SECONDS_PER_PART = 405;
 export const PART_CHARS = { small: 8_000, standard: 24_000 };
-export function workEstimate({ seconds, unknown, speech, local, timing, dictionaryModel, effort, part }) {
+export function workEstimate({ durations, unknown, speech, local, timing, dictionaryModel, effort, part }) {
   if (unknown) return "Some recordings have no known length, so there is no time estimate.";
+  const seconds = durations.reduce((sum, d) => sum + d, 0);
   if (!(seconds > 0)) return "";
   const rate = timing?.speech?.[speech];
-  const workers = local ? 1 : timing?.workers ?? 1;
-  const transcribe = rate ? `about ${duration((seconds / 60) * rate / workers)}${workers > 1 ? `, ${workers} recordings at a time` : ""}`
+  // Whole recordings go to the workers: never more at once than recordings, and never
+  // shorter than the longest recording alone.
+  const workers = Math.min(local ? 1 : timing?.workers ?? 1, durations.length);
+  const wall = Math.max(seconds / workers, ...durations);
+  const transcribe = rate ? `about ${duration((wall / 60) * rate)}${workers > 1 ? `, ${workers} recordings at a time` : ""}`
     : "not measured yet for this speech model";
   const parts = Math.max(1, Math.ceil((seconds / 3600) * CHARS_PER_HOUR / PART_CHARS[part]));
   const measured = timing?.suggestion?.[`${dictionaryModel}|${effort}|${PART_CHARS[part]}`];
@@ -128,7 +132,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     const language = getDictionaryModelName();
     const { effort, part } = getRunSettings();
     el("audio-generation-estimate").textContent = workEstimate({
-      seconds: seconds(chosen), unknown, speech: speech?.id, local: (timing?.local ?? []).includes(speech?.id.split("/")[0]),
+      durations: chosen.map((item) => item.seconds ?? 0), unknown, speech: speech?.id, local: (timing?.local ?? []).includes(speech?.id.split("/")[0]),
       timing, dictionaryModel: getSettings()?.dictionaryModel, effort, part,
     });
     // The footer speaks only when something stops the start.
