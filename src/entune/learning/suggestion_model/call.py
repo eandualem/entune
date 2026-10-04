@@ -66,8 +66,12 @@ async def run(request: Request, model: Model | None = None) -> str:
 
 
 async def _run(request: Request, chosen: Model) -> str:
-    native = chosen.profile.get("supports_json_schema_output", False)
     plan = request.provider == CHATGPT
+    # On a ChatGPT plan the strict JSON schema lets a reply fall into endless blank space
+    # between tokens, which never recovers (156 of GPT-6 Astra's 170 failed attempts in
+    # the September experiments). The schema there goes in the instructions instead; the
+    # reply is still validated against it and sent back for a fix when it breaks it.
+    native = chosen.profile.get("supports_json_schema_output", False) and not plan
     agent = Agent(
         chosen,
         output_type=NativeOutput(request.shape) if native else PromptedOutput(request.shape),

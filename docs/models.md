@@ -104,10 +104,11 @@ for imports and refinement.
 
 On a ChatGPT plan, each request ends at about 15 minutes, which we measured over about
 1,500 plan requests in September 2026; an API key gets Entune's own 20-minute limit
-per reply. In the same measurements, builds with GPT-6 Astra at medium or high reasoning
-and standard 24,000-character parts did not complete on the plan, mostly because replies
-ran into empty output or reached the limit; at low reasoning they completed. If a part
-runs too long, choose Faster replies or Smaller parts and continue.
+per reply. The more common failure is quicker: a reply starts its JSON, then sends only
+blank space. Entune stops such a reply after 2,000 blank characters, usually within one
+or two minutes, and tries the part again, three attempts in all. In those measurements
+GPT-6 Astra did this at every reasoning level and part size, and GPT-6.1 Sol less often.
+If a part runs too long, choose Faster replies or Smaller parts and continue.
 
 ### Time estimate before learning from audio
 

@@ -1078,6 +1078,10 @@ def test_a_chatgpt_plan_is_asked_at_its_endpoint_for_its_account_without_an_outp
     body = json.loads(outgoing.content)
     assert body["store"] is False and body["stream"] is True
     assert "max_output_tokens" not in body
+    # The schema is in the instructions, not a strict json_schema format (endless blank space).
+    assert body.get("text", {}).get("format", {}).get("type") != "json_schema"
+    system = next(item for item in body["input"] if item.get("role") == "system")
+    assert '"title": "GenerationReply"' in system["content"]  # the schema reaches the model
 
 
 def test_a_reply_past_its_time_limit_is_not_tried_again_and_says_what_to_change() -> None:
