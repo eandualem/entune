@@ -486,3 +486,38 @@ def test_a_stopped_run_waits_for_every_transcription_under_way(
         release.set()
     stopped = wait_for_build(client)
     assert stopped["phase"] == "cancelled" and stopped["cachedTranscripts"] == 1
+
+
+def test_continue_with_nothing_new_to_read_keeps_the_finished_suggestions(
+    app: Entune, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 20)
+    first = wav_bytes(bytes([0, 0]) * 16)
+    stopping = threading.Event()
+
+    def transcribe(clip: Clip, model: str, key: str) -> Transcript:
+        if clip.data == first:
+            return Transcript("temporary words here")  # one part's worth
+        stopping.wait(5)
+        raise RuntimeError("connection reset")  # this recording never transcribes
+
+    async def fake(_: Request) -> str:
+        return '{"additions": []}'
+
+    monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
+    monkeypatch.setattr(app.builds, "_call", fake)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    job = client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"}).json()
+    deadline = time.monotonic() + 5
+    while client.get("/api/dictionary/build").json().get("completedBatches", 0) < 1:
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    client.post(f"/api/dictionary/build/{job['id']}/cancel")
+    stopping.set()
+    stopped = wait_for_build(client)
+    assert stopped["phase"] == "ready" and stopped["outcome"] == "stopped"
+    client.post(f"/api/dictionary/build/{job['id']}/retry")
+    done = wait_for_build(client)
+    # The other recording is skipped again; the finished part is still there to apply.
+    assert done["phase"] == "ready" and done["skipped"] == 1
+    assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200

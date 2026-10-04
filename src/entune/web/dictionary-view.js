@@ -75,11 +75,13 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const speechSelect = el("suggest-speech");
   function fillSpeech() {
     const toolbar = el("model");
-    speechSelect.replaceChildren(...[...toolbar.options].filter((o) => o.value).map((o) => new Option(o.textContent, o.value, false, o.value === toolbar.value)));
+    // "Pick a model" stays while no default is set, so the picker never shows one as chosen.
+    speechSelect.replaceChildren(...[...toolbar.options].filter((o) => o.value || !toolbar.value).map((o) => new Option(o.textContent, o.value, false, o.value === toolbar.value)));
     speechSelect.disabled = building || !speechSelect.options.length;
   }
   speechSelect.addEventListener("change", () => {
     const toolbar = el("model");
+    if (!speechSelect.value) return;
     toolbar.value = speechSelect.value;
     toolbar.dispatchEvent(new Event("change"));
   });

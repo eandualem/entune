@@ -603,7 +603,14 @@ class DictionaryBuilds:
                 continue
             if finished:
                 break
-        if self._proposal is not None or self._working is not None:
+        if self._proposal is not None:
+            return
+        if self._working is not None:
+            # Continue found nothing new to read: the parts finished before are the result.
+            with self._lock:
+                self._proposal = dictionary_changes.propose(
+                    spec.dictionary, self._working, spec.speech.id, f'"{spec.revision}"'
+                )
             return
         if self._skipped and not self._texts:
             name, why = self._skipped[0]
