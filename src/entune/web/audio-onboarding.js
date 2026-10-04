@@ -270,5 +270,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     // Status polls repeat the same value; redraw only on a change, keeping focus in the list.
     setBuildBusy(value) { if (value !== buildBusy) { buildBusy = value; draw(); } },
     redraw: draw,
+    // Another speech model hears different recordings as new: filter the list again.
+    modelChanged() { if (loaded) choose(); },
   };
 }

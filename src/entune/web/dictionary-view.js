@@ -196,7 +196,12 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   }
 
   // ---- Loading and saving ----
+  let shownModel; // the speech model the audio list was last filtered for
   async function loadDictionary(pollBuild = true) {
+    if (getModel()?.id !== shownModel) {
+      shownModel = getModel()?.id;
+      onboarding.modelChanged();
+    }
     dictVersion = null;
     const res = await fetch("/api/dictionary");
     const text = await res.text();
