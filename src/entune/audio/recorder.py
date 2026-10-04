@@ -7,6 +7,7 @@ Providers accept any common rate, so the device's is used as is.
 
 from __future__ import annotations
 
+import atexit
 import logging
 import math
 import threading
@@ -25,6 +26,8 @@ START_QUIET_SECONDS = 3.0  # nothing heard since the start: a microphone problem
 PAUSE_QUIET_SECONDS = 40.0  # silence after speech: a pause to think, so be patient
 QUIET_PEAK = 256  # about -42 dBFS; a warning, never a reason to discard audio
 LEVEL_FLOOR_DB = -55.0  # the pill's level bars: this is empty, 0 dBFS is full
+STOP_TIMEOUT_SECONDS = 3.0  # a microphone takes milliseconds to close; longer means it hung
+STUCK = "The microphone stopped responding. Quit and reopen Entune to record again."
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,7 @@ class Recorder:
         self._rate = FALLBACK_RATE
         self._sink: Sink | None = None
         self._lock = threading.Lock()
+        self._stuck = False  # a stream never finished closing; PortAudio is not safe to touch
         self._started = 0.0
         self._last_signal: float | None = None  # None: nothing heard yet in this recording
         self.level = 0.0  # 0..1, the latest chunk's peak, for the recording pill
@@ -81,6 +85,8 @@ class Recorder:
         with self._lock:
             if self._stream is not None:
                 return
+            if self._stuck:
+                raise RuntimeError(STUCK)
             self._chunks = []
             # PortAudio snapshots devices/defaults at initialization. Refresh while
             # our only stream is closed so connecting AirPods does not leave stale IDs.
@@ -114,23 +120,28 @@ class Recorder:
             print(f"recording from {device['name']} at {self._rate} Hz", flush=True)
 
     def stop(self, *, discard: bool = False) -> Capture:
-        """Stop capturing and release the buffers; cancellation skips the PCM copy."""
+        """Stop capturing and release the buffers; cancellation skips the PCM copy.
+
+        The audio is taken before the device is closed, and the close gets a few seconds
+        on its own thread: PortAudio's stop can deadlock inside Core Audio (seen after
+        the input device changed), and neither what was said nor the shortcuts waiting
+        on this call may go down with it."""
         with self._lock:
             stream, self._stream = self._stream, None
             if stream is None:
                 return Capture(b"", self._rate)
-            try:
-                try:
-                    stream.stop()
-                finally:
-                    stream.close()
-            except Exception:
-                # A device that went away mid-recording (AirPods back in their case)
-                # cannot be stopped cleanly; what it captured before then is still kept.
-                logging.getLogger(__name__).exception("The microphone did not stop cleanly")
-            finally:
-                self._sink = None
-                chunks, self._chunks = self._chunks, []
+            self._sink = None
+            chunks, self._chunks = self._chunks, []
+            closing = threading.Thread(target=_close, args=(stream,), daemon=True)
+            closing.start()
+            closing.join(STOP_TIMEOUT_SECONDS)
+            if closing.is_alive():
+                logging.getLogger(__name__).error("The microphone did not close; %s", STUCK)
+                self._stuck = True
+                import sounddevice
+
+                # Its exit handler closes every stream, this one too: quitting would hang.
+                atexit.unregister(sounddevice._exit_handler)
             return Capture(b"" if discard else b"".join(chunks), self._rate)
 
     def _on_audio(self, indata: Any, frames: int, time: Any, status: Any) -> None:
@@ -144,3 +155,15 @@ class Recorder:
         self.level = min(max(1 - decibels / LEVEL_FLOOR_DB, 0.0), 1.0)
         if self._sink is not None:
             self._sink(chunk)
+
+
+def _close(stream: Any) -> None:
+    try:
+        try:
+            stream.stop()
+        finally:
+            stream.close()
+    except Exception:
+        # A device that went away mid-recording (AirPods back in their case) cannot be
+        # stopped cleanly; what it captured before then is already kept.
+        logging.getLogger(__name__).exception("The microphone did not stop cleanly")

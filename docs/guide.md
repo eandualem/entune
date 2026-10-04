@@ -190,7 +190,8 @@ History retains audio and all attempts for retry.
 The default model is the picker next to the Record button, the same one as
 in Settings; picking a model applies at once, no Save. The Record button in
 the window records the same WAV the shortcut does, so every model, cloud or
-local, takes it.
+local, takes it. While the shortcut is recording, the button reads Stop and
+ends that recording.
 The speech model is sampled when transcription starts, so changing it while speaking
 changes the engine for that recording. Changes after transcription starts apply to
 later attempts. Enhancement switches are sampled after speech succeeds. In fast mode,

@@ -687,6 +687,21 @@ def test_clearing_the_shortcuts_mid_recording_finishes_the_clip(tmp_path: Path) 
     wait_for(lambda: platform.actions.pasted == 1)
 
 
+def test_the_window_stops_a_recording_the_shortcut_started(tmp_path: Path) -> None:
+    app, platform, entune = make(tmp_path)
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_shortcuts(None, "cmd+alt_r")
+    engine = app.engine
+    assert engine is not None
+    engine.press("cmd")
+    engine.press("alt_r")  # hands-free recording
+    assert app.recorder.recording  # type: ignore[attr-defined]
+    assert entune.desktop.stop_recording()
+    assert not app.recorder.recording and not engine.recording  # type: ignore[attr-defined]
+    wait_for(lambda: platform.actions.pasted == 1)
+
+
 def test_a_stopped_clip_is_in_history_before_its_transcription_runs(tmp_path: Path) -> None:
     app, platform, entune = make(tmp_path)
     entune.settings.set_shortcuts("alt_r", None)  # no model set: transcription cannot even start

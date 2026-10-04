@@ -1,5 +1,6 @@
 import io
 import sys
+import threading
 import wave
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -81,6 +82,36 @@ def test_a_microphone_that_fails_to_stop_still_hands_over_its_audio(
     recorder._on_audio(b"\x01\x00" * 100, 100, None, None)
     assert recorder.stop().pcm == b"\x01\x00" * 100
     assert stream.close.called and not recorder.recording and recorder._chunks == []
+
+
+def test_a_microphone_that_hangs_on_stop_still_hands_over_its_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = threading.Event()
+    stream = Mock()
+    stream.stop.side_effect = lambda: release.wait()  # PortAudio deadlocked in Core Audio
+    backend = SimpleNamespace(
+        _initialized=1,
+        _terminate=Mock(),
+        _initialize=Mock(),
+        _exit_handler=Mock(),
+        query_devices=lambda **kw: {"index": 0, "name": "Mic", "default_samplerate": 48_000},
+        RawInputStream=lambda **kw: stream,
+    )
+    monkeypatch.setitem(sys.modules, "sounddevice", backend)
+    monkeypatch.setattr("entune.audio.recorder.STOP_TIMEOUT_SECONDS", 0.05)
+    unregister = Mock()
+    monkeypatch.setattr("entune.audio.recorder.atexit.unregister", unregister)
+    recorder = Recorder()
+    recorder.start()
+    recorder._on_audio(b"\x01\x00" * 100, 100, None, None)
+    assert recorder.stop().pcm == b"\x01\x00" * 100
+    assert not recorder.recording
+    unregister.assert_called_once_with(backend._exit_handler)
+    with pytest.raises(RuntimeError, match="Quit and reopen Entune"):
+        recorder.start()  # never touch PortAudio again while a stream is stuck in it
+    backend._terminate.assert_called_once()  # by the first start only
+    release.set()
 
 
 def test_microphone_open_failure_releases_the_upload_sink(monkeypatch: pytest.MonkeyPatch) -> None:

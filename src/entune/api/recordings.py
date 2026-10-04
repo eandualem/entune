@@ -81,6 +81,19 @@ def routes(app: Entune) -> list[Route]:
             app.operations.cancel_dictation()
         return JSONResponse(app.operations.status())
 
+    def stop_operation(request: Request) -> Response:
+        current = app.operations.status()
+        if (
+            not current
+            or current["id"] != request.path_params["operation"]
+            or current["stage"] != "recording"
+            or current["source"] == "web"
+        ):
+            return bad("No shortcut recording is running", 409)
+        if not app.desktop.stop_recording():
+            return bad("No desktop app is running", 409)
+        return JSONResponse(current, status_code=202)
+
     def abandon_operation(request: Request) -> Response:
         app.operations.abandon_capture(request.path_params["operation"])
         return JSONResponse({"notice": "Capture closed; no audio was submitted."})
@@ -122,6 +135,7 @@ def routes(app: Entune) -> list[Route]:
         Route("/api/operations", operation_status, methods=["GET"]),
         Route("/api/operations", begin_operation, methods=["POST"]),
         Route("/api/operations/{operation}/cancel", cancel_operation, methods=["POST"]),
+        Route("/api/operations/{operation}/stop", stop_operation, methods=["POST"]),
         Route("/api/operations/{operation}", abandon_operation, methods=["DELETE"]),
         Route("/api/recordings", list_recordings, methods=["GET"]),
         Route("/api/recordings", create_recording, methods=["POST"]),
