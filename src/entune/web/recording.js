@@ -13,10 +13,6 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   let active = null;
   let dropping = false; // dropped audio files are being transcribed, one after another
   let shortcut = false; // a recording the shortcut started: this button stops it too
-  const cancel = document.createElement("button");
-  cancel.type = "button"; cancel.className = "btn ghost";
-  cancel.textContent = "Cancel dictation"; cancel.hidden = true;
-  button.after(cancel);
   const labels = {recording: "Recording…", saving: "Saving audio…", transcribing: "Transcribing…", correction: "Checking the dictionary…", cleanup: "Reducing fillers…", formatting: "Formatting…", delivering: "Delivering…", cancelling: "Canceling — keeping audio…", learning: "Preparing dictionary suggestions…", review: "Review the dictionary suggestions to dictate again."};
   let previous = null;
   async function poll() {
@@ -36,8 +32,6 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
         button.querySelector(".label").textContent = shortcut ? "Stop" : "Record";
       }
       button.disabled = !shortcut && (starting || uploading || Boolean(active && active.id !== operationId));
-      cancel.hidden = active?.kind !== "dictation";
-      cancel.disabled = active?.stage === "cancelling";
       if (recorder && active?.id === operationId && active.stage === "cancelling") recorder.stop();
     } catch (err) {
       onStatus(errorText(err));
@@ -49,11 +43,6 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   // it opened is closed too, or Entune would refuse every later dictation as busy.
   addEventListener("pagehide", () => {
     if (operationId && !uploading) fetch(`/api/operations/${operationId}`, { method: "DELETE", keepalive: true });
-  });
-  cancel.addEventListener("click", async () => {
-    if (!active) return;
-    try { await api(`/api/operations/${active.id}/cancel`, {method: "POST"}); }
-    catch (err) { onStatus(errorText(err)); }
   });
   poll();
 
