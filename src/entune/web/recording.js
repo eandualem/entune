@@ -11,6 +11,7 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   let uploading = false;
   let operationId = null;
   let active = null;
+  let shortcut = false; // a recording the shortcut started: this button stops it too
   const cancel = document.createElement("button");
   cancel.type = "button"; cancel.className = "btn ghost";
   cancel.textContent = "Cancel dictation"; cancel.hidden = true;
@@ -26,7 +27,13 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
         else if (previous && !uploading) onStatus("Ready");
         previous = key;
       }
-      button.disabled = starting || uploading || Boolean(active && active.id !== operationId);
+      const wasShortcut = shortcut;
+      shortcut = !recorder && active?.kind === "dictation" && active.stage === "recording" && active.source !== "web";
+      if (shortcut !== wasShortcut) {
+        button.setAttribute("aria-pressed", String(shortcut));
+        button.querySelector(".label").textContent = shortcut ? "Stop" : "Record";
+      }
+      button.disabled = !shortcut && (starting || uploading || Boolean(active && active.id !== operationId));
       cancel.hidden = active?.kind !== "dictation";
       cancel.disabled = active?.stage === "cancelling";
       if (recorder && active?.id === operationId && active.stage === "cancelling") recorder.stop();
@@ -84,6 +91,12 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
 
   button.addEventListener("click", async () => {
     if (recorder) { recorder.stop(); return; }
+    if (shortcut) {
+      button.disabled = true; // until the next poll shows the recording has ended
+      try { await api(`/api/operations/${active.id}/stop`, {method: "POST"}); }
+      catch (err) { onStatus(errorText(err)); }
+      return;
+    }
     if (starting || uploading) return;
     starting = true;
     let stream;

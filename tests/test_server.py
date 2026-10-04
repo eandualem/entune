@@ -135,6 +135,22 @@ def test_a_page_recording_opens_the_provider_connection(tmp_path: Path) -> None:
     assert opened.wait(2)
 
 
+def test_the_window_can_stop_only_a_shortcut_recording(tmp_path: Path) -> None:
+    app = Entune(Store(tmp_path), [StubProvider()])
+    client = TestClient(create_app(app), base_url="http://localhost")
+    stops: list[bool] = []
+    shortcut = app.operations.begin("dictation", "recording")
+    assert client.post(f"/api/operations/{shortcut.id}/stop").status_code == 409  # no desktop
+    app.desktop.on_stop_recording(lambda operation: stops.append(operation == shortcut.id))
+    assert client.post("/api/operations/other/stop").status_code == 409
+    assert client.post(f"/api/operations/{shortcut.id}/stop").status_code == 202
+    assert stops == [True]
+    app.operations.finish(shortcut)
+    page = client.post("/api/operations").json()  # the window's own recording stops itself
+    assert client.post(f"/api/operations/{page['id']}/stop").status_code == 409
+    assert stops == [True]
+
+
 def test_unknown_routes(client: TestClient) -> None:
     assert (
         client.post("/api/recordings/999/transcriptions", json={"model": "stub/good"}).status_code

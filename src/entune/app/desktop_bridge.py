@@ -13,6 +13,7 @@ class DesktopBridge:
         self._status: dict[str, object] = {"desktop": False}
         self._permission_listeners: list[Callable[[str, bool], None]] = []
         self._show_window_listeners: list[Callable[[], None]] = []
+        self._stop_listeners: list[Callable[[str], None]] = []
 
     # What the desktop app reports about itself, for /api/status and for diagnosis.
 
@@ -38,3 +39,12 @@ class DesktopBridge:
         for listener in self._show_window_listeners:
             listener()
         return bool(self._show_window_listeners)
+
+    def on_stop_recording(self, listener: Callable[[str], None]) -> None:
+        """The window's Stop button ends a recording the shortcut started, by its id."""
+        self._stop_listeners.append(listener)
+
+    def stop_recording(self, operation_id: str) -> bool:
+        for listener in self._stop_listeners:
+            listener(operation_id)
+        return bool(self._stop_listeners)

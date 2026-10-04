@@ -81,6 +81,7 @@ class EntuneApp:
             lambda: platform.run_on_ui_thread(platform.hotkeys.cancel_capture)
         )
         entune.desktop.on_show_window(lambda: platform.run_on_ui_thread(self.open_window))
+        entune.desktop.on_stop_recording(self._request_stop)
         entune.desktop.on_permission_request(
             lambda name, settings: platform.run_on_ui_thread(
                 lambda: self._request_permission(name, settings)
@@ -373,6 +374,24 @@ class EntuneApp:
                 with contextlib.suppress(CancelledError):
                     self.entune.operations.stage(operation, "saving")
             self._captures.put((capture, upload, operation))
+
+    def _request_stop(self, operation_id: str) -> None:
+        engine = self.engine
+        start = engine.starts if engine else 0
+        self._key_actions.put(partial(self.stop_from_window, engine, start, operation_id))
+
+    def stop_from_window(
+        self, engine: ShortcutEngine | None, start: int, operation_id: str
+    ) -> None:
+        """The window's Stop button: the same stop as the shortcut's, for the recording
+        shown when it was clicked. Keys pressed since then may have stopped that one and
+        started another, which this must neither stop nor forget."""
+        with self._close_lock:
+            if self._operation is None or self._operation.id != operation_id:
+                return
+            if engine is not None:
+                engine.start_failed(start)  # the same reset, and only if no newer start
+            self.stop_recording()
 
     def cancel_recording(self) -> None:
         """Cancel recording, processing, or queued delivery; saved audio is retained."""
