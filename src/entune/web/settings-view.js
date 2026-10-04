@@ -19,9 +19,18 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   }
 
   // ---- Settings ----
+  // Where each speech provider hands out API keys; the link opens in the browser, where
+  // the provider may ask to sign in first.
+  const KEY_PAGES = {
+    assemblyai: "https://www.assemblyai.com/dashboard/api-keys",
+    elevenlabs: "https://elevenlabs.io/app/developers/api-keys",
+    groq: "https://console.groq.com/keys",
+    soniox: "https://console.soniox.com/",
+    xai: "https://console.x.ai/",
+  };
   function keyRow(provider) {
     const row = document.createElement("div");
-    row.className = "srow";
+    row.className = "srow key-row";
     const label = document.createElement("label");
     label.className = "name";
     label.htmlFor = `key-${provider.id}`;
@@ -34,6 +43,11 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     input.autocomplete = "off";
     input.placeholder = provider.keyHint ? `saved ${provider.keyHint} · type to replace` : "Not set";
     row.append(label, input);
+    if (KEY_PAGES[provider.id]) {
+      const link = Object.assign(document.createElement("a"), { className: "key-link", href: KEY_PAGES[provider.id], target: "_blank", rel: "noopener", textContent: "Get a key" });
+      link.title = `Open ${provider.name}'s API key page in your browser`;
+      row.append(link);
+    }
     return row;
   }
 

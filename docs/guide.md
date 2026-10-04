@@ -239,7 +239,8 @@ A speech model turns a recording into text. These are the ones Entune can use:
 | Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
 | Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
 
-Enter a provider's API key on the Models page and its model appears in the
+Enter a provider's API key on the Models page (**Get a key** beside each provider opens
+its API key page in your browser) and its model appears in the
 model list; pick one as the default. You pay each provider directly, per minute
 of audio, at its own published rate:
 [AssemblyAI](https://www.assemblyai.com/pricing),

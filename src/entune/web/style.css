@@ -500,6 +500,9 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .name .caption { display: inline; font-weight: 400; }
 .srow { display: grid; grid-template-columns: var(--label-col) minmax(0, 1fr); gap: var(--sp-16); align-items: center; padding: var(--sp-14) var(--sp-16); border-bottom: 1px solid var(--line-faint); }
 .srow:last-child { border-bottom: 0; }
+.srow.key-row { grid-template-columns: var(--label-col) minmax(0, 1fr) auto; }
+.key-link { font-size: var(--fs-12-5); color: var(--accent-text); text-decoration: none; white-space: nowrap; }
+.key-link:hover { text-decoration: underline; }
 .srow.top { align-items: start; }
 .srow .caption { margin-top: 3px; }
 .srow.check { display: grid; cursor: default; grid-template-columns: minmax(0, 1fr) auto; }
