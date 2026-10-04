@@ -84,44 +84,46 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
     dropping = uploading = true; // the status line stays on the files until they are done
     const tally = { ok: 0, failed: 0, cancelled: 0, other: 0, refused: [], stopped: null, left: 0 };
     let number = 0;
-    while (dropped.length) {
-      const file = dropped.shift();
-      number++;
-      onStatus(`Transcribing ${number} of ${number + dropped.length}: ${file.name}…`);
-      const form = new FormData();
-      form.append("audio", file, file.name);
-      // A file the server refuses (empty, too large) is reported and skipped; the rest go
-      // on. A busy Entune or a lost connection stops the queue and says what is left.
-      let response;
-      try {
-        response = await fetch("/api/recordings", { method: "POST", body: form });
-      } catch (err) {
-        response = null;
-        tally.stopped = `${errorText(err)}`;
+    try {
+      while (dropped.length) {
+        const file = dropped.shift();
+        number++;
+        onStatus(`Transcribing ${number} of ${number + dropped.length}: ${file.name}…`);
+        const form = new FormData();
+        form.append("audio", file, file.name);
+        // A file the server refuses (empty, too large) is reported and skipped; the rest go
+        // on. A busy Entune stops the queue and says what is left.
+        const response = await fetch("/api/recordings", { method: "POST", body: form });
+        if (response.status === 409) {
+          tally.stopped = (await response.text()).replace(/\.$/, "");
+          tally.left = dropped.length + 1; // this file was not taken either
+          number--;
+          break;
+        }
+        if (!response.ok) {
+          tally.refused.push(`${file.name}: ${(await response.text()).replace(/\.$/, "")}`);
+          continue;
+        }
+        const attempt = (await response.json()).transcriptions?.[0];
+        // A saved recording can still carry a failed or cancelled transcription.
+        tally[attempt?.processing_state === "cancelled" ? "cancelled" : attempt?.status === "ok" ? "ok" : attempt?.status === "error" ? "failed" : "other"]++;
+        await onUploaded();
       }
-      if (response && response.status === 409) tally.stopped = await response.text();
-      if (tally.stopped) {
-        tally.left = dropped.length + 1;
-        dropped.length = 0;
-        break;
-      }
-      if (!response.ok) {
-        tally.refused.push(`${file.name}: ${await response.text()}`);
-        continue;
-      }
-      const attempt = (await response.json()).transcriptions?.[0];
-      // A saved recording can still carry a failed or cancelled transcription.
-      tally[attempt?.processing_state === "cancelled" ? "cancelled" : attempt?.status === "ok" ? "ok" : attempt?.status === "error" ? "failed" : "other"]++;
-      await onUploaded();
+    } catch (err) {
+      // A lost connection or a failed History refresh: say so, and what was not done.
+      tally.stopped = errorText(err).replace(/\.$/, "");
+      tally.left = dropped.length;
+    } finally {
+      dropped.length = 0;
+      dropping = uploading = false;
+      previous = null; // the summary below stays; the poll has nothing newer to say
     }
-    dropping = uploading = false;
-    previous = null; // the summary below stays; the poll has nothing newer to say
-    const total = number + (tally.stopped ? tally.left - 1 : 0);
+    const total = number + tally.left; // files handled, and files not started
     const parts = [`Transcribed ${tally.ok} of ${total} file${total === 1 ? "" : "s"}`];
     if (tally.failed) parts.push(`${tally.failed} failed, see History`);
     if (tally.cancelled) parts.push(`${tally.cancelled} cancelled`);
     if (tally.refused.length) parts.push(`not accepted: ${tally.refused.join("; ")}`);
-    if (tally.stopped) parts.push(`${tally.left} not transcribed: ${tally.stopped}`);
+    if (tally.stopped) parts.push(`${tally.left ? `${tally.left} not transcribed: ` : ""}${tally.stopped}`);
     if (tally.other) parts.push(`${tally.other} saved without text`);
     onStatus(`${parts.join("; ")}.`);
   }
