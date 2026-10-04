@@ -537,25 +537,23 @@ class DictionaryBuilds:
         start = self._consumed.get(text.id, 0)
         if not start and len(text.text) <= limit:
             return [text]
-        rest = learning_inputs.LearningText(
-            text.id,
-            text.text[start:],
-            text.kind,
-            text.result and batches.within(text.result, start, len(text.text)),
-        )
+        rest = learning_inputs.LearningText(text.id, text.text[start:], text.kind)
         pieces = []
         position = 0
         snippets = [s for step in batches.learning_batches([rest], limit) for s in step.snippets]
         for number, snippet in enumerate(snippets, 1):
             position = rest.text.find(snippet.text, position)
-            piece = f"{text.id}@{start + position}"
+            begin = start + position
             position += len(snippet.text)
             # The last piece finishes the text, whatever whitespace follows it.
             end = len(text.text) if number == len(snippets) else start + position
             with self._lock:
-                self._segments[piece] = (text.id, end, len(text.text))
+                self._segments[f"{text.id}@{begin}"] = (text.id, end, len(text.text))
+            # Each piece takes its own share of what the dictionary did: an edit across a
+            # piece's edge drops only that piece's share, never the rest of the text.
+            share = text.result and batches.within(text.result, begin, begin + len(snippet.text))
             pieces.append(
-                learning_inputs.LearningText(piece, snippet.text, text.kind, snippet.result)
+                learning_inputs.LearningText(f"{text.id}@{begin}", snippet.text, text.kind, share)
             )
         return pieces
 

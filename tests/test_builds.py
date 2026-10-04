@@ -521,3 +521,21 @@ def test_continue_with_nothing_new_to_read_keeps_the_finished_suggestions(
     # The other recording is skipped again; the finished part is still there to apply.
     assert done["phase"] == "ready" and done["skipped"] == 1
     assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200
+
+
+def test_a_resumed_long_transcript_keeps_each_later_pieces_dictionary_results(
+    app: Entune,
+) -> None:
+    from entune.learning.inputs import DictionaryResult, LearningText
+    from entune.processing.text_edits import Change
+
+    text = "aaaa bbbb cccc dddd eeee ffff"
+    across = Change(3, 6, "a b", "A B")  # across the edge where the last part stopped
+    later = Change(15, 19, "dddd", "DDDD")  # wholly inside a later piece
+    source = LearningText("t", text, "raw_speech", DictionaryResult((across, later)))
+    app.builds._consumed["t"] = 5  # the finished part ended after "aaaa "
+    pieces = app.builds._remaining(source, 10)
+    assert [p.text for p in pieces] == ["bbbb cccc", "dddd eeee", "ffff"]
+    # Only the piece the straddling edit touches loses its share; the later one keeps it.
+    assert pieces[1].result is not None
+    assert [(c.start, c.end, c.after) for c in pieces[1].result.changes] == [(0, 4, "DDDD")]
