@@ -369,6 +369,10 @@ function revealNewest() {
     card.toggleAttribute("data-reveal", on && card === newest && card.dataset.id !== remembered("entune.anonymous.copied"));
   }
 }
+// The newest dictation blurs once it has been copied, by any copy action.
+function copiedNewest(card) {
+  if (card.hasAttribute("data-reveal")) { remembered("entune.anonymous.copied", card.dataset.id); revealNewest(); }
+}
 anonymous.checked = remembered("entune.anonymous") === "on";
 anonymous.addEventListener("change", () => { remembered("entune.anonymous", anonymous.checked ? "on" : "off"); revealNewest(); });
 new MutationObserver(revealNewest).observe(historyList, { childList: true });
@@ -384,6 +388,7 @@ historyList.addEventListener("click", async (e) => {
       // WebKit only allows a clipboard write that starts in the click, so hand it the pending text.
       const request = api(`/api/recordings/${card.dataset.id}/transcriptions/${recovery.dataset.attempt}/safe-copy`, { method: "POST" });
       await navigator.clipboard.write([new ClipboardItem({ "text/plain": request.then((r) => new Blob([r.text], { type: "text/plain" })) })]);
+      copiedNewest(card);
       const result = await request;
       message.textContent = `Copied · ${result.replacements} direct mappings · ${result.unresolved} unresolved`;
     } catch (err) { message.textContent = errorText(err); }
@@ -399,8 +404,7 @@ historyList.addEventListener("click", async (e) => {
     try {
       await navigator.clipboard.writeText(text);
       tag.textContent = "Copied";
-      // Anonymous mode: the newest dictation blurs once it has been copied.
-      if (card.hasAttribute("data-reveal")) { remembered("entune.anonymous.copied", card.dataset.id); revealNewest(); }
+      copiedNewest(card);
     } catch (err) {
       tag.textContent = `Copy failed: ${errorText(err)}`;
     }

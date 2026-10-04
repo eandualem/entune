@@ -64,33 +64,51 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   addEventListener("dragenter", (event) => { if (hasFiles(event)) { event.preventDefault(); depth++; overlay.hidden = false; } });
   addEventListener("dragover", (event) => { if (hasFiles(event)) event.preventDefault(); });
   addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; overlay.hidden = true; } });
-  addEventListener("drop", async (event) => {
+  // Drops queue up: files dropped while others are transcribing wait their turn.
+  const dropped = [];
+  let dropping = false;
+  addEventListener("drop", (event) => {
     if (!hasFiles(event)) return;
     event.preventDefault(); // never open the file in place of the app
     depth = 0; overlay.hidden = true;
     const files = [...event.dataTransfer.files];
     const audio = files.filter(isAudio);
     if (!audio.length) { onStatus("Only audio files can be transcribed."); return; }
-    let done = 0;
-    uploading = true; // the status line stays on the files until they are done
-    for (const [index, file] of audio.entries()) {
-      onStatus(`Transcribing ${audio.length > 1 ? `${index + 1} of ${audio.length}: ` : ""}${file.name}…`);
+    if (recorder || starting || (uploading && !dropping)) { onStatus("Finish the current recording first, then drop the files again."); return; }
+    dropped.push(...audio);
+    if (files.length > audio.length) onStatus(`${files.length - audio.length} file${files.length - audio.length === 1 ? " is" : "s are"} not audio and will be skipped.`);
+    if (!dropping) transcribeDropped();
+  });
+  async function transcribeDropped() {
+    dropping = uploading = true; // the status line stays on the files until they are done
+    const tally = { ok: 0, failed: 0, other: 0 };
+    let number = 0;
+    while (dropped.length) {
+      const file = dropped.shift();
+      number++;
+      onStatus(`Transcribing ${number} of ${number + dropped.length}: ${file.name}…`);
       const form = new FormData();
       form.append("audio", file, file.name);
       try {
-        await api("/api/recordings", { method: "POST", body: form });
-        done++;
+        const recording = await api("/api/recordings", { method: "POST", body: form });
+        // A saved recording can still carry a failed transcription: count what happened.
+        const status = recording.transcriptions?.[0]?.status;
+        tally[status === "ok" ? "ok" : status === "error" ? "failed" : "other"]++;
         await onUploaded();
       } catch (err) {
-        uploading = false;
+        dropped.length = 0;
+        dropping = uploading = false;
         onStatus(`${file.name}: ${errorText(err)}`);
         return;
       }
     }
-    uploading = false;
-    const skipped = files.length - audio.length;
-    onStatus(`Transcribed ${done} file${done === 1 ? "" : "s"}${skipped ? `; ${skipped} not audio, skipped` : ""}.`);
-  });
+    dropping = uploading = false;
+    previous = null; // the summary below stays; the poll has nothing newer to say
+    const parts = [`Transcribed ${tally.ok} of ${number} file${number === 1 ? "" : "s"}`];
+    if (tally.failed) parts.push(`${tally.failed} failed, see History`);
+    if (tally.other) parts.push(`${tally.other} saved without text`);
+    onStatus(`${parts.join("; ")}.`);
+  }
 
   function setRecording(on) {
     button.setAttribute("aria-pressed", String(on));
