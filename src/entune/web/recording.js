@@ -105,8 +105,11 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
     } finally {
       dropped.length = 0;
       dropping = uploading = false;
-      previous = null; // the summary below stays; the poll has nothing newer to say
     }
+    // The summary below stays until the operation changes: the poll takes the one running
+    // now (a dictation that refused the files, or none) as already reported.
+    const now = await api("/api/operations").catch(() => null);
+    previous = now ? `${now.id}:${now.stage}` : null;
     const total = number + tally.left; // files handled, and files not started
     const parts = [`Transcribed ${tally.ok} of ${total} file${total === 1 ? "" : "s"}`];
     if (tally.failed) parts.push(`${tally.failed} failed, see History`);
