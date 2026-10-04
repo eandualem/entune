@@ -225,23 +225,23 @@
                 <div class="guide-example"><code>cloud</code> → <b>Claude</b>, an AI assistant you ask to write or code<br><code>cloud</code> → <b>cloud</b>, internet storage and servers</div>
                 <p>In “Ask cloud to draft the reply”, Entune writes <b>Claude</b>. In “The backups are in the cloud”, it leaves <b>cloud</b> alone. It chooses from the surrounding words, which is why each meaning has a short description: write what the thing is and what it goes with.</p>
                 <p>One entry can list several spellings the model writes (“cloud”, “clawed”) and several meanings. Each heard spelling is linked to the meanings it can stand for.</p>
-                <h3>Getting suggestions</h3>
-                <p>You don't have to build the dictionary by hand. Entune can read your dictations and suggest entries, using the dictionary model you choose (its key is in Settings).</p>
-                <p>Choose <b>Get suggestions</b>. What it looks for depends on your dictionary:</p>
-                <ul>
-                  <li>With no entries yet for this speech model, it reads your recent transcripts and suggests first entries for the mistakes it finds.</li>
-                  <li>Once you have entries, pinned or learned, it also compares what the speech model wrote with what the dictionary changed. It suggests missing entries and fixes: a clearer description, a wider or narrower entry, or removing a learned entry that does more harm than good.</li>
-                  <li><b>Learning from audio</b>, in the <b>⋯</b> menu, transcribes recordings again with your current speech model before suggesting entries. Use it when the recordings were made with another model, or come from another dictation app or a folder. It takes longer and uses more tokens.</li>
-                </ul>
-                <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model selected in the toolbar.</p>
-                <p>Each run reads up to 300 of that model's newest transcripts that no earlier run has read, so running it again moves on to newer dictations. To read transcripts again, turn on <b>Include transcripts already used</b> in the suggestions panel or the <b>⋯</b> menu; that costs tokens again and can repeat earlier suggestions.</p>
+                <h3 id="guide-suggestions">Getting suggestions</h3>
+                <p>Entune can build the dictionary for you. A suggestion model, the language model you choose with its key in Settings, reads what your speech model wrote and suggests entries for the words it gets wrong. With entries already in place, it also suggests clearer descriptions, wider or narrower entries, and removals.</p>
+                <p><b>Get suggestions</b> is the simple path: it reads up to 300 of your speech model's newest transcripts that no earlier run has read. <b>Include transcripts already used</b> reads them again, which costs tokens again and can repeat earlier suggestions.</p>
                 <h3 id="guide-audio">Learning from audio</h3>
-                <p>Choose a source in the <b>⋯</b> menu: your Entune recordings made with other speech models, the recordings another dictation app kept on this Mac (only the audio is copied, never its transcripts), or a folder of audio files. For Entune recordings you can include the ones this speech model already transcribed.</p>
-                <p>After you pick a source, the timeline shows all its recorded audio, oldest on the left and newest on the right. It measures recorded time, so days without recordings take no space; the dates under the handles show where you are.</p>
-                <p>Everything is selected at first. Drag the left handle right to keep only your most recent audio, or move either handle to choose any stretch. You'll see exactly how much audio and how many recordings are included, and you can list and play them. Each edge snaps to whole recordings.</p>
-                <p>Then choose <b>Transcribe and suggest</b>. Entune transcribes the selection with your speech model, then the dictionary model reads the new text. Transcribing again can take a while and your providers may charge for both steps. You can stop at any time; finished transcripts are kept for a retry.</p>
+                <p>The <b>⋯</b> menu learns from audio instead: Entune recordings made with other speech models, another dictation app's recordings on this Mac (only the audio is copied, never its transcripts), or a folder of WAV, MP3, M4A, FLAC, OGG or WebM files. Entune first <b>transcribes</b> that audio with your speech model, then the suggestion model reads the new text, so this path takes longer and providers may charge for both steps.</p>
+                <p>The timeline shows the source's recorded time, oldest on the left. Drag the handles to choose how much to use; each edge snaps to whole recordings, and the dates show where you are. Starting with your most recent hour or two gives quick results.</p>
+                <h3>Time and settings</h3>
+                <p>Text goes to the suggestion model in parts, one after another, because each part builds on the entries found so far. With audio, parts start as soon as enough is transcribed, while the rest is still transcribing. Cloud speech models transcribe several recordings at a time; a local model takes one at a time.</p>
+                <ul>
+                  <li><b>Replies</b>: Faster reasons less and answers sooner; Thorough reasons more and takes longer.</li>
+                  <li><b>Part size</b>: Smaller sends about 8,000 characters per request, so more requests that each finish sooner; Standard sends about 24,000.</li>
+                </ul>
+                <p>The estimate uses what Entune has measured: your speech model's transcription times, and the time per part of earlier runs with the same suggestion model and settings. A combination not used before says so.</p>
+                <p>A ChatGPT plan ends any single reply at about 15 minutes. If a part runs past that, or past a provider's time or length limit, Entune stops and keeps the finished parts. Choose Faster replies or Smaller parts, or less audio, and press <b>Continue</b>: it picks up where it stopped. Transcripts made so far are kept for Continue while Entune stays open.</p>
                 <h3>Reviewing suggestions</h3>
-                <p>Suggestions open in a panel beside your dictionary, grouped into new entries, changes and removals. You can edit any of them, remove the ones you don't want with ×, and then apply the rest in one step. Nothing is saved until you apply. While suggestions are open, dictation pauses, so apply or discard them when you're done.</p>
+                <p>Suggestions open in a panel beside your dictionary, grouped into new entries, changes and removals. Edit any of them, leave out the ones you don't want with ×, and apply the rest in one step. Nothing is saved until you apply. Dictation keeps working the whole time; only editing the dictionary waits until you apply or discard.</p>
+                <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model chosen when the run starts.</p>
                 <h3>Pinned and learned entries</h3>
                 <p><b>Learned</b> entries are used only with the speech model they were learned for. <b>Pin</b> an entry to use it with every speech model; pinned entries are yours and suggestions can't remove them. Pinning doesn't make an entry win: Entune still reads the sentence.</p>
                 <h3>Adding an entry yourself</h3>
@@ -270,20 +270,18 @@
             <div class="drawer-inner">
               <header class="drawer-head">
                 <div><h2 id="suggest-title">Get suggestions</h2><p class="caption" id="suggest-sub"></p></div>
+                <button type="button" class="btn ghost sm help-btn" id="suggest-help" aria-haspopup="dialog" aria-controls="help-dialog">Help</button>
                 <button type="button" class="btn-icon" id="suggest-close" aria-label="Close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
               </header>
               <div class="drawer-body">
                 <div class="suggest-setup" id="suggest-setup">
-                  <p id="learn-source">Suggestions from your recent transcripts. Nothing changes until you review them.</p>
-                  <p class="caption">Dictionary generation can take minutes to hours for a large history. It processes batches in sequence; the model and size of the growing dictionary affect the time.</p>
+                  <p id="learn-source">Reads your recent transcripts and suggests entries for the words your speech model gets wrong.</p>
                   <label class="check"><input type="checkbox" id="learning-reuse" /> Include transcripts already used</label>
-                  <p class="caption">Reads transcripts an earlier run already read. It costs tokens again and can repeat earlier suggestions.</p>
                 </div>
                 <div class="suggest-audio" id="suggest-audio" hidden>
                   <p id="audio-intro"></p>
                   <div class="app-list" id="audio-provider-pick" role="radiogroup" aria-label="Dictation app" hidden></div>
                   <div class="source-note">
-                    <p class="caption" id="audio-source-note"></p>
                     <button type="button" class="btn sm" id="import-app" hidden>Import</button>
                     <button type="button" class="btn sm" id="choose-audio-folder" hidden>Choose folder…</button>
                     <input type="file" id="audio-folder" webkitdirectory multiple hidden />
@@ -299,26 +297,25 @@
                       <input type="range" id="audio-range-end" min="0" max="1000" value="1000" step="1" aria-label="Newest included audio" />
                     </div>
                     <div class="range-labels"><span id="audio-start-label"></span><span id="audio-end-label"></span></div>
-                    <p class="caption range-note">Drag the handles to choose a stretch of recorded time, oldest to newest.</p>
                     <details class="audio-detail" id="audio-detail"><summary id="audio-detail-summary">Show included recordings</summary><div class="audio-list" id="learning-audio-list"></div><button type="button" class="btn ghost sm" id="audio-more" hidden>Show more</button></details>
                   </div>
-                  <p id="audio-generation-estimate" role="status"></p>
-                  <p class="caption">Cloud providers may charge for both steps: transcribing, then suggestions.</p>
-                  <button type="button" class="btn link" id="audio-help" aria-haspopup="dialog" aria-controls="help-dialog">How learning from audio works</button>
-                </div>
-                <div class="suggest-shared" id="suggest-shared">
-                  <div class="suggest-model">
-                    <label for="dictionary-model">Suggestion model</label>
-                    <select class="select" id="dictionary-model" aria-describedby="dictionary-model-note"></select>
-                    <button type="button" class="btn link" id="suggest-settings">Keys in Settings</button>
-                  </div>
-                  <p class="caption learn-note" id="dictionary-model-note" hidden></p>
-                  <p class="caption">Nothing changes in your dictionary until you apply. While a run or review is open, dictation and dictionary editing are paused.</p>
                 </div>
                 <div class="learn-status" id="learn-status" hidden>
                   <div class="learn-line"><span class="spinner" id="build-spinner" aria-hidden="true" hidden></span><p class="learn-progress" id="dictionary-build-status" role="status"></p></div>
                   <details class="build-error-detail" id="build-error-detail" hidden><summary>Technical details</summary><pre id="build-error-text"></pre></details>
                   <p class="caption" id="run-note" hidden>You can close this panel; progress stays above the list. Finished parts are kept if you stop.</p>
+                </div>
+                <div class="suggest-shared" id="suggest-shared">
+                  <div class="run-settings">
+                    <label class="run-field" id="speech-field">Speech model <select class="select" id="suggest-speech"></select></label>
+                    <label class="run-field">Suggestion model <select class="select" id="dictionary-model" aria-describedby="dictionary-model-note"></select></label>
+                    <label class="run-field">Replies <select class="select" id="suggest-effort"><option value="low">Faster</option><option value="medium">Thorough</option></select></label>
+                    <label class="run-field">Part size <select class="select" id="suggest-part"><option value="small">Smaller</option><option value="standard">Standard</option></select></label>
+                  </div>
+                  <p class="caption" id="run-effect"></p>
+                  <p class="estimate" id="audio-generation-estimate" role="status"></p>
+                  <p class="caption learn-note" id="dictionary-model-note" hidden></p>
+                  <p class="caption">Your dictionary changes only when you apply. Dictation keeps working meanwhile. <button type="button" class="btn link" id="suggest-settings">Keys in Settings</button></p>
                 </div>
                 <div class="proposal" id="proposal" hidden>
                   <p class="caption" id="proposal-title">Edit any suggestion, or leave it out with ×. Pinned entries are never changed by suggestions.</p>
@@ -330,7 +327,7 @@
                 <button type="button" class="btn primary" id="build-audio-dictionary" hidden disabled>Transcribe and suggest</button>
                 <span class="caption audio-models" id="audio-models" hidden></span>
                 <button type="button" class="btn primary" id="accept-proposal" hidden>Apply</button>
-                <button type="button" class="btn" id="retry-dictionary-build" hidden>Retry the rest</button>
+                <button type="button" class="btn" id="retry-dictionary-build" hidden>Continue</button>
                 <button type="button" class="btn ghost" id="cancel-dictionary-build" hidden>Stop</button>
                 <button type="button" class="btn ghost" id="discard-proposal" hidden>Discard all</button>
                 <button type="button" class="btn ghost" id="abandon-dictionary-build" hidden>Discard</button>

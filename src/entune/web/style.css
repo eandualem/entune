@@ -403,8 +403,12 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 #laya-command { margin: var(--sp-6) 0 0; padding: var(--sp-8) var(--sp-10); border-radius: var(--r-7); background: var(--well); font: var(--fs-12)/1.5 var(--mono); color: var(--text); -webkit-user-select: all; user-select: all; white-space: pre-wrap; }
 .drawer-foot .audio-models { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
 #learn-source { color: var(--text-secondary); }
-.suggest-model { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); padding-top: var(--sp-12); border-top: 1px solid var(--line); font-size: var(--fs-12-5); color: var(--text-dim); }
-.suggest-model .select { max-width: 16rem; }
+.run-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--sp-10) var(--sp-12); padding-top: var(--sp-12); border-top: 1px solid var(--line); }
+.run-field { display: flex; flex-direction: column; gap: var(--sp-4); font-size: var(--fs-12-5); color: var(--text-dim); min-width: 0; }
+.run-field[hidden] { display: none; }
+.run-field .select { width: 100%; }
+.suggest-shared .estimate { white-space: pre-line; }
+.suggest-shared .estimate:empty, .suggest-shared .estimate[hidden] { display: none; }
 .learn-status { display: flex; flex-direction: column; gap: var(--sp-8); }
 .learn-line { display: flex; align-items: flex-start; gap: var(--sp-10); }
 .learn-line .spinner { margin-top: 0.2rem; }
@@ -599,7 +603,6 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .range input::-moz-range-thumb { pointer-events: auto; width: 1.125rem; height: 1.125rem; border: 0; border-radius: 50%; background: var(--text); }
 .range input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--surface-raised), var(--focus); }
 .range-labels { display: flex; justify-content: space-between; gap: var(--sp-12); font-size: var(--fs-12); color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.range-note { margin: var(--sp-8) 0; }
 .check { display: flex; align-items: center; gap: var(--sp-6); }
 .audio-detail { margin-top: var(--sp-10); }
 .audio-detail summary { cursor: default; font-size: var(--fs-12-5); color: var(--accent-text); }

@@ -269,25 +269,26 @@ workflow or closing the app clears them, while source audio remains. The generat
 provider receives the selected inputs, pinned knowledge and this model's working groups.
 The configured model is honored, including a custom model ID. The
 [model guide](models.md#dictionary-generation) gives our current recommendation;
-the built-in suggested list can contain older models. Medium reasoning is requested
-where supported. No generation or classification model rewrites dictation.
+the built-in suggested list can contain older models. Medium reasoning (Thorough) or
+low (Faster) is requested where supported, as chosen in the setup. No generation or classification model rewrites dictation.
 
-Sequential steps contain about 24,000 transcript characters; the full growing dictionary
-adds to that request size. A long transcript split across steps carries only its own
+Sequential steps contain about 24,000 transcript characters, or about 8,000 with Smaller
+parts; the full growing dictionary adds to that request size. Each step holds whole
+transcripts that no finished step has covered, so a resumed run can use another size. A long transcript split across steps carries only its own
 span of the dictionary result. Step numbers stay in the app for progress and resume. Each
 reply may use up to 32,000 output tokens, including the model's thinking; a reply cut at
 that limit fails its step visibly. On a ChatGPT subscription the plan's own limit applies
 instead, and a reply it cuts fails the same way. Unmentioned knowledge remains. New temporary IDs are assigned
 persistent IDs once; subsequent steps and editor changes retain them. Pinned definitions
 and usage can be proposed for review, but existing pinned variants/meanings cannot be
-removed. Separate editing and dictation are blocked from generation through review;
-editing within the proposal is allowed. Additions, before/after updates and explicit
+removed. Separate editing is blocked from generation through review, while dictation
+continues; editing within the proposal is allowed. Additions, before/after updates and explicit
 removals can be dismissed individually, then applied together. No proposal is installed
 automatically. A revision check also rejects out-of-band file edits.
 
 Each validated batch checkpoints the working dictionary and its fully covered input
-IDs. Failure or Stop keeps completed proposals and excludes the failed batch. Retry
-resumes from the completed batch with the accumulated dictionary. Applying at least one
+IDs. Failure or Stop keeps completed proposals and excludes the failed batch. Continue
+resumes with the inputs not yet covered and the accumulated dictionary. Applying at least one
 actual change consumes only fully covered input IDs for that model; applying none
 consumes none. A transcript split across batches is covered only after its final segment
 succeeds. This ID-based record works even when selected inputs are not a chronological

@@ -35,8 +35,6 @@ INDICATOR: dict[State, str] = {
     "formatting": "Formatting…",
     "delivering": "Delivering…",
     "cancelling": "Canceling — keeping audio…",
-    "learning": "Preparing dictionary suggestions…",
-    "review": "Review dictionary suggestions to dictate again",
 }
 ALERT_CHARS = 300  # an error's detail on the pill; History keeps all of it
 # Room for the Dictionary page and its audio dialog; smaller screens get most of their

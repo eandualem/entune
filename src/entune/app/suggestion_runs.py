@@ -1,14 +1,20 @@
-"""Exclusive learning workflow with validated checkpoints and temporary retry reuse."""
+"""Exclusive learning workflow with validated checkpoints and temporary retry reuse.
+
+Audio is transcribed on worker threads, several cloud clips at a time, and suggestions
+start as soon as one part's worth of text is ready, while the rest is still being
+transcribed. Each part reads whole recordings or transcripts that no finished part has
+covered, so Retry continues from what is covered, whatever part size it uses next."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import queue
 import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from concurrent.futures import CancelledError
+from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,15 +24,19 @@ from entune.app.operations import Operation, Operations
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary.changes import Proposal
 from entune.dictionary.entries import Dictionary, Groups
-from entune.learning import generate, suggestion_model
+from entune.learning import batches, generate, suggestion_model
 from entune.learning import inputs as learning_inputs
 from entune.providers.contracts import Clip, Failure
+from entune.providers.local.contracts import Downloadable
 from entune.providers.registry import ModelRef
 from entune.providers.resources import SpeechResources
 from entune.storage.records import DictionaryAudio
 
 Source = Literal["history", "audio"]
 RUNNING = {"queued", "transcribing", "building", "cancelling", "cleaning"}
+TRANSCRIBE_WORKERS = 4  # cloud clips transcribed at once; a local model takes one at a time
+SMALL_PART = 8_000  # transcript characters; the standard part is batches.BATCH_CHARS
+EFFORTS = ("low", "medium")
 
 
 class JobConflict(ValueError):
@@ -45,6 +55,8 @@ class BuildInput:
     audio: tuple[tuple[DictionaryAudio, Path], ...] = ()
     scope: str = "new"
     mode: learning_inputs.Mode = "generate"
+    effort: str = "medium"  # the suggestion model's reasoning
+    part_chars: int | None = None  # transcript characters per part; None: BATCH_CHARS
 
 
 class DictionaryBuilds:
@@ -60,9 +72,10 @@ class DictionaryBuilds:
         self._working: Groups | None = None
         self._covered: set[str] = set()
         self._completed_batches = 0
-        self._planned: tuple[str, ...] | None = None  # the inputs the finished parts came from
+        self._skipped: list[tuple[str, str]] = []  # recordings that would not transcribe
         self._operation: Operation | None = None
         self._cancel = threading.Event()
+        self._halt = threading.Event()  # suggestions ended: stop starting transcriptions
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task[Groups] | None = None
@@ -102,6 +115,8 @@ class DictionaryBuilds:
                 "scope": spec.scope,
                 "model": spec.speech.id,
                 "dictionaryModel": spec.builder[2],
+                "effort": spec.effort,
+                "partChars": _limit(spec),
                 "version": f'"{spec.revision}"',
                 "completed": 0,
                 "total": len(spec.audio) if spec.source == "audio" else len(spec.transcripts),
@@ -142,7 +157,11 @@ class DictionaryBuilds:
                 self._covered.clear()
             self._spec = fresh
             self._state.update(
-                phase="queued", dictionaryModel=fresh.builder[2], version=f'"{fresh.revision}"'
+                phase="queued",
+                dictionaryModel=fresh.builder[2],
+                effort=fresh.effort,
+                partChars=_limit(fresh),
+                version=f'"{fresh.revision}"',
             )
             self._state.pop("error", None)
             self._state.pop("errorDetail", None)
@@ -152,6 +171,7 @@ class DictionaryBuilds:
 
     def _launch(self) -> None:
         self._cancel = threading.Event()
+        self._halt = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True, name="entune-learning")
         self._thread.start()
 
@@ -208,9 +228,10 @@ class DictionaryBuilds:
             self._state = {"phase": "idle"}
 
     def _clear(self) -> None:
-        self._proposal = self._spec = self._working = self._planned = None
+        self._proposal = self._spec = self._working = None
         self._texts.clear()
         self._covered.clear()
+        self._skipped.clear()
         self._completed_batches = 0
 
     def _release(self) -> None:
@@ -234,11 +255,11 @@ class DictionaryBuilds:
                 attempt=attempt, attempts=suggestion_model.MAX_FIXES + 1, brokenRule=rule
             )
 
-    def _retrying_part(self, part: int, attempt: int, reason: str, seconds: float) -> None:
+    def _retrying_part(self, attempt: int, reason: str, seconds: float) -> None:
         # A part starts over after a failure that may pass: say why, and keep each failed
         # attempt in the run's record.
         failed = {
-            "part": part,
+            "part": self._completed_batches + 1,
             "attempt": attempt - 1,
             "reason": reason,
             "seconds": round(seconds, 1),
@@ -251,43 +272,28 @@ class DictionaryBuilds:
                 retries=[*self._state.get("retries", ()), failed],
             )
 
-    async def _generate(
-        self, spec: BuildInput, inputs: list[learning_inputs.LearningText]
-    ) -> Groups:
+    async def _part(self, spec: BuildInput, step: batches.Batch, number: int) -> None:
+        """One part from the working dictionary; a validated result becomes the proposal."""
         with self._lock:
             self._loop = asyncio.get_running_loop()
             self._task = asyncio.current_task()
-
-        def completed(groups: Groups, number: int, total: int, covered: tuple[str, ...]) -> None:
-            # Validate against the full scoped dictionary before advancing coverage.
-            proposal = dictionary_changes.propose(
-                spec.dictionary, groups, spec.speech.id, f'"{spec.revision}"'
-            )
-            with self._lock:
-                self._working, self._proposal = groups, proposal
-                self._completed_batches = number
-                self._covered.update(covered)
-                self._state.update(
-                    completedBatches=number, steps=total, coveredInputs=len(self._covered)
-                )
-
+            working = self._working
+        current = dictionary_changes.share(spec.dictionary, set())
+        began = time.monotonic()
         try:
             self._checkpoint()
-            return await generate.propose_learned(
+            groups = await generate.propose_part(
                 *spec.builder,
-                spec.dictionary,
-                (),
+                current,
+                current.effective(spec.speech.id) if working is None else working,
+                step,
                 spec.speech.id,
-                call=self._call,
+                f"Part {number}",
+                self._call,
                 mode=spec.mode,
-                inputs=inputs,
-                working=self._working,
-                resume=self._completed_batches,
-                checkpoint=completed,
-                progress=lambda step, total, size: self._progress(
-                    phase="building",
-                    step=step,
-                    steps=total,
+                effort=spec.effort,
+                started=lambda size: self._progress(
+                    step=number,
                     inputCharacters=size,
                     stepStartedAt=time.time(),  # the page shows how long this part has run
                     attempt=1,
@@ -303,8 +309,29 @@ class DictionaryBuilds:
         finally:
             with self._lock:
                 self._loop = self._task = None
+        # Validate against the full scoped dictionary before advancing coverage.
+        proposal = dictionary_changes.propose(
+            spec.dictionary, groups, spec.speech.id, f'"{spec.revision}"'
+        )
+        with self._lock:
+            self._working, self._proposal = groups, proposal
+            self._completed_batches = number
+            self._covered.update(step.completed)
+            # What each part took, kept with the run: it times this model for the next.
+            timing = {
+                "seconds": round(time.monotonic() - began, 1),
+                "characters": sum(len(s.text) for s in step.snippets),
+            }
+            self._state.update(
+                completedBatches=number,
+                coveredInputs=len(self._covered),
+                stepStartedAt=None,
+                parts=[*self._state.get("parts", ()), timing],
+            )
 
-    def _transcribe_clip(self, spec: BuildInput, item: DictionaryAudio, path: Path) -> None:
+    def _transcribe_clip(
+        self, spec: BuildInput, item: DictionaryAudio, path: Path
+    ) -> learning_inputs.LearningText:
         with self._speech.use(spec.speech, background=True, cancel=self._cancel):
             self._checkpoint()
             data = path.read_bytes()
@@ -315,69 +342,91 @@ class DictionaryBuilds:
             )
         if isinstance(result, Failure):
             raise generate.StepFailed(f"{spec.speech.label} could not transcribe it.", result.error)
+        text = learning_inputs.LearningText(item.id, result.text, "temporary_audio")
         # Preserve a successful in-flight result even if Stop arrived during inference.
         # It can be reused on Retry, never delivered.
-        if not self._closed:
-            self._texts[item.id] = learning_inputs.LearningText(
-                item.id, result.text, "temporary_audio"
-            )
-        self._checkpoint()
+        with self._lock:
+            if not self._closed:
+                self._texts[item.id] = text
+        return text
+
+    def _transcribe_one(
+        self, spec: BuildInput, item: DictionaryAudio, path: Path
+    ) -> learning_inputs.LearningText | None:
+        """One recording, tried once more if it fails, then skipped (None): the others
+        still teach the dictionary."""
+        for attempt in (1, 2):
+            if self._halt.is_set():
+                raise CancelledError()
+            try:
+                return self._transcribe_clip(spec, item, path)
+            except CancelledError:
+                raise
+            except Exception as exc:
+                if attempt == 2:
+                    why = (
+                        exc.detail
+                        if isinstance(exc, generate.StepFailed)
+                        else f"{type(exc).__name__}: {exc}"
+                    )
+                    with self._lock:
+                        self._skipped.append((item.name, why))
+        return None
+
+    def _transcribe(self, spec: BuildInput, ready: queue.Queue[object]) -> None:
+        """Transcribe the selection on worker threads, handing each text to `ready` as
+        it arrives; DONE goes last, also after a stop or failure."""
+        try:
+            todo = []
+            done = 0
+            for item, path in spec.audio:
+                cached = self._texts.get(item.id)
+                if cached is None:
+                    todo.append((item, path))
+                    continue
+                ready.put(cached)
+                done += 1
+            self._progress(completed=done)
+            local = isinstance(spec.speech.provider, Downloadable)
+            with ThreadPoolExecutor(1 if local else TRANSCRIBE_WORKERS) as pool:
+                futures = [pool.submit(self._transcribe_one, spec, *pair) for pair in todo]
+                try:
+                    for future in as_completed(futures):
+                        text = future.result()
+                        if text is not None:
+                            ready.put(text)
+                        done += 1
+                        with self._lock:
+                            self._state.update(completed=done, skipped=len(self._skipped))
+                finally:
+                    for future in futures:
+                        future.cancel()
+        except BaseException as exc:
+            ready.put(exc)
+        finally:
+            ready.put(DONE)
 
     def _run(self) -> None:
         spec = self._spec
         assert spec is not None
         outcome, error, detail = "complete", None, None
+        transcriber: threading.Thread | None = None
         try:
             self._checkpoint()
+            ready: queue.Queue[object] = queue.Queue()
             if spec.source == "audio":
+                self._skipped.clear()
                 self._progress(phase="transcribing", skipped=0)
-                # One clip that will not transcribe does not stop the rest: it is tried
-                # once more, then skipped, and the suggestions come from the others.
-                skipped: list[tuple[str, str]] = []
-                for number, (item, path) in enumerate(spec.audio, 1):
-                    self._checkpoint()
-                    if item.id not in self._texts:
-                        for attempt in (1, 2):
-                            try:
-                                self._transcribe_clip(spec, item, path)
-                                break
-                            except CancelledError:
-                                raise
-                            except Exception as exc:
-                                if attempt == 2:
-                                    why = (
-                                        exc.detail
-                                        if isinstance(exc, generate.StepFailed)
-                                        else f"{type(exc).__name__}: {exc}"
-                                    )
-                                    skipped.append((item.name, why))
-                    self._progress(completed=number, skipped=len(skipped))
-                inputs = [self._texts[item.id] for item, _ in spec.audio if item.id in self._texts]
-                planned = tuple(item.id for item in inputs)
-                if self._planned is not None and planned != self._planned:
-                    # A recording skipped before transcribed on Retry: the parts are cut
-                    # differently now, so generation starts over rather than resume.
-                    self._working, self._completed_batches = None, 0
-                    self._covered.clear()
-                self._planned = planned
-                if not inputs:
-                    name, why = skipped[0]
-                    count = len(spec.audio)
-                    what = "The recording" if count == 1 else f"None of the {count} recordings"
-                    raise generate.StepFailed(
-                        f"{what} could be transcribed with {spec.speech.label}, even on a"
-                        f" second try; {name} failed with: {why}"
-                        if count > 1
-                        else f"{what} could not be transcribed with {spec.speech.label}, even"
-                        f" on a second try: {why}",
-                        why,
-                    )
+                transcriber = threading.Thread(
+                    target=self._transcribe, args=(spec, ready), daemon=True
+                )
+                transcriber.start()
             else:
-                inputs = list(spec.transcripts)
-            if not any(item.text.strip() for item in inputs):
-                raise ValueError("The selected inputs contain no transcribed text")
-            self._progress(phase="building")
-            asyncio.run(self._generate(spec, inputs))
+                for text in spec.transcripts:
+                    ready.put(text)
+                ready.put(DONE)
+                self._progress(phase="building")
+            self._suggest(spec, ready)
             self._checkpoint()
         except (CancelledError, asyncio.CancelledError):
             outcome = "stopped"
@@ -393,6 +442,11 @@ class DictionaryBuilds:
                     error = error.replace(secret, "[redacted]")
                     detail = detail.replace(secret, "[redacted]")
         finally:
+            # Suggestions ended: start no more transcriptions, and let the ones under
+            # way finish so their text is kept for Retry.
+            self._halt.set()
+            if transcriber is not None:
+                transcriber.join()
             with self._lock:
                 if self._closed:
                     self._clear()
@@ -410,6 +464,8 @@ class DictionaryBuilds:
                         cachedTranscripts=len(self._texts),
                         completedBatches=self._completed_batches,
                         coveredInputs=len(self._covered),
+                        skipped=len(self._skipped),
+                        stepStartedAt=None,
                     )
                     if error:
                         self._state["error"] = error
@@ -418,6 +474,65 @@ class DictionaryBuilds:
                         self._operations.stage(self._operation, "review")
                     else:
                         self._release()
+
+    def _suggest(self, spec: BuildInput, ready: queue.Queue[object]) -> None:
+        """Run parts while texts arrive: a part starts once a part's worth of text not
+        yet covered is waiting, or with what is left once everything has arrived."""
+        waiting: list[learning_inputs.LearningText] = []
+        finished = False
+        while True:
+            self._checkpoint()
+            try:
+                item = ready.get(timeout=0.2)
+            except queue.Empty:
+                item = None
+            while item is not None:
+                if item is DONE:
+                    finished = True
+                elif isinstance(item, BaseException):
+                    raise item
+                elif (
+                    isinstance(item, learning_inputs.LearningText)
+                    and item.id not in self._covered
+                    and item.text.strip()
+                ):
+                    waiting.append(item)
+                try:
+                    item = ready.get_nowait()
+                except queue.Empty:
+                    item = None
+            size = sum(len(text.text) for text in waiting)
+            if waiting and (finished or size >= _limit(spec)):
+                if finished:
+                    with self._lock:
+                        # Everything has arrived: the number of parts is now known.
+                        left = len(_split(waiting, _limit(spec)))
+                        self._state["steps"] = self._completed_batches + left
+                part, waiting = _take(waiting, _limit(spec))
+                with self._lock:
+                    if self._state["phase"] == "queued":
+                        self._state["phase"] = "building"
+                for step in batches.learning_batches(part, _limit(spec)):
+                    asyncio.run(self._part(spec, step, self._completed_batches + 1))
+                if finished and not waiting:
+                    break
+                continue
+            if finished:
+                break
+        if self._proposal is not None or self._working is not None:
+            return
+        if self._skipped and not self._texts:
+            name, why = self._skipped[0]
+            count = len(spec.audio)
+            raise generate.StepFailed(
+                f"None of the {count} recordings could be transcribed with"
+                f" {spec.speech.label}, even on a second try; {name} failed with: {why}"
+                if count > 1
+                else f"The recording could not be transcribed with {spec.speech.label},"
+                f" even on a second try: {why}",
+                why,
+            )
+        raise ValueError("The selected inputs contain no transcribed text")
 
     def close(self, timeout: float = 2.0) -> bool:
         deadline = time.monotonic() + max(0.0, timeout)
@@ -438,3 +553,33 @@ class DictionaryBuilds:
         if thread is not None:
             thread.join(max(0.0, deadline - time.monotonic()))
         return thread is None or not thread.is_alive()
+
+
+DONE = object()  # the last item a transcription queue carries
+
+
+def _take(
+    texts: list[learning_inputs.LearningText], limit: int
+) -> tuple[list[learning_inputs.LearningText], list[learning_inputs.LearningText]]:
+    """Whole texts up to `limit` characters for the next part (at least one), and the
+    rest. A text longer than a part is split by the part itself."""
+    size, count = 0, 0
+    for text in texts:
+        if count and size + len(text.text) > limit:
+            break
+        size += len(text.text)
+        count += 1
+    return texts[:count], texts[count:]
+
+
+def _split(texts: list[learning_inputs.LearningText], limit: int) -> list[batches.Batch]:
+    """The parts the remaining texts will make, for the progress line."""
+    parts: list[batches.Batch] = []
+    while texts:
+        part, texts = _take(texts, limit)
+        parts.extend(batches.learning_batches(part, limit))
+    return parts
+
+
+def _limit(spec: BuildInput) -> int:
+    return batches.BATCH_CHARS if spec.part_chars is None else spec.part_chars

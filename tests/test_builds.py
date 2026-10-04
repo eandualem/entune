@@ -141,6 +141,7 @@ def test_cancel_during_speech_waits_for_cleanup_and_never_starts_next_clip(
 
     monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
     monkeypatch.setattr(app.builds, "_call", forbidden)
+    monkeypatch.setattr("entune.app.suggestion_runs.TRANSCRIBE_WORKERS", 1)  # one at a time
     client = TestClient(create_app(app), base_url="http://localhost")
     state = client.post(
         "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
@@ -173,7 +174,6 @@ def test_cancel_between_chunks_stops_refinement_and_reports_full_input_size(
         state = app.learning.dictionary_build_status()
         calls.append(len(request.system) + len(request.user))
         assert state["inputCharacters"] == calls[0] > batches.BATCH_CHARS
-        assert state["steps"] == 2
         app.learning.cancel_dictionary_build(str(state["id"]))
         return '{"additions": []}'
 
@@ -182,7 +182,7 @@ def test_cancel_between_chunks_stops_refinement_and_reports_full_input_size(
     client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
     partial = wait_for_build(client)
     assert partial["phase"] == "ready" and partial["outcome"] == "stopped"
-    assert partial["completedBatches"] == 1 and partial["steps"] == 2
+    assert partial["completedBatches"] == 1
     assert partial["coveredInputs"] == 1
     assert len(calls) == 1
 
@@ -315,3 +315,79 @@ def test_a_retried_part_is_shown_and_kept_in_the_runs_record(
         "reason": "the service returned error 503",
     }
     assert isinstance(retry["seconds"], float)
+
+
+def test_suggestions_start_while_the_rest_is_still_transcribing(
+    app: Entune, store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 20)
+    for i in range(2, 6):
+        audio_import.import_audio(store, wav_bytes(bytes([i, 0]) * 16), f"{i}.wav")
+    held = wav_bytes(bytes([5, 0]) * 16)
+    suggested, lock = threading.Event(), threading.Lock()
+    running = most = 0
+
+    def transcribe(clip: Clip, model: str, key: str) -> Transcript:
+        nonlocal running, most
+        with lock:
+            running += 1
+            most = max(most, running)
+        try:
+            if clip.data == held:
+                # Released only once a part has run: suggestions must not wait for this.
+                assert suggested.wait(5)
+            else:
+                time.sleep(0.05)
+            return Transcript("temporary words here")
+        finally:
+            with lock:
+                running -= 1
+
+    async def fake(request: Request) -> str:
+        suggested.set()
+        return '{"additions": []}'
+
+    monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
+    monkeypatch.setattr(app.builds, "_call", fake)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
+    done = wait_for_build(client)
+    assert done["outcome"] == "complete" and done["skipped"] == 0
+    assert done["completed"] == 6 and done["coveredInputs"] == 6
+    assert most > 1  # cloud clips are transcribed several at a time
+    assert len(done["parts"]) == done["completedBatches"] >= 2
+
+
+def test_continue_with_smaller_parts_and_faster_replies_after_a_slow_part(
+    app: Entune, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from entune.learning.suggestion_model import ReplyTimedOut
+
+    seen: list[tuple[str, int]] = []
+
+    async def fake(request: Request) -> str:
+        seen.append((request.effort, len(request.user)))
+        if len(seen) == 1:
+            raise ReplyTimedOut("the reply ran past its 14.5-minute limit", "timed out")
+        return '{"additions": []}'
+
+    monkeypatch.setattr(app.builds, "_call", fake)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    job = client.post(
+        "/api/dictionary/build", json={"mode": "generate", "source": "history"}
+    ).json()
+    assert job["effort"] == "medium" and job["partChars"] == batches.BATCH_CHARS
+    failed = wait_for_build(client)
+    assert failed["phase"] == "failed" and "smaller parts" in failed["error"]
+    assert len(seen) == 1  # the slow part is not tried again by itself
+    retried = client.post(
+        f"/api/dictionary/build/{job['id']}/retry", json={"effort": "low", "part": "small"}
+    )
+    assert retried.status_code == 200
+    done = wait_for_build(client)
+    assert done["outcome"] == "complete" and done["effort"] == "low"
+    assert done["partChars"] == 8_000 and seen[-1][0] == "low"
+    assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200
+    timing = client.get("/api/dictionary/timing").json()
+    assert timing["suggestion"][f"{done['dictionaryModel']}|low|8000"]["parts"] == 1
+    assert timing["workers"] > 1

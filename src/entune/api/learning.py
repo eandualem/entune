@@ -15,9 +15,11 @@ from entune.api.common import bad
 from entune.app import audio_import
 from entune.app.dictionary_file import DictionaryChanged
 from entune.app.entune import Entune
+from entune.app.metrics import model_metrics
 from entune.app.operations import Busy
-from entune.app.suggestion_runs import JobConflict
+from entune.app.suggestion_runs import TRANSCRIBE_WORKERS, JobConflict
 from entune.audio.formats import extension_for, safe_mime
+from entune.providers.local.contracts import Downloadable
 
 
 def routes(app: Entune) -> list[Route]:
@@ -34,7 +36,7 @@ def routes(app: Entune) -> list[Route]:
             body = await request.json()
             if (
                 not isinstance(body, dict)
-                or set(body) - {"source", "mode", "scope", "audio_ids"}
+                or set(body) - {"source", "mode", "scope", "audio_ids", "effort", "part"}
                 or body.get("source") not in ("history", "audio")
             ):
                 raise ValueError("Choose source history or audio")
@@ -51,6 +53,8 @@ def routes(app: Entune) -> list[Route]:
                 mode=body["mode"],
                 scope=body.get("scope", "new"),
                 audio_ids=ids,
+                effort=body.get("effort", "medium"),
+                part=body.get("part", "standard"),
             )
         except (JobConflict, Busy) as exc:
             return bad(str(exc), 409)
@@ -78,6 +82,17 @@ def routes(app: Entune) -> list[Route]:
                     request.path_params["job_id"],
                     body.get("selected"),
                 )
+            elif action == "retry":
+                # Continue with smaller parts or faster replies, when the person chose so.
+                body = await request.json() if await request.body() else {}
+                if not isinstance(body, dict) or set(body) - {"effort", "part"}:
+                    raise ValueError("Retry takes effort and part only")
+                await run_in_threadpool(
+                    app.learning.retry_dictionary_build,
+                    request.path_params["job_id"],
+                    body.get("effort"),
+                    body.get("part"),
+                )
             else:
                 await run_in_threadpool(methods[action], request.path_params["job_id"])
         except (JobConflict, DictionaryChanged, Busy) as exc:
@@ -85,6 +100,24 @@ def routes(app: Entune) -> list[Route]:
         except ValueError as exc:
             return bad(str(exc))
         return JSONResponse(app.learning.dictionary_build_status())
+
+    def timing(_: Request) -> Response:
+        """What the setup estimates from: each speech model's measured wait per minute of
+        audio, and each suggestion model's measured seconds per part."""
+        speech = {
+            f"{m.provider}/{m.model}": m.seconds_per_minute
+            for m in model_metrics(app.store, app.providers)
+            if m.seconds_per_minute is not None and not m.fast
+        }
+        return JSONResponse(
+            {
+                "speech": speech,
+                "suggestion": app.learning.suggestion_timing(),
+                "workers": TRANSCRIBE_WORKERS,
+                # A local model transcribes one recording at a time.
+                "local": [p.id for p in app.providers if isinstance(p, Downloadable)],
+            }
+        )
 
     def dictionary_audio(_: Request) -> Response:
         with app.data.using_data("audio listing"):
@@ -172,6 +205,7 @@ def routes(app: Entune) -> list[Route]:
         Route("/api/dictionary/build/{job_id}", build_status, methods=["GET"]),
         Route("/api/dictionary/build/{job_id}", act_on_build, methods=["DELETE"]),
         Route("/api/dictionary/build/{job_id}/{action}", act_on_build, methods=["POST"]),
+        Route("/api/dictionary/timing", timing, methods=["GET"]),
         Route("/api/dictionary/audio", dictionary_audio, methods=["GET"]),
         Route("/api/dictionary/audio", import_dictionary_audio, methods=["POST"]),
         Route("/api/dictionary/audio/apps/{app:str}", import_app, methods=["POST"]),

@@ -28,6 +28,7 @@ class Request:
     shape: type[BaseModel]  # the reply's structure
     check: Callable[[str], object]  # raises ValueError naming the rule a reply breaks
     retrying: Callable[[int, str], None]  # (attempt about to start, the rule broken)
+    effort: str = "medium"  # reasoning: "low" answers sooner, "medium" thinks longer
 
 
 Caller = Callable[[Request], Coroutine[Any, Any, str]]
@@ -44,6 +45,15 @@ class ReplyStopped(ValueError):
     def __init__(self, reason: str, detail: str) -> None:
         super().__init__(detail)
         self.reason = reason  # for the person, e.g. "the reply ran into empty output"
+
+
+class ReplyTimedOut(ReplyStopped):
+    """A reply still running at its time limit. Trying the same part again would most
+    likely take as long, so the person chooses smaller parts or faster replies instead."""
+
+
+class ReplyTooLong(ValueError):
+    """A reply cut at the model's output limit, which includes its reasoning."""
 
 
 async def call_model(request: Request, model: Model | None = None) -> str:

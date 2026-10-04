@@ -1078,3 +1078,50 @@ def test_a_chatgpt_plan_is_asked_at_its_endpoint_for_its_account_without_an_outp
     body = json.loads(outgoing.content)
     assert body["store"] is False and body["stream"] is True
     assert "max_output_tokens" not in body
+
+
+def test_a_reply_past_its_time_limit_is_not_tried_again_and_says_what_to_change() -> None:
+    calls = 0
+
+    async def slow(request: Request) -> str:
+        nonlocal calls
+        calls += 1
+        assert request.effort == "low"
+        raise suggestion_model.ReplyTimedOut(
+            "the reply ran past its 14.5-minute limit", "The reply timed out"
+        )
+
+    with pytest.raises(generate.StepFailed, match="smaller parts or faster replies") as failed:
+        asyncio.run(
+            generate.propose_learned(
+                "openai",
+                "k",
+                "openai:gpt-6-astra",
+                Dictionary(),
+                ["cloud code"],
+                "s/m",
+                call=slow,
+                mode="generate",
+                effort="low",
+            )
+        )
+    assert calls == 1 and "14.5-minute limit" in str(failed.value)
+
+
+def test_a_reply_cut_at_the_output_limit_asks_for_smaller_parts() -> None:
+    async def long(_: Request) -> str:
+        raise suggestion_model.ReplyTooLong("The reply reached the plan's output limit")
+
+    with pytest.raises(generate.StepFailed, match=r"output limit.*smaller parts"):
+        asyncio.run(
+            generate.propose_learned(
+                "openai",
+                "k",
+                "openai:gpt-6-astra",
+                Dictionary(),
+                ["cloud code"],
+                "s/m",
+                call=long,
+                mode="generate",
+            )
+        )

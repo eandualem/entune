@@ -335,9 +335,12 @@ audio file in `dictionary-audio/`, separate from recording history, and can reus
 it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
 up to 199 MB can be uploaded; the chosen provider must support the audio format
 and length. A build uses the speech and dictionary models selected when it starts.
-A recording that will not transcribe is tried once more, then skipped, and the
-suggestions come from the others; the result says how many were skipped. If the build
-stops, Retry continues from where it was: recordings already transcribed are kept.
+A cloud speech model transcribes four recordings at a time; a local model takes one at a
+time. Suggestions start as soon as one part's worth of text is transcribed, while the
+rest is still being transcribed. A recording that will not transcribe is tried once
+more, then skipped, and the suggestions come from the others; the result says how many
+were skipped. If the build stops, **Continue** picks up where it was: recordings already
+transcribed and parts already finished are kept.
 A two-handle range over recorded time, oldest to newest without the gaps between days,
 selects a continuous stretch of whole recordings: all audio by default, the most recent
 by dragging the left handle. The exact duration, count and edge dates are shown, and
@@ -346,24 +349,34 @@ history attempts. Retry reuses successful transcriptions, including after a late
 generation failure. Finishing, discarding, replacing the workflow, or closing Entune
 clears that temporary text. Source audio is kept.
 
-History and audio share one exclusive, user-initiated learning workflow. Finish an
-active dictation first. Learning blocks dictation and separate dictionary editing,
-including while proposals await review. Stop or a later failure retains validated
-completed batches for review, with their actual coverage and cause. A running speech
-call may need to finish; a generation request can be interrupted. Apply, discard, or
-retry the completed portion. No changes are applied automatically.
+History and audio share one exclusive, user-initiated learning workflow. Dictation keeps
+working while it runs and while its proposals await review; separate dictionary editing
+waits until they are applied or discarded, because a proposal is checked against the
+dictionary it started from. Stop or a later failure retains validated completed parts
+for review, with their actual coverage and cause. A running speech call may need to
+finish; a generation request can be interrupted. Apply, discard, or continue with the
+rest. No changes are applied automatically.
+
+The setup chooses the speech model, the suggestion model, **Replies** (Faster asks for
+low reasoning, Thorough for medium) and **Part size** (Smaller sends about 8,000
+transcript characters per request, Standard about 24,000). For audio it estimates the
+time from measurements only: the speech model's transcription times from History, and
+the seconds per part of earlier runs with the same suggestion model and settings. A
+combination not yet timed says so.
 
 The dictionary model's reply must match the dictionary's format, which the provider
 enforces where it can. When a reply still breaks one of the dictionary's rules, the
 model is shown the rule and asked for a corrected reply, at most twice per part. The
 progress line says so and names the rule, and **Stop** ends it. A part is tried again
 from the same point, three attempts in all, when its reply ran into empty output (more
-than 2,000 whitespace characters in a row, stopped at once), ran past the time limit for
-one reply (20 minutes; 14.5 on a ChatGPT plan, which cuts a request at about 15), lost
-its connection or met a server error (5xx), and once more when a reply still broke a
-rule. The progress line says why and which attempt, and the run's record keeps each
-one. Refused keys, limits and quotas (401, 403, 429), other failed requests and replies
-cut at the output limit are never retried.
+than 2,000 whitespace characters in a row, stopped at once), lost its connection or met
+a server error (5xx), and once more when a reply still broke a rule. The progress line
+says why and which attempt, and the run's record keeps each one. A reply that runs past
+its time limit (20 minutes; 14.5 on a ChatGPT plan, which ends a request at about 15)
+or reaches the output limit stops the run instead: the same part would most likely take
+as long again, so Entune asks for Faster replies, Smaller parts or less audio, then
+**Continue**. Refused keys, limits and quotas (401, 403, 429) and other failed requests
+are never retried.
 
 Default history refinement uses up to 300 recent, unprocessed attempts for the selected
 speech model; “All history” deliberately includes older/previously examined data.

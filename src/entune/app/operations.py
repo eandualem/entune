@@ -1,4 +1,8 @@
-"""One user operation owns recording through delivery, or learning through review."""
+"""One dictation owns recording through delivery; one learning run owns its review.
+
+The two run side by side: dictation keeps working while suggestions are prepared, and
+only edits to the dictionary wait for the learning run, whose proposal is checked
+against the dictionary it started from."""
 
 from __future__ import annotations
 
@@ -32,7 +36,8 @@ class Operation:
 class Operations:
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self.active: Operation | None = None
+        self.active: Operation | None = None  # the dictation
+        self.learning: Operation | None = None
         self.listeners: list[Callable[[], None]] = []
 
     def _changed(self) -> None:
@@ -40,18 +45,22 @@ class Operations:
             listener()
 
     def message(self) -> str:
-        if self.active and self.active.kind == "learning":
-            return (
-                "Apply or discard the dictionary suggestions first."
-                if self.active.stage == "review"
-                else "Entune is preparing dictionary suggestions; stop them or wait."
-            )
         return "Finish the current dictation and delivery first."
+
+    def learning_message(self) -> str:
+        if self.learning and self.learning.stage == "review":
+            return "Apply or discard the dictionary suggestions first."
+        return "Entune is preparing dictionary suggestions; stop them or wait."
 
     def begin(
         self, kind: Literal["dictation", "learning"], stage: str, *, source: str = ""
     ) -> Operation:
         with self._lock:
+            if kind == "learning":
+                if self.learning:
+                    raise Busy(self.learning_message())
+                self.learning = Operation(kind, stage, source=source)
+                return self.learning
             if self.active:
                 raise Busy(self.message())
             self.active = Operation(kind, stage, source=source)
@@ -60,7 +69,7 @@ class Operations:
 
     def stage(self, operation: Operation, stage: str) -> None:
         with self._lock:
-            if self.active is not operation:
+            if operation is not self.active and operation is not self.learning:
                 raise Busy("This operation is no longer active")
             operation.check()
             operation.stage = stage
@@ -68,7 +77,9 @@ class Operations:
 
     def finish(self, operation: Operation) -> None:
         with self._lock:
-            if self.active is operation:
+            if self.learning is operation:
+                self.learning = None
+            elif self.active is operation:
                 self.active = None
                 self._changed()
 
@@ -114,12 +125,14 @@ class Operations:
         with self._lock:
             if self.active:
                 raise Busy(self.message())
+            if self.learning:
+                raise Busy(self.learning_message())
             yield
 
     @contextmanager
     def dictionary_edit(self) -> Iterator[None]:
         # Keep the check and write atomic with learning's acquisition/snapshot.
         with self._lock:
-            if self.active and self.active.kind == "learning":
-                raise Busy(self.message())
+            if self.learning:
+                raise Busy(self.learning_message())
             yield
