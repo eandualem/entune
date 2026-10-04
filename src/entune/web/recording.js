@@ -55,6 +55,43 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   });
   poll();
 
+  // Audio dropped anywhere in the window is transcribed with the default model, one file
+  // after another, and lands in History like a dictation.
+  const overlay = el("drop-overlay");
+  const isAudio = (file) => file.type.startsWith("audio/") || /\.(wav|mp3|m4a|mp4|aac|flac|ogg|oga|opus|webm)$/i.test(file.name);
+  const hasFiles = (event) => [...(event.dataTransfer?.types ?? [])].includes("Files");
+  let depth = 0;
+  addEventListener("dragenter", (event) => { if (hasFiles(event)) { event.preventDefault(); depth++; overlay.hidden = false; } });
+  addEventListener("dragover", (event) => { if (hasFiles(event)) event.preventDefault(); });
+  addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; overlay.hidden = true; } });
+  addEventListener("drop", async (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault(); // never open the file in place of the app
+    depth = 0; overlay.hidden = true;
+    const files = [...event.dataTransfer.files];
+    const audio = files.filter(isAudio);
+    if (!audio.length) { onStatus("Only audio files can be transcribed."); return; }
+    let done = 0;
+    uploading = true; // the status line stays on the files until they are done
+    for (const [index, file] of audio.entries()) {
+      onStatus(`Transcribing ${audio.length > 1 ? `${index + 1} of ${audio.length}: ` : ""}${file.name}…`);
+      const form = new FormData();
+      form.append("audio", file, file.name);
+      try {
+        await api("/api/recordings", { method: "POST", body: form });
+        done++;
+        await onUploaded();
+      } catch (err) {
+        uploading = false;
+        onStatus(`${file.name}: ${errorText(err)}`);
+        return;
+      }
+    }
+    uploading = false;
+    const skipped = files.length - audio.length;
+    onStatus(`Transcribed ${done} file${done === 1 ? "" : "s"}${skipped ? `; ${skipped} not audio, skipped` : ""}.`);
+  });
+
   function setRecording(on) {
     button.setAttribute("aria-pressed", String(on));
     button.querySelector(".label").textContent = on ? "Stop" : "Record";

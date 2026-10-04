@@ -754,3 +754,13 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 }
 @keyframes intro-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes intro-fade-out { from { opacity: 1; } to { opacity: 0; } }
+
+/* Anonymous mode: transcripts keep their size and place but cannot be read. The newest
+   dictation stays readable until it is copied (data-reveal). */
+html[data-anonymous] .card:not([data-reveal]) :is(.transcript, .failed, .attempt),
+html[data-anonymous] .details-popover .changes { filter: blur(6px); user-select: none; }
+
+/* Dropping audio anywhere in the window transcribes it into History. */
+.drop-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: color-mix(in srgb, var(--surface) 80%, transparent); border: 2px dashed var(--accent); pointer-events: none; }
+.drop-overlay[hidden] { display: none; }
+.drop-overlay p { margin: 0; font-size: var(--fs-15); color: var(--text); }

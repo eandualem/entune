@@ -35,6 +35,10 @@
       <div class="spacer pywebview-drag-region"></div>
       <span class="status" id="status" role="status"></span>
       <select class="select" id="model" aria-label="Default model" title="Default model: what the shortcut uses. Picking one applies at once."></select>
+      <label class="fast" id="anonymous-wrap" title="Anonymous mode: blur your transcripts, for screen sharing. The newest stays readable until you copy it.">
+        <svg class="i13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/><path d="M2.5 13.5l11-11"/></svg>
+        <input type="checkbox" id="anonymous" aria-label="Anonymous mode" />
+      </label>
       <label class="fast" id="fast-mode-wrap" title="Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop (AssemblyAI only)">
         <svg class="i13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"/></svg>
         <input type="checkbox" id="fast-mode" aria-label="Fast mode" />
@@ -44,6 +48,7 @@
       </button>
     </header>
 
+    <div class="drop-overlay" id="drop-overlay" hidden><p>Drop audio to transcribe it</p></div>
     <main class="content">
       <section class="view" id="view-history" role="tabpanel" data-active>
         <div class="history" id="history"></div>
@@ -88,18 +93,16 @@
 
             <div class="section" id="models-performance">
               <h2 class="sec-label">Speech models</h2>
-              <p class="caption section-intro">How each speech model has done on your own dictations.</p>
               <div class="scard perf-card">
                 <div class="perf-table" id="metrics-table">
                   <div class="perf-grid perf-head"><span>Model</span><span class="num">Wait per audio minute</span><span class="num">Dictionary corrections</span><span class="num">Runs</span><span class="num">Audio</span></div>
                   <div id="metrics-rows"></div>
                 </div>
                 <p class="caption perf-empty" id="metrics-empty" hidden>Nothing to compare yet. Each model you dictate with appears here.</p>
-                <div class="srow foot"><span class="caption"><b>Wait</b>: how long transcription took after you stopped, per minute of audio; fast mode uploads while you record, and processing is timed separately. <b>Corrections</b>: dictionary replacements per 100 words, in dictations where the dictionary ran. Neither is an accuracy score.</span></div>
+                <div class="srow foot"><span class="caption"><b>Wait</b>: transcription time after you stop, per minute of audio. <b>Corrections</b>: dictionary replacements per 100 words. Neither measures accuracy.</span></div>
               </div>
-              <h2 class="sec-label">Corrections &amp; formatting</h2>
-              <p class="caption section-intro">What the chosen decision model did after speech recognition, across all dictations and every speech model. It counts work done, not accuracy.</p>
-              <div class="scard activity-card" id="processing-activity">
+              <h2 class="sec-label" id="activity-label" hidden>Corrections &amp; formatting</h2>
+              <div class="scard activity-card" id="processing-activity" hidden>
                 <p class="caption activity-total" id="activity-total"></p>
                 <div class="perf-table" id="activity-table" hidden>
                   <div class="activity-grid perf-head"><span>Step</span><span class="num">Dictations</span><span class="num">Changes made</span><span class="num">Unresolved</span><span class="num">Added time</span></div>

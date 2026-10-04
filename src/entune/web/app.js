@@ -218,15 +218,14 @@ async function loadMetrics() {
       if (m.fast) name.firstChild.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "Fast" }));
       name.append(Object.assign(document.createElement("span"), { className: "cell-sub", textContent: m.model }));
       const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-      const speed = m.seconds_per_minute === null
-        ? figure("–", "no timed run yet")
-        : figure(`${m.seconds_per_minute < 10 ? m.seconds_per_minute.toFixed(1) : Math.round(m.seconds_per_minute)} s`, `from ${plural(m.timed_runs, "timed run")}`);
+      const speed = figure(m.seconds_per_minute === null ? "–"
+        : `${m.seconds_per_minute < 10 ? m.seconds_per_minute.toFixed(1) : Math.round(m.seconds_per_minute)} s`, "");
       const corrections = m.checked === 0 || m.words === 0
-        ? figure("–", "dictionary never ran")
+        ? figure("–", "")
         : figure(`${m.replacements ? (100 * m.replacements / m.words).toFixed(1) : "0"} per 100 words`, `${m.corrected} of ${plural(m.checked, "dictation")} changed`);
       const failed = m.runs - m.ok;
       const used = figure(String(m.runs), failed ? `${failed} failed` : "", failed ? "perf-failed" : "");
-      const audio = figure(m.audio_seconds ? audioLength(m.audio_seconds) : "–", m.audio_seconds ? "" : "length unknown");
+      const audio = figure(m.audio_seconds ? audioLength(m.audio_seconds) : "–", "");
       row.append(name, speed, corrections, used, audio);
       return row;
     }),
@@ -358,6 +357,23 @@ document.addEventListener("visibilitychange", () => {
   if (historyVisible()) loadHistory().catch(() => {});
 });
 
+// Anonymous mode blurs History for screen sharing; the newest dictation stays readable
+// until it is copied. Both choices are remembered in this window.
+const anonymous = el("anonymous");
+const remembered = (key, value) => { try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); } catch { return null; } };
+function revealNewest() {
+  const on = anonymous.checked;
+  document.documentElement.toggleAttribute("data-anonymous", on);
+  const newest = el("history-newer").hidden ? historyList.querySelector(".card") : null;
+  for (const card of historyList.querySelectorAll(".card")) {
+    card.toggleAttribute("data-reveal", on && card === newest && card.dataset.id !== remembered("entune.anonymous.copied"));
+  }
+}
+anonymous.checked = remembered("entune.anonymous") === "on";
+anonymous.addEventListener("change", () => { remembered("entune.anonymous", anonymous.checked ? "on" : "off"); revealNewest(); });
+new MutationObserver(revealNewest).observe(historyList, { childList: true });
+revealNewest();
+
 // Copy (click on the transcript) and re-transcribe, delegated so re-renders need no rebinding.
 historyList.addEventListener("click", async (e) => {
   const recovery = e.target.closest(".safe-copy");
@@ -383,6 +399,8 @@ historyList.addEventListener("click", async (e) => {
     try {
       await navigator.clipboard.writeText(text);
       tag.textContent = "Copied";
+      // Anonymous mode: the newest dictation blurs once it has been copied.
+      if (card.hasAttribute("data-reveal")) { remembered("entune.anonymous.copied", card.dataset.id); revealNewest(); }
     } catch (err) {
       tag.textContent = `Copy failed: ${errorText(err)}`;
     }

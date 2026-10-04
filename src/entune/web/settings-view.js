@@ -287,8 +287,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const s = j.summary;
     const seconds = (value) => (value === null || value === undefined ? "–" : `+${value.toFixed(1)} s`);
     el("activity-total").textContent = s.transcriptions
-      ? `${s.transcriptions} processed dictation${s.transcriptions === 1 ? "" : "s"} · median ${seconds(s.median_seconds)} added per dictation.`
-      : settings.decisionModel.selected ? "No processed dictations yet." : "Choose a decision model in Settings › Corrections & formatting to enable processing.";
+      ? `${s.transcriptions} processed dictation${s.transcriptions === 1 ? "" : "s"} · median ${seconds(s.median_seconds)} added per dictation.` : "";
     const steps = [["contextual", "Dictionary, read in context"], ["deterministic", "Dictionary, always-apply entries"], ["cleanup", "Repeated fillers"], ["formatting", "Paragraphs and bullets"]];
     const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
     const rows = [];
@@ -322,6 +321,8 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     el("activity-details").hidden = details.length === 0;
     el("activity-rows").replaceChildren(...rows);
     el("activity-table").hidden = rows.length === 0;
+    // The section shows only once a step has run; until then it would describe nothing.
+    el("activity-label").hidden = el("processing-activity").hidden = rows.length === 0;
   }
   el("jev-policy-form").addEventListener("submit", async (e) => {
     e.preventDefault();
