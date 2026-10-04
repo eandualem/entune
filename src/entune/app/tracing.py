@@ -93,7 +93,9 @@ def _authorization(public: str, secret: str) -> str:
 class Tracing:
     def __init__(self, store: Store) -> None:
         self._store = store
-        self._lock = threading.Lock()
+        # Saving, clearing and reading the keys and host happen together under this lock,
+        # so a connection always pairs keys with the host saved alongside them.
+        self._lock = threading.RLock()
         self._provider: Any = None  # the TracerProvider while tracing is on
         self._exporter: Any = None  # its exporter, shut first when consent is withdrawn
         self._generation = 0  # a newer configuration wins over a connection still under way
@@ -127,16 +129,19 @@ class Tracing:
                 raise ValueError(f"The Langfuse host is not a valid address: {exc}") from exc
             if url.scheme not in ("https", "http") or not url.host:
                 raise ValueError("The Langfuse host must start with https:// or http://")
-            self._store.set_setting(HOST, host.strip().rstrip("/"))
-        for name, value in ((PUBLIC, public), (SECRET, secret)):
-            if value is not None and value.strip():
-                self._store.set_setting(name, value.strip())
-        self._configure()
+        with self._lock:
+            if host is not None and host.strip():
+                self._store.set_setting(HOST, host.strip().rstrip("/"))
+            for name, value in ((PUBLIC, public), (SECRET, secret)):
+                if value is not None and value.strip():
+                    self._store.set_setting(name, value.strip())
+            self._configure()
 
     def clear(self) -> None:
-        for name in (PUBLIC, SECRET, HOST):
-            self._store.set_setting(name, None)
-        self._configure()
+        with self._lock:
+            for name in (PUBLIC, SECRET, HOST):
+                self._store.set_setting(name, None)
+            self._configure()
 
     def sync(self) -> None:
         """After any settings change: keys that are gone (Delete everything) turn it off."""
@@ -158,7 +163,7 @@ class Tracing:
                 self.state, self.detail = "missing", f"Install tracing support: {INSTALL}"
                 return
             self.state, self.detail = "connecting", ""
-        host = self._store.get_setting(HOST) or DEFAULT_HOST
+            host = self._store.get_setting(HOST) or DEFAULT_HOST
         threading.Thread(
             target=self._connect, args=(generation, public, secret, host), daemon=True
         ).start()
@@ -166,6 +171,7 @@ class Tracing:
     def _connect(self, generation: int, public: str, secret: str, host: str) -> None:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.sdk.trace.sampling import ALWAYS_ON
         from pydantic_ai import Agent
         from pydantic_ai.models.instrumented import InstrumentationSettings
 
@@ -189,7 +195,8 @@ class Tracing:
                 self.state, self.detail = "failed", detail
                 return
             try:
-                provider = TracerProvider()
+                # Every request is traced: OTEL_TRACES_SAMPLER in the environment does not apply.
+                provider = TracerProvider(sampler=ALWAYS_ON)
                 exporter = _exporter(
                     f"{host}/api/public/otel/v1/traces", authorization, self._delivered
                 )

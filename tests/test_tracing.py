@@ -85,6 +85,7 @@ def test_a_run_is_sent_to_the_saved_host_only(
     # Settings meant for another telemetry service never reach Langfuse.
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "https://elsewhere.test/v1/traces")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-other-service=other-secret")
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER", "always_off")
     with closing(Store(tmp_path)) as store:
         t = tracing.Tracing(store)
         t.save("pk-lf-1234", "sk-lf-5678", "https://langfuse.example.test/")
