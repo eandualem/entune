@@ -489,6 +489,8 @@ build = [
 ]
 dev = [
     { name = "mypy" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-sdk" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "types-pynput" },
@@ -523,6 +525,8 @@ provides-extras = ["tracing"]
 build = [{ name = "pyinstaller", specifier = ">=6" }]
 dev = [
     { name = "mypy", specifier = ">=1.11" },
+    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.30" },
+    { name = "opentelemetry-sdk", specifier = ">=1.30" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.6" },
     { name = "types-pynput", specifier = ">=1.8.1.20260712" },

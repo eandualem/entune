@@ -158,3 +158,34 @@ def test_the_tracing_api_masks_keys_and_turns_off(tmp_path: Path, langfuse: Lang
     assert client.put("/api/tracing", json={"other": 1}).status_code == 400
     assert client.delete("/api/tracing").json()["publicKeyHint"] is None
     app.close()
+
+
+def test_turning_off_drops_queued_spans_but_quitting_sends_them(
+    tmp_path: Path, langfuse: Langfuse
+) -> None:
+    with closing(Store(tmp_path)) as store:
+        t = tracing.Tracing(store)
+        t.save("pk", "sk", None)
+        settle(t)
+        with t.run("queued"):
+            asyncio.run(Agent(TestModel()).run("waiting to be sent"))
+        t.clear()  # consent withdrawn before the batch went out
+        assert not langfuse.spans()
+        t.save("pk", "sk", None)
+        settle(t)
+        with t.run("quitting"):
+            asyncio.run(Agent(TestModel()).run("sent on quit"))
+        t.close()  # an ordinary quit sends what is pending
+        assert langfuse.spans()
+
+
+def test_deleting_all_data_turns_tracing_off(tmp_path: Path, langfuse: Langfuse) -> None:
+    app = Entune(Store(tmp_path), [StubProvider()])
+    app.tracing.save("pk", "sk", None)
+    settle(app.tracing)
+    assert app.tracing.state == "on"
+    app.data.reset_data()
+    assert app.tracing.state == "off" and app.tracing._provider is None
+    ask(app.tracing, "after reset")
+    assert not langfuse.spans()
+    app.close()

@@ -51,6 +51,7 @@ class Entune:
             providers, lambda message: self.desktop.report_status(lastError=message)
         )
         self.tracing = Tracing(store)
+        self._listeners.append(self.tracing.sync)  # Delete everything removes its keys
         self.builds = DictionaryBuilds(self.speech, llm_call, self.operations, self.tracing.run)
         laya = laya or Laya(store.data_dir / "models")
         self.settings = Settings(

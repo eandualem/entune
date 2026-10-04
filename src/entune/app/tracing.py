@@ -49,6 +49,7 @@ class Tracing:
         self._store = store
         self._lock = threading.Lock()
         self._provider: Any = None  # the TracerProvider while tracing is on
+        self._exporter: Any = None  # its exporter, shut first when consent is withdrawn
         self._generation = 0  # a newer configuration wins over a connection still under way
         self.state = "off"  # off | missing | connecting | on | failed
         self.detail = ""
@@ -85,11 +86,17 @@ class Tracing:
             self._store.set_setting(name, None)
         self._configure()
 
+    def sync(self) -> None:
+        """After any settings change: keys that are gone (Delete everything) turn it off."""
+        saved = self._store.get_setting(PUBLIC) and self._store.get_setting(SECRET)
+        if self.state != "off" and not saved:
+            self._configure()
+
     def _configure(self) -> None:
         with self._lock:
             self._generation += 1
             generation = self._generation
-            self._stop()
+            self._stop(discard=True)  # new or removed keys: nothing more goes to the old ones
             public, secret = self._store.get_setting(PUBLIC), self._store.get_setting(SECRET)
             if not public or not secret:
                 self.state, self.detail = "off", ""
@@ -138,19 +145,23 @@ class Tracing:
             )
             provider.add_span_processor(BatchSpanProcessor(exporter))
             Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
-            self._provider = provider
+            self._provider, self._exporter = provider, exporter
             self.state, self.detail = "on", host
 
-    def _stop(self) -> None:
+    def _stop(self, *, discard: bool) -> None:
         """Under the lock: stop instrumenting and shut the provider down, so a request
-        already under way sends nothing more."""
+        already under way sends nothing more. When consent is withdrawn (`discard`), spans
+        still queued are dropped; on quit they are sent as usual."""
         if self._provider is None:
             return
         from pydantic_ai import Agent
 
         Agent.instrument_all(False)
         provider, self._provider = self._provider, None
+        exporter, self._exporter = self._exporter, None
         try:
+            if discard:
+                exporter.shutdown()  # a shut exporter sends nothing, so the flush below is empty
             provider.shutdown()
         except Exception:
             logging.getLogger(__name__).exception("Tracing did not shut down cleanly")
@@ -174,4 +185,4 @@ class Tracing:
     def close(self) -> None:
         with self._lock:
             self._generation += 1
-            self._stop()
+            self._stop(discard=False)
