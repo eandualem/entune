@@ -269,7 +269,7 @@ def test_a_stopped_reply_keeps_what_it_sent_on_its_trace(
     from tests.test_suggestions import Finished, request
 
     async def runaway(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        yield '{"additions": [{"id": "new_cloud", "meanings": ['
+        yield '{"additions": [{"meanings": [{"id": "n_cloud", '
         while True:
             yield " " * 100  # blank space, never the rest of the reply
 
@@ -282,7 +282,7 @@ def test_a_stopped_reply_keeps_what_it_sent_on_its_trace(
         assert t._provider is not None
         t._provider.force_flush()
         body = langfuse.sent()
-        assert b"entune.partial_reply" in body and b'"new_cloud"' in body
+        assert b"entune.partial_reply" in body and b'"n_cloud"' in body
 
 
 def test_an_sdk_disabled_by_the_environment_is_reported_not_on(

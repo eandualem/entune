@@ -47,7 +47,7 @@ def test_competing_sources_and_named_actions_share_one_job(
         started.set()
         while not release.is_set():
             await asyncio.sleep(0.01)
-        return '{"additions": []}'
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
@@ -55,9 +55,7 @@ def test_competing_sources_and_named_actions_share_one_job(
 
     def start(source: str) -> int:
         barrier.wait()
-        return client.post(
-            "/api/dictionary/build", json={"mode": "generate", "source": source}
-        ).status_code
+        return client.post("/api/dictionary/build", json={"source": source}).status_code
 
     try:
         with ThreadPoolExecutor(2) as pool:
@@ -72,17 +70,10 @@ def test_competing_sources_and_named_actions_share_one_job(
     ready = wait_for_build(client)
     assert ready["phase"] == "ready"
     assert "proposal" not in client.get("/api/dictionary/build").json()
-    assert (
-        client.post(
-            "/api/dictionary/build", json={"mode": "generate", "source": "history"}
-        ).status_code
-        == 409
-    )
+    assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 409
     assert client.post(f"/api/dictionary/build/{ready['id']}/cancel").status_code == 409
     assert client.delete(f"/api/dictionary/build/{ready['id']}").status_code == 200
-    next_job = client.post(
-        "/api/dictionary/build", json={"mode": "generate", "source": "history"}
-    ).json()
+    next_job = client.post("/api/dictionary/build", json={"source": "history"}).json()
     for method, suffix in (("POST", "/cancel"), ("POST", "/accept"), ("DELETE", ""), ("GET", "")):
         assert (
             client.request(method, f"/api/dictionary/build/{ready['id']}{suffix}").status_code
@@ -109,9 +100,7 @@ def test_generation_cancel_closes_request_before_publishing_and_discards_text(
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
     original = client.get("/api/dictionary").content
-    state = client.post(
-        "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
-    ).json()
+    state = client.post("/api/dictionary/build", json={"source": "audio"}).json()
     assert entered.wait(2)
     before = time.monotonic()
     assert client.post(f"/api/dictionary/build/{state['id']}/cancel").status_code == 200
@@ -143,19 +132,12 @@ def test_cancel_during_speech_waits_for_cleanup_and_never_starts_next_clip(
     monkeypatch.setattr(app.builds, "_call", forbidden)
     monkeypatch.setattr("entune.app.suggestion_runs.TRANSCRIBE_WORKERS", 1)  # one at a time
     client = TestClient(create_app(app), base_url="http://localhost")
-    state = client.post(
-        "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
-    ).json()
+    state = client.post("/api/dictionary/build", json={"source": "audio"}).json()
     try:
         assert entered.wait(2)
         cancelled = client.post(f"/api/dictionary/build/{state['id']}/cancel")
         assert cancelled.json()["phase"] == "cancelling"
-        assert (
-            client.post(
-                "/api/dictionary/build", json={"mode": "generate", "source": "history"}
-            ).status_code
-            == 409
-        )
+        assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 409
         assert client.delete(f"/api/dictionary/build/{state['id']}").status_code == 409
     finally:
         release.set()
@@ -175,11 +157,11 @@ def test_cancel_between_chunks_stops_refinement_and_reports_full_input_size(
         calls.append(len(request.system) + len(request.user))
         assert state["inputCharacters"] == calls[0] > batches.BATCH_CHARS
         app.learning.cancel_dictionary_build(str(state["id"]))
-        return '{"additions": []}'
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
-    client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
+    client.post("/api/dictionary/build", json={"source": "audio"})
     partial = wait_for_build(client)
     assert partial["phase"] == "ready" and partial["outcome"] == "stopped"
     assert partial["completedBatches"] == 1
@@ -195,7 +177,7 @@ def test_failure_scrubs_keys_and_keeps_originals(
 
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
-    client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
+    client.post("/api/dictionary/build", json={"source": "history"})
     state = wait_for_build(client)
     assert state["phase"] == "failed" and "[redacted]" in state["errorDetail"]
     assert "build-secret" not in state["error"] + state["errorDetail"] and "proposal" not in state
@@ -217,7 +199,7 @@ def test_shutdown_is_bounded_and_drains_a_blocked_speech_owner(
     monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
     monkeypatch.setattr(app.providers[0], "close", closed.set, raising=False)
     client = TestClient(create_app(app), base_url="http://localhost")
-    client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
+    client.post("/api/dictionary/build", json={"source": "audio"})
     try:
         assert entered.wait(2)
         before = time.monotonic()
@@ -226,12 +208,7 @@ def test_shutdown_is_bounded_and_drains_a_blocked_speech_owner(
         assert 1.8 <= elapsed < 2.5  # lazy Jev client has no active loop to drain
         assert not closed.is_set()
         assert "still draining" in str(app.desktop.desktop_status()["lastError"])
-        assert (
-            client.post(
-                "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
-            ).status_code
-            == 409
-        )
+        assert client.post("/api/dictionary/build", json={"source": "audio"}).status_code == 409
     finally:
         release.set()
     assert closed.wait(2)
@@ -254,7 +231,7 @@ def test_shutdown_deadline_also_bounds_waiting_for_a_source_snapshot(
 
     monkeypatch.setattr(app.learning, "_build_input", slow_snapshot)
     with ThreadPoolExecutor(1) as pool:
-        started = pool.submit(app.learning.start_dictionary_build, "history", mode="generate")
+        started = pool.submit(app.learning.start_dictionary_build, "history")
         try:
             assert entered.wait(1)
             before = time.monotonic()
@@ -282,7 +259,7 @@ def test_a_fix_request_is_shown_with_its_rule_and_stop_still_stops_it(
 
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
-    client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
+    client.post("/api/dictionary/build", json={"source": "history"})
     assert wait_for_build(client)["phase"] == "cancelled"
     assert seen[0]["attempt"] == 2 and seen[0]["attempts"] == 3
     assert seen[0]["brokenRule"] == "evidence: List should have at most 0 items"
@@ -297,11 +274,11 @@ def test_a_retried_part_is_shown_and_kept_in_the_runs_record(
         seen.append(app.learning.dictionary_build_status())
         if len(seen) == 1:
             raise ModelHTTPError(503, "gpt-6-luna", "busy")
-        return '{"additions": []}'
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
-    client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
+    client.post("/api/dictionary/build", json={"source": "history"})
     ready = wait_for_build(client)
     assert ready["phase"] == "ready" and seen[0]["partAttempt"] == 1
     assert seen[1]["partAttempt"] == 2 and seen[1]["partAttempts"] == 3
@@ -345,12 +322,12 @@ def test_suggestions_start_while_the_rest_is_still_transcribing(
 
     async def fake(request: Request) -> str:
         suggested.set()
-        return '{"additions": []}'
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
-    client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
+    client.post("/api/dictionary/build", json={"source": "audio"})
     done = wait_for_build(client)
     assert done["outcome"] == "complete" and done["skipped"] == 0
     assert done["completed"] == 6 and done["coveredInputs"] == 6
@@ -358,7 +335,7 @@ def test_suggestions_start_while_the_rest_is_still_transcribing(
     assert len(done["parts"]) == done["completedBatches"] >= 2
 
 
-def test_continue_with_smaller_parts_and_faster_replies_after_a_slow_part(
+def test_continue_with_a_lower_reasoning_effort_after_a_slow_part(
     app: Entune, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from entune.learning.suggestion_model import ReplyTimedOut
@@ -369,27 +346,25 @@ def test_continue_with_smaller_parts_and_faster_replies_after_a_slow_part(
         seen.append((request.effort, len(request.user)))
         if len(seen) == 1:
             raise ReplyTimedOut("the reply ran past its 14.5-minute limit", "timed out")
-        return '{"additions": []}'
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
-    job = client.post(
-        "/api/dictionary/build", json={"mode": "generate", "source": "history"}
-    ).json()
-    assert job["effort"] == "medium" and job["partChars"] == batches.BATCH_CHARS
+    refused = client.post("/api/dictionary/build", json={"source": "history", "effort": "fast"})
+    assert refused.status_code == 400 and "minimal, low, medium, high, xhigh" in refused.text
+    job = client.post("/api/dictionary/build", json={"source": "history"}).json()
+    assert job["effort"] == "high"
     failed = wait_for_build(client)
-    assert failed["phase"] == "failed" and "smaller parts" in failed["error"]
+    assert failed["phase"] == "failed" and "lower reasoning effort" in failed["error"]
     assert len(seen) == 1  # the slow part is not tried again by itself
-    retried = client.post(
-        f"/api/dictionary/build/{job['id']}/retry", json={"effort": "low", "part": "small"}
-    )
+    retried = client.post(f"/api/dictionary/build/{job['id']}/retry", json={"effort": "low"})
     assert retried.status_code == 200
     done = wait_for_build(client)
     assert done["outcome"] == "complete" and done["effort"] == "low"
-    assert done["partChars"] == 8_000 and seen[-1][0] == "low"
+    assert seen[-1][0] == "low"
     assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200
     timing = client.get("/api/dictionary/timing").json()
-    assert timing["suggestion"][f"{done['dictionaryModel']}|low|8000"]["parts"] == 1
+    assert timing["suggestion"][f"{done['dictionaryModel']}|low"]["parts"] == 1
     assert timing["workers"] > 1
 
 
@@ -405,7 +380,7 @@ def test_a_transcription_under_way_never_keeps_entune_from_closing(
 
     monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
     client = TestClient(create_app(app), base_url="http://localhost")
-    client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
+    client.post("/api/dictionary/build", json={"source": "audio"})
     try:
         assert entered.wait(2)
         speech = [t for t in threading.enumerate() if t.name == "entune-learning-speech"]
@@ -432,13 +407,11 @@ def test_continue_reads_only_the_unread_rest_of_a_long_transcript(
         sent.append(request.user)
         if len(sent) == 2:
             raise ReplyTimedOut("the reply ran past its 14.5-minute limit", "timed out")
-        return '{"additions": []}'
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
-    job = client.post(
-        "/api/dictionary/build", json={"mode": "generate", "source": "history", "scope": "all"}
-    ).json()
+    job = client.post("/api/dictionary/build", json={"source": "history", "scope": "all"}).json()
     assert wait_for_build(client)["outcome"] == "failed"
     first = next(text for text in sent if "w00" in text)
     client.post(f"/api/dictionary/build/{job['id']}/retry", json={"effort": "low"})
@@ -452,8 +425,8 @@ def test_continue_reads_only_the_unread_rest_of_a_long_transcript(
     timing = client.get("/api/dictionary/timing").json()["suggestion"]
     model = done["dictionaryModel"]
     # Each part is timed under the settings it actually ran with.
-    assert timing[f"{model}|medium|40"]["parts"] == 1
-    assert timing[f"{model}|low|40"]["parts"] == done["completedBatches"] - 1
+    assert timing[f"{model}|high"]["parts"] == 1
+    assert timing[f"{model}|low"]["parts"] == done["completedBatches"] - 1
 
 
 def test_a_stopped_run_waits_for_every_transcription_under_way(
@@ -474,7 +447,7 @@ def test_a_stopped_run_waits_for_every_transcription_under_way(
 
     monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
     client = TestClient(create_app(app), base_url="http://localhost")
-    job = client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"}).json()
+    job = client.post("/api/dictionary/build", json={"source": "audio"}).json()
     try:
         assert entered[0].wait(2) and entered[1].wait(2)
         client.post(f"/api/dictionary/build/{job['id']}/cancel")
@@ -502,12 +475,12 @@ def test_continue_with_nothing_new_to_read_keeps_the_finished_suggestions(
         raise RuntimeError("connection reset")  # this recording never transcribes
 
     async def fake(_: Request) -> str:
-        return '{"additions": []}'
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
-    job = client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"}).json()
+    job = client.post("/api/dictionary/build", json={"source": "audio"}).json()
     deadline = time.monotonic() + 5
     while client.get("/api/dictionary/build").json().get("completedBatches", 0) < 1:
         assert time.monotonic() < deadline
@@ -551,14 +524,12 @@ def test_each_part_is_traced_under_its_run(app: Entune, monkeypatch: pytest.Monk
         return nullcontext()
 
     async def fake(_: Request) -> str:
-        return '{"additions": []}'
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     monkeypatch.setattr(app.builds, "_trace", trace)
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
-    job = client.post(
-        "/api/dictionary/build", json={"mode": "generate", "source": "history", "effort": "low"}
-    ).json()
+    job = client.post("/api/dictionary/build", json={"source": "history", "effort": "low"}).json()
     wait_for_build(client)
     assert traced and traced[0][0] == job["id"]
     assert traced[0][1]["part"] == 1 and traced[0][1]["effort"] == "low"

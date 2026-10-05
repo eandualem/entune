@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Any
 
 from entune import prompts
-from entune.dictionary.entries import Dictionary, Group, Groups
-from entune.learning.inputs import DictionaryResult, Kind, LearningText, Mode
-from entune.processing import text_edits
+from entune.learning import view
+from entune.learning.inputs import DictionaryResult, Kind, LearningText
 
 MAX_TRANSCRIPTS = 300
 # A long history goes to the model in several steps, each with this much transcript,
@@ -93,92 +90,18 @@ def learning_batches(inputs: Sequence[LearningText], limit: int | None = None) -
     return result
 
 
-def _dictation(snippet: Snippet, known: set[str]) -> dict[str, object]:
-    """A raw transcript beside the dictionary step's own result, never later stages."""
-    entry: dict[str, object] = {"id": snippet.source, "kind": snippet.kind, "raw": snippet.text}
-    result = snippet.result
-    if result is None:
-        entry["after_dictionary"] = None
-        return entry
-    after = text_edits.apply(snippet.text, result.changes)
-    entry["after_dictionary"] = after
-    if result.selections is None:
-        decisions = [
-            {"start": c.start, "end": c.end, "recognized": c.before, "result": c.after}
-            for c in result.changes
-        ]
-    else:
-        decisions = []
-        for s in result.selections:
-            inside = tuple(
-                replace(c, start=c.start - s.start, end=c.end - s.start)
-                for c in result.changes
-                if c.start >= s.start and c.end <= s.end
-            )
-            decision: dict[str, object] = {
-                "start": s.start,
-                "end": s.end,
-                "recognized": snippet.text[s.start : s.end],
-                "result": text_edits.apply(snippet.text[s.start : s.end], inside),
-                "method": s.method,
-                "meaning_ids": list(s.meaning_ids),
-            }
-            if removed := [m for m in s.meaning_ids if m not in known]:
-                decision["meanings_no_longer_in_dictionary"] = removed
-            decisions.append(decision)
-    entry["decisions"] = decisions
-    return entry
+def system_prompt() -> str:
+    return prompts.text("dictionary-system.txt")
 
 
-def _lines(items: Sequence[object]) -> str:
-    """A JSON array with one item per line: compact, and easy to scan."""
-    if not items:
-        return "[]"
-    return "[\n" + ",\n".join(json.dumps(i, ensure_ascii=False) for i in items) + "\n]"
-
-
-def compact(group: Group) -> dict[str, Any]:
-    """A group without default-valued fields; parsing restores the defaults."""
-    data = group.as_json()
-    if not data["needs_review"]:
-        del data["needs_review"]
-    for form in data["recognized_forms"]:
-        if form["direct"] is None:
-            del form["direct"], form["direct_reason"]
-    return data
-
-
-def build_user_prompt(
-    mode: Mode,
-    current: Dictionary,
-    snippets: Sequence[Snippet],
-    speech_model: str,
-    working: Groups | None = None,
-) -> str:
-    """The task, the dictionary it builds on, and this step's sources."""
-    groups = current.effective(speech_model) if working is None else working
-    pinned = sorted({m.id for g in current.pinned for m in g.meanings})
-    dictionary = (
-        f"pinned_meaning_ids: {json.dumps(pinned)}\ngroups:\n{_lines([compact(g) for g in groups])}"
-    )
-    if mode == "generate":
-        entries: list[dict[str, object]] = [
-            {"id": s.source, "kind": s.kind, "text": s.text} for s in snippets
-        ]
-    else:
-        known = {m.id for g in groups for m in g.meanings}
-        entries = [_dictation(s, known) for s in snippets]
+def user_prompt(speech_model: str, shown: view.View) -> str:
+    """The part's request: the recognizer, the entries that occur in its dictations, and
+    the dictations, all in the compact form of learning/view.py."""
     return prompts.render_text(
-        f"dictionary-{mode}-user.txt",
+        "dictionary-user.txt",
         speech_model=speech_model,
-        dictionary=dictionary,
-        sources=_lines(entries),
-    )
-
-
-def system_prompt(mode: Mode) -> str:
-    return prompts.render_text(
-        f"dictionary-{mode}-system.txt", foundation=prompts.text("dictionary-foundation.txt")
+        dictionary=shown.dictionary,
+        dictations=shown.dictations,
     )
 
 

@@ -1,0 +1,7 @@
+Speech recognizer: $speech_model
+
+Dictionary entries that occur in these dictations:
+$dictionary
+
+Dictations:
+$dictations

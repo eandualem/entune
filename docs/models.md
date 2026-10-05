@@ -54,8 +54,8 @@ Then choose the dictionary model on the Dictionary page. If it is missing from
 the suggested list, open **Settings → Dictionary setup → Custom** and enter
 just `gpt-6.1-sol`, for either access option. Entune adds the provider prefix
 automatically. The selected account must have access to the model. The suggestions
-setup chooses the reasoning (Faster asks for low, Thorough for medium, where supported)
-and the part size (about 8,000 or 24,000 characters per request).
+setup chooses the reasoning effort by the provider's level names (minimal, low, medium,
+high, xhigh; high by default).
 
 **Current sign-in limitation:** the ChatGPT integration is experimental. It
 predates OpenAI's documented open-source sign-in route and does not yet implement
@@ -100,7 +100,7 @@ Start with a modest history. Dictation keeps working during learning and review;
 separate dictionary editing waits. **Stop** retains validated completed parts for
 review; **Continue** picks up from there. Review and apply the entries you want.
 Nothing is installed automatically. See the [learning guide](guide.md#personal-dictionary)
-for imports and refinement.
+for imports and suggestions.
 
 On a ChatGPT plan, each request ends at about 15 minutes, which we measured over about
 1,500 plan requests in September 2026; an API key gets Entune's own 20-minute limit
@@ -108,7 +108,7 @@ per reply. The more common failure is quicker: a reply starts its JSON, then sen
 blank space. Entune stops such a reply after 2,000 blank characters, usually within one
 or two minutes, and tries the part again, three attempts in all. In those measurements
 GPT-6 Astra did this at every reasoning level and part size, and GPT-6.1 Sol less often.
-If a part runs too long, choose Faster replies or Smaller parts and continue.
+If a part runs too long, choose a lower reasoning effort and continue.
 
 ### Time estimate before learning from audio
 
@@ -119,10 +119,10 @@ setting, from measurements only:
   History, divided by the recordings transcribed at once (four for a cloud model, one
   for a local one). A speech model with no measured transcriptions says so.
 - **Suggestions**: the number of parts, from about 37,000 transcript characters per
-  hour of speech (our 12.3-hour sample had 452,400) divided by the part size, at the
-  median seconds per part of earlier runs with the same suggestion model, reasoning and
-  part size. Our one Sol measurement (135 minutes for 20 parts at medium reasoning and
-  standard parts) is shown until Sol has been timed on your Mac. Other combinations say
+  hour of speech (our 12.3-hour sample had 452,400) divided by the part size (about
+  24,000 characters), at the median seconds per part of earlier runs with the same
+  suggestion model and reasoning effort. Our one Sol measurement (135 minutes for 20
+  parts at medium reasoning) is shown until Sol has been timed on your Mac. Other combinations say
   they have not been timed yet.
 
 It is a planning figure, not a guarantee: speech density, the growing dictionary,

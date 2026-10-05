@@ -28,7 +28,7 @@ class Request:
     shape: type[BaseModel]  # the reply's structure
     check: Callable[[str], object]  # raises ValueError naming the rule a reply breaks
     retrying: Callable[[int, str], None]  # (attempt about to start, the rule broken)
-    effort: str = "medium"  # reasoning: "low" answers sooner, "medium" thinks longer
+    effort: str = "high"  # reasoning effort, by the level's own name
 
 
 Caller = Callable[[Request], Coroutine[Any, Any, str]]
@@ -49,7 +49,7 @@ class ReplyStopped(ValueError):
 
 class ReplyTimedOut(ReplyStopped):
     """A reply still running at its time limit. Trying the same part again would most
-    likely take as long, so the person chooses smaller parts or faster replies instead."""
+    likely take as long, so the person chooses a lower reasoning effort instead."""
 
 
 class ReplyTooLong(ValueError):

@@ -154,11 +154,11 @@ another dictation app or an audio folder. Entune transcribes imported audio
 with your chosen speech model, then proposes entries for review.
 
 **Dictionary generation takes time.** Text goes to the suggestion model in parts,
-one after another, with the growing dictionary included in each request. Large
+one after another, each with the dictionary entries that occur in its text. Large
 histories can take minutes to hours; our 540-transcript Sol build took about
 **2 hours 15 minutes**. Imported audio is transcribed first, several recordings at a
 time with a cloud speech model, and parts start as soon as enough text is ready. The
-setup lets you choose faster replies and smaller parts, and estimates the time from
+setup lets you choose the reasoning effort, and estimates the time from
 what Entune has measured. This is separate from the fast decision step on each new
 dictation.
 
@@ -169,8 +169,8 @@ waits until the proposal is applied or discarded.
 
 Learned entries belong to their speech model: a Parakeet dictionary is not
 automatically an AssemblyAI dictionary. Pin entries you deliberately want to
-share. **Suggest improvements** can revise learned entries later; more
-refinement does not guarantee a better dictionary.
+share. Later suggestions can revise learned entries; more suggestion runs do not
+guarantee a better dictionary.
 
 ## Keep control of your recordings
 

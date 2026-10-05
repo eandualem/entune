@@ -21,42 +21,63 @@ from pydantic_ai.models import StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
-from entune import prompts
 from entune.dictionary.entries import Association, Dictionary, Form, Group, Meaning
-from entune.learning import batches, generate, replies, suggestion_model
+from entune.learning import batches, generate, replies, suggestion_model, view
 from entune.learning import inputs as learning_inputs
 from entune.learning.suggestion_model import Request, call, chatgpt, providers
-from tests.dictionary_samples import JEV, group, proposed
+from tests.dictionary_samples import CLOUD, JEV, group, proposed
 
 TEXT = "I use cloud code."
 REPLY = json.dumps(proposed(TEXT))
 
 
-def test_user_prompt_carries_only_this_models_working_groups_and_literal_data() -> None:
+def snippets(*texts: str) -> list[batches.Snippet]:
+    return [batches.Snippet(batches.source_id(t), "raw_speech", t, None) for t in texts]
+
+
+def parse(
+    reply: str | dict[str, Any],
+    texts: tuple[str, ...] = (TEXT,),
+    working: tuple[Group, ...] = (),
+    pinned: tuple[Group, ...] = (),
+) -> tuple[Group, ...]:
+    """The reply checked as one part over `texts` checks it."""
+    shown = view.build(working, pinned, snippets(*texts))
+    content = reply if isinstance(reply, str) else json.dumps(reply)
+    return replies.parse_reply(content, shown, working, transcripts=texts, pinned=pinned)
+
+
+def reply(
+    additions: list[Any] | None = None,
+    revisions: list[Any] | None = None,
+    removals: list[str] | None = None,
+) -> dict[str, Any]:
+    return {"additions": additions or [], "revisions": revisions or [], "removals": removals or []}
+
+
+def test_the_request_shows_only_entries_in_its_dictations_by_short_labels() -> None:
     current = Dictionary(
         (JEV,),
         {
-            "stub/good": (group("Soniox", "sonics"),),
+            "stub/good": (group("Soniox", "sonics"), group("Groq", "grok")),
             "other/model": (group("Elsewhere", "else where"),),
         },
     )
-    snippets = [
-        batches.Snippet(batches.source_id(t), "raw_speech", t, None) for t in ("first", "second")
-    ]
-    modes: tuple[learning_inputs.Mode, ...] = ("generate", "refine")
-    for mode in modes:
-        prompt = batches.build_user_prompt(
-            mode, current, snippets, "stub/good", (*current.pinned, group("Groq", "grok"))
-        )
-        assert "Jev" in prompt and "Groq" in prompt and "stub/good" in prompt
-        assert "Soniox" not in prompt and "Elsewhere" not in prompt
-        assert "Step" not in prompt and '"g_jev"' in prompt
-        assert all(s.source in prompt for s in snippets)
-        assert 'pinned_meaning_ids: ["a_jev", "b_jeff", "c_gif"]' in prompt
-    for mode in modes:
-        system = batches.system_prompt(mode)
-        assert "glossary" in system and "$" not in system
-        assert system.startswith(prompts.text("dictionary-foundation.txt").rstrip())
+    working = current.effective("stub/good")
+    shown = view.build(working, current.pinned, snippets("ask grok", "Jeff said hi"))
+    prompt = batches.user_prompt("stub/good", shown)
+    assert "Groq" in prompt and "Jev" in prompt and "stub/good" in prompt
+    # Soniox does not occur in these dictations; Elsewhere belongs to another recognizer.
+    assert "Soniox" not in prompt and "Elsewhere" not in prompt
+    # No stored IDs, evidence, sources or hidden fields reach the model.
+    for hidden in ("g_jev", "a_jev", "s_", "evidence", "personal_context", "casing", "direct"):
+        assert hidden not in prompt
+    entries = json.loads(shown.dictionary)
+    assert [e["id"] for e in entries] == ["e1", "e2"] and entries[0]["pinned"] is True
+    assert entries[0]["heard"]["Jeff"] == ["e1a", "e1b"]
+    assert [d["id"] for d in json.loads(shown.dictations)] == ["d1", "d2"]
+    system = batches.system_prompt()
+    assert "main job" in system and "$" not in system
 
 
 def test_all_supplied_text_is_processed_in_bounded_steps(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -77,74 +98,82 @@ def test_all_supplied_text_is_processed_in_bounded_steps(monkeypatch: pytest.Mon
     assert batches.learning_batches([learning_inputs.LearningText("empty", " ")]) == []
 
 
-@pytest.mark.parametrize("reply", [REPLY, f"```json\n{REPLY}\n```"])
-def test_reply_has_persistent_ids_and_validated_source_occurrences(reply: str) -> None:
-    learned = replies.parse_generation(reply, transcripts=[TEXT])
+@pytest.mark.parametrize("content", [REPLY, f"```json\n{REPLY}\n```"])
+def test_reply_has_persistent_ids_and_validated_source_occurrences(content: str) -> None:
+    learned = parse(content)
     assert len(learned) == 1 and learned[0].id.startswith("g_")
     (meaning,) = learned[0].meanings
     assert meaning.id.startswith("m_") and meaning.spelling == "Claude Code"
     form = learned[0].recognized_forms[0]
     assert form.associations[0].meaning_id == meaning.id
-    assert form.associations[0].evidence[0].start == 6
+    (evidence,) = form.associations[0].evidence
+    assert evidence.source == batches.source_id(TEXT) and evidence.start == 6
     assert TEXT not in json.dumps(learned[0].as_json())  # no source excerpt persisted
 
 
 def test_a_miscounted_span_is_moved_to_the_occurrence_and_an_absent_form_is_rejected() -> None:
     text = 'He said "use cloud code" and later cloud code again.'
     payload = proposed(text)
-    evidence = payload["additions"][0]["recognized_forms"][0]["associations"][0]["evidence"][0]
+    evidence = payload["additions"][0]["heard"][0]["links"][0]["evidence"][0]
     real = evidence["start"]
     for start in (real + 3, real - 2, real + 25):  # off-by-some counts, as a model makes them
         evidence.update(start=start, end=start + 10)
-        (group,) = replies.parse_generation(json.dumps(payload), transcripts=[text])
-        (item,) = group.recognized_forms[0].associations[0].evidence
+        (found,) = parse(payload, (text,))
+        (item,) = found.recognized_forms[0].associations[0].evidence
         assert text[item.start : item.end] == "cloud code"
         assert item.start == (real if start < real + 12 else text.rindex("cloud code"))
-    payload["additions"][0]["recognized_forms"][0]["text"] = "claude coat"
+    payload["additions"][0]["heard"][0]["text"] = "claude coat"
     with pytest.raises(ValueError, match="exact whole recognized form"):
-        replies.parse_generation(json.dumps(payload), transcripts=[text])
+        parse(payload, (text,))
 
 
-def test_provenance_glossary_and_unapproved_direct_changes_are_rejected() -> None:
+def test_provenance_glossary_and_unapproved_changes_are_rejected() -> None:
     payload = proposed(TEXT)
-    groups = payload["additions"]
-    assert isinstance(groups, list)
-    record = groups[0]
-    record["recognized_forms"][0]["text"] = "cloud coat"  # not in the cited source
+    payload["additions"][0]["heard"][0]["text"] = "cloud coat"  # not in the cited dictation
     with pytest.raises(ValueError, match="exact whole"):
-        replies.parse_generation(json.dumps(payload), transcripts=[TEXT])
-    with pytest.raises(ValueError, match="unavailable source"):
-        replies.parse_generation(REPLY, transcripts=["different text"])
+        parse(payload)
     payload = proposed(TEXT)
-    record = payload["additions"][0]
-    record["recognized_forms"][0].update(direct="new_meaning", direct_reason="The model says so")
-    with pytest.raises(ValueError, match="cannot approve"):
-        replies.parse_generation(json.dumps(payload), transcripts=[TEXT])
-    record["recognized_forms"] = [record["recognized_forms"][1]]
+    payload["additions"][0]["heard"][0]["links"][0]["evidence"][0]["dictation"] = "d9"
+    with pytest.raises(ValueError, match="unknown dictation"):
+        parse(payload)
+    payload = proposed(TEXT)
+    payload["additions"][0]["heard"] = [payload["additions"][0]["heard"][1]]
     with pytest.raises(ValueError, match="glossary"):
-        replies.parse_generation(json.dumps(payload), transcripts=[TEXT])
+        parse(payload)
+    payload = proposed(TEXT)
+    payload["additions"][0]["meanings"][0]["meaning"] = "x" * (view.MEANING_CHARS + 1)
+    with pytest.raises(ValueError, match="short phrase"):
+        parse(payload)
+
     pinned = group("Claude Code", "cloud code")
-    revised = pinned.as_json()
-    revised["meanings"][0]["meaning"] = "Changed by the generator"
-
-    def refine(additions: list[Any], revisions: list[Any], removals: list[str]) -> str:
-        return json.dumps({"additions": additions, "revisions": revisions, "removals": removals})
-
-    result = replies.parse_refinement(refine([], [revised], []), (pinned,), pinned=(pinned,))
-    assert result[0].meanings[0].meaning == "Changed by the generator"
-    with pytest.raises(ValueError, match="cannot revise"):
-        replies.parse_generation(json.dumps({"additions": [revised]}), (pinned,), pinned=(pinned,))
-    revised["recognized_forms"] = []
+    shown = view.build((pinned,), (pinned,), snippets(TEXT))
+    revised = json.loads(shown.dictionary)[0]
+    revised["meanings"][0]["meaning"] = "Anthropic's coding agent"
+    revised["meanings"][0]["casing"] = "fixed"
+    revised["heard"] = [
+        {"text": text, "links": [{"meaning": m, "basis": "existing", "evidence": []} for m in ids]}
+        for text, ids in revised["heard"].items()
+    ]
+    del revised["pinned"]
+    (result,) = parse(reply(revisions=[revised]), working=(pinned,), pinned=(pinned,))
+    assert result.meanings[0].meaning == "Anthropic's coding agent"
+    assert result.recognized_forms == pinned.recognized_forms  # stored fields restored
+    revised["heard"] = []
     with pytest.raises(ValueError, match="pinned variant"):
-        replies.parse_refinement(refine([], [revised], []), (pinned,), pinned=(pinned,))
-    with pytest.raises(ValueError, match="Pinned groups cannot be removed"):
-        replies.parse_refinement(refine([], [], [pinned.id]), (pinned,), pinned=(pinned,))
-    for content in ("no JSON", '{"additions":[}', '{"groups": [], "remove": []}'):
+        parse(reply(revisions=[revised]), working=(pinned,), pinned=(pinned,))
+    with pytest.raises(ValueError, match="Pinned entries cannot be removed"):
+        parse(reply(removals=["e1"]), working=(pinned,), pinned=(pinned,))
+    with pytest.raises(ValueError, match="shown here"):
+        parse(reply(removals=["e7"]), working=(pinned,), pinned=(pinned,))
+    revised["heard"] = [
+        {"text": "cloud code", "links": [{"meaning": "e1a", "basis": "existing", "evidence": []}]},
+        {"text": "clod code", "links": [{"meaning": "e1a", "basis": "existing", "evidence": []}]},
+    ]
+    with pytest.raises(ValueError, match="not linked to e1a before"):
+        parse(reply(revisions=[revised]), working=(pinned,), pinned=(pinned,))
+    for content in ("no JSON", '{"additions":[}', '{"additions": [], "revisions": []}'):
         with pytest.raises(ValueError):
-            replies.parse_generation(content)
-    for content in ('{"additions": []}', '{"additions": [], "revisions": [], "remove": []}'):
-        with pytest.raises(ValueError, match="exactly"):
-            replies.parse_refinement(content)
+            parse(content)
 
 
 def test_propose_uses_chosen_model_and_does_not_change_the_live_dictionary() -> None:
@@ -157,6 +186,7 @@ def test_propose_uses_chosen_model_and_does_not_change_the_live_dictionary() -> 
             model=request.model,
             system=request.system,
             user=request.user,
+            effort=request.effort,
         )
         return REPLY
 
@@ -170,45 +200,141 @@ def test_propose_uses_chosen_model_and_does_not_change_the_live_dictionary() -> 
             [TEXT],
             "s/m",
             call=fake,
-            mode="generate",
         )
     )
     assert learned[0].meanings[0].spelling == "Claude Code" and not current
     assert seen["model"] == "anthropic:claude-sonnet-5" and seen["provider"] == "anthropic"
-    assert seen["system"] == batches.system_prompt("generate") and TEXT in seen["user"]
+    assert seen["system"] == batches.system_prompt() and TEXT in seen["user"]
+    assert seen["effort"] == "high"
 
 
-def test_generation_can_add_literal_competitors_to_protected_pinned_knowledge() -> None:
+def test_an_added_literal_competitor_beside_protected_pinned_knowledge() -> None:
     pinned = group("Claude", "cloud")
-    literal = Group(
-        "new_literal_group",
-        (Meaning("new_weather", "cloud", "Water droplets in the sky.", casing="ordinary"),),
-        (Form("cloud", (Association("new_weather", basis="literal"),)),),
-    )
-    result = replies.parse_generation(
-        json.dumps({"additions": [literal.as_json()]}), (pinned,), pinned=(pinned,)
+    text = "The backups go to the cloud."
+    weather = {"id": "n1", "spelling": "cloud", "meaning": "cloud storage", "casing": "ordinary"}
+    literal = {"text": "cloud", "links": [{"meaning": "n1", "basis": "literal", "evidence": []}]}
+    result = parse(
+        reply(additions=[{"meanings": [weather], "heard": [literal]}]),
+        (text,),
+        (pinned,),
+        (pinned,),
     )
     assert result[-1].meanings[0].spelling == "cloud"
     assert pinned.meanings[0].spelling == "Claude"
 
 
+def test_a_pinned_entry_is_shown_with_its_local_competitors_and_cross_links() -> None:
+    from entune.dictionary import changes
+
+    current = changes.pin(Dictionary(learned={"s/m": (CLOUD,)}), "s/m", "g_cloud", "a_claude")
+    working = current.effective("s/m")
+    linked = Group(
+        "g_linked",
+        (),
+        (Form("clawed", (Association("a_claude"),)),),
+    )
+    shown = view.build((*working, linked), current.pinned, snippets("ask clawed"))
+    entries = json.loads(shown.dictionary)
+    # The entry that links to Claude brings Claude's whole entry, competitors included.
+    assert [len(e["meanings"]) for e in entries] == [3, 0]
+    assert entries[0]["pinned"] is True and entries[1]["heard"] == {"clawed": ["e1a"]}
+    revised = {
+        "id": "e2",
+        "meanings": [],
+        "heard": [
+            {"text": "clawed", "links": [{"meaning": "e1a", "basis": "existing", "evidence": []}]}
+        ],
+    }
+    result = replies.parse_reply(
+        json.dumps(reply(revisions=[revised])),
+        shown,
+        (*working, linked),
+        transcripts=["ask clawed"],
+        pinned=current.pinned,
+    )
+    assert {g.id: g for g in result}["g_cloud"].meanings == CLOUD.meanings
+
+
+def test_an_entry_others_link_to_and_a_decided_entry_are_shown() -> None:
+    from entune.learning.inputs import DictionaryResult
+    from entune.processing.results import Selection
+
+    claude = group("Claude", "cloud")
+    linked = Group("g_linked", (), (Form("clawed", (Association("a_claude"),)),))
+    keep = group("Keep", "keep term")
+    # "cloud" shows Claude, which brings the entry linking to it, so both can go.
+    texts = ("the cloud",)
+    shown = view.build((claude, linked, keep), (), snippets(*texts))
+    assert len(json.loads(shown.dictionary)) == 2
+    result = replies.parse_reply(
+        json.dumps(reply(removals=["e1", "e2"])),
+        shown,
+        (claude, linked, keep),
+        transcripts=texts,
+    )
+    assert result == (keep,)
+    # A decision chose Keep where the text no longer matches its heard forms.
+    decided = batches.Snippet(
+        "s_1",
+        "raw_speech",
+        "keep turn",
+        DictionaryResult((), (Selection(0, 9, ("a_keep",), "contextual"),)),
+    )
+    shown = view.build((keep,), (), [decided])
+    (entry,) = json.loads(shown.dictations)
+    assert entry["decisions"][0]["meanings"] == ["e1a"]
+
+
+def test_an_identical_ordinary_meaning_not_shown_is_reused() -> None:
+    cache = Meaning("m_cache", "cache", "stored copy of data", casing="ordinary")
+    stored = Group("g_cache", (cache,), (Form("cash", (Association("m_cache"),)),))
+    text = "clear the catch now"
+    meaning = {
+        "id": "n1",
+        "spelling": "cache",
+        "meaning": "stored copy of data",
+        "casing": "ordinary",
+    }
+    evidence = [{"dictation": "d1", "start": 10, "end": 15}]
+    heard = {"text": "catch", "links": [{"meaning": "n1", "basis": "text", "evidence": evidence}]}
+    (merged,) = parse(
+        reply(additions=[{"meanings": [meaning], "heard": [heard]}]), (text,), (stored,)
+    )
+    assert merged.meanings == (cache,) and {f.text for f in merged.recognized_forms} == {
+        "cash",
+        "catch",
+    }
+
+
+def test_a_name_already_stored_joins_its_entry_instead_of_a_new_one() -> None:
+    stored = group("Claude Code", "claw code")  # not in this dictation, so not shown
+    (merged,) = parse(proposed(TEXT), working=(stored,))
+    assert merged.id == stored.id and merged.meanings == stored.meanings
+    cloud = next(f for f in merged.recognized_forms if f.text == "cloud code")
+    assert [a.meaning_id for a in cloud.associations] == [stored.meanings[0].id]
+    assert {f.text for f in merged.recognized_forms} == {"claw code", "Claude Code", "cloud code"}
+
+
 def test_case_only_duplicates_and_changes_to_approved_outputs_are_rejected() -> None:
     payload = proposed(TEXT)
     record = payload["additions"][0]
-    duplicate = {**record["meanings"][0], "id": "new_duplicate", "spelling": "CLAUDE CODE"}
-    record["meanings"].append(duplicate)
+    record["meanings"].append({**record["meanings"][0], "id": "n2", "spelling": "CLAUDE CODE"})
+    record["heard"][0]["links"].append(
+        {"meaning": "n2", "basis": "text", "evidence": record["heard"][0]["links"][0]["evidence"]}
+    )
     with pytest.raises(ValueError, match="case alone"):
-        replies.parse_generation(json.dumps(payload), transcripts=[TEXT])
+        parse(payload)
 
     approved = group("Entune", "dictim", direct=True)
-    changed = replace(
-        approved,
-        meanings=(replace(approved.meanings[0], spelling="Different"),),
-        recognized_forms=(approved.recognized_forms[0],),
-    )
+    text = "open dictim"
+    meanings = [
+        {"id": "e1a", "spelling": "Different", "meaning": "a name", "casing": "fixed"},
+    ]
+    heard = [{"text": "dictim", "links": [{"meaning": "e1a", "basis": "existing", "evidence": []}]}]
     with pytest.raises(ValueError, match="approved direct mapping"):
-        replies.parse_refinement(
-            json.dumps({"additions": [], "revisions": [changed.as_json()], "removals": []}),
+        parse(
+            reply(revisions=[{"id": "e1", "meanings": meanings, "heard": heard}]),
+            (text,),
             (approved,),
         )
 
@@ -218,43 +344,34 @@ def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
 ) -> None:
     monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
     seen: list[str] = []
-    stable_id = ""
 
     async def fake(request: Request) -> str:
-        nonlocal stable_id
         seen.append(request.user)
         if len(seen) == 1:
-            return json.dumps({**proposed("cloud code"), "revisions": [], "removals": []})
-        working = json.loads(request.user.split("groups:\n")[1].split("\n\n")[0])
-        target = next(g for g in working if g["meanings"][0]["spelling"] == "Claude Code")
-        stable_id = target["meanings"][0]["id"]
+            return json.dumps(proposed("cloud code"))
         if len(seen) == 2:
-            target["meanings"][0]["meaning"] = "An AI coding assistant."
-            target["recognized_forms"].append(
-                {
-                    "text": "clod code",
-                    "associations": [
-                        {
-                            "meaning_id": stable_id,
-                            "basis": "text",
-                            "evidence": [
-                                {
-                                    "source": next(iter(batches.sources(["clod code"]))),
-                                    "start": 0,
-                                    "end": 9,
-                                }
-                            ],
-                        }
-                    ],
-                }
+            # "clod code" does not show the Claude Code entry; the model names it again.
+            assert "Claude Code" not in request.user
+            meaning = {"id": "n1", "spelling": "Claude Code", "meaning": "AI coding agent"}
+            evidence = [{"dictation": "d1", "start": 0, "end": 9}]
+            heard = {
+                "text": "clod code",
+                "links": [{"meaning": "n1", "basis": "text", "evidence": evidence}],
+            }
+            entries = json.loads(request.user.split("dictations:\n")[1].split("\n\nDictations")[0])
+            wrong = next(e["id"] for e in entries if e["meanings"][0]["spelling"] == "Wrong")
+            return json.dumps(
+                reply(
+                    additions=[{"meanings": [{**meaning, "casing": "fixed"}], "heard": [heard]}],
+                    removals=[wrong],
+                )
             )
-            return json.dumps({"additions": [], "revisions": [target], "removals": ["g_wrong"]})
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return json.dumps(reply())
 
     current = Dictionary(
         (JEV,),
         {
-            "s/m": (group("Keep", "keep term"), group("Wrong", "wrong term")),
+            "s/m": (group("Keep", "keep term"), group("Wrong", "clod")),
             "other/model": (group("Elsewhere", "else where"),),
         },
     )
@@ -267,18 +384,16 @@ def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
             ["cloud code", "clod code", "third"],
             "s/m",
             call=fake,
-            mode="refine",
         )
     )
-    target = next(g for g in learned if g.meanings[0].spelling == "Claude Code")
-    assert (
-        target.meanings[0].id == stable_id
-        and target.meanings[0].meaning == "An AI coding assistant."
-    )
+    (target,) = [g for g in learned if g.meanings and g.meanings[0].spelling == "Claude Code"]
+    assert target.meanings[0].meaning == "The named tool Claude Code."  # stored, not redefined
     assert {f.text for f in target.recognized_forms} == {"cloud code", "clod code", "Claude Code"}
+    cloud = next(f for f in target.recognized_forms if f.text == "cloud code")
+    assert cloud.associations[0].evidence  # the first part's evidence is kept
     assert {g.id for g in learned} == {"g_jev", "g_keep", target.id}
-    assert all("Elsewhere" not in prompt and "Jev" in prompt for prompt in seen)
-    assert "An AI coding assistant." in seen[2] and "Wrong" not in seen[2]
+    assert all("Elsewhere" not in prompt and "Keep" not in prompt for prompt in seen)
+    assert "Wrong" not in seen[2]
     assert len(current.learned_for("s/m")) == 2  # still a proposal
 
 
@@ -305,7 +420,6 @@ def test_a_later_step_failure_returns_no_partial_dictionary(
                 ["cloud code", "three"],
                 "s/m",
                 call=failing,
-                mode="generate",
             )
         )
     assert failed.value.detail == "RuntimeError: HTTP 529"
@@ -325,7 +439,6 @@ def test_provider_failures_surface_verbatim() -> None:
                 ["x"],
                 "s/m",
                 call=failing,
-                mode="generate",
             )
         )
     assert failed.value.detail == "RuntimeError: status_code: 401, authentication_error"
@@ -391,44 +504,21 @@ def test_each_provider_gets_the_key_it_was_given_no_sdk_retries_and_a_closed_cli
 
 
 def test_reply_shapes_stay_strict_for_openai() -> None:
-    for shape in (replies.GenerationReply, replies.RefinementReply):
-        schema = OpenAIJsonSchemaTransformer(shape.model_json_schema(), strict=None)
-        schema.walk()
-        assert schema.is_strict_compatible
+    schema = OpenAIJsonSchemaTransformer(replies.Reply.model_json_schema(), strict=None)
+    schema.walk()
+    assert schema.is_strict_compatible
 
 
-def literal_with_evidence() -> str:
-    """Luna's reply that failed on 2026-09-23: evidence on a literal association."""
+def unknown_basis() -> str:
+    """A reply whose link names a basis the schema does not allow."""
     reply = proposed(TEXT)
-    forms = reply["additions"][0]["recognized_forms"]
-    form = next(f for f in forms if f["text"] == "cloud code")
-    evidence = form["associations"][0]["evidence"]
-    form["associations"].append(
-        {"meaning_id": "new_literal", "basis": "literal", "evidence": evidence}
-    )
+    reply["additions"][0]["heard"][0]["links"][0]["basis"] = "guessed"
     return json.dumps(reply)
 
 
 def strict_reply(text: str) -> str:
-    """A reply as the provider sends it under the schema: every field present."""
-    return replies.GenerationReply.model_validate_json(
-        json.dumps(
-            {
-                "additions": [
-                    {
-                        "needs_review": False,
-                        **g,
-                        "meanings": [{"personal_context": None, **m} for m in g["meanings"]],
-                        "recognized_forms": [
-                            {"direct": None, "direct_reason": "", **f}
-                            for f in g["recognized_forms"]
-                        ],
-                    }
-                    for g in json.loads(text)["additions"]
-                ]
-            }
-        )
-    ).model_dump_json()
+    """A reply as the provider sends it under the schema."""
+    return replies.Reply.model_validate_json(text).model_dump_json()
 
 
 def request(
@@ -440,7 +530,7 @@ def request(
         "openai:gpt-6-luna",
         "system",
         "user",
-        replies.GenerationReply,
+        replies.Reply,
         check,
         retrying,
     )
@@ -470,14 +560,14 @@ def scripted(*replies_: str) -> tuple[FunctionModel, list[int]]:
 
 def test_a_reply_breaking_the_schema_is_sent_back_with_the_rule_and_the_person_told() -> None:
     good = strict_reply(REPLY)
-    model, calls = scripted(literal_with_evidence(), good)
+    model, calls = scripted(unknown_basis(), good)
     heard: list[tuple[int, str]] = []
     result = asyncio.run(
         suggestion_model.call_model(request(retrying=lambda *a: heard.append(a)), model)
     )
     assert json.loads(result) == json.loads(good) and len(calls) == 2
-    assert heard == [(2, heard[0][1])] and "at most 0 items" in heard[0][1]
-    assert "evidence" in heard[0][1] and "Input should be 'text'" not in heard[0][1]
+    assert heard == [(2, heard[0][1])] and "basis" in heard[0][1]
+    assert "Input should be 'text', 'literal' or 'existing'" in heard[0][1]
 
 
 def test_rules_the_schema_cannot_hold_are_checked_and_fixed_at_most_twice() -> None:
@@ -510,7 +600,7 @@ def test_a_reply_cut_at_the_output_limit_is_never_retried() -> None:
 
 def openai_stream(*kinds: str) -> httpx2.Response:
     """An OpenAI Responses stream carrying a valid reply, ending as `kinds` say."""
-    text = json.dumps({"additions": []})
+    text = json.dumps({"additions": [], "revisions": [], "removals": []})
 
     def response(status: str) -> dict[str, Any]:
         message = {"type": "output_text", "text": text, "annotations": []}
@@ -577,7 +667,7 @@ def test_only_a_stream_the_provider_finished_is_used_and_it_carries_the_saved_ke
     )
     run = suggestion_model.call_model(request())
     if ending == "completed":
-        assert json.loads(asyncio.run(run)) == {"additions": []}
+        assert json.loads(asyncio.run(run))["additions"] == []
     else:
         with pytest.raises(ValueError, match="did not finish its reply"):
             asyncio.run(run)
@@ -648,6 +738,33 @@ def test_a_request_waits_five_seconds_to_connect_and_twenty_minutes_to_read(
     assert all(t["connect"] == providers.CONNECT and t["read"] == providers.TIMEOUT for t in limits)
 
 
+@pytest.mark.parametrize("effort", ["high", "xhigh"])
+def test_claude_thinks_within_its_output_limit_at_every_effort(
+    monkeypatch: pytest.MonkeyPatch, effort: str
+) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def respond(outgoing: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(outgoing.content))
+        return httpx2.Response(500, json={"error": "stop here"})
+
+    factory = providers._http2
+
+    def offline(header: str, value: str) -> Any:
+        client = factory(header, value)
+        client._transport = httpx2.MockTransport(respond)
+        return client
+
+    monkeypatch.setattr(providers, "_http2", offline)
+    claude = replace(
+        request(), provider="anthropic", model="anthropic:claude-haiku-4-5", effort=effort
+    )
+    with pytest.raises(ModelHTTPError):
+        asyncio.run(suggestion_model.call_model(claude))
+    (body,) = bodies
+    assert body["thinking"]["budget_tokens"] < body["max_tokens"]
+
+
 @pytest.mark.parametrize("plan", [False, True])
 def test_a_reply_that_keeps_streaming_past_the_limit_is_cut(
     monkeypatch: pytest.MonkeyPatch, plan: bool
@@ -706,7 +823,6 @@ def test_a_step_whose_fixes_all_break_rules_fails_plainly() -> None:
                 ["x"],
                 "s/m",
                 call=broken,
-                mode="generate",
             )
         )
     assert failed.value.detail == "BrokenReply: basis: literal needs no evidence"
@@ -732,7 +848,6 @@ def test_a_part_whose_reply_still_broke_the_rules_gets_one_fresh_attempt() -> No
             [TEXT],
             "s/m",
             call=broken_once,
-            mode="generate",
             retrying_part=lambda part, attempt, reason, seconds: heard.append(
                 (part, attempt, reason)
             ),
@@ -769,7 +884,6 @@ def test_a_reply_that_runs_into_empty_output_is_stopped_and_its_part_retried() -
             [TEXT],
             "s/m",
             call=caller,
-            mode="generate",
             retrying_part=lambda part, attempt, reason, seconds: heard.append(
                 (part, attempt, reason)
             ),
@@ -820,7 +934,6 @@ def test_a_part_that_failed_in_a_way_that_may_pass_is_tried_twice_more_and_annou
                 ["x"],
                 "s/m",
                 call=failing,
-                mode="generate",
                 progress=lambda part, total, size: events.append(("progress", part)),
                 retrying_part=lambda part, attempt, why, seconds: events.append(
                     (part, attempt, why)
@@ -860,7 +973,6 @@ def test_a_refused_key_or_a_limit_is_never_retried(status: int, problem: str) ->
                 ["x"],
                 "s/m",
                 call=refused,
-                mode="generate",
                 retrying_part=lambda *told: heard.append(told),
             )
         )
@@ -886,7 +998,6 @@ def test_a_busy_service_whose_words_mention_a_timeout_is_reported_as_busy() -> N
                 ["x"],
                 "s/m",
                 call=busy,
-                mode="generate",
             )
         )
     assert "reset reason: connection timeout" in failed.value.detail
@@ -905,7 +1016,7 @@ def test_a_retried_part_starts_from_the_working_dictionary_and_repeats_no_finish
             return json.dumps(proposed("cloud code"))
         if len(prompts) == 2:
             raise ModelHTTPError(502, "gpt-6-luna", "bad gateway")
-        return '{"additions": []}'
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     learned = asyncio.run(
         generate.propose_learned(
@@ -916,60 +1027,44 @@ def test_a_retried_part_starts_from_the_working_dictionary_and_repeats_no_finish
             ["cloud code", "second one", "third item"],
             "s/m",
             call=flaky,
-            mode="generate",
             checkpoint=lambda groups, number, total, covered: saved.append(number),
         )
     )
     assert saved == [1, 2, 3] and len(prompts) == 4
-    assert prompts[1] == prompts[2] and "Claude Code" in prompts[2]  # part 1's dictionary
+    assert prompts[1] == prompts[2]  # the same part, from the same working dictionary
     assert len({prompts[0], prompts[2], prompts[3]}) == 3  # part 1 was not asked again
     assert learned[0].meanings[0].spelling == "Claude Code"
 
 
-def test_refinement_names_each_group_once_and_only_existing_ones() -> None:
+def test_changes_name_each_shown_entry_once() -> None:
     learned = group("Keep", "keep term")
     other = group("Other", "other term")
-
-    def refine(additions: list[Any], revisions: list[Any], removals: list[Any]) -> str:
-        return json.dumps({"additions": additions, "revisions": revisions, "removals": removals})
-
-    with pytest.raises(ValueError, match="existing groups: g_new"):
-        replies.parse_refinement(refine([], [{**learned.as_json(), "id": "g_new"}], []), (learned,))
-    with pytest.raises(ValueError, match="new_ group ID"):
-        replies.parse_refinement(refine([learned.as_json()], [], []), (learned,))
-    with pytest.raises(ValueError, match="existing learned groups: g_absent"):
-        replies.parse_refinement(refine([], [], ["g_absent"]), (learned,))
+    texts = ("keep term and other term",)
+    shown = view.build((learned, other), (), snippets(*texts))
+    entry = json.loads(shown.dictionary)[0]
+    entry["meanings"] = [{**m, "casing": "fixed"} for m in entry["meanings"]]
+    entry["heard"] = [
+        {"text": t, "links": [{"meaning": m, "basis": "existing", "evidence": []} for m in ids]}
+        for t, ids in entry["heard"].items()
+    ]
+    working = (learned, other)
+    with pytest.raises(ValueError, match="shown here: e9"):
+        parse(reply(revisions=[{**entry, "id": "e9"}]), texts, working)
+    with pytest.raises(ValueError, match="shown here: e9"):
+        parse(reply(removals=["e9"]), texts, working)
     with pytest.raises(ValueError, match="once"):
-        replies.parse_refinement(refine([], [learned.as_json()], [learned.id]), (learned,))
-    assert replies.parse_refinement(refine([], [], [learned.id]), (learned, other)) == (other,)
-    # Generation cannot redefine an existing meaning, only link a new form to it.
+        parse(reply(revisions=[entry], removals=["e1"]), texts, working)
+    assert parse(reply(removals=["e1"]), texts, working) == (other,)
+    # An addition cannot redefine a meaning another entry holds; it links to it.
+    changed = {**entry["meanings"][0], "meaning": "Changed."}
     link = {
-        "id": "new_g",
-        "meanings": [],
-        "recognized_forms": [
-            {
-                "text": "keep turn",
-                "associations": [
-                    {
-                        "meaning_id": learned.meanings[0].id,
-                        "basis": "text",
-                        "evidence": [
-                            {"source": batches.source_id("keep turn"), "start": 0, "end": 9}
-                        ],
-                    }
-                ],
-            }
-        ],
+        "meaning": "e1a",
+        "basis": "text",
+        "evidence": [{"dictation": "d1", "start": 0, "end": 9}],
     }
-    result = replies.parse_generation(
-        json.dumps({"additions": [link]}), (learned,), transcripts=["keep turn"]
-    )
-    assert len(result) == 2 and result[1].recognized_forms[0].text == "keep turn"
-    redefine = {**link, "meanings": [learned.meanings[0].__dict__ | {"meaning": "Changed."}]}
-    with pytest.raises(ValueError, match="cannot redefine"):
-        replies.parse_generation(
-            json.dumps({"additions": [redefine]}), (learned,), transcripts=["keep turn"]
-        )
+    added = {"meanings": [changed], "heard": [{"text": "keep term", "links": [link]}]}
+    (kept, untouched) = parse(reply(additions=[added]), texts, working)
+    assert kept.meanings == learned.meanings and untouched == other
 
 
 def test_starting_entune_loads_no_suggestion_sdk() -> None:
@@ -1070,7 +1165,7 @@ def test_a_chatgpt_plan_is_asked_at_its_endpoint_for_its_account_without_an_outp
     )
     token = jwt(ACCOUNT)
     plan = replace(request(), provider="chatgpt", api_key=token, model="chatgpt:gpt-6-sol")
-    assert json.loads(asyncio.run(suggestion_model.call_model(plan))) == {"additions": []}
+    assert json.loads(asyncio.run(suggestion_model.call_model(plan)))["additions"] == []
     [outgoing] = sent
     assert str(outgoing.url) == f"{chatgpt.BACKEND}/responses"
     assert outgoing.headers["authorization"] == f"Bearer {token}"
@@ -1081,7 +1176,7 @@ def test_a_chatgpt_plan_is_asked_at_its_endpoint_for_its_account_without_an_outp
     # The schema is in the instructions, not a strict json_schema format (endless blank space).
     assert body.get("text", {}).get("format", {}).get("type") != "json_schema"
     system = next(item for item in body["input"] if item.get("role") == "system")
-    assert '"title": "GenerationReply"' in system["content"]  # the schema reaches the model
+    assert '"title": "Reply"' in system["content"]  # the schema reaches the model
 
 
 def test_a_reply_past_its_time_limit_is_not_tried_again_and_says_what_to_change() -> None:
@@ -1095,7 +1190,7 @@ def test_a_reply_past_its_time_limit_is_not_tried_again_and_says_what_to_change(
             "the reply ran past its 14.5-minute limit", "The reply timed out"
         )
 
-    with pytest.raises(generate.StepFailed, match="smaller parts or faster replies") as failed:
+    with pytest.raises(generate.StepFailed, match="lower reasoning effort") as failed:
         asyncio.run(
             generate.propose_learned(
                 "openai",
@@ -1105,18 +1200,17 @@ def test_a_reply_past_its_time_limit_is_not_tried_again_and_says_what_to_change(
                 ["cloud code"],
                 "s/m",
                 call=slow,
-                mode="generate",
                 effort="low",
             )
         )
     assert calls == 1 and "14.5-minute limit" in str(failed.value)
 
 
-def test_a_reply_cut_at_the_output_limit_asks_for_smaller_parts() -> None:
+def test_a_reply_cut_at_the_output_limit_asks_for_a_lower_effort() -> None:
     async def long(_: Request) -> str:
         raise suggestion_model.ReplyTooLong("The reply reached the plan's output limit")
 
-    with pytest.raises(generate.StepFailed, match=r"output limit.*smaller parts"):
+    with pytest.raises(generate.StepFailed, match=r"output limit.*lower reasoning effort"):
         asyncio.run(
             generate.propose_learned(
                 "openai",
@@ -1126,6 +1220,5 @@ def test_a_reply_cut_at_the_output_limit_asks_for_smaller_parts() -> None:
                 ["cloud code"],
                 "s/m",
                 call=long,
-                mode="generate",
             )
         )

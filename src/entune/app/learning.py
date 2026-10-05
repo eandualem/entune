@@ -13,7 +13,13 @@ from dataclasses import replace
 from entune.app.dictionary_file import DictionaryChanged, DictionaryFile
 from entune.app.models import NoDefaultModel, SpeechModels, UnknownModel
 from entune.app.settings import Settings
-from entune.app.suggestion_runs import EFFORTS, SMALL_PART, BuildInput, DictionaryBuilds, Source
+from entune.app.suggestion_runs import (
+    DEFAULT_EFFORT,
+    EFFORTS,
+    BuildInput,
+    DictionaryBuilds,
+    Source,
+)
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
 from entune.dictionary.changes import Proposal
@@ -57,25 +63,17 @@ class Learning:
         self,
         source: Source,
         *,
-        mode: str,
         scope: str = "new",
         audio_ids: list[str] | None = None,
-        effort: str = "medium",
-        part: str = "standard",
+        effort: str = DEFAULT_EFFORT,
     ) -> dict[str, object]:
-        # Generation and refinement are different jobs; the workflow names which one.
-        if mode not in {"generate", "refine"}:
-            raise ValueError("Choose generate or refine")
         if scope not in {"new", "all"}:
             raise ValueError("Choose new or all history")
-        effort, part_chars = _settings(effort, part)
+        _check(effort)
         previous = self._builds.status()
         state = self._builds.start(
             lambda: replace(
-                self._build_input(source, scope=scope, audio_ids=audio_ids),
-                mode="generate" if mode == "generate" else "refine",
-                effort=effort,
-                part_chars=part_chars,
+                self._build_input(source, scope=scope, audio_ids=audio_ids), effort=effort
             )
         )
         if previous.get("phase") in {"failed", "cancelled"}:
@@ -104,11 +102,9 @@ class Learning:
             job_id, str(state["model"]), str(state["source"]), (), "discarded", state, applied=False
         )
 
-    def retry_dictionary_build(
-        self, job_id: str, effort: str | None = None, part: str | None = None
-    ) -> None:
-        """Continue a stopped or failed run, with smaller parts or faster replies if chosen;
-        parts already finished are kept either way."""
+    def retry_dictionary_build(self, job_id: str, effort: str | None = None) -> None:
+        """Continue a stopped or failed run, with another reasoning effort if chosen; parts
+        already finished are kept either way."""
 
         def refresh(spec: BuildInput) -> BuildInput:
             with self._dictionary.lock:
@@ -118,14 +114,11 @@ class Learning:
                     if configured is None:
                         raise ValueError(f"No API key set for {spec.speech.provider.name}.")
                     speech_key = configured
-                chosen, part_chars = _settings(
-                    effort or spec.effort,
-                    part or ("small" if spec.part_chars == SMALL_PART else "standard"),
-                )
+                if effort is not None:
+                    _check(effort)
                 return replace(
                     spec,
-                    effort=chosen,
-                    part_chars=part_chars,
+                    effort=effort or spec.effort,
                     speech_key=speech_key,
                     builder=self._dictionary_builder(),
                     dictionary=dictionary_changes.share(self._dictionary.dictionary(), set()),
@@ -135,8 +128,8 @@ class Learning:
         self._builds.retry(job_id, refresh)
 
     def suggestion_timing(self) -> dict[str, dict[str, float]]:
-        """Measured seconds per part for each suggestion model, reasoning and part size
-        ("model|effort|characters"), from finished runs' receipts."""
+        """Measured seconds per part for each suggestion model and reasoning effort
+        ("model|effort"), from finished runs' receipts."""
         seconds: dict[str, list[float]] = {}
         for details in self._store.learning_details():
             parts = details.get("parts")
@@ -145,8 +138,11 @@ class Learning:
                     timing.get("seconds"), int | float
                 ):
                     continue
-                # Each part names the settings it ran with: Continue can change them.
-                key = f"{timing.get('model')}|{timing.get('effort')}|{timing.get('partChars')}"
+                # Each part names the effort it ran with: Continue can change it. Parts
+                # of another size, from older runs, would mislead the estimate.
+                if timing.get("partChars", batches.BATCH_CHARS) != batches.BATCH_CHARS:
+                    continue
+                key = f"{timing.get('model')}|{timing.get('effort')}"
                 seconds.setdefault(key, []).append(float(timing["seconds"]))
         return {
             key: {"secondsPerPart": round(statistics.median(values), 1), "parts": len(values)}
@@ -248,10 +244,6 @@ class Learning:
         )
 
 
-def _settings(effort: str, part: str) -> tuple[str, int | None]:
-    """The reasoning and part size a run uses; None is the standard part."""
+def _check(effort: str) -> None:
     if effort not in EFFORTS:
-        raise ValueError("Choose low or medium reasoning")
-    if part not in {"small", "standard"}:
-        raise ValueError("Choose small or standard parts")
-    return effort, SMALL_PART if part == "small" else None
+        raise ValueError(f"Choose a reasoning effort: {', '.join(EFFORTS)}")

@@ -306,10 +306,9 @@ Speech models mishear names, products and everyday words. The Dictionary tab gro
 recognized forms with their possible meanings, definitions and exact output spellings.
 Explicit associations decide which meanings can compete for a form; context decides
 which one applies. Edit entries directly, or ask the configured language model to
-suggest them: **Suggest new entries** (generation) reads this speech model's raw
-history and only adds; **Suggest improvements** (refinement) compares each raw
-transcript with what the dictionary step made of it and can add, revise or remove
-learned entries. **How the dictionary works** opens a short guide.
+suggest them: **Get suggestions** reads this speech model's raw history, finds the
+words it gets wrong, and can also improve or remove the entries those transcripts show,
+judging what the dictionary step made of each one. **How the dictionary works** opens a short guide.
 Additions, before/after updates, and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
 then apply the remainder once. Dismissing a proposal does not delete active knowledge.
 
@@ -346,8 +345,8 @@ audio file in `dictionary-audio/`, separate from recording history, and can reus
 it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
 up to 199 MB can be uploaded; the chosen provider must support the audio format
 and length. A build uses the speech and dictionary models selected when it starts.
-Learning from audio always looks for new entries: freshly transcribed audio carries no
-record of what the dictionary did, so there is nothing for refinement to judge.
+Freshly transcribed audio carries no record of what the dictionary did, so only its
+text is sent.
 A cloud speech model transcribes four recordings at a time; a local model takes one at a
 time. Suggestions start as soon as one part's worth of text is transcribed, while the
 rest is still being transcribed. A recording that will not transcribe is tried once
@@ -370,12 +369,11 @@ for review, with their actual coverage and cause. A running speech call may need
 finish; a generation request can be interrupted. Apply, discard, or continue with the
 rest. No changes are applied automatically.
 
-The setup chooses the speech model, the suggestion model, **Replies** (Faster asks for
-low reasoning, Thorough for medium) and **Part size** (Smaller sends about 8,000
-transcript characters per request, Standard about 24,000). For audio it estimates the
-time from measurements only: the speech model's transcription times from History, and
-the seconds per part of earlier runs with the same suggestion model and settings. A
-combination not yet timed says so.
+The setup chooses the speech model, the suggestion model and the **Reasoning effort**,
+by the levels providers name: minimal, low, medium, high or xhigh, high by default. For
+audio it estimates the time from measurements only: the speech model's transcription
+times from History, and the seconds per part of earlier runs with the same suggestion
+model and effort. A combination not yet timed says so.
 
 The dictionary model's reply must match the dictionary's format, which the provider
 enforces where it can. When a reply still breaks one of the dictionary's rules, the
@@ -387,13 +385,13 @@ a server error (5xx), and once more when a reply still broke a rule. The progres
 says why and which attempt, and the run's record keeps each one. A reply that runs past
 its time limit (20 minutes; 14.5 on a ChatGPT plan, which ends a request at about 15)
 or reaches the output limit stops the run instead: the same part would most likely take
-as long again, so Entune asks for Faster replies, Smaller parts or less audio, then
+as long again, so Entune asks for a lower reasoning effort or less audio, then
 **Continue**. Refused keys, limits and quotas (401, 403, 429) and other failed requests
 are never retried.
 
-Default history refinement uses up to 300 recent, unprocessed attempts for the selected
+Default history learning uses up to 300 recent, unprocessed attempts for the selected
 speech model; “All history” deliberately includes older/previously examined data.
-Refinement pairs each raw transcript with the dictionary step's recorded result and
+Each raw transcript is paired with the dictionary step's recorded result and
 decisions, which show what the system did, not confirmed intended wording. Filler
 reduction, formatting and the delivered text are never sent. Older attempts without a
 recorded result, and freshly transcribed audio, are sent as raw text only. Applying at least one actual change marks only fully
@@ -478,7 +476,7 @@ and secret keys, and a host if it isn't Langfuse Cloud (`https://cloud.langfuse.
 `https://`, or `http://` only for a Langfuse running on this machine.
 The line under the form says when tracing is on. Each suggestion run appears in
 Langfuse as one session, with every part's request, streamed reply, timing and errors,
-tagged with the speech model, suggestion model, reasoning and part size. Nothing is
+tagged with the speech model, suggestion model and reasoning effort. Nothing is
 traced until both keys are saved; **Turn off** removes them. Traces include your
 transcripts, so use a Langfuse project you trust with them.
 
@@ -533,9 +531,9 @@ Enabled features determine what is sent out:
   mode starts uploading during recording. Local Whisper.cpp and Parakeet transcribe
   on this machine, without sending audio to a speech service.
 - **Dictionary builds:** the chosen dictionary model's provider receives raw source
-  transcripts (for refinement, beside the dictionary step's recorded result) and the
-  pinned/working confusion groups, including definitions and personal context. Each
-  chunk sends the current working dictionary again.
+  transcripts, beside the dictionary step's recorded result, and the pinned and working
+  entries that occur in each part's transcripts: spellings, meanings and heard forms,
+  never personal context or stored evidence.
 - **Tracing (off by default):** with Langfuse keys saved under **Settings →
   Integrations**, each dictionary-suggestion request and reply, including its
   transcripts and dictionary, also goes to the Langfuse host you set.

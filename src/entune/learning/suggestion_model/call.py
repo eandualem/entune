@@ -13,7 +13,7 @@ overcome.
 from __future__ import annotations
 
 import asyncio
-from typing import Literal
+from typing import cast
 
 import httpx
 import httpx2
@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
     TextPartDelta,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
 from entune.learning.suggestion_model.catalog import CHATGPT
 from entune.learning.suggestion_model.providers import PLAN_TIMEOUT, TIMEOUT, provider_model
@@ -46,6 +46,9 @@ from entune.learning.suggestion_model.request import (
 # Thinking and reasoning tokens count toward this cap, so it leaves room for a long
 # proposal after the model has reasoned. Billing follows actual use.
 MAX_OUTPUT_TOKENS = 32_000
+# Anthropic's xhigh is a 32,768-token thinking budget, which must stay below the output
+# limit: that one combination gets 64,000, the most Claude models write in one reply.
+ANTHROPIC_XHIGH_OUTPUT_TOKENS = 64_000
 
 # A runaway reply streams valid JSON, then only whitespace until the connection is cut,
 # and never recovers; no finished reply has ended in a run this long.
@@ -83,7 +86,7 @@ async def _run(request: Request, chosen: Model) -> str:
         model_settings=(
             ModelSettings(thinking=_effort(request.effort))
             if plan
-            else ModelSettings(max_tokens=MAX_OUTPUT_TOKENS, thinking=_effort(request.effort))
+            else ModelSettings(max_tokens=_output_limit(request), thinking=_effort(request.effort))
         ),
     )
 
@@ -138,7 +141,7 @@ async def _run(request: Request, chosen: Model) -> str:
                         + (", just before the ChatGPT plan would cut it" if plan else ""),
                     ) from exc
                 if finish == "length":
-                    limit = "plan's" if plan else f"{MAX_OUTPUT_TOKENS}-token"
+                    limit = "plan's" if plan else f"{_output_limit(request)}-token"
                     raise ReplyTooLong(
                         f"The reply reached the {limit} output limit,"
                         " which includes reasoning; nothing from this step was used"
@@ -189,8 +192,15 @@ def _keep_partial(received: list[str], blank: int) -> None:
     span.set_attribute("entune.trailing_blank_characters", blank)
 
 
-def _effort(value: str) -> Literal["low", "medium"]:
-    return "low" if value == "low" else "medium"
+def _output_limit(request: Request) -> int:
+    if request.provider == "anthropic" and request.effort == "xhigh":
+        return ANTHROPIC_XHIGH_OUTPUT_TOKENS
+    return MAX_OUTPUT_TOKENS
+
+
+def _effort(value: str) -> ThinkingLevel:
+    """The reasoning level by its own name; app/learning.py accepts only these."""
+    return cast(ThinkingLevel, value)
 
 
 def _text(event: object) -> str:

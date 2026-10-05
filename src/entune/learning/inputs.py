@@ -8,7 +8,6 @@ from typing import Literal
 from entune.processing.results import Selection
 from entune.processing.text_edits import Change
 
-Mode = Literal["generate", "refine"]
 # raw_speech: the recognizer's recorded output. legacy_final: an older attempt whose raw
 # output was not kept, so only its final text exists. temporary_audio: saved audio
 # transcribed again with the selected recognizer for this learning run.

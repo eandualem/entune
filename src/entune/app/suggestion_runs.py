@@ -3,7 +3,7 @@
 Audio is transcribed on worker threads, several cloud clips at a time, and suggestions
 start as soon as one part's worth of text is ready, while the rest is still being
 transcribed. Each part reads whole recordings or transcripts that no finished part has
-covered, so Retry continues from what is covered, whatever part size it uses next."""
+covered, so Retry continues from what is covered."""
 
 from __future__ import annotations
 
@@ -35,8 +35,10 @@ from entune.storage.records import DictionaryAudio
 Source = Literal["history", "audio"]
 RUNNING = {"queued", "transcribing", "building", "cancelling", "cleaning"}
 TRANSCRIBE_WORKERS = 4  # cloud clips transcribed at once; a local model takes one at a time
-SMALL_PART = 8_000  # transcript characters; the standard part is batches.BATCH_CHARS
-EFFORTS = ("low", "medium")
+# The suggestion model's reasoning effort, by the levels providers name. High found the
+# most entries in the September experiments, so it is the default.
+EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
+DEFAULT_EFFORT = "high"
 
 
 class JobConflict(ValueError):
@@ -54,9 +56,7 @@ class BuildInput:
     transcripts: tuple[learning_inputs.LearningText, ...] = ()
     audio: tuple[tuple[DictionaryAudio, Path], ...] = ()
     scope: str = "new"
-    mode: learning_inputs.Mode = "generate"
-    effort: str = "medium"  # the suggestion model's reasoning
-    part_chars: int | None = None  # transcript characters per part; None: BATCH_CHARS
+    effort: str = DEFAULT_EFFORT  # the suggestion model's reasoning
 
 
 class DictionaryBuilds:
@@ -79,7 +79,7 @@ class DictionaryBuilds:
         self._completed_batches = 0
         self._skipped: list[tuple[str, str]] = []  # recordings that would not transcribe
         # How far finished parts got into a text longer than one part, by its ID; Continue
-        # starts there, whatever part size it uses.
+        # starts there.
         self._consumed: dict[str, int] = {}
         self._segments: dict[str, tuple[str, int, int]] = {}  # segment ID: (text ID, end, length)
         self._operation: Operation | None = None
@@ -120,12 +120,10 @@ class DictionaryBuilds:
                 "id": uuid.uuid4().hex,
                 "phase": "queued",
                 "source": spec.source,
-                "mode": spec.mode,
                 "scope": spec.scope,
                 "model": spec.speech.id,
                 "dictionaryModel": spec.builder[2],
                 "effort": spec.effort,
-                "partChars": _limit(spec),
                 "version": f'"{spec.revision}"',
                 "completed": 0,
                 "total": len(spec.audio) if spec.source == "audio" else len(spec.transcripts),
@@ -170,7 +168,6 @@ class DictionaryBuilds:
                 phase="queued",
                 dictionaryModel=fresh.builder[2],
                 effort=fresh.effort,
-                partChars=_limit(fresh),
                 version=f'"{fresh.revision}"',
             )
             self._state.pop("error", None)
@@ -300,9 +297,7 @@ class DictionaryBuilds:
                 part=number,
                 speech_model=spec.speech.id,
                 suggestion_model=spec.builder[2],
-                mode=spec.mode,
                 effort=spec.effort,
-                part_chars=_limit(spec),
             ):
                 groups = await generate.propose_part(
                     *spec.builder,
@@ -312,7 +307,6 @@ class DictionaryBuilds:
                     spec.speech.id,
                     f"Part {number}",
                     self._call,
-                    mode=spec.mode,
                     effort=spec.effort,
                     started=lambda size: self._progress(
                         step=number,
@@ -355,7 +349,6 @@ class DictionaryBuilds:
                 "characters": sum(len(s.text) for s in step.snippets),
                 "model": spec.builder[2],
                 "effort": spec.effort,
-                "partChars": _limit(spec),
             }
             self._state.update(
                 completedBatches=number,
@@ -593,23 +586,23 @@ class DictionaryBuilds:
                     and item.id not in self._covered
                     and item.text.strip()
                 ):
-                    waiting.extend(self._remaining(item, _limit(spec)))
+                    waiting.extend(self._remaining(item, batches.BATCH_CHARS))
                 try:
                     item = ready.get_nowait()
                 except queue.Empty:
                     item = None
             size = sum(len(text.text) for text in waiting)
-            if waiting and (finished or size >= _limit(spec)):
+            if waiting and (finished or size >= batches.BATCH_CHARS):
                 if finished:
                     with self._lock:
                         # Everything has arrived: the number of parts is now known.
-                        left = len(_split(waiting, _limit(spec)))
+                        left = len(_split(waiting, batches.BATCH_CHARS))
                         self._state["steps"] = self._completed_batches + left
-                part, waiting = _take(waiting, _limit(spec))
+                part, waiting = _take(waiting, batches.BATCH_CHARS)
                 with self._lock:
                     if self._state["phase"] == "queued":
                         self._state["phase"] = "building"
-                for step in batches.learning_batches(part, _limit(spec)):
+                for step in batches.learning_batches(part, batches.BATCH_CHARS):
                     asyncio.run(self._part(spec, step, self._completed_batches + 1))
                 if finished and not waiting:
                     break
@@ -683,7 +676,3 @@ def _split(texts: list[learning_inputs.LearningText], limit: int) -> list[batche
         part, texts = _take(texts, limit)
         parts.extend(batches.learning_batches(part, limit))
     return parts
-
-
-def _limit(spec: BuildInput) -> int:
-    return batches.BATCH_CHARS if spec.part_chars is None else spec.part_chars
