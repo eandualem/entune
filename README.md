@@ -15,9 +15,9 @@ Choose a cloud or local speech model, and keep your recordings on your computer.
 Its personal dictionary learns from your dictation; a decision model chooses
 when a dictionary replacement actually fits the sentence.
 
-From install to the first dictation, on a Mac:
+A 40-second tour of Entune on a Mac:
 
-https://github.com/user-attachments/assets/99d4f7a1-48a2-4e69-97d2-e04d8bc200fe
+https://github.com/user-attachments/assets/322a7a1f-07ba-4d40-9709-d7396d204666
 
 ## Install
 
