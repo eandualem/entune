@@ -1,7 +1,0 @@
-Task: refine the dictionary for the speech recognizer $speech_model using the dictations below. Return additions, revisions and removals, or none.
-
-Current dictionary for this recognizer, including pinned entries.
-$dictionary
-
-Dictations (JSON). "raw" is the recognizer's transcript. "after_dictionary" is the text right after the dictionary step, or null when no result was recorded. "decisions" lists each span the dictionary matched and what it wrote there. Spans and evidence count characters in "raw".
-$sources

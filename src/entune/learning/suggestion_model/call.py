@@ -13,7 +13,7 @@ overcome.
 from __future__ import annotations
 
 import asyncio
-from typing import Literal
+from typing import cast
 
 import httpx
 import httpx2
@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
     TextPartDelta,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
 from entune.learning.suggestion_model.catalog import CHATGPT
 from entune.learning.suggestion_model.providers import PLAN_TIMEOUT, TIMEOUT, provider_model
@@ -189,8 +189,9 @@ def _keep_partial(received: list[str], blank: int) -> None:
     span.set_attribute("entune.trailing_blank_characters", blank)
 
 
-def _effort(value: str) -> Literal["low", "medium"]:
-    return "low" if value == "low" else "medium"
+def _effort(value: str) -> ThinkingLevel:
+    """The reasoning level by its own name; app/learning.py accepts only these."""
+    return cast(ThinkingLevel, value)
 
 
 def _text(event: object) -> str:

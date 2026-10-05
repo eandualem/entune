@@ -29,20 +29,19 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const entryDrawer = el("entry-drawer");
   const suggestDrawer = el("suggest-drawer");
   const jsonBox = el("dictionary");
-  // How a run works: the suggestion model's reasoning and the part size, remembered in
-  // this browser. Both shape how long each reply takes; see drawEffect.
-  const effortSelect = el("suggest-effort"), partSelect = el("suggest-part");
+  // The suggestion model's reasoning effort, by the provider's level names, remembered in
+  // this browser. High is the default; see drawEffect.
+  const effortSelect = el("suggest-effort");
+  effortSelect.value = "high";
   try {
-    effortSelect.value = localStorage.getItem("entune.suggest.effort") ?? "medium";
-    partSelect.value = localStorage.getItem("entune.suggest.part") ?? "standard";
-  } catch { /* storage unavailable: the defaults stand */ }
-  const runSettings = () => ({ effort: effortSelect.value || "medium", part: partSelect.value || "standard" });
+    const saved = localStorage.getItem("entune.suggest.effort");
+    if ([...effortSelect.options].some((o) => o.value === saved)) effortSelect.value = saved;
+  } catch { /* storage unavailable: the default stands */ }
+  const runSettings = () => ({ effort: effortSelect.value || "high" });
   const onboarding = createAudioOnboarding({
     getModel, getSettings, getRunSettings: runSettings,
     getDictionaryModelName: () => missingKey ? null : languageName(getSettings()?.dictionaryModel),
-    // Fresh transcripts from audio carry no record of what the dictionary did, so there is
-    // nothing for refinement to judge: audio always looks for new entries.
-    onBuild(selection) { return builds.start("audio", { mode: "generate", ...selection, ...runSettings() }); },
+    onBuild(selection) { return builds.start("audio", { ...selection, ...runSettings() }); },
     onBusy(value) { importing = value; gate(); },
   });
 
@@ -54,24 +53,18 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     getSelected: () => proposalChanges.filter(c => c.included).map(c => ({id: c.id, after: c.after})),
     getRunSettings: runSettings,
   });
-  for (const [select, key] of [[effortSelect, "effort"], [partSelect, "part"]]) {
-    select.addEventListener("change", () => {
-      try { localStorage.setItem(`entune.suggest.${key}`, select.value); } catch { /* not remembered */ }
-      drawEffect();
-      onboarding.redraw();
-    });
-  }
-  // What the two choices do, in one line; on a ChatGPT plan, also its limit per reply.
+  effortSelect.addEventListener("change", () => {
+    try { localStorage.setItem("entune.suggest.effort", effortSelect.value); } catch { /* not remembered */ }
+    drawEffect();
+    onboarding.redraw();
+  });
+  // What the choice does, in one line; on a ChatGPT plan, also its limit per reply.
   function drawEffect() {
     const model = getSettings()?.dictionaryModel ?? "";
-    const { effort, part } = runSettings();
-    const parts = part === "small" ? "Smaller parts: about 8,000 characters per request, so more requests that each finish sooner."
-      : "Standard parts: about 24,000 characters per request.";
-    const replies = effort === "low" ? "Faster replies reason less." : "Thorough replies reason more and take longer.";
     const plan = model.startsWith("chatgpt:")
       ? " On a ChatGPT plan each reply must finish within about 15 minutes."
       : "";
-    el("run-effect").textContent = `${replies} ${parts}${plan}`;
+    el("run-effect").textContent = `Higher effort reasons longer and usually finds more; high is the default.${plan}`;
   }
   // The speech model the dictionary is for: the same choice as the toolbar's default model.
   const speechSelect = el("suggest-speech");
@@ -257,14 +250,6 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     modelSelect.disabled = building || modelSelect.value === "";
   }
 
-  // One action: with no entries that apply to the selected speech model (pinned or its
-  // learned), suggestions start a dictionary; once any apply, they refine it, which can
-  // also add missing entries. The server's effective dictionary is the same union.
-  function mode() {
-    const learned = dict.learned[getModel()?.id] ?? [];
-    return dict.pinned.length || learned.length ? "refine" : "generate";
-  }
-
   // ---- The table ----
   const selectFilter = segmentedGroup({ all: el("filter-all"), pinned: el("filter-pinned"), learned: el("filter-learned"), attention: el("filter-attention") }, (name) => { filter = name; openId = null; renderRows(); });
   el("dict-search").addEventListener("input", (event) => { query = event.target.value; renderRows(); });
@@ -286,7 +271,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("pin-all-label").textContent = model ? `Pin all learned for ${shortName(model)}` : "Pin all learned";
     el("pin-all-count").textContent = learned ? plural(learned, "entry", "entries") : "";
     el("learn-source").textContent = !model ? "Choose a speech model first."
-      : `Reads your newest transcripts not yet used by suggestions you applied, and suggests ${mode() === "generate" ? "entries for the words your speech model gets wrong" : "fixes and missing entries"}.`;
+      : "Reads your newest transcripts not yet used by suggestions you applied, finds the words your speech model gets wrong, and improves the entries those transcripts show.";
     if (proposalModel) proposalTitle();
     renderRows();
     fillModels();
@@ -1083,8 +1068,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("suggest-setup").hidden = now !== "setup" || audio;
     el("suggest-audio").hidden = now !== "setup" || !audio;
     if (audio) el("audio-intro").textContent = audioIntro(setupSource);
-    // The settings stay open after a stop or failure: Continue can use smaller parts or
-    // faster replies. The speech model is only chosen before a run.
+    // The settings stay open after a stop or failure: Continue can use another reasoning
+    // effort. The speech model is only chosen before a run.
     const resumable = now === "halted" || (now === "review" && ["failed", "stopped"].includes(state.outcome));
     el("suggest-shared").hidden = now !== "setup" && !resumable;
     el("speech-field").hidden = now !== "setup";
@@ -1265,7 +1250,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     if (!proposalChanges.length) proposalBody.append(node("p", "No changes suggested. Finish to close this review; the same dictations can be used again later.", "caption"));
   }
   const scope = () => reuse.checked ? "all" : "new";
-  el("build-dictionary").addEventListener("click", () => builds.start("history", {mode: mode(), scope: scope(), ...runSettings()}));
+  el("build-dictionary").addEventListener("click", () => builds.start("history", {scope: scope(), ...runSettings()}));
 
   return { load: loadDictionary, refreshAudio: () => onboarding.load(), refreshModels: fillModels };
 }

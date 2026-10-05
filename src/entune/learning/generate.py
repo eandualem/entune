@@ -1,7 +1,8 @@
 """Propose a speech model's dictionary, one bounded batch at a time.
 
-It reads one speech model's recent raw transcripts and proposes confusion groups for that
-model, with explicit form-to-meaning associations and textual provenance. Pinned
+Each part shows the model its dictations and the entries that occur in them, compactly
+(learning/view.py). The model finds the confusions not covered yet, improves or removes
+the entries shown, and the reply is validated against the stored dictionary. Pinned
 knowledge is shared and protected; it does not take priority over competing meanings.
 """
 
@@ -13,19 +14,10 @@ from collections.abc import Callable, Sequence
 
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary.entries import Dictionary, Groups
-from entune.learning.batches import (
-    Batch,
-    build_user_prompt,
-    learning_batches,
-    system_prompt,
-)
-from entune.learning.inputs import LearningText, Mode
-from entune.learning.replies import (
-    GenerationReply,
-    RefinementReply,
-    parse_generation,
-    parse_refinement,
-)
+from entune.learning import view
+from entune.learning.batches import Batch, learning_batches, system_prompt, user_prompt
+from entune.learning.inputs import LearningText
+from entune.learning.replies import Reply, parse_reply
 from entune.learning.suggestion_model import (
     MAX_FIXES,
     BrokenReply,
@@ -74,10 +66,7 @@ def _service_problem(detail: str) -> str:
     return "the suggestion model's service returned an error."
 
 
-SMALLER = (
-    " Choose smaller parts or faster replies, or less audio, then continue;"
-    " finished parts are kept."
-)
+SMALLER = " Choose a lower reasoning effort or less audio, then continue; finished parts are kept."
 
 
 async def propose_part(
@@ -91,8 +80,7 @@ async def propose_part(
     label: str,
     call: Caller = call_model,
     *,
-    mode: Mode,
-    effort: str = "medium",
+    effort: str = "high",
     started: Callable[[int], None] | None = None,
     retrying: Callable[[int, str], None] | None = None,
     retrying_part: Callable[[int, str, float], None] | None = None,
@@ -104,23 +92,23 @@ async def propose_part(
     broke a rule; `retrying_part` hears (attempt, why the last one failed, its seconds)
     first, and `started` the request's size before every attempt. A reply that ran past
     its time limit or reached the output limit is not tried again: the person is told to
-    choose smaller parts or faster replies. Raises StepFailed carrying the provider's or
-    the model's own words."""
-    user_prompt = build_user_prompt(mode, current, step.snippets, speech_model, proposed)
-    system = system_prompt(mode)
+    choose a lower reasoning effort or less audio. Raises StepFailed carrying the
+    provider's or the model's own words."""
+    shown = view.build(proposed, current.pinned, step.snippets)
+    request_text = user_prompt(speech_model, shown)
+    system = system_prompt()
     texts = [s.text for s in step.snippets]
-    parse = parse_generation if mode == "generate" else parse_refinement
 
     def check(reply: str) -> Groups:
-        return parse(reply, proposed, transcripts=texts, pinned=current.pinned)
+        return parse_reply(reply, shown, proposed, transcripts=texts, pinned=current.pinned)
 
     request = Request(
         provider,
         api_key,
         model,
         system,
-        user_prompt,
-        GenerationReply if mode == "generate" else RefinementReply,
+        request_text,
+        Reply,
         check,
         retrying or (lambda attempt, problem: None),
         effort,
@@ -130,7 +118,7 @@ async def propose_part(
     while True:
         await asyncio.sleep(0)  # cancellation between attempts even for immediate callers
         if started:
-            started(len(system) + len(user_prompt))
+            started(len(system) + len(request_text))
         if failed and retrying_part:
             retrying_part(attempt, *failed)
         named = label if attempt == 1 else f"{label}, attempt {attempt} of {PART_ATTEMPTS}"
@@ -188,16 +176,14 @@ async def propose_learned(
     speech_model: str,
     call: Caller = call_model,
     *,
-    mode: Mode,
-    effort: str = "medium",
-    part_chars: int | None = None,
+    effort: str = "high",
     progress: Callable[[int, int, int], None] | None = None,
     retrying: Callable[[int, str], None] | None = None,
     retrying_part: Callable[[int, int, str, float], None] | None = None,
     inputs: Sequence[LearningText] | None = None,
     checkpoint: Callable[[Groups, int, int, tuple[str, ...]], None] | None = None,
 ) -> Groups:
-    """Propose `speech_model`'s dictionary in the chosen mode, one part after another.
+    """Propose `speech_model`'s dictionary, one part after another.
 
     Each part sees the working dictionary after the earlier parts' changes; see
     `propose_part`. The checkpoint hears every validated part."""
@@ -207,7 +193,6 @@ async def propose_learned(
         inputs
         if inputs is not None
         else [LearningText(str(i), text) for i, text in enumerate(transcripts)],
-        part_chars,
     )
     for number, step in enumerate(steps, 1):
 
@@ -229,7 +214,6 @@ async def propose_learned(
             speech_model,
             f"Part {number} of {len(steps)}",
             call,
-            mode=mode,
             effort=effort,
             started=started,
             retrying=retrying,

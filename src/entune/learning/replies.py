@@ -7,19 +7,21 @@ import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
 from entune.dictionary import entries as dictionary_entries
 from entune.dictionary.entries import Dictionary, Groups, key
+from entune.learning import view
 from entune.learning.batches import sources
 
-# The reply's shape, which the provider enforces where it can. Every field is required
-# and the associations form a plain union, so OpenAI accepts the schema as strict.
-# The rules a schema cannot express stay in the parsers below.
+# The reply's shape, the compact form the model sees the dictionary in (learning/view.py):
+# labels instead of IDs, and only what the model decides. Every field is required, so a
+# provider can enforce it as a strict schema. The rules a schema cannot express stay in
+# the parser below.
 
 
 class _Shape(BaseModel):
@@ -27,58 +29,43 @@ class _Shape(BaseModel):
 
 
 class _Evidence(_Shape):
-    source: str
+    dictation: str
     start: int
     end: int
 
 
-class TextLink(_Shape):
-    meaning_id: str
-    basis: Literal["text"]
+class _Link(_Shape):
+    meaning: str  # a meaning's label: e1a for one shown, n1 for a new one
+    basis: Literal["text", "literal", "existing"]
     evidence: list[_Evidence]
 
 
-class LiteralLink(_Shape):
-    meaning_id: str
-    basis: Literal["literal"]
-    evidence: Annotated[list[_Evidence], Field(max_length=0)]  # the spelling is the form
-
-
-class UserLink(_Shape):
-    meaning_id: str
-    basis: Literal["user"]
-    evidence: list[_Evidence]
-
-
-class _Form(_Shape):
+class _Heard(_Shape):
     text: str
-    associations: list[TextLink | LiteralLink | UserLink]
-    direct: str | None
-    direct_reason: str
+    links: list[_Link]
 
 
 class _Meaning(_Shape):
     id: str
     spelling: str
     meaning: str
-    personal_context: str | None
     casing: Literal["fixed", "ordinary"]
 
 
-class _Group(_Shape):
+class _Addition(_Shape):
+    meanings: list[_Meaning]
+    heard: list[_Heard]
+
+
+class _Revision(_Shape):
     id: str
     meanings: list[_Meaning]
-    recognized_forms: list[_Form]
-    needs_review: bool
+    heard: list[_Heard]
 
 
-class GenerationReply(_Shape):
-    additions: list[_Group]
-
-
-class RefinementReply(_Shape):
-    additions: list[_Group]
-    revisions: list[_Group]
+class Reply(_Shape):
+    additions: list[_Addition]
+    revisions: list[_Revision]
     removals: list[str]
 
 
@@ -96,49 +83,25 @@ def _reply(content: str, fields: set[str]) -> dict[str, Any]:
     return data
 
 
-def parse_generation(
-    content: str, proposed: Groups = (), *, transcripts: Sequence[str] = (), pinned: Groups = ()
+def parse_reply(
+    content: str,
+    shown: view.View,
+    proposed: Groups = (),
+    *,
+    transcripts: Sequence[str] = (),
+    pinned: Groups = (),
 ) -> Groups:
-    """Generation only adds: new groups, which may link forms to existing meanings."""
-    data = _reply(content, {"additions"})
-    additions = dictionary_document.parse_groups(data["additions"], "additions")
-    existing = {g.id for g in (*pinned, *proposed)}
-    meanings = {m.id for g in (*pinned, *proposed) for m in g.meanings}
-    if any(g.id in existing for g in additions):
-        raise ValueError("Generation adds new groups only; it cannot revise existing ones")
-    if any(m.id in meanings for g in additions for m in g.meanings):
-        raise ValueError(
-            "Generation cannot redefine an existing meaning; link a form to its ID instead"
-        )
-    return _apply(proposed, additions, [], transcripts, pinned)
-
-
-def parse_refinement(
-    content: str, proposed: Groups = (), *, transcripts: Sequence[str] = (), pinned: Groups = ()
-) -> Groups:
-    """Explicit additions, complete revisions of named groups, and learned-group removals."""
-    data = _reply(content, {"additions", "revisions", "removals"})
-    additions = dictionary_document.parse_groups(data["additions"], "additions")
-    revisions = dictionary_document.parse_groups(data["revisions"], "revisions")
-    existing = {g.id for g in (*pinned, *proposed)}
-    if any(g.id in existing for g in additions):
-        raise ValueError("An addition needs a new_ group ID; revise existing groups instead")
-    if unknown := [g.id for g in revisions if g.id not in existing]:
-        raise ValueError(f"Revisions must name existing groups: {', '.join(unknown)}")
-    removals = data["removals"]
-    if not isinstance(removals, list) or not all(isinstance(v, str) for v in removals):
-        raise ValueError("removals must list group IDs")
+    """New entries, complete revisions of shown entries, and removals of shown learned
+    entries, mapped back onto the stored dictionary and validated."""
+    data = Reply.model_validate(
+        _reply(content, {"additions", "revisions", "removals"})
+    ).model_dump()
+    additions, revisions, removals = view.groups(data, shown, (*pinned, *proposed))
     protected = {m.id for g in pinned for m in g.meanings}
     for identity in removals:
         group = next((g for g in proposed if g.id == identity), None)
-        if group is None:
-            raise ValueError(f"removals must name existing learned groups: {identity}")
-        if any(m.id in protected for m in group.meanings):
-            raise ValueError("Pinned groups cannot be removed")
-    if len({g.id for g in (*additions, *revisions)} | set(removals)) != len(additions) + len(
-        revisions
-    ) + len(removals):
-        raise ValueError("Name each group once across additions, revisions and removals")
+        if group is None or any(m.id in protected for m in group.meanings):
+            raise ValueError("Pinned entries cannot be removed")
     return _apply(proposed, (*additions, *revisions), removals, transcripts, pinned)
 
 

@@ -15,13 +15,13 @@ export function duration(seconds) {
 // speech model's measured wait per minute of audio, several recordings at a time for a
 // cloud model. Suggestions are counted in parts: about 37,000 characters of transcript per
 // hour of speech (452,400 characters in a 12.3-hour dictation sample), divided by
-// the part size, at the seconds per part measured for this model and these settings. The
-// one reference without a measurement: GPT-6.1 Sol, thorough, standard parts, took 135
-// minutes for 20 parts (docs/models.md). Both steps run side by side.
+// the part size, at the seconds per part measured for this model and this effort. The
+// one reference without a measurement: GPT-6.1 Sol at medium effort took 135 minutes for
+// 20 parts (docs/models.md). Both steps run side by side.
 const CHARS_PER_HOUR = 37_000;
 const SOL_SECONDS_PER_PART = 405;
-export const PART_CHARS = { small: 8_000, standard: 24_000 };
-export function workEstimate({ durations, unknown, speech, local, timing, dictionaryModel, effort, part }) {
+export const PART_CHARS = 24_000;
+export function workEstimate({ durations, unknown, speech, local, timing, dictionaryModel, effort }) {
   if (unknown) return "Some recordings have no known length, so there is no time estimate.";
   const seconds = durations.reduce((sum, d) => sum + d, 0);
   if (!(seconds > 0)) return "";
@@ -32,9 +32,9 @@ export function workEstimate({ durations, unknown, speech, local, timing, dictio
   const wall = Math.max(seconds / workers, ...durations);
   const transcribe = rate ? `about ${duration((wall / 60) * rate)}${workers > 1 ? `, ${workers} recordings at a time` : ""}`
     : "not measured yet for this speech model";
-  const parts = Math.max(1, Math.ceil((seconds / 3600) * CHARS_PER_HOUR / PART_CHARS[part]));
-  const measured = timing?.suggestion?.[`${dictionaryModel}|${effort}|${PART_CHARS[part]}`];
-  const sol = !measured && /:gpt-6\.1-sol$/.test(dictionaryModel ?? "") && effort === "medium" && part === "standard";
+  const parts = Math.max(1, Math.ceil((seconds / 3600) * CHARS_PER_HOUR / PART_CHARS));
+  const measured = timing?.suggestion?.[`${dictionaryModel}|${effort}`];
+  const sol = !measured && /:gpt-6\.1-sol$/.test(dictionaryModel ?? "") && effort === "medium";
   const per = measured?.secondsPerPart ?? (sol ? SOL_SECONDS_PER_PART : null);
   const each = per ? `, about ${duration(per)} each${sol ? " (measured once)" : ""}, about ${duration(parts * per)} in all`
     : "; not timed yet with these settings";
@@ -130,10 +130,10 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     if (el("audio-detail").open) drawList(chosen);
     const speech = getModel();
     const language = getDictionaryModelName();
-    const { effort, part } = getRunSettings();
+    const { effort } = getRunSettings();
     el("audio-generation-estimate").textContent = workEstimate({
       durations: chosen.map((item) => item.seconds ?? 0), unknown, speech: speech?.id, local: (timing?.local ?? []).includes(speech?.id.split("/")[0]),
-      timing, dictionaryModel: getSettings()?.dictionaryModel, effort, part,
+      timing, dictionaryModel: getSettings()?.dictionaryModel, effort,
     });
     // The footer speaks only when something stops the start.
     el("audio-models").textContent = !speech ? "Choose a speech model first."

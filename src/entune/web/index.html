@@ -229,19 +229,16 @@
                 <p>In “Ask cloud to draft the reply”, Entune writes <b>Claude</b>. In “The backups are in the cloud”, it leaves <b>cloud</b> alone. It chooses from the surrounding words, which is why each meaning has a short description: write what the thing is and what it goes with.</p>
                 <p>One entry can list several spellings the model writes (“cloud”, “clawed”) and several meanings. Each heard spelling is linked to the meanings it can stand for.</p>
                 <h3 id="guide-suggestions">Getting suggestions</h3>
-                <p>Entune can build the dictionary for you. A suggestion model, the language model you choose with its key in Settings, reads what your speech model wrote and suggests entries for the words it gets wrong. With entries already in place, it also suggests clearer descriptions, wider or narrower entries, and removals.</p>
+                <p>Entune can build the dictionary for you. A suggestion model, the language model you choose with its key in Settings, reads what your speech model wrote and suggests entries for the words it gets wrong. For the entries those transcripts show, it also suggests clearer meanings, more heard spellings, and removals.</p>
                 <p><b>Get suggestions</b> is the simple path: it reads up to 300 of your speech model's newest transcripts not yet used by suggestions you applied; a run you discard or stop uses none. <b>Include transcripts already used</b> reads them again, which costs tokens again and can repeat earlier suggestions.</p>
                 <h3 id="guide-audio">Learning from audio</h3>
                 <p>The <b>⋯</b> menu learns from audio instead: Entune recordings made with other speech models, another dictation app's recordings on this Mac (only the audio is copied, never its transcripts), or a folder of WAV, MP3, M4A, FLAC, OGG or WebM files. Entune first <b>transcribes</b> that audio with your speech model, then the suggestion model reads the new text, so this path takes longer and providers may charge for both steps.</p>
                 <p>The timeline shows the source's recorded time, oldest on the left. Drag the handles to choose how much to use; each edge snaps to whole recordings, and the dates show where you are. Starting with your most recent hour or two gives quick results.</p>
                 <h3>Time and settings</h3>
                 <p>Text goes to the suggestion model in parts, one after another, because each part builds on the entries found so far. With audio, parts start as soon as enough is transcribed, while the rest is still transcribing. Cloud speech models transcribe several recordings at a time; a local model takes one at a time.</p>
-                <ul>
-                  <li><b>Replies</b>: Faster reasons less and answers sooner; Thorough reasons more and takes longer.</li>
-                  <li><b>Part size</b>: Smaller sends about 8,000 characters per request, so more requests that each finish sooner; Standard sends about 24,000.</li>
-                </ul>
-                <p>The estimate uses what Entune has measured: your speech model's transcription times, and the time per part of earlier runs with the same suggestion model and settings. A combination not used before says so.</p>
-                <p>Sometimes a reply starts and then sends only blank space. Entune stops it within a minute or two and tries that part again, three attempts in all. A ChatGPT plan also ends any single reply at about 15 minutes. If a part fails all its attempts, or runs past a time or length limit, Entune stops and keeps the finished parts. Choose Faster replies or Smaller parts, or less audio, and press <b>Continue</b>: it picks up where it stopped. Transcripts made so far are kept for Continue while Entune stays open.</p>
+                <p><b>Reasoning effort</b> is the level the suggestion model's provider names, from minimal to xhigh. Higher effort reasons longer and usually finds more; high is the default. A provider without a level maps it to one it has.</p>
+                <p>The estimate uses what Entune has measured: your speech model's transcription times, and the time per part of earlier runs with the same suggestion model and effort. A combination not used before says so.</p>
+                <p>Sometimes a reply starts and then sends only blank space. Entune stops it within a minute or two and tries that part again, three attempts in all. A ChatGPT plan also ends any single reply at about 15 minutes. If a part fails all its attempts, or runs past a time or length limit, Entune stops and keeps the finished parts. Choose a lower reasoning effort, or less audio, and press <b>Continue</b>: it picks up where it stopped. Transcripts made so far are kept for Continue while Entune stays open.</p>
                 <h3>Reviewing suggestions</h3>
                 <p>Suggestions open in a panel beside your dictionary, grouped into new entries, changes and removals. Edit any of them, leave out the ones you don't want with ×, and apply the rest in one step. Nothing is saved until you apply. Dictation keeps working the whole time; only editing the dictionary waits until you apply or discard.</p>
                 <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model chosen when the run starts.</p>
@@ -312,8 +309,7 @@
                   <div class="run-settings">
                     <label class="run-field" id="speech-field">Speech model <select class="select" id="suggest-speech"></select></label>
                     <label class="run-field">Suggestion model <select class="select" id="dictionary-model" aria-describedby="dictionary-model-note"></select></label>
-                    <label class="run-field">Replies <select class="select" id="suggest-effort"><option value="low">Faster</option><option value="medium">Thorough</option></select></label>
-                    <label class="run-field">Part size <select class="select" id="suggest-part"><option value="small">Smaller</option><option value="standard">Standard</option></select></label>
+                    <label class="run-field">Reasoning effort <select class="select" id="suggest-effort"><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option></select></label>
                   </div>
                   <p class="caption" id="run-effect"></p>
                   <p class="estimate" id="audio-generation-estimate" role="status"></p>

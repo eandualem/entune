@@ -25,7 +25,7 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
     cancel.disabled = state.phase === "cancelling";
     progress.classList.toggle("err", state.phase === "failed");
     const kept = (n = 0) => `${n} temporary transcript${n === 1 ? "" : "s"}`;
-    const task = state.mode === "refine" ? "Checking your entries" : "Looking for new entries";
+    const task = "Looking for entries";
     const from = state.source === "audio" ? "audio" : "history";
     // A part takes as long as the model takes; say which part runs, how many are done
     // and how long this one has run, never a percentage.

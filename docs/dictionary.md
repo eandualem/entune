@@ -246,35 +246,44 @@ classification quality. Paid evaluation needs separate authorization.
 
 ## Generation, editing and migration
 
-Learning runs in one of two explicit modes, chosen by the button that starts it, never
-inferred from whether a dictionary exists. **Generate** sends raw transcripts and the
-current dictionary, and accepts additions only: new groups, which may link a new form to
-an existing meaning by ID. **Refine** sends the current effective dictionary and, for
-each dictation, the raw transcript beside the text right after the dictionary step and
-that step's per-span decisions (method and meaning IDs). The pair is rebuilt from the
-step's recorded edits; it exists only when the step ran and recorded them. Failed or
-disabled steps, older attempts without recorded edits, `legacy_final` history and
-temporary audio transcripts are labelled and sent raw-only. Filler reduction, formatting
-and delivered text are never sent. A decision naming a meaning that is no longer in the
-dictionary is marked as such. Machine corrections are evidence of what the system did,
-not ground truth. Refinement accepts additions, complete revisions of named groups and
-removals of learned groups, each group named once.
+Every run does one job with one prompt: find the confusions the dictionary does not
+cover yet, which is the main job, and improve or remove the entries the dictations show.
+Each part sends its dictations and only the entries that occur in them: an entry whose
+spelling or heard form appears in a dictation, pinned or learned. Entries are compact:
+a short label (`e1`, meanings `e1a`), each meaning's spelling and a short meaning, the
+heard forms with the meanings they link to, and `pinned` when the person's own. Stored
+IDs, evidence, approvals, casing and personal context stay in the app. Dictations carry a
+label (`d1`) and their raw text and, when the dictionary step ran and changed something,
+the text right after it and its per-span decisions (heard, written, method, meanings).
+Older attempts without recorded edits, failed or disabled steps and temporary audio
+transcripts send their text only; `legacy_final` history is marked as final text.
+Filler reduction, formatting and delivered text are never sent. Machine corrections are
+evidence of what the system did, not ground truth.
+
+The reply uses the same labels: additions, complete revisions of shown entries and
+removals of shown learned entries, each entry named once. Links say their basis:
+`text` with evidence (dictation label and character span), `literal`, or `existing`
+for a link the entry already had, whose stored evidence is restored. A new meaning is a
+short phrase of at most 120 characters. A new name spelled exactly like a stored one
+(fixed casing) is that meaning, so an addition that only adds heard forms to it joins
+the entry where it is defined.
 
 Default learning uses up to 300 recent, not-yet-covered attempts for this speech model;
-explicit All history includes older data. Generation and refinement share that coverage:
-applying either consumes the inputs it fully covered. Audio learning uses selected saved/imported recordings,
+explicit All history includes older data. Applying a run consumes the inputs it fully
+covered. Audio learning uses selected saved/imported recordings,
 of any age. Temporary target-model transcripts stay in memory and are reused on retry;
 they never enter the database or ordinary history. Applying, discarding, replacing the
 workflow or closing the app clears them, while source audio remains. The generation
-provider receives the selected inputs, pinned knowledge and this model's working groups.
+provider receives the selected inputs and the pinned and working entries that occur in
+them.
 The configured model is honored, including a custom model ID. The
 [model guide](models.md#dictionary-generation) gives our current recommendation;
-the built-in suggested list can contain older models. Medium reasoning (Thorough) or
-low (Faster) is requested where supported, as chosen in the setup. No generation or classification model rewrites dictation.
+the built-in suggested list can contain older models. The reasoning effort chosen in the
+setup (minimal, low, medium, high or xhigh; high by default) is requested by that name. No generation or classification model rewrites dictation.
 
-Sequential steps contain about 24,000 transcript characters, or about 8,000 with Smaller
-parts; the full growing dictionary adds to that request size. Each step holds whole
-transcripts that no finished step has covered, so a resumed run can use another size. A long transcript split across steps carries only its own
+Sequential steps contain about 24,000 transcript characters; the entries that occur in
+them add to that request size, however large the dictionary grows. Each step holds whole
+transcripts that no finished step has covered. A long transcript split across steps carries only its own
 span of the dictionary result. Step numbers stay in the app for progress and resume. Each
 reply may use up to 32,000 output tokens, including the model's thinking; a reply cut at
 that limit fails its step visibly. On a ChatGPT subscription the plan's own limit applies

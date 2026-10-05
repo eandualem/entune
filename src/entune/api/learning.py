@@ -17,7 +17,7 @@ from entune.app.dictionary_file import DictionaryChanged
 from entune.app.entune import Entune
 from entune.app.metrics import model_metrics
 from entune.app.operations import Busy
-from entune.app.suggestion_runs import TRANSCRIBE_WORKERS, JobConflict
+from entune.app.suggestion_runs import DEFAULT_EFFORT, TRANSCRIBE_WORKERS, JobConflict
 from entune.audio.formats import extension_for, safe_mime
 from entune.providers.local.contracts import Downloadable
 
@@ -36,12 +36,10 @@ def routes(app: Entune) -> list[Route]:
             body = await request.json()
             if (
                 not isinstance(body, dict)
-                or set(body) - {"source", "mode", "scope", "audio_ids", "effort", "part"}
+                or set(body) - {"source", "scope", "audio_ids", "effort"}
                 or body.get("source") not in ("history", "audio")
             ):
                 raise ValueError("Choose source history or audio")
-            if body.get("mode") not in ("generate", "refine"):
-                raise ValueError("Choose mode generate or refine")
             ids = body.get("audio_ids")
             if ids is not None and (
                 not isinstance(ids, list) or not all(isinstance(i, str) for i in ids)
@@ -50,11 +48,9 @@ def routes(app: Entune) -> list[Route]:
             state = await run_in_threadpool(
                 app.learning.start_dictionary_build,
                 body["source"],
-                mode=body["mode"],
                 scope=body.get("scope", "new"),
                 audio_ids=ids,
-                effort=body.get("effort", "medium"),
-                part=body.get("part", "standard"),
+                effort=body.get("effort", DEFAULT_EFFORT),
             )
         except (JobConflict, Busy) as exc:
             return bad(str(exc), 409)
@@ -83,15 +79,14 @@ def routes(app: Entune) -> list[Route]:
                     body.get("selected"),
                 )
             elif action == "retry":
-                # Continue with smaller parts or faster replies, when the person chose so.
+                # Continue with another reasoning effort, when the person chose one.
                 body = await request.json() if await request.body() else {}
-                if not isinstance(body, dict) or set(body) - {"effort", "part"}:
-                    raise ValueError("Retry takes effort and part only")
+                if not isinstance(body, dict) or set(body) - {"effort"}:
+                    raise ValueError("Retry takes effort only")
                 await run_in_threadpool(
                     app.learning.retry_dictionary_build,
                     request.path_params["job_id"],
                     body.get("effort"),
-                    body.get("part"),
                 )
             else:
                 await run_in_threadpool(methods[action], request.path_params["job_id"])
