@@ -170,3 +170,32 @@ def layout_titlebar(window: Any, height: float) -> None:
             _active.failure("Title-bar layout")
         else:
             logging.getLogger(__name__).exception("Cocoa title-bar layout failed")
+
+
+def make_vibrant(uid: str) -> None:
+    """The sidebar material macOS uses in Finder and System Settings, behind the page:
+    pywebview adds the effect view under its web view (attached to the window only after
+    the first load); the page lets it through where a Mac window does."""
+    try:
+        instance = BrowserView.instances.get(uid)
+        if instance is None:
+            raise RuntimeError("Native window not found.")
+        page = instance.webview
+        for view in page.subviews():
+            if isinstance(view, AppKit.NSVisualEffectView):
+                view.setMaterial_(AppKit.NSVisualEffectMaterialSidebar)
+                view.setState_(AppKit.NSVisualEffectStateFollowsWindowActiveState)
+        page.setValue_forKey_(False, "drawsBackground")  # the page paints its own grounds
+    except Exception:
+        if _active is not None:
+            _active.failure("Window material")
+        else:
+            logging.getLogger(__name__).exception("Cocoa window material failed")
+
+
+def set_appearance(theme: str) -> None:
+    """Entune's theme for the whole app, so the window's material and the recording pill
+    match the page: light or dark, or the system's when the theme follows the system."""
+    names = {"light": AppKit.NSAppearanceNameAqua, "dark": AppKit.NSAppearanceNameDarkAqua}
+    name = names.get(theme)
+    AppKit.NSApp.setAppearance_(AppKit.NSAppearance.appearanceNamed_(name) if name else None)

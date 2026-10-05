@@ -18,7 +18,7 @@ from entune.audio.formats import wav_bytes
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import entries as dictionary_entries
 from entune.dictionary.entries import Dictionary
-from entune.learning import batches, suggestion_model
+from entune.learning import batches, suggestion_model, view
 from entune.learning import inputs as learning_inputs
 from entune.learning.suggestion_model import Request
 from entune.providers.contracts import Clip, Failure, Transcript
@@ -93,31 +93,48 @@ def test_apply_consumes_only_examined_model_inputs_and_new_review_data_stays_eli
         first = source(store, "cloud code")
         other = source(store, "other engine", "bad")
         app, client = setup(store, call)
-        assert (
-            client.post(
-                "/api/dictionary/build", json={"mode": "generate", "source": "history"}
-            ).status_code
-            == 202
-        )
+        assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 202
         job = wait_for_build(client)
         newer = source(store, "made during review")
         current = client.get("/api/dictionary").json()
         assert client.put("/api/dictionary", json=current).status_code == 409
-        assert (
-            client.post("/api/recordings", files={"audio": ("c", WEBM_HEADER)}).status_code == 409
-        )
-        assert (
-            client.post("/api/recordings/1/transcriptions", json={"model": "stub/good"}).status_code
-            == 409
-        )
+        # Dictation and retries go on while suggestions wait for review, and what they
+        # transcribe stays eligible for a later run.
+        dictated = client.post("/api/recordings", files={"audio": ("c", WEBM_HEADER)})
+        retried = client.post("/api/recordings/1/transcriptions", json={"model": "stub/good"})
+        assert dictated.status_code == retried.status_code == 200
+        during = {
+            str(dictated.json()["transcriptions"][0]["id"]),
+            str(retried.json()["transcriptions"][0]["id"]),
+        }
         assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200
-        assert [i.id for i in store.learning_inputs("stub", "good")] == [str(newer)]
+        assert {i.id for i in store.learning_inputs("stub", "good")} == {str(newer), *during}
         assert [i.id for i in store.learning_inputs("stub", "bad")] == [str(other)]
         assert {i.id for i in store.learning_inputs("stub", "good", scope="all")} == {
             str(first),
             str(newer),
+            *during,
         }
         assert store.learning_history("stub/good")[0]["outcome"] == "applied"
+        # The reuse timeline lists every transcript of the default model, used ones marked,
+        # and a run on chosen ones reads only those.
+        listed = client.get("/api/dictionary/history").json()
+        assert listed["model"] == "stub/good"
+        used = {i["id"]: i["used"] for i in listed["items"]}
+        assert used[str(first)] and not used[str(newer)]
+        assert [
+            i.id for i in store.learning_inputs("stub", "good", scope="all", ids=[str(first)])
+        ] == [str(first)]
+        refused = client.post(
+            "/api/dictionary/build",
+            json={"source": "history", "scope": "new", "transcript_ids": [str(first)]},
+        )
+        assert refused.status_code == 400
+        gone = client.post(
+            "/api/dictionary/build",
+            json={"source": "history", "scope": "all", "transcript_ids": [str(first), "999"]},
+        )
+        assert gone.status_code == 400 and "no longer available" in gone.text
         assert (
             client.put("/api/dictionary", json=client.get("/api/dictionary").json()).status_code
             == 200
@@ -133,7 +150,7 @@ def test_dismissing_every_proposal_leaves_file_and_input_boundary_unchanged(tmp_
         first = source(store, "cloud code")
         app, client = setup(store, call)
         old = client.get("/api/dictionary")
-        client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
+        client.post("/api/dictionary/build", json={"source": "history"})
         job = wait_for_build(client)
         response = client.post(f"/api/dictionary/build/{job['id']}/accept", json={"selected": []})
         assert response.status_code == 200 and response.json()["applied"] is False
@@ -159,7 +176,7 @@ def test_partial_generation_keeps_validated_proposal_and_only_fully_covered_inpu
         if calls == 1:
             return json.dumps(proposed("cloud code"))
         if calls == 2:
-            return '{"additions": []}'
+            return '{"additions": [], "revisions": [], "removals": []}'
         if stop:
             later.set()
             await asyncio.sleep(30)
@@ -170,9 +187,7 @@ def test_partial_generation_keeps_validated_proposal_and_only_fully_covered_inpu
         split = source(store, "long input spans several batches")
         full = source(store, "cloud code")
         app, client = setup(store, call)
-        initial = client.post(
-            "/api/dictionary/build", json={"mode": "generate", "source": "history"}
-        ).json()
+        initial = client.post("/api/dictionary/build", json={"source": "history"}).json()
         if stop:
             assert later.wait(2)
             client.post(f"/api/dictionary/build/{initial['id']}/cancel")
@@ -181,7 +196,9 @@ def test_partial_generation_keeps_validated_proposal_and_only_fully_covered_inpu
         assert job["completedBatches"] == 2 and job["steps"] > 2
         assert job["coveredInputs"] == 1 and job["total"] == 2
         assert len(job["proposal"]["changes"]) == 1
-        assert app.operations.status()["stage"] == "review"  # type: ignore[index]
+        assert app.operations.learning is not None
+        assert app.operations.learning.stage == "review"
+        assert app.operations.status() is None  # dictation is free meanwhile
         assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200
         assert [i.id for i in store.learning_inputs("stub", "good")] == [str(split)]
         assert str(full) in store.learning_history("stub/good")[0]["details"]["coveredInputIds"]  # type: ignore[index]
@@ -210,7 +227,7 @@ def test_a_recording_that_will_not_transcribe_is_skipped_and_the_rest_are_used(
                 "/api/dictionary/audio",
                 files={"audio": (f"{i}.wav", wav_bytes(bytes([i, 0]) * 16))},
             )
-        client.post("/api/dictionary/build", json={"mode": "generate", "source": "audio"})
+        client.post("/api/dictionary/build", json={"source": "audio"})
         ready = wait_for_build(client)
         assert ready["phase"] == "ready" and ready["skipped"] == 1, ready
         assert calls.count(bad) == 2  # tried once more, then skipped
@@ -237,7 +254,7 @@ def test_a_recording_recovered_on_retry_is_not_left_out_of_generation(
         attempts["generation"] += 1
         if attempts["generation"] == 2:
             raise ValueError("generation stopped")  # after the first part finished
-        return '{"additions": []}'
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     with closing(Store(tmp_path)) as store:
         app, client = setup(store, call)
@@ -247,9 +264,7 @@ def test_a_recording_recovered_on_retry_is_not_left_out_of_generation(
                 "/api/dictionary/audio",
                 files={"audio": (f"{i}.wav", wav_bytes(bytes([i, 0]) * 16))},
             )
-        job = client.post(
-            "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
-        ).json()
+        job = client.post("/api/dictionary/build", json={"source": "audio"}).json()
         partial = wait_for_build(client)  # the finished part stays reviewable
         assert partial["outcome"] == "failed" and partial["completedBatches"] == 1, partial
         assert client.post(f"/api/dictionary/build/{job['id']}/retry").status_code == 200
@@ -286,9 +301,7 @@ def test_retry_audio_reuses_successes_and_generation_checkpoint_without_persisti
                 "/api/dictionary/audio",
                 files={"audio": (f"{i}.wav", wav_bytes(bytes([i, 0]) * 16))},
             )
-        job = client.post(
-            "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
-        ).json()
+        job = client.post("/api/dictionary/build", json={"source": "audio"}).json()
         # The clip that failed is tried once more at once; generation then fails.
         failed = wait_for_build(client)
         assert failed["phase"] == "failed" and failed["cachedTranscripts"] == 2
@@ -310,7 +323,7 @@ def test_old_saved_recordings_are_selectable_with_duration_and_never_gain_learni
     tmp_path: Path,
 ) -> None:
     async def call(_: Request) -> str:
-        return '{"additions": []}'
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     with closing(Store(tmp_path)) as store:
         r = store.create_recording(wav_bytes(b"\0\0" * 16000))
@@ -326,7 +339,7 @@ def test_old_saved_recordings_are_selectable_with_duration_and_never_gain_learni
         assert (
             client.post(
                 "/api/dictionary/build",
-                json={"mode": "generate", "source": "audio", "audio_ids": [item["id"]]},
+                json={"source": "audio", "audio_ids": [item["id"]]},
             ).status_code
             == 202
         )
@@ -338,7 +351,7 @@ def test_old_saved_recordings_are_selectable_with_duration_and_never_gain_learni
         app.close()
 
 
-def test_learning_is_rejected_while_speech_is_running(
+def test_learning_starts_while_speech_is_running(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     entered, release = threading.Event(), threading.Event()
@@ -349,19 +362,19 @@ def test_learning_is_rejected_while_speech_is_running(
         return Transcript("cloud code")
 
     async def call(_: Request) -> str:
-        pytest.fail("Busy learning must not call generation")
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     with closing(Store(tmp_path)) as store:
+        source(store, "cloud code")
         app, client = setup(store, call)
         monkeypatch.setattr(app.providers[0], "transcribe", speech)
         with ThreadPoolExecutor(1) as pool:
             future = pool.submit(app.dictation.record_and_transcribe, WEBM_HEADER, None, None)
             try:
                 assert entered.wait(1)
-                result = client.post(
-                    "/api/dictionary/build", json={"mode": "generate", "source": "history"}
-                )
-                assert result.status_code == 409 and "current dictation" in result.text
+                result = client.post("/api/dictionary/build", json={"source": "history"})
+                assert result.status_code == 202
+                assert wait_for_build(client)["outcome"] == "complete"
             finally:
                 release.set()
             assert future.result().transcriptions[0].status == "ok"
@@ -380,14 +393,16 @@ def test_retry_resumes_completed_generation_batches_with_accumulated_groups(
             return json.dumps(proposed("cloud code"))
         if len(prompts) == 2:
             raise ValueError("temporary generation interruption")
-        assert "Claude Code" in request.user  # batch one's validated working dictionary survives
-        return '{"additions": []}'
+        # Batch one's entry is kept for the proposal, but a part shows only entries
+        # that occur in its own dictations.
+        assert "Claude Code" not in request.user
+        return '{"additions": [], "revisions": [], "removals": []}'
 
     with closing(Store(tmp_path)) as store:
         source(store, "older data")
         source(store, "cloud code")
         app, client = setup(store, call)
-        client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
+        client.post("/api/dictionary/build", json={"source": "history"})
         partial = wait_for_build(client)
         assert partial["completedBatches"] == 1 and partial["coveredInputs"] == 1
         assert client.post(f"/api/dictionary/build/{partial['id']}/retry").status_code == 200
@@ -417,6 +432,7 @@ def test_stop_during_audio_keeps_its_success_for_retry_and_discard_clears_it(
     async def call(_: Request) -> str:
         return json.dumps(proposed("temporary cloud code"))
 
+    monkeypatch.setattr("entune.app.suggestion_runs.TRANSCRIBE_WORKERS", 1)  # one at a time
     with closing(Store(tmp_path)) as store:
         app, client = setup(store, call)
         monkeypatch.setattr(app.providers[0], "transcribe", speech)
@@ -425,9 +441,7 @@ def test_stop_during_audio_keeps_its_success_for_retry_and_discard_clears_it(
                 "/api/dictionary/audio",
                 files={"audio": (f"{i}.wav", wav_bytes(bytes([i, 0]) * 16))},
             )
-        job = client.post(
-            "/api/dictionary/build", json={"mode": "generate", "source": "audio"}
-        ).json()
+        job = client.post("/api/dictionary/build", json={"source": "audio"}).json()
         assert entered.wait(1)
         client.post(f"/api/dictionary/build/{job['id']}/cancel")
         release.set()
@@ -490,21 +504,19 @@ def test_audio_from_other_models_creates_then_refines_the_selected_models_dictio
         app, client = setup(store, call)
         items = client.get("/api/dictionary/audio").json()["items"]
         assert [item["models"] for item in items] == [["other/x"]]
-        for applied, mode in ((True, "generate"), (False, "refine")):
+        for applied in (True, False):
             job = client.post(
                 "/api/dictionary/build",
-                json={"mode": mode, "source": "audio", "audio_ids": [f"recording:{other.id}"]},
+                json={"source": "audio", "audio_ids": [f"recording:{other.id}"]},
             ).json()
             assert wait_for_build(client)["phase"] == "ready"
             accepted = client.post(f"/api/dictionary/build/{job['id']}/accept").json()
             assert accepted["applied"] is applied
-        # The generator received the selected model's text; refinement also saw what it learned.
-        # Audio text is labelled as this model's fresh transcription, with no dictionary result.
-        assert heard in prompts[0] and "Claude Code" not in prompts[0].split("Transcripts")[0]
+        # The first run received the selected model's text; the second also saw what it
+        # learned. Audio text is this model's fresh transcription, with no dictionary result.
+        assert heard in prompts[0] and "Claude Code" not in prompts[0].split("Dictations")[0]
         assert "Claude Code" in prompts[1].split("Dictations")[0]
-        assert (
-            '"kind": "temporary_audio"' in prompts[1] and '"after_dictionary": null' in prompts[1]
-        )
+        assert "after_dictionary" not in prompts[1]
         learned = app.dictionary.dictionary().learned
         assert list(learned) == ["stub/good"] and len(learned["stub/good"]) == 1
         attempts = store.get_recording(other.id).transcriptions  # type: ignore[union-attr]
@@ -584,26 +596,29 @@ def test_refinement_pairs_raw_text_with_the_dictionary_step_result_only(tmp_path
             learned={"stub/good": (dictionary_entries.Group("g", (claude,), (form,)),)}
         )
         (step,) = batches.learning_batches(list(inputs.values()))
-        prompt = batches.build_user_prompt("refine", current, step.snippets, "stub/good")
-        entries = json.loads(prompt.split("(JSON).")[1].split("\n", 1)[1])
-        by_raw = {e["raw"]: e for e in entries}
-        pair = by_raw[raw]
+        shown = view.build(current.effective("stub/good"), current.pinned, step.snippets)
+        prompt = batches.user_prompt("stub/good", shown)
+        by_text = {e["text"]: e for e in json.loads(shown.dictations)}
+        pair = by_text[raw]
         assert pair["after_dictionary"] == corrected
-        assert pair["decisions"][0] == {
-            "start": 4,
-            "end": 9,
-            "recognized": "cloud",
-            "result": "Claude",
-            "method": "contextual",
-            "meaning_ids": ["m_claude"],
-        }
-        assert pair["decisions"][1]["meanings_no_longer_in_dictionary"] == ["m_gone"]
-        assert by_raw["Nothing matched here."]["after_dictionary"] == "Nothing matched here."
-        assert by_raw["Failed stage keeps raw only."]["after_dictionary"] is None
-        assert by_raw["Final text only."]["kind"] == "legacy_final"
-        # Older records kept replacements without per-span decisions.
-        assert by_raw["Old cloud record."]["after_dictionary"] == "Old Claude record."
-        assert by_raw["Old cloud record."]["decisions"] == [
-            {"start": 4, "end": 9, "recognized": "cloud", "result": "Claude"}
+        assert pair["decisions"] == [
+            {"heard": "cloud", "wrote": "Claude", "method": "contextual", "meanings": ["e1a"]},
+            {"heard": "cloud", "wrote": "cloud", "method": "contextual", "meanings": ["removed"]},
         ]
+        # Nothing to show where the dictionary changed nothing or did not run.
+        assert set(by_text["Nothing matched here."]) == {"id", "text"}
+        assert set(by_text["Failed stage keeps raw only."]) == {"id", "text"}
+        assert by_text["Final text only."]["final_text"] is True
+        # Older records kept replacements without per-span decisions.
+        assert by_text["Old cloud record."]["after_dictionary"] == "Old Claude record."
+        assert by_text["Old cloud record."]["decisions"] == [{"heard": "cloud", "wrote": "Claude"}]
         assert later not in prompt  # filler reduction and delivered text never stand in
+        # The entry is shown by a short label, without its stored ID.
+        assert json.loads(shown.dictionary) == [
+            {
+                "id": "e1",
+                "meanings": [{"id": "e1a", "spelling": "Claude", "meaning": "An AI assistant."}],
+                "heard": {"cloud": ["e1a"]},
+            }
+        ]
+        assert "m_claude" not in prompt

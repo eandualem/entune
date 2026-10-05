@@ -1,7 +1,8 @@
 """Propose a speech model's dictionary, one bounded batch at a time.
 
-It reads one speech model's recent raw transcripts and proposes confusion groups for that
-model, with explicit form-to-meaning associations and textual provenance. Pinned
+Each part shows the model its dictations and the entries that occur in them, compactly
+(learning/view.py). The model finds the confusions not covered yet, improves or removes
+the entries shown, and the reply is validated against the stored dictionary. Pinned
 knowledge is shared and protected; it does not take priority over competing meanings.
 """
 
@@ -13,18 +14,16 @@ from collections.abc import Callable, Sequence
 
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary.entries import Dictionary, Groups
-from entune.learning.batches import build_user_prompt, learning_batches, system_prompt
-from entune.learning.inputs import LearningText, Mode
-from entune.learning.replies import (
-    GenerationReply,
-    RefinementReply,
-    parse_generation,
-    parse_refinement,
-)
+from entune.learning import view
+from entune.learning.batches import Batch, learning_batches, system_prompt, user_prompt
+from entune.learning.inputs import LearningText
+from entune.learning.replies import Reply, parse_reply
 from entune.learning.suggestion_model import (
     MAX_FIXES,
     BrokenReply,
     Caller,
+    ReplyTimedOut,
+    ReplyTooLong,
     Request,
     call_model,
     passing,
@@ -67,6 +66,107 @@ def _service_problem(detail: str) -> str:
     return "the suggestion model's service returned an error."
 
 
+SMALLER = " Choose a lower reasoning effort or less audio, then continue; finished parts are kept."
+
+
+async def propose_part(
+    provider: str,
+    api_key: str,
+    model: str,
+    current: Dictionary,
+    proposed: Groups,
+    step: Batch,
+    speech_model: str,
+    label: str,
+    call: Caller = call_model,
+    *,
+    effort: str = "high",
+    started: Callable[[int], None] | None = None,
+    retrying: Callable[[int, str], None] | None = None,
+    retrying_part: Callable[[int, str, float], None] | None = None,
+) -> Groups:
+    """One part: the model reads `step` beside the working dictionary `proposed` and the
+    validated result is returned. A reply that breaks a rule is sent back for a fix, and
+    `retrying` hears (attempt, rule broken) first. A part that failed for a passing reason
+    is tried again, PART_ATTEMPTS times in all, and once more after a reply that still
+    broke a rule; `retrying_part` hears (attempt, why the last one failed, its seconds)
+    first, and `started` the request's size before every attempt. A reply that ran past
+    its time limit or reached the output limit is not tried again: the person is told to
+    choose a lower reasoning effort or less audio. Raises StepFailed carrying the
+    provider's or the model's own words."""
+    shown = view.build(proposed, current.pinned, step.snippets)
+    request_text = user_prompt(speech_model, shown)
+    system = system_prompt()
+    texts = [s.text for s in step.snippets]
+
+    def check(reply: str) -> Groups:
+        return parse_reply(reply, shown, proposed, transcripts=texts, pinned=current.pinned)
+
+    request = Request(
+        provider,
+        api_key,
+        model,
+        system,
+        request_text,
+        Reply,
+        check,
+        retrying or (lambda attempt, problem: None),
+        effort,
+    )
+    attempt, fresh = 1, True  # a reply that still broke a rule starts over once
+    failed: tuple[str, float] | None = None  # why the last attempt failed, its seconds
+    while True:
+        await asyncio.sleep(0)  # cancellation between attempts even for immediate callers
+        if started:
+            started(len(system) + len(request_text))
+        if failed and retrying_part:
+            retrying_part(attempt, *failed)
+        named = label if attempt == 1 else f"{label}, attempt {attempt} of {PART_ATTEMPTS}"
+        began = time.monotonic()
+        try:
+            # Each reply has its own time limit; this bounds one attempt as a whole.
+            async with asyncio.timeout(1200 * (MAX_FIXES + 1)):
+                reply = await call(request)
+            break
+        except TimeoutError as exc:
+            raise StepFailed(
+                f"{named}: the suggestion model did not finish within an hour.{SMALLER}",
+                "TimeoutError",
+            ) from exc
+        except ReplyTimedOut as exc:
+            raise StepFailed(f"{named}: {exc.reason}.{SMALLER}", str(exc)) from exc
+        except ReplyTooLong as exc:
+            raise StepFailed(
+                f"{named}: the reply reached the model's output limit, which includes its"
+                f" reasoning.{SMALLER}",
+                str(exc),
+            ) from exc
+        except BrokenReply as exc:
+            if not fresh or attempt == PART_ATTEMPTS:
+                raise StepFailed(
+                    f"{named}: the suggestion model's reply still broke the dictionary's"
+                    f" rules after {MAX_FIXES} corrections, so nothing from it was kept.",
+                    f"BrokenReply: {exc}",
+                ) from exc
+            fresh, reason = False, "the reply still broke a rule after its corrections"
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            why = passing(exc)
+            if why is None or attempt == PART_ATTEMPTS:
+                raise StepFailed(f"{named}: {_service_problem(detail)}", detail) from exc
+            reason = why
+        failed = reason, time.monotonic() - began
+        attempt += 1
+    try:
+        return check(reply)
+    except Exception as exc:
+        raise StepFailed(
+            f"{label}: the suggestion model's reply did not follow the dictionary's rules,"
+            " so nothing from it was kept.",
+            f"{type(exc).__name__}: {exc}",
+        ) from exc
+
+
 async def propose_learned(
     provider: str,
     api_key: str,
@@ -76,100 +176,49 @@ async def propose_learned(
     speech_model: str,
     call: Caller = call_model,
     *,
-    mode: Mode,
+    effort: str = "high",
     progress: Callable[[int, int, int], None] | None = None,
     retrying: Callable[[int, str], None] | None = None,
     retrying_part: Callable[[int, int, str, float], None] | None = None,
     inputs: Sequence[LearningText] | None = None,
     checkpoint: Callable[[Groups, int, int, tuple[str, ...]], None] | None = None,
-    working: Groups | None = None,
-    resume: int = 0,
 ) -> Groups:
-    """Propose `speech_model`'s dictionary in the chosen mode, one bounded step at a time.
+    """Propose `speech_model`'s dictionary, one part after another.
 
-    Each step sees the working dictionary after the earlier steps' changes. Step numbers
-    stay in the app for progress and resume. A reply that breaks a rule is sent back for
-    a fix, and `retrying` hears (attempt, rule broken) first. A step that failed for a
-    passing reason is tried again, PART_ATTEMPTS times in all, and once more after a reply
-    that still broke a rule; `retrying_part` hears (step, attempt, why the last one failed,
-    its seconds) first. Each attempt starts from the same working dictionary. Raises
-    StepFailed carrying the provider's or the model's own words when a step fails; the
-    checkpoint keeps only validated steps.
-    """
+    Each part sees the working dictionary after the earlier parts' changes; see
+    `propose_part`. The checkpoint hears every validated part."""
     current = dictionary_changes.share(current, set())
-    proposed = current.effective(speech_model) if working is None else working
+    proposed = current.effective(speech_model)
     steps = learning_batches(
         inputs
         if inputs is not None
-        else [LearningText(str(i), text) for i, text in enumerate(transcripts)]
+        else [LearningText(str(i), text) for i, text in enumerate(transcripts)],
     )
-    parse = parse_generation if mode == "generate" else parse_refinement
-    shape = GenerationReply if mode == "generate" else RefinementReply
     for number, step in enumerate(steps, 1):
-        part = f"Part {number} of {len(steps)}"
-        if number <= resume:
-            continue
-        await asyncio.sleep(0)  # cancellation between chunks even for immediate test callers
-        user_prompt = build_user_prompt(mode, current, step.snippets, speech_model, proposed)
-        system = system_prompt(mode)
-        texts = [s.text for s in step.snippets]
 
-        def check(reply: str, before: Groups = proposed, texts: list[str] = texts) -> Groups:
-            return parse(reply, before, transcripts=texts, pinned=current.pinned)
+        def started(size: int, number: int = number) -> None:
+            if progress:
+                progress(number, len(steps), size)
 
-        request = Request(
+        def again(attempt: int, why: str, seconds: float, number: int = number) -> None:
+            if retrying_part:
+                retrying_part(number, attempt, why, seconds)
+
+        proposed = await propose_part(
             provider,
             api_key,
             model,
-            system,
-            user_prompt,
-            shape,
-            check,
-            retrying or (lambda attempt, problem: None),
+            current,
+            proposed,
+            step,
+            speech_model,
+            f"Part {number} of {len(steps)}",
+            call,
+            effort=effort,
+            started=started,
+            retrying=retrying,
+            retrying_part=again,
         )
-        attempt, fresh = 1, True  # a reply that still broke a rule starts over once
-        failed: tuple[str, float] | None = None  # why the last attempt failed, its seconds
-        while True:
-            if progress:
-                progress(number, len(steps), len(system) + len(user_prompt))
-            if failed and retrying_part:
-                retrying_part(number, attempt, *failed)
-            label = part if attempt == 1 else f"{part}, attempt {attempt} of {PART_ATTEMPTS}"
-            started = time.monotonic()
-            try:
-                # Each reply has its own time limit; this bounds one attempt as a whole.
-                async with asyncio.timeout(1200 * (MAX_FIXES + 1)):
-                    reply = await call(request)
-                break
-            except TimeoutError as exc:
-                raise StepFailed(
-                    f"{label}: the suggestion model did not finish within an hour.",
-                    "TimeoutError",
-                ) from exc
-            except BrokenReply as exc:
-                if not fresh or attempt == PART_ATTEMPTS:
-                    raise StepFailed(
-                        f"{label}: the suggestion model's reply still broke the dictionary's"
-                        f" rules after {MAX_FIXES} corrections, so nothing from it was kept.",
-                        f"BrokenReply: {exc}",
-                    ) from exc
-                fresh, reason = False, "the reply still broke a rule after its corrections"
-            except Exception as exc:
-                detail = f"{type(exc).__name__}: {exc}"
-                why = passing(exc)
-                if why is None or attempt == PART_ATTEMPTS:
-                    raise StepFailed(f"{label}: {_service_problem(detail)}", detail) from exc
-                reason = why
-            failed = reason, time.monotonic() - started
-            attempt += 1
-        try:
-            proposed = check(reply)
-            if checkpoint:
-                checkpoint(proposed, number, len(steps), step.completed)
-        except Exception as exc:
-            raise StepFailed(
-                f"{part}: the suggestion model's reply did not follow the dictionary's rules,"
-                " so nothing from it was kept.",
-                f"{type(exc).__name__}: {exc}",
-            ) from exc
+        if checkpoint:
+            checkpoint(proposed, number, len(steps), step.completed)
     return proposed

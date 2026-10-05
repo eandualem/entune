@@ -59,7 +59,9 @@ silently if Entune is not running.
 | `POST /api/dictionary/pin` | `{"model", "group", "meaning"}` IDs plus `If-Match`: share one meaning and its associations; `{"model"}` explicitly pins all learned knowledge for that model |
 | `POST /api/recordings/{id}/transcriptions/{attempt}/safe-copy` | derive text from original using only approved direct mappings for the original speech model; returns text, replacements and unresolved count, without saving or pasting |
 | `GET /api/dictionary/corrections` | what agents sent and Entune pinned, newest first, with the `source` each gave |
-| `POST /api/dictionary/build` | `{"source": "history", "mode": "generate", "scope": "new" or "all"}` or `{"source": "audio", "mode": "generate", "audio_ids": [IDs from audio listing]}` (use `"mode": "refine"` to revise existing groups): start one exclusive frozen-model/revision workflow; 202 returns its `id` and status; 409 if a job or unreviewed proposal is already active |
+| `GET /api/dictionary/history` | the default speech model (`model`) and its transcripts suggestions can read, oldest first (`items`: `id`, `created_at`, `characters`, `used` by suggestions applied before) |
+| `POST /api/dictionary/build` | `{"source": "history", "scope": "new" or "all"}`, with `"transcript_ids"` (IDs from the history listing) beside `"scope": "all"` to reuse only those, or `{"source": "audio", "audio_ids": [IDs from audio listing]}`, optionally `"effort"`: `"minimal"`, `"low"`, `"medium"`, `"high"` (default) or `"xhigh"`: start one exclusive frozen-model/revision workflow; 202 returns its `id` and status; 409 if a job or unreviewed proposal is already active. Dictation is not blocked |
+| `GET /api/dictionary/timing` | what the setup estimates from: `speech` (seconds of wait per minute of audio, per speech model), `suggestion` (median `secondsPerPart` and `parts` per `"model\|effort"`), `workers` (cloud recordings transcribed at once) and `local` (providers that take one at a time) |
 | `GET /api/dictionary/build` | lightweight current job progress (no transcript or proposal contents) |
 | `GET /api/dictionary/build/{id}` | named job status, including its proposal when ready; 409 if no longer current |
 | `POST /api/dictionary/build/{id}/cancel` | request cancellation; in-flight synchronous speech may finish before cleanup; no new clips/chunks; validated completed proposals remain reviewable |
@@ -77,7 +79,11 @@ knowledge remain. The former synchronous history and separate audio-build routes
 
 Learning `ready` can have outcome `complete`, `failed` or `stopped`; completedBatches,
 steps, coveredInputs and total describe actual coverage. `/retry` (POST) resumes failed
-or stopped learning using successful temporary audio and validated generation batches.
+or stopped learning using successful temporary audio and validated generation parts; an
+optional body `{"effort": ...}` continues with another reasoning effort. Audio is
+transcribed while parts run, so `transcribing` can carry `step` and `completedBatches`;
+`steps` is set once everything is transcribed. Each finished part adds `{seconds,
+characters}` to `parts`.
 GET `/api/dictionary/audio` includes retained imports and ordinary recordings, known
 seconds, unknown-duration count and dates where known, and `apps`: the dictation apps
 whose recordings can be imported. POST `/api/dictionary/audio/apps/{app}` imports one
@@ -86,7 +92,9 @@ persisted; per-model learning run/coverage metadata is persisted only on finish/
 
 The window's Record button starts `POST /api/operations` before microphone capture, then sends its
 returned `id` as multipart `operation` with the audio. GET lists the active operation;
-POST `/api/operations/{id}/cancel` cancels dictation without deleting audio. The recorder
+POST `/api/operations/{id}/stop` ends a recording the shortcut started, as the shortcut
+would (409 when none is recording). POST `/api/operations/{id}/cancel` cancels dictation
+without deleting audio. The recorder
 still submits saved audio after cancellation. DELETE `/api/operations/{id}` releases
 only an unclaimed window capture after failed setup. Ordinary retry and direct upload
 also acquire the operation guard. Busy mutations return 409 with a user-facing reason.

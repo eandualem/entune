@@ -1,7 +1,0 @@
-Task: propose new dictionary entries for the speech recognizer $speech_model from the transcripts below. Return additions only, or none.
-
-Current dictionary for this recognizer. All of it already exists: do not add it again.
-$dictionary
-
-Transcripts (JSON). Each has an id, a kind and its text.
-$sources

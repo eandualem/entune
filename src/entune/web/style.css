@@ -41,6 +41,14 @@ a { color: var(--accent-text); text-decoration: none; }
 .toolbar .status { font-size: var(--fs-12-5); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .native-mac .toolbar { padding-left: 84px; }
 .native-mac .toolbar .select { min-width: 0; }
+/* The Mac window has the system's sidebar material behind the page, as in Finder and System
+   Settings: side rails show it as it is, the toolbar through a light veil, and content
+   through a nearly solid ground. Cards, menus, drawers and dialogs keep their solid colours. */
+:root.native-mac, :root.native-mac body { background: transparent; }
+.native-mac .toolbar { background: var(--glass-bar); }
+.native-mac .rail { background: transparent; }
+.native-mac .view:not(:has(> .settings)) { background: var(--glass-ground); }
+.native-mac .view > .settings { background: linear-gradient(to right, transparent var(--rail), var(--glass-ground) var(--rail)); }
 
 /* Segmented control: a well with one raised segment */
 .segmented { display: inline-flex; gap: var(--sp-2); padding: 3px; border-radius: var(--r-8); background: var(--well); width: max-content; }
@@ -91,7 +99,7 @@ a { color: var(--accent-text); text-decoration: none; }
 .select.quiet:hover { color: var(--text); }
 .input {
   height: var(--h-30); width: 100%; padding: 0 var(--sp-10); border-radius: var(--r-7);
-  background: var(--well); border: 1px solid var(--line); color: var(--text); font-size: var(--fs-13);
+  background: var(--field); border: 1px solid var(--line); color: var(--text); font-size: var(--fs-13);
   -webkit-user-select: text; user-select: text;
 }
 .input::placeholder { color: var(--text-faint); }
@@ -244,8 +252,8 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .badge { padding: 0 var(--sp-6); border-radius: 999px; background: var(--accent); color: var(--surface); font-size: var(--fs-11); font-weight: 600; font-variant-numeric: tabular-nums; }
 .add-btn { font-weight: 600; gap: var(--sp-4); }
 .add-btn .plus { font-size: var(--fs-16); line-height: 1; }
-.btn.primary { background: var(--accent); color: var(--surface); border-color: transparent; font-weight: 600; padding: 0 var(--sp-14); }
-.btn.primary:hover { color: var(--surface); }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; padding: 0 var(--sp-14); }
+.btn.primary:hover { color: var(--on-accent); }
 .btn.primary:disabled { opacity: 0.45; }
 
 /* The ⋯ menu: less common ways to build the dictionary, and whole-dictionary actions. */
@@ -388,7 +396,8 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 #audio-intro { color: var(--text-secondary); }
 .suggest-audio .source-note { margin: 0; }
 .suggest-audio .source-note .caption:empty { display: none; }
-.suggest-audio .audio-pick { margin: 0; }
+.suggest-audio .audio-pick, .suggest-setup .audio-pick { margin: 0; }
+.reuse-line { display: flex; align-items: center; gap: var(--sp-8); }
 .suggest-audio .audio-empty { margin: 0; }
 .suggest-audio > .btn.link { align-self: flex-start; font-size: var(--fs-12); }
 .app-list { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-4); border-radius: var(--r-8); background: var(--well); }
@@ -396,15 +405,26 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 .app-option:has(input:checked) { background: var(--card); box-shadow: var(--shadow-card); }
 .app-option input { margin: 0; accent-color: var(--accent); }
 .app-option .caption { display: block; }
-.decision-list { flex: 1; }
+.srow.wide { grid-template-columns: minmax(0, 1fr); }
+/* A status line with its action at the end, the way macOS settings place a button. */
+.srow.status { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); }
+.srow.status .caption { margin-top: 0; }
+/* The two decision models side by side across the card, each its own option. */
+.decision-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); }
+.decision-list .app-option { align-items: flex-start; padding: var(--sp-10) var(--sp-12); }
+.decision-list .app-option input { margin-top: 3px; }
 #decision-status-row:has(#decision-note:empty):not(:has(.show)) { display: none; }
 #laya-status.err { color: var(--error); overflow-wrap: anywhere; }
 #dm-signin-state strong { -webkit-user-select: all; user-select: all; }
 #laya-command { margin: var(--sp-6) 0 0; padding: var(--sp-8) var(--sp-10); border-radius: var(--r-7); background: var(--well); font: var(--fs-12)/1.5 var(--mono); color: var(--text); -webkit-user-select: all; user-select: all; white-space: pre-wrap; }
 .drawer-foot .audio-models { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
 #learn-source { color: var(--text-secondary); }
-.suggest-model { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); padding-top: var(--sp-12); border-top: 1px solid var(--line); font-size: var(--fs-12-5); color: var(--text-dim); }
-.suggest-model .select { max-width: 16rem; }
+.run-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--sp-10) var(--sp-12); padding-top: var(--sp-12); border-top: 1px solid var(--line); }
+.run-field { display: flex; flex-direction: column; gap: var(--sp-4); font-size: var(--fs-12-5); color: var(--text-dim); min-width: 0; }
+.run-field[hidden] { display: none; }
+.run-field .select { width: 100%; }
+.suggest-shared .estimate { white-space: pre-line; }
+.suggest-shared .estimate:empty, .suggest-shared .estimate[hidden] { display: none; }
 .learn-status { display: flex; flex-direction: column; gap: var(--sp-8); }
 .learn-line { display: flex; align-items: flex-start; gap: var(--sp-10); }
 .learn-line .spinner { margin-top: 0.2rem; }
@@ -496,6 +516,9 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .name .caption { display: inline; font-weight: 400; }
 .srow { display: grid; grid-template-columns: var(--label-col) minmax(0, 1fr); gap: var(--sp-16); align-items: center; padding: var(--sp-14) var(--sp-16); border-bottom: 1px solid var(--line-faint); }
 .srow:last-child { border-bottom: 0; }
+.srow.key-row { grid-template-columns: var(--label-col) minmax(0, 1fr) auto; }
+.key-link { font-size: var(--fs-12-5); color: var(--accent-text); text-decoration: none; white-space: nowrap; }
+.key-link:hover { text-decoration: underline; }
 .srow.top { align-items: start; }
 .srow .caption { margin-top: 3px; }
 .srow.check { display: grid; cursor: default; grid-template-columns: minmax(0, 1fr) auto; }
@@ -594,12 +617,12 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .range { position: relative; height: 1.75rem; margin: var(--sp-10) 0 var(--sp-2); }
 .range-track { position: absolute; left: 0; right: 0; top: 50%; height: 6px; margin-top: -3px; border-radius: 3px; background: var(--track); }
 .range-fill { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: var(--accent); }
+.range-used { position: absolute; left: 0; right: 0; top: 50%; height: 3px; margin-top: 6px; border-radius: 2px; }
 .range input { position: absolute; inset: 0; width: 100%; margin: 0; background: transparent; pointer-events: none; -webkit-appearance: none; appearance: none; }
 .range input::-webkit-slider-thumb { -webkit-appearance: none; pointer-events: auto; width: 1.125rem; height: 1.125rem; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 3px var(--surface-raised), var(--shadow-segment); cursor: grab; }
 .range input::-moz-range-thumb { pointer-events: auto; width: 1.125rem; height: 1.125rem; border: 0; border-radius: 50%; background: var(--text); }
 .range input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--surface-raised), var(--focus); }
 .range-labels { display: flex; justify-content: space-between; gap: var(--sp-12); font-size: var(--fs-12); color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.range-note { margin: var(--sp-8) 0; }
 .check { display: flex; align-items: center; gap: var(--sp-6); }
 .audio-detail { margin-top: var(--sp-10); }
 .audio-detail summary { cursor: default; font-size: var(--fs-12-5); color: var(--accent-text); }
@@ -751,3 +774,13 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 }
 @keyframes intro-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes intro-fade-out { from { opacity: 1; } to { opacity: 0; } }
+
+/* Anonymous mode: transcripts keep their size and place but cannot be read. The newest
+   dictation stays readable until it is copied (data-reveal). */
+html[data-anonymous] .card:not([data-reveal]) :is(.transcript, .failed, .attempt),
+html[data-anonymous] .details-popover .changes { filter: blur(6px); user-select: none; }
+
+/* Dropping audio anywhere in the window transcribes it into History. */
+.drop-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: color-mix(in srgb, var(--surface) 80%, transparent); border: 2px dashed var(--accent); pointer-events: none; }
+.drop-overlay[hidden] { display: none; }
+.drop-overlay p { margin: 0; font-size: var(--fs-15); color: var(--text); }

@@ -53,9 +53,9 @@ Choose **OpenAI** in dictionary setup, then choose how to access it:
 Then choose the dictionary model on the Dictionary page. If it is missing from
 the suggested list, open **Settings → Dictionary setup → Custom** and enter
 just `gpt-6.1-sol`, for either access option. Entune adds the provider prefix
-automatically. The selected account must have access to the model. Entune requests medium thinking where
-supported and automatically splits inputs into approximately 24,000-character
-batches; these are not additional UI settings.
+automatically. The selected account must have access to the model. The suggestions
+setup chooses the reasoning effort by the provider's level names (minimal, low, medium,
+high, xhigh; high by default).
 
 **Current sign-in limitation:** the ChatGPT integration is experimental. It
 predates OpenAI's documented open-source sign-in route and does not yet implement
@@ -86,36 +86,48 @@ The built-in suggested list may still contain older model IDs.
 ### How long will it take?
 
 Generation runs only when requested. A short history may finish in minutes;
-a large import can take hours. Each batch receives the dictionary produced so
-far, so batches depend on earlier results and run sequentially. Dictionary size,
+a large import can take hours. Each part receives the dictionary produced so
+far, so parts depend on earlier results and run one after another. Dictionary size,
 transcript length, reasoning, provider load and retries all affect the wait.
 
-Our 540-transcript Sol build processed 20 batches in about **2 hours 15 minutes**
+Our 540-transcript Sol build processed 20 parts in about **2 hours 15 minutes**
 of elapsed time, including recovery from one failed request. That example excludes
 speech transcription and is not a promised completion time. Importing recordings
-first transcribes them with the target speech model and adds that time.
+first transcribes them with the target speech model, several at a time with a cloud
+model, and parts start while the rest is still being transcribed.
 
-Start with a modest history. During learning and proposal review, dictation and
-separate dictionary editing are paused. **Stop** retains validated completed
-batches for review; **Retry** resumes from the checkpoint. Review and apply the
-entries you want. Nothing is installed automatically. See the
-[learning guide](guide.md#personal-dictionary) for imports and refinement.
+Start with a modest history. Dictation keeps working during learning and review;
+separate dictionary editing waits. **Stop** retains validated completed parts for
+review; **Continue** picks up from there. Review and apply the entries you want.
+Nothing is installed automatically. See the [learning guide](guide.md#personal-dictionary)
+for imports and suggestions.
+
+On a ChatGPT plan, each request ends at about 15 minutes, which we measured over about
+1,500 plan requests in September 2026; an API key gets Entune's own 20-minute limit
+per reply. The more common failure is quicker: a reply starts its JSON, then sends only
+blank space. Entune stops such a reply after 2,000 blank characters, usually within one
+or two minutes, and tries the part again, three attempts in all. In those measurements
+GPT-6 Astra did this at every reasoning level and part size, and GPT-6.1 Sol less often.
+If a part runs too long, choose a lower reasoning effort and continue.
 
 ### Time estimate before learning from audio
 
-The audio selection shows a rough planning range that changes as you move the
-selection handles: **10–20 minutes of dictionary generation per hour of audio**
-with GPT-6.1 Sol at medium effort. Audio transcription takes additional time.
-For example, selecting 3 hours shows 30–60 minutes, plus transcription.
+The audio setup estimates both steps as you move the selection handles or change a
+setting, from measurements only:
 
-The range rounds the measured rate and adds headroom: our single 540-transcript
-build covered about 12.3 hours of speech and took 135 minutes, including one
-failed request and recovery. It is a planning allowance, not a statistical
-confidence interval or a guaranteed deadline. Speech density, prompt, existing
-dictionary size, provider load and retries can change the time considerably.
-Other models show this as a Sol reference estimate, not a prediction for that
-model. If any selected audio has an unknown duration, no numeric estimate is
-shown. Learning from existing history shows a general time warning instead.
+- **Transcribing**: the speech model's measured wait per minute of audio, from your
+  History, divided by the recordings transcribed at once (four for a cloud model, one
+  for a local one). A speech model with no measured transcriptions says so.
+- **Suggestions**: the number of parts, from about 37,000 transcript characters per
+  hour of speech (our 12.3-hour sample had 452,400) divided by the part size (about
+  24,000 characters), at the median seconds per part of earlier runs with the same
+  suggestion model and reasoning effort. Our one Sol measurement (135 minutes for 20
+  parts at medium reasoning) is shown until Sol has been timed on your Mac. Other combinations say
+  they have not been timed yet.
+
+It is a planning figure, not a guarantee: speech density, the growing dictionary,
+provider load and retries change the time. If any selected audio has an unknown
+duration, no estimate is shown.
 
 ## Decision models
 

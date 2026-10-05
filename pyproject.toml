@@ -1,6 +1,6 @@
 [project]
 name = "entune"
-version = "0.2.1"
+version = "0.3.0"
 description = "Dictation with your choice of speech model and a personal dictionary that selects corrections in context."
 readme = "README.md"
 license = "MIT"
@@ -10,6 +10,7 @@ dependencies = [
   "httpx>=0.27",
   "httpx2",
   "numpy",
+  "opentelemetry-api>=1.28",  # an interrupted reply's text goes on its trace (call.py)
   "pillow",
   "pydantic>=2",
   "pydantic-ai-slim[anthropic,google,groq,mistral,openai]>=2.48",
@@ -27,6 +28,11 @@ dependencies = [
   "uvicorn>=0.30",
 ]
 
+[project.optional-dependencies]
+# Opt-in Langfuse tracing of dictionary-suggestion requests (entune/app/tracing.py), sent
+# to Langfuse's OpenTelemetry endpoint by Entune's own exporter.
+tracing = ["opentelemetry-sdk>=1.30", "opentelemetry-exporter-otlp-proto-common>=1.30"]
+
 [project.urls]
 Homepage = "https://github.com/eandualem/entune"
 Documentation = "https://github.com/eandualem/entune#readme"
@@ -43,6 +49,8 @@ build-backend = "uv_build"
 build = ["pyinstaller>=6"]
 dev = [
   "mypy>=1.11",
+  "opentelemetry-exporter-otlp-proto-common>=1.30",  # the tracing extra, for its tests
+  "opentelemetry-sdk>=1.30",
   "pytest>=8",
   "ruff>=0.6",
   "types-pynput>=1.8.1.20260712",

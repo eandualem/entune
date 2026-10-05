@@ -11,10 +11,8 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   let uploading = false;
   let operationId = null;
   let active = null;
-  const cancel = document.createElement("button");
-  cancel.type = "button"; cancel.className = "btn ghost";
-  cancel.textContent = "Cancel dictation"; cancel.hidden = true;
-  button.after(cancel);
+  let dropping = false; // dropped audio files are being transcribed, one after another
+  let shortcut = false; // a recording the shortcut started: this button stops it too
   const labels = {recording: "Recording…", saving: "Saving audio…", transcribing: "Transcribing…", correction: "Checking the dictionary…", cleanup: "Reducing fillers…", formatting: "Formatting…", delivering: "Delivering…", cancelling: "Canceling — keeping audio…", learning: "Preparing dictionary suggestions…", review: "Review the dictionary suggestions to dictate again."};
   let previous = null;
   async function poll() {
@@ -22,13 +20,18 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
       active = await api("/api/operations");
       const key = active ? `${active.id}:${active.stage}` : null;
       if (key !== previous) {
-        if (active) onStatus(labels[active.stage] ?? active.stage);
+        // Dropped files keep their own progress line ("Transcribing 2 of 5: name").
+        if (active && !dropping) onStatus(labels[active.stage] ?? active.stage);
         else if (previous && !uploading) onStatus("Ready");
         previous = key;
       }
-      button.disabled = starting || uploading || Boolean(active && active.id !== operationId);
-      cancel.hidden = active?.kind !== "dictation";
-      cancel.disabled = active?.stage === "cancelling";
+      const wasShortcut = shortcut;
+      shortcut = !recorder && active?.kind === "dictation" && active.stage === "recording" && active.source !== "web";
+      if (shortcut !== wasShortcut) {
+        button.setAttribute("aria-pressed", String(shortcut));
+        button.querySelector(".label").textContent = shortcut ? "Stop" : "Record";
+      }
+      button.disabled = !shortcut && (starting || uploading || Boolean(active && active.id !== operationId));
       if (recorder && active?.id === operationId && active.stage === "cancelling") recorder.stop();
     } catch (err) {
       onStatus(errorText(err));
@@ -41,12 +44,81 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   addEventListener("pagehide", () => {
     if (operationId && !uploading) fetch(`/api/operations/${operationId}`, { method: "DELETE", keepalive: true });
   });
-  cancel.addEventListener("click", async () => {
-    if (!active) return;
-    try { await api(`/api/operations/${active.id}/cancel`, {method: "POST"}); }
-    catch (err) { onStatus(errorText(err)); }
-  });
   poll();
+
+  // Audio dropped anywhere in the window is transcribed with the default model, one file
+  // after another, and lands in History like a dictation.
+  const overlay = el("drop-overlay");
+  const isAudio = (file) => file.type.startsWith("audio/") || /\.(wav|mp3|m4a|mp4|aac|flac|ogg|oga|opus|webm)$/i.test(file.name);
+  const hasFiles = (event) => [...(event.dataTransfer?.types ?? [])].includes("Files");
+  let depth = 0;
+  addEventListener("dragenter", (event) => { if (hasFiles(event)) { event.preventDefault(); depth++; overlay.hidden = false; } });
+  addEventListener("dragover", (event) => { if (hasFiles(event)) event.preventDefault(); });
+  addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; overlay.hidden = true; } });
+  // Drops queue up: files dropped while others are transcribing wait their turn.
+  const dropped = [];
+  addEventListener("drop", (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault(); // never open the file in place of the app
+    depth = 0; overlay.hidden = true;
+    const files = [...event.dataTransfer.files];
+    const audio = files.filter(isAudio);
+    if (!audio.length) { onStatus("Only audio files can be transcribed."); return; }
+    if (recorder || starting || (uploading && !dropping)) { onStatus("Finish the current recording first, then drop the files again."); return; }
+    dropped.push(...audio);
+    if (files.length > audio.length) onStatus(`${files.length - audio.length} file${files.length - audio.length === 1 ? " is" : "s are"} not audio and will be skipped.`);
+    if (!dropping) transcribeDropped();
+  });
+  async function transcribeDropped() {
+    dropping = uploading = true; // the status line stays on the files until they are done
+    const tally = { ok: 0, failed: 0, cancelled: 0, other: 0, refused: [], stopped: null, left: 0 };
+    let number = 0;
+    try {
+      while (dropped.length) {
+        const file = dropped.shift();
+        number++;
+        onStatus(`Transcribing ${number} of ${number + dropped.length}: ${file.name}…`);
+        const form = new FormData();
+        form.append("audio", file, file.name);
+        // A file the server refuses (empty, too large) is reported and skipped; the rest go
+        // on. A busy Entune stops the queue and says what is left.
+        const response = await fetch("/api/recordings", { method: "POST", body: form });
+        if (response.status === 409) {
+          tally.stopped = (await response.text()).replace(/\.$/, "");
+          tally.left = dropped.length + 1; // this file was not taken either
+          number--;
+          break;
+        }
+        if (!response.ok) {
+          tally.refused.push(`${file.name}: ${(await response.text()).replace(/\.$/, "")}`);
+          continue;
+        }
+        const attempt = (await response.json()).transcriptions?.[0];
+        // A saved recording can still carry a failed or cancelled transcription.
+        tally[attempt?.processing_state === "cancelled" ? "cancelled" : attempt?.status === "ok" ? "ok" : attempt?.status === "error" ? "failed" : "other"]++;
+        await onUploaded();
+      }
+    } catch (err) {
+      // A lost connection or a failed History refresh: say so, and what was not done.
+      tally.stopped = errorText(err).replace(/\.$/, "");
+      tally.left = dropped.length;
+    } finally {
+      dropped.length = 0;
+      dropping = uploading = false;
+    }
+    // The summary below stays until the operation changes: the poll takes the one running
+    // now (a dictation that refused the files, or none) as already reported.
+    const now = await api("/api/operations").catch(() => null);
+    previous = now ? `${now.id}:${now.stage}` : null;
+    const total = number + tally.left; // files handled, and files not started
+    const parts = [`Transcribed ${tally.ok} of ${total} file${total === 1 ? "" : "s"}`];
+    if (tally.failed) parts.push(`${tally.failed} failed, see History`);
+    if (tally.cancelled) parts.push(`${tally.cancelled} cancelled`);
+    if (tally.refused.length) parts.push(`not accepted: ${tally.refused.join("; ")}`);
+    if (tally.stopped) parts.push(`${tally.left ? `${tally.left} not transcribed: ` : ""}${tally.stopped}`);
+    if (tally.other) parts.push(`${tally.other} saved without text`);
+    onStatus(`${parts.join("; ")}.`);
+  }
 
   function setRecording(on) {
     button.setAttribute("aria-pressed", String(on));
@@ -84,6 +156,12 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
 
   button.addEventListener("click", async () => {
     if (recorder) { recorder.stop(); return; }
+    if (shortcut) {
+      button.disabled = true; // until the next poll shows the recording has ended
+      try { await api(`/api/operations/${active.id}/stop`, {method: "POST"}); }
+      catch (err) { onStatus(errorText(err)); }
+      return;
+    }
     if (starting || uploading) return;
     starting = true;
     let stream;

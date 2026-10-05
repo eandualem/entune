@@ -108,6 +108,13 @@ in a Wayland session that is:
 sudo apt install libminizip1t64 libportaudio2 libsnappy1v5 libxcb-cursor0 wl-clipboard
 ```
 
+On Arch and other rolling-release distributions, install with uv's own Python, so a
+system Python upgrade cannot break Entune's environment:
+
+```sh
+uv tool install --managed-python entune && entune
+```
+
 Get started then asks for **keyboard access**, Linux's counterpart of the Mac's
 Input Monitoring and Accessibility. Entune reads your shortcut from the keyboard
 devices in `/dev/input`, and types the transcript through a virtual keyboard made
@@ -141,6 +148,11 @@ text on the Wayland clipboard for the app you are in.
 
 In Entune's window, click **Record**, speak, then click **Stop** to transcribe. Copy
 the result from History into another app.
+
+To transcribe audio you already have, such as a recording another dictation app could
+not transcribe, drop the files anywhere on Entune's window. Each one is transcribed
+with your default model, one after another, and appears in History like a dictation.
+Files that are not audio are skipped.
 
 In the desktop app on macOS, Windows and Linux, you can also dictate with global shortcuts. Set a shortcut once in Settings, or from Get started. Click
 "Set…", press the key or combination, let go. Two recording shortcuts, and both
@@ -183,7 +195,8 @@ History retains audio and all attempts for retry.
 The default model is the picker next to the Record button, the same one as
 in Settings; picking a model applies at once, no Save. The Record button in
 the window records the same WAV the shortcut does, so every model, cloud or
-local, takes it.
+local, takes it. While the shortcut is recording, the button reads Stop and
+ends that recording.
 The speech model is sampled when transcription starts, so changing it while speaking
 changes the engine for that recording. Changes after transcription starts apply to
 later attempts. Enhancement switches are sampled after speech succeeds. In fast mode,
@@ -226,7 +239,8 @@ A speech model turns a recording into text. These are the ones Entune can use:
 | Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
 | Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
 
-Enter a provider's API key on the Models page and its model appears in the
+Enter a provider's API key on the Models page (**Get a key** beside each provider opens
+its API key page in your browser) and its model appears in the
 model list; pick one as the default. You pay each provider directly, per minute
 of audio, at its own published rate:
 [AssemblyAI](https://www.assemblyai.com/pricing),
@@ -281,16 +295,20 @@ playable and downloadable, the transcript copies with a click, and any
 recording can be transcribed again with another model. Failures show the
 provider's response verbatim.
 
+**Anonymous mode**, the eye switch in the toolbar, blurs every transcript in History
+without changing the layout, for recording your screen or sharing it. The newest
+dictation stays readable until you copy it, then it blurs too. The switch is remembered
+in this window.
+
 ## Personal dictionary
 
 Speech models mishear names, products and everyday words. The Dictionary tab groups
 recognized forms with their possible meanings, definitions and exact output spellings.
 Explicit associations decide which meanings can compete for a form; context decides
 which one applies. Edit entries directly, or ask the configured language model to
-suggest them: **Suggest new entries** (generation) reads this speech model's raw
-history and only adds; **Suggest improvements** (refinement) compares each raw
-transcript with what the dictionary step made of it and can add, revise or remove
-learned entries. **How the dictionary works** opens a short guide.
+suggest them: **Get suggestions** reads this speech model's raw history, finds the
+words it gets wrong, and can also improve or remove the entries those transcripts show,
+judging what the dictionary step made of each one. **Help**, next to **Add**, opens a short guide.
 Additions, before/after updates, and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
 then apply the remainder once. Dismissing a proposal does not delete active knowledge.
 
@@ -327,9 +345,14 @@ audio file in `dictionary-audio/`, separate from recording history, and can reus
 it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
 up to 199 MB can be uploaded; the chosen provider must support the audio format
 and length. A build uses the speech and dictionary models selected when it starts.
-A recording that will not transcribe is tried once more, then skipped, and the
-suggestions come from the others; the result says how many were skipped. If the build
-stops, Retry continues from where it was: recordings already transcribed are kept.
+Freshly transcribed audio carries no record of what the dictionary did, so only its
+text is sent.
+A cloud speech model transcribes four recordings at a time; a local model takes one at a
+time. Suggestions start as soon as one part's worth of text is transcribed, while the
+rest is still being transcribed. A recording that will not transcribe is tried once
+more, then skipped, and the suggestions come from the others; the result says how many
+were skipped. If the build stops, **Continue** picks up where it was: recordings already
+transcribed and parts already finished are kept.
 A two-handle range over recorded time, oldest to newest without the gaps between days,
 selects a continuous stretch of whole recordings: all audio by default, the most recent
 by dragging the left handle. The exact duration, count and edge dates are shown, and
@@ -338,28 +361,37 @@ history attempts. Retry reuses successful transcriptions, including after a late
 generation failure. Finishing, discarding, replacing the workflow, or closing Entune
 clears that temporary text. Source audio is kept.
 
-History and audio share one exclusive, user-initiated learning workflow. Finish an
-active dictation first. Learning blocks dictation and separate dictionary editing,
-including while proposals await review. Stop or a later failure retains validated
-completed batches for review, with their actual coverage and cause. A running speech
-call may need to finish; a generation request can be interrupted. Apply, discard, or
-retry the completed portion. No changes are applied automatically.
+History and audio share one exclusive, user-initiated learning workflow. Dictation keeps
+working while it runs and while its proposals await review; separate dictionary editing
+waits until they are applied or discarded, because a proposal is checked against the
+dictionary it started from. Stop or a later failure retains validated completed parts
+for review, with their actual coverage and cause. A running speech call may need to
+finish; a generation request can be interrupted. Apply, discard, or continue with the
+rest. No changes are applied automatically.
+
+The setup chooses the speech model, the suggestion model and the **Reasoning effort**,
+by the levels providers name: minimal, low, medium, high or xhigh, high by default. For
+audio it estimates the time from measurements only: the speech model's transcription
+times from History, and the seconds per part of earlier runs with the same suggestion
+model and effort. A combination not yet timed says so.
 
 The dictionary model's reply must match the dictionary's format, which the provider
 enforces where it can. When a reply still breaks one of the dictionary's rules, the
 model is shown the rule and asked for a corrected reply, at most twice per part. The
 progress line says so and names the rule, and **Stop** ends it. A part is tried again
 from the same point, three attempts in all, when its reply ran into empty output (more
-than 2,000 whitespace characters in a row, stopped at once), ran past the time limit for
-one reply (20 minutes; 14.5 on a ChatGPT plan, which cuts a request at about 15), lost
-its connection or met a server error (5xx), and once more when a reply still broke a
-rule. The progress line says why and which attempt, and the run's record keeps each
-one. Refused keys, limits and quotas (401, 403, 429), other failed requests and replies
-cut at the output limit are never retried.
+than 2,000 whitespace characters in a row, stopped at once), lost its connection or met
+a server error (5xx), and once more when a reply still broke a rule. The progress line
+says why and which attempt, and the run's record keeps each one. A reply that runs past
+its time limit (20 minutes; 14.5 on a ChatGPT plan, which ends a request at about 15)
+or reaches the output limit stops the run instead: the same part would most likely take
+as long again, so Entune asks for a lower reasoning effort or less audio, then
+**Continue**. Refused keys, limits and quotas (401, 403, 429) and other failed requests
+are never retried.
 
-Default history refinement uses up to 300 recent, unprocessed attempts for the selected
+Default history learning uses up to 300 recent, unprocessed attempts for the selected
 speech model; “All history” deliberately includes older/previously examined data.
-Refinement pairs each raw transcript with the dictionary step's recorded result and
+Each raw transcript is paired with the dictionary step's recorded result and
 decisions, which show what the system did, not confirmed intended wording. Filler
 reduction, formatting and the delivered text are never sent. Older attempts without a
 recorded result, and freshly transcribed audio, are sent as raw text only. Applying at least one actual change marks only fully
@@ -430,6 +462,24 @@ approved direct mappings; ambiguous spans remain untouched.
 Details: [the dictionary file](dictionary.md) and
 [the agents' API](agents-api.md).
 
+### Tracing dictionary suggestions
+
+To see exactly what the suggestion model received and answered, connect
+[Langfuse](https://langfuse.com). Install Entune with tracing support:
+
+```sh
+uv tool install --force "entune[tracing]" && entune
+```
+
+Then, under **Settings → Integrations → Tracing**, enter a Langfuse project's public
+and secret keys, and a host if it isn't Langfuse Cloud (`https://cloud.langfuse.com`):
+`https://`, or `http://` only for a Langfuse running on this machine.
+The line under the form says when tracing is on. Each suggestion run appears in
+Langfuse as one session, with every part's request, streamed reply, timing and errors,
+tagged with the speech model, suggestion model and reasoning effort. Nothing is
+traced until both keys are saved; **Turn off** removes them. Traces include your
+transcripts, so use a Langfuse project you trust with them.
+
 ## Entune.app
 
 `entune` (or `entune install-app`) writes `Entune.app` to /Applications, or to
@@ -481,9 +531,12 @@ Enabled features determine what is sent out:
   mode starts uploading during recording. Local Whisper.cpp and Parakeet transcribe
   on this machine, without sending audio to a speech service.
 - **Dictionary builds:** the chosen dictionary model's provider receives raw source
-  transcripts (for refinement, beside the dictionary step's recorded result) and the
-  pinned/working confusion groups, including definitions and personal context. Each
-  chunk sends the current working dictionary again.
+  transcripts, beside the dictionary step's recorded result, and the pinned and working
+  entries that occur in each part's transcripts: spellings, meanings and heard forms,
+  never personal context or stored evidence.
+- **Tracing (off by default):** with Langfuse keys saved under **Settings →
+  Integrations**, each dictionary-suggestion request and reply, including its
+  transcripts and dictionary, also goes to the Langfuse host you set.
 - **Decision model:** for contextual correction it receives up to 160 characters of the
   original transcript either side of each matched occurrence, and each eligible
   meaning's spelling, definition and personal context. Filler reduction sends its input

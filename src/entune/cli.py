@@ -305,6 +305,7 @@ def _run(args: argparse.Namespace, data_dir: Path, store: Store) -> None:
     entune = Entune(store, default_providers(data_dir / "models"))
     entune.models.warm_default_model()
     entune.decisions.sync()
+    entune.tracing.start()  # Langfuse, only when its keys are saved
     server = uvicorn.Server(
         uvicorn.Config(create_app(entune), host="127.0.0.1", port=args.port, log_level="warning")
     )

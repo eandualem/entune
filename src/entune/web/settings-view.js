@@ -19,9 +19,18 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   }
 
   // ---- Settings ----
+  // Where each speech provider hands out API keys; the link opens in the browser, where
+  // the provider may ask to sign in first.
+  const KEY_PAGES = {
+    assemblyai: "https://www.assemblyai.com/dashboard/api-keys",
+    elevenlabs: "https://elevenlabs.io/app/developers/api-keys",
+    groq: "https://console.groq.com/keys",
+    soniox: "https://console.soniox.com/",
+    xai: "https://console.x.ai/",
+  };
   function keyRow(provider) {
     const row = document.createElement("div");
-    row.className = "srow";
+    row.className = "srow key-row";
     const label = document.createElement("label");
     label.className = "name";
     label.htmlFor = `key-${provider.id}`;
@@ -34,6 +43,11 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     input.autocomplete = "off";
     input.placeholder = provider.keyHint ? `saved ${provider.keyHint} · type to replace` : "Not set";
     row.append(label, input);
+    if (KEY_PAGES[provider.id]) {
+      const link = Object.assign(document.createElement("a"), { className: "key-link", href: KEY_PAGES[provider.id], target: "_blank", rel: "noopener", textContent: "Get a key" });
+      link.title = `Open ${provider.name}'s API key page in your browser`;
+      row.append(link);
+    }
     return row;
   }
 
@@ -287,8 +301,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const s = j.summary;
     const seconds = (value) => (value === null || value === undefined ? "–" : `+${value.toFixed(1)} s`);
     el("activity-total").textContent = s.transcriptions
-      ? `${s.transcriptions} processed dictation${s.transcriptions === 1 ? "" : "s"} · median ${seconds(s.median_seconds)} added per dictation.`
-      : settings.decisionModel.selected ? "No processed dictations yet." : "Choose a decision model in Settings › Corrections & formatting to enable processing.";
+      ? `${s.transcriptions} processed dictation${s.transcriptions === 1 ? "" : "s"} · median ${seconds(s.median_seconds)} added per dictation.` : "";
     const steps = [["contextual", "Dictionary, read in context"], ["deterministic", "Dictionary, always-apply entries"], ["cleanup", "Repeated fillers"], ["formatting", "Paragraphs and bullets"]];
     const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
     const rows = [];
@@ -322,6 +335,8 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     el("activity-details").hidden = details.length === 0;
     el("activity-rows").replaceChildren(...rows);
     el("activity-table").hidden = rows.length === 0;
+    // The section shows only once a step has run; until then it would describe nothing.
+    el("activity-label").hidden = el("processing-activity").hidden = rows.length === 0;
   }
   el("jev-policy-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -678,9 +693,38 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     });
   }
 
+  // Langfuse tracing: keys stay masked; the line under the form says whether it is on.
+  const tracingForm = el("tracing-form");
+  function showTracing(t) {
+    el("tracing-public").placeholder = t.publicKeyHint ? `saved ${t.publicKeyHint} · type to replace` : "Not set";
+    el("tracing-secret").placeholder = t.secretKeyHint ? `saved ${t.secretKeyHint} · type to replace` : "Not set";
+    el("tracing-host").placeholder = t.host;
+    el("tracing-off").hidden = !t.publicKeyHint && !t.secretKeyHint;
+    el("tracing-state").textContent = {
+      off: "Off.", connecting: "Connecting to Langfuse…",
+      on: `On: sending to ${t.detail}.${t.lastError ? ` The last traces did not arrive (${t.lastError}).` : ""}`,
+      failed: `Not connected: ${t.detail}`, missing: t.detail,
+    }[t.state] ?? t.state;
+    // Connecting settles in a moment: look again until it does.
+    if (t.state === "connecting") setTimeout(() => loadTracing().catch(() => {}), 1500);
+  }
+  async function loadTracing() { showTracing(await api("/api/tracing")); }
+  tracingForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = { publicKey: el("tracing-public").value, secretKey: el("tracing-secret").value, host: el("tracing-host").value };
+    try {
+      showTracing(await api("/api/tracing", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+      for (const id of ["tracing-public", "tracing-secret", "tracing-host"]) el(id).value = "";
+    } catch (err) { el("tracing-state").textContent = errorText(err); }
+  });
+  el("tracing-off").addEventListener("click", async () => {
+    try { showTracing(await api("/api/tracing", { method: "DELETE" })); }
+    catch (err) { el("tracing-state").textContent = errorText(err); }
+  });
+
   return {
     load: loadSettings, save: saveSetting,
-    refreshCorrections: () => loadCorrections().catch((err) => onError(errorText(err))),
+    refreshCorrections: () => Promise.all([loadCorrections(), loadTracing()]).catch((err) => onError(errorText(err))),
     async refreshJev() { if (settings) { settings.jev.summary = (await api("/api/settings")).jev.summary; renderJevSummary(); } },
   };
 }

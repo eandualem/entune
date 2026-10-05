@@ -64,24 +64,24 @@ CLOUD = Group(
 )
 
 
-def proposed(text: str = "I use cloud code.") -> dict[str, Any]:
-    from entune.learning.batches import sources
-
-    record = group("Claude Code", "cloud code").as_json()
-    record["id"] = "new_group"
-    record["meanings"][0]["id"] = "new_meaning"
-    for form in record["recognized_forms"]:
-        link = form["associations"][0]
-        link["meaning_id"] = "new_meaning"
-        if form["text"] == "cloud code":
-            start = text.index("cloud code")
-            link.update(
-                basis="text",
-                evidence=[
-                    {"source": next(iter(sources([text]))), "start": start, "end": start + 10}
-                ],
-            )
-    return {"additions": [record]}
+def proposed(text: str = "I use cloud code.", dictation: str = "d1") -> dict[str, Any]:
+    """A reply adding Claude Code, heard as "cloud code" in `dictation`, whose text is `text`."""
+    start = text.index("cloud code")
+    meaning = {
+        "id": "n1",
+        "spelling": "Claude Code",
+        "meaning": "The named tool Claude Code.",
+        "casing": "fixed",
+    }
+    evidence = {"dictation": dictation, "start": start, "end": start + 10}
+    heard = [
+        {
+            "text": "cloud code",
+            "links": [{"meaning": "n1", "basis": "text", "evidence": [evidence]}],
+        },
+        {"text": "Claude Code", "links": [{"meaning": "n1", "basis": "literal", "evidence": []}]},
+    ]
+    return {"additions": [{"meanings": [meaning], "heard": heard}], "revisions": [], "removals": []}
 
 
 def document(*pinned: Group, learned: dict[str, tuple[Group, ...]] | None = None) -> dict[str, Any]:

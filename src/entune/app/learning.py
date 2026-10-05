@@ -6,13 +6,20 @@ part decides what a run reads and what applying its proposal writes.
 
 from __future__ import annotations
 
+import statistics
 from collections.abc import Callable
 from dataclasses import replace
 
 from entune.app.dictionary_file import DictionaryChanged, DictionaryFile
 from entune.app.models import NoDefaultModel, SpeechModels, UnknownModel
 from entune.app.settings import Settings
-from entune.app.suggestion_runs import BuildInput, DictionaryBuilds, Source
+from entune.app.suggestion_runs import (
+    DEFAULT_EFFORT,
+    EFFORTS,
+    BuildInput,
+    DictionaryBuilds,
+    Source,
+)
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
 from entune.dictionary.changes import Proposal
@@ -56,20 +63,23 @@ class Learning:
         self,
         source: Source,
         *,
-        mode: str,
         scope: str = "new",
         audio_ids: list[str] | None = None,
+        transcript_ids: list[str] | None = None,
+        effort: str = DEFAULT_EFFORT,
     ) -> dict[str, object]:
-        # Generation and refinement are different jobs; the workflow names which one.
-        if mode not in {"generate", "refine"}:
-            raise ValueError("Choose generate or refine")
         if scope not in {"new", "all"}:
             raise ValueError("Choose new or all history")
+        if transcript_ids is not None and (source != "history" or scope != "all"):
+            raise ValueError("Chosen transcripts are reused history")
+        _check(effort)
         previous = self._builds.status()
         state = self._builds.start(
             lambda: replace(
-                self._build_input(source, scope=scope, audio_ids=audio_ids),
-                mode="generate" if mode == "generate" else "refine",
+                self._build_input(
+                    source, scope=scope, audio_ids=audio_ids, transcript_ids=transcript_ids
+                ),
+                effort=effort,
             )
         )
         if previous.get("phase") in {"failed", "cancelled"}:
@@ -83,6 +93,17 @@ class Learning:
                 applied=False,
             )
         return state
+
+    def history_transcripts(self) -> dict[str, object]:
+        """The default speech model's transcripts, for the reuse timeline."""
+        try:
+            ref = self._models.choose_model(None)
+        except (NoDefaultModel, UnknownModel):
+            return {"model": None, "items": []}
+        return {
+            "model": ref.id,
+            "items": self._store.learning_transcripts(ref.provider.id, ref.model),
+        }
 
     def dictionary_build_status(self, job_id: str | None = None) -> dict[str, object]:
         return self._builds.status(job_id)
@@ -98,7 +119,10 @@ class Learning:
             job_id, str(state["model"]), str(state["source"]), (), "discarded", state, applied=False
         )
 
-    def retry_dictionary_build(self, job_id: str) -> None:
+    def retry_dictionary_build(self, job_id: str, effort: str | None = None) -> None:
+        """Continue a stopped or failed run, with another reasoning effort if chosen; parts
+        already finished are kept either way."""
+
         def refresh(spec: BuildInput) -> BuildInput:
             with self._dictionary.lock:
                 speech_key = spec.speech_key
@@ -107,8 +131,11 @@ class Learning:
                     if configured is None:
                         raise ValueError(f"No API key set for {spec.speech.provider.name}.")
                     speech_key = configured
+                if effort is not None:
+                    _check(effort)
                 return replace(
                     spec,
+                    effort=effort or spec.effort,
                     speech_key=speech_key,
                     builder=self._dictionary_builder(),
                     dictionary=dictionary_changes.share(self._dictionary.dictionary(), set()),
@@ -116,6 +143,28 @@ class Learning:
                 )
 
         self._builds.retry(job_id, refresh)
+
+    def suggestion_timing(self) -> dict[str, dict[str, float]]:
+        """Measured seconds per part for each suggestion model and reasoning effort
+        ("model|effort"), from finished runs' receipts."""
+        seconds: dict[str, list[float]] = {}
+        for details in self._store.learning_details():
+            parts = details.get("parts")
+            for timing in parts if isinstance(parts, list) else ():
+                if not isinstance(timing, dict) or not isinstance(
+                    timing.get("seconds"), int | float
+                ):
+                    continue
+                # Each part names the effort it ran with: Continue can change it. Parts
+                # of another size, from older runs, would mislead the estimate.
+                if timing.get("partChars", batches.BATCH_CHARS) != batches.BATCH_CHARS:
+                    continue
+                key = f"{timing.get('model')}|{timing.get('effort')}"
+                seconds.setdefault(key, []).append(float(timing["seconds"]))
+        return {
+            key: {"secondsPerPart": round(statistics.median(values), 1), "parts": len(values)}
+            for key, values in seconds.items()
+        }
 
     def accept_dictionary_build(self, job_id: str, selected: object = None) -> None:
         def save(proposal: Proposal, spec: BuildInput, covered: tuple[str, ...]) -> bool:
@@ -160,7 +209,12 @@ class Learning:
         self._builds.accept(job_id, save)
 
     def _build_input(
-        self, source: Source, *, scope: str = "new", audio_ids: list[str] | None = None
+        self,
+        source: Source,
+        *,
+        scope: str = "new",
+        audio_ids: list[str] | None = None,
+        transcript_ids: list[str] | None = None,
     ) -> BuildInput:
         builder = self._dictionary_builder()
         try:
@@ -174,12 +228,21 @@ class Learning:
             version = self._dictionary.dictionary_version()
         if source == "history":
             inputs = self._store.learning_inputs(
-                ref.provider.id, ref.model, scope=scope, limit=batches.MAX_TRANSCRIPTS
+                ref.provider.id,
+                ref.model,
+                scope=scope,
+                limit=batches.MAX_TRANSCRIPTS,
+                ids=transcript_ids,
             )
+            if transcript_ids is not None and len(inputs) != len(transcript_ids):
+                raise ValueError(
+                    "Some of the chosen transcripts are no longer available. Close and open"
+                    " the panel to see the current ones."
+                )
             if not inputs:
                 raise ValueError(
-                    f"No new transcripts to learn from for {ref.label}. To read used ones "
-                    "again, turn on Include transcripts already used under Options."
+                    f"No new transcripts to learn from for {ref.label}. To read earlier ones "
+                    "again, turn on Reuse earlier transcripts."
                     if scope == "new"
                     else f"No transcripts to learn from for {ref.label} yet."
                 )
@@ -210,3 +273,8 @@ class Learning:
         return BuildInput(
             source, ref, speech_key, builder, current, version, audio=audio, scope="selected"
         )
+
+
+def _check(effort: str) -> None:
+    if effort not in EFFORTS:
+        raise ValueError(f"Choose a reasoning effort: {', '.join(EFFORTS)}")

@@ -135,6 +135,22 @@ def test_a_page_recording_opens_the_provider_connection(tmp_path: Path) -> None:
     assert opened.wait(2)
 
 
+def test_the_window_can_stop_only_a_shortcut_recording(tmp_path: Path) -> None:
+    app = Entune(Store(tmp_path), [StubProvider()])
+    client = TestClient(create_app(app), base_url="http://localhost")
+    stops: list[bool] = []
+    shortcut = app.operations.begin("dictation", "recording")
+    assert client.post(f"/api/operations/{shortcut.id}/stop").status_code == 409  # no desktop
+    app.desktop.on_stop_recording(lambda operation: stops.append(operation == shortcut.id))
+    assert client.post("/api/operations/other/stop").status_code == 409
+    assert client.post(f"/api/operations/{shortcut.id}/stop").status_code == 202
+    assert stops == [True]
+    app.operations.finish(shortcut)
+    page = client.post("/api/operations").json()  # the window's own recording stops itself
+    assert client.post(f"/api/operations/{page['id']}/stop").status_code == 409
+    assert stops == [True]
+
+
 def test_unknown_routes(client: TestClient) -> None:
     assert (
         client.post("/api/recordings/999/transcriptions", json={"model": "stub/good"}).status_code
@@ -441,7 +457,7 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
     chosen = {"dictionaryModel": "chatgpt:gpt-6-sol", "defaultModel": "stub/good"}
     client.put("/api/settings", json={"keys": {"stub": "k"}, **chosen})
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
-    build = {"mode": "generate", "source": "history"}
+    build = {"source": "history"}
     assert client.post("/api/dictionary/build", json=build).status_code == 202
     first = wait_for_build(client)
     assert first["proposal"] and calls == [("chatgpt:gpt-6-sol", "access")]
@@ -484,10 +500,9 @@ def test_a_chatgpt_login_due_to_run_out_is_renewed_and_kept_unless_signed_out(
     assert settings.chatgpt_login() is None
 
 
-def test_learning_needs_an_explicit_mode(client: TestClient) -> None:
-    for body in ({"source": "history"}, {"source": "history", "mode": "guess"}):
-        response = client.post("/api/dictionary/build", json=body)
-        assert response.status_code == 400 and "generate or refine" in response.text
+def test_learning_refuses_the_retired_mode(client: TestClient) -> None:
+    response = client.post("/api/dictionary/build", json={"source": "history", "mode": "refine"})
+    assert response.status_code == 400 and "Choose source" in response.text
 
 
 def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
@@ -508,25 +523,25 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
 
     entune = Entune(Store(tmp_path), [stub], llm_call=fake)
     client = TestClient(create_app(entune), base_url="http://localhost")
-    res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
+    res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 400 and "Add a key for Anthropic, OpenAI" in res.text
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
-    res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
+    res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 400 and "No API key set for OpenAI" in res.text
     client.put("/api/settings", json={"keys": {"openai": "sk-1", "stub": "k"}})
-    res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
+    res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 400 and "Pick a default model first" in res.text
     client.put("/api/settings", json={"defaultModel": "stub/good"})
     rec = client.post(
         "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}, data={"model": "stub/bad"}
     ).json()
     entune.store.add_transcription(rec["id"], "stub", "other", "ok", "from another model", None)
-    res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
+    res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 400 and "No new transcripts to learn from for Stub / good" in res.text
 
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
     client.put("/api/dictionary", json=document(group("Entune", "in tune")))
-    res = client.post("/api/dictionary/build", json={"mode": "generate", "source": "history"})
+    res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 202, res.text
     first = wait_for_build(client)
     proposal = first["proposal"]
@@ -541,12 +556,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     # Separate edits are blocked during generation and review. Out-of-process file
     # changes still invalidate a snapshot; this is a final guard, not merge UX.
     assert client.delete(f"/api/dictionary/build/{first['id']}").status_code == 200
-    assert (
-        client.post(
-            "/api/dictionary/build", json={"mode": "generate", "source": "history"}
-        ).status_code
-        == 202
-    )
+    assert client.post("/api/dictionary/build", json={"source": "history"}).status_code == 202
     pending = wait_for_build(client)
     current = client.get("/api/dictionary")
     assert client.put("/api/dictionary", json=current.json()).status_code == 409
@@ -706,7 +716,10 @@ def test_audio_response_cannot_execute_uploaded_or_legacy_html(
         assert response.content == body
         assert response.headers["content-type"] == "application/octet-stream"
         assert response.headers["x-content-type-options"] == "nosniff"
-        assert response.headers["content-security-policy"] == "sandbox"
+        assert response.headers.get_list("content-security-policy") == [
+            "sandbox",
+            "frame-ancestors 'none'",
+        ]
     store.close()
 
 
@@ -742,6 +755,16 @@ def test_requests_from_other_origins_are_refused(client: TestClient) -> None:
     # A sandboxed frame sends an opaque origin: refused too.
     opaque = client.put("/api/settings", json={"keys": {}}, headers={"origin": "null"})
     assert opaque.status_code == 403
+
+
+def test_other_sites_can_neither_frame_the_page_nor_load_its_audio(client: TestClient) -> None:
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
+    for path in ("/", f"/api/recordings/{rec['id']}/audio"):
+        headers = client.get(path).headers
+        assert headers["cross-origin-resource-policy"] == "same-origin"
+        assert "frame-ancestors 'none'" in headers.get_list("content-security-policy")
+        assert headers["x-frame-options"] == "DENY"
 
 
 def test_a_clip_missing_from_disk_becomes_a_stored_error(

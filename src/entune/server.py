@@ -24,6 +24,15 @@ WEB_DIR = Path(__file__).parent / "web"
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # an hour of 16-bit WAV at 24 kHz is about 170 MB
 
+# On every response: no other site may load Entune's recordings as media, nor embed
+# its window in a frame and trick clicks into it. The app's own window loads the page
+# top-level from this origin; curl and local agents are not browsers, so neither applies.
+SAME_ORIGIN_HEADERS = [
+    (b"cross-origin-resource-policy", b"same-origin"),
+    (b"content-security-policy", b"frame-ancestors 'none'"),
+    (b"x-frame-options", b"DENY"),
+]
+
 
 class LocalOnly:
     """Refuse state-changing requests that a web page from elsewhere could make.
@@ -61,6 +70,11 @@ class LocalOnly:
                 return
         received = 0
 
+        async def isolated_send(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message["headers"] = [*message.get("headers", []), *SAME_ORIGIN_HEADERS]
+            await send(message)
+
         async def limited_receive() -> Message:
             nonlocal received
             message = await receive()
@@ -72,7 +86,7 @@ class LocalOnly:
                     raise HTTPException(413, "Request too large")
             return message
 
-        await self.app(scope, limited_receive, send)
+        await self.app(scope, limited_receive, isolated_send)
 
 
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")

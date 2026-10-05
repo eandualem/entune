@@ -22,6 +22,7 @@ from entune.app.models import SpeechModels
 from entune.app.operations import Operations
 from entune.app.settings import Settings
 from entune.app.suggestion_runs import DictionaryBuilds
+from entune.app.tracing import Tracing
 from entune.learning import suggestion_model
 from entune.processing.jev_client import Client as JevClient
 from entune.processing.laya import Laya
@@ -49,7 +50,9 @@ class Entune:
         self.speech = SpeechResources(
             providers, lambda message: self.desktop.report_status(lastError=message)
         )
-        self.builds = DictionaryBuilds(self.speech, llm_call, self.operations)
+        self.tracing = Tracing(store)
+        self._listeners.append(self.tracing.sync)  # Delete everything removes its keys
+        self.builds = DictionaryBuilds(self.speech, llm_call, self.operations, self.tracing.run)
         laya = laya or Laya(store.data_dir / "models")
         self.settings = Settings(
             store, providers, self._changed, laya_installed=lambda: laya.engine() is not None
@@ -98,6 +101,7 @@ class Entune:
         # owns a separate two-second close; builds/resources share two more seconds.
         self.builds.close(0)
         self.speech.close(0)
+        self.tracing.close()  # pending traces get two seconds at most
         try:
             self.decisions.close()
         except Exception as exc:

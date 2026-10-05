@@ -1,13 +1,10 @@
+import { createRange } from "./range.js";
 import { THIS_DEVICE, api, el, errorText } from "./ui.js";
 
 // Learn from audio, in the suggestions panel: one source at a time (chosen from the menu), a
 // contiguous span chosen on a range over recorded time (oldest to newest, without calendar
 // gaps), whole recordings only.
 const PAGE = 60;
-const NOTES = {
-  entune: "",
-  folder: "WAV, MP3, M4A, FLAC, OGG or WebM files, up to 199 MB each, dated by when they were modified.",
-};
 
 export function duration(seconds) {
   const minutes = Math.round(seconds / 60);
@@ -15,32 +12,48 @@ export function duration(seconds) {
   if (minutes < 60) return `${minutes} min`;
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
 }
-// Planning allowance, not a measured confidence interval: a 12.3-hour sample
-// took 135 minutes with GPT-6.1 Sol, medium effort, 24k-character requests.
-// See docs/models.md. Transcription is additional; other models are uncalibrated.
-export function generationEstimate(seconds, unknown, model) {
-  if (unknown) return "Time estimate unavailable: some selected recordings have no known duration. Dictionary generation can take minutes to hours, plus transcription.";
-  if (!(seconds > 0)) return "Select audio to see an estimated generation time.";
-  const hours = seconds / 3600;
-  const low = Math.max(1, Math.ceil(hours * 10));
-  const high = Math.max(low + 1, Math.ceil(hours * 20));
-  const interval = `${duration(low * 60)}–${duration(high * 60)}`;
-  const calibrated = ["chatgpt:gpt-6.1-sol", "openai:gpt-6.1-sol"].includes(model);
-  return `${calibrated ? "Estimated dictionary generation" : "GPT-6.1 Sol reference estimate"}: ${interval}, plus audio transcription. Based on a small Sol benchmark at medium effort; ${calibrated ? "large dictionaries and retries can take longer" : "the selected model has not been timed and may differ"}.`;
+// What the selected audio will take, from measurements only. Transcription uses the
+// speech model's measured wait per minute of audio, several recordings at a time for a
+// cloud model. Suggestions are counted in parts: about 37,000 characters of transcript per
+// hour of speech (452,400 characters in a 12.3-hour dictation sample), divided by
+// the part size, at the seconds per part measured for this model and this effort. The
+// one reference without a measurement: GPT-6.1 Sol at medium effort took 135 minutes for
+// 20 parts (docs/models.md). Both steps run side by side.
+const CHARS_PER_HOUR = 37_000;
+const SOL_SECONDS_PER_PART = 405;
+export const PART_CHARS = 24_000;
+export function workEstimate({ durations, unknown, speech, local, timing, dictionaryModel, effort }) {
+  if (unknown) return "Some recordings have no known length, so there is no time estimate.";
+  const seconds = durations.reduce((sum, d) => sum + d, 0);
+  if (!(seconds > 0)) return "";
+  const rate = timing?.speech?.[speech];
+  // Whole recordings go to the workers: never more at once than recordings, and never
+  // shorter than the longest recording alone.
+  const workers = Math.min(local ? 1 : timing?.workers ?? 1, durations.length);
+  const wall = Math.max(seconds / workers, ...durations);
+  const transcribe = rate ? `about ${duration((wall / 60) * rate)}${workers > 1 ? `, ${workers} recordings at a time` : ""}`
+    : "not measured yet for this speech model";
+  const parts = Math.max(1, Math.ceil((seconds / 3600) * CHARS_PER_HOUR / PART_CHARS));
+  const measured = timing?.suggestion?.[`${dictionaryModel}|${effort}`];
+  const sol = !measured && /:gpt-6\.1-sol$/.test(dictionaryModel ?? "") && effort === "medium";
+  const per = measured?.secondsPerPart ?? (sol ? SOL_SECONDS_PER_PART : null);
+  const each = per ? `, about ${duration(per)} each${sol ? " (measured once)" : ""}, about ${duration(parts * per)} in all`
+    : "; not timed yet with these settings";
+  return `Transcribing: ${transcribe}\nSuggestions: about ${parts} part${parts === 1 ? "" : "s"}${each}, starting while transcription runs`;
 }
-const day = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "Undated";
+export const day = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "Undated";
 const moment = (iso) => iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "Undated";
 
-export function createAudioOnboarding({ getModel, getSettings, getDictionaryModelName, onBuild, onBusy }) {
+export function createAudioOnboarding({ getModel, getSettings, getDictionaryModelName, getRunSettings, onBuild, onBusy }) {
   const folder = el("audio-folder");
   const start = el("audio-range-start"), end = el("audio-range-end");
   const player = new Audio();
   let items = [];
+  let timing = null;      // measured speeds, for the estimate
   let apps = [];          // dictation apps with an importer, from the server; the stored source is the id
   let source = "entune";
   let list = [];          // this source's recordings, oldest first
-  let edges = [0];        // cumulative position of each boundary, 0..1000
-  let from = 0, to = 0;   // included recordings: list[from .. to - 1]
+  const range = createRange({ start, end, fill: el("audio-range-fill"), onChange: () => draw() });
   let shown = PAGE;
   let importing = false, buildBusy = false, loaded = false;
   let playing = null;
@@ -50,12 +63,8 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     // recording keeps its own selectable stretch of the range.
     const measured = list.filter((item) => item.seconds != null);
     const typical = measured.length ? measured.reduce((sum, item) => sum + item.seconds, 0) / measured.length : 1;
-    const widths = list.map((item) => item.seconds ?? typical);
-    const total = widths.reduce((sum, width) => sum + width, 0) || 1;
-    edges = [0];
-    for (const width of widths) edges.push(edges.at(-1) + (width / total) * 1000);
+    range.setWeights(list.map((item) => item.seconds ?? typical));
   }
-  const nearest = (value) => edges.reduce((best, edge, i) => Math.abs(edge - value) < Math.abs(edges[best] - value) ? i : best, 0);
 
   // The stored source of the recordings shown: Entune, a folder, or the app picked in the list.
   const pickedApp = () => apps.find((app) => app.id === document.querySelector('input[name="audio-provider"]:checked')?.value) ?? apps[0];
@@ -68,12 +77,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
       option.className = "app-option";
       const input = Object.assign(document.createElement("input"), { type: "radio", name: "audio-provider", value: app.id, checked: index === 0 });
       input.addEventListener("change", () => { el("audio-import-status").textContent = ""; choose(); });
-      const text = document.createElement("span");
-      text.append(
-        Object.assign(document.createElement("span"), { className: "app-name", textContent: app.name }),
-        Object.assign(document.createElement("span"), { className: "caption", textContent: app.note }),
-      );
-      option.append(input, text);
+      option.append(input, Object.assign(document.createElement("span"), { className: "app-name", textContent: app.name }));
       return option;
     }));
   }
@@ -85,7 +89,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
       .map((item, order) => ({ ...item, order }))
       .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? "") || a.order - b.order);
     positions();
-    from = 0; to = list.length; shown = PAGE;
+    shown = PAGE;
     stop();
     draw();
   }
@@ -93,7 +97,6 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   function draw() {
     el("audio-provider-pick").hidden = source !== "provider";
     const app = source === "provider" ? pickedApp() : null;
-    el("audio-source-note").textContent = app ? `Entune copies the audio only, never ${app.name}'s transcripts.` : NOTES[source] ?? "";
     el("import-app").hidden = !app;
     el("choose-audio-folder").hidden = source !== "folder";
     const some = items.some((item) => item.source === shownSource());
@@ -106,29 +109,28 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
       ? (items.some((item) => item.source === "entune") ? "Every recording here was already transcribed by this speech model." : "No Entune recordings yet.")
       : source === "provider" ? `Nothing imported from ${app?.name ?? "this app"} yet. Press Import to copy its recordings.`
         : "No audio files imported yet.";
-    const chosen = list.slice(from, to);
+    const chosen = list.slice(range.from, range.to);
     const seconds = (values) => values.reduce((sum, item) => sum + (item.seconds ?? 0), 0);
     const unknown = chosen.filter((item) => item.seconds == null).length;
     el("audio-selected").textContent = list.length ? `${duration(seconds(chosen))} selected` : "";
     el("audio-available").textContent = list.length
       ? `${chosen.length} of ${list.length} recordings · ${duration(seconds(list))} available${unknown ? ` · ${unknown} without a known duration` : ""}`
       : "";
-    start.value = String(Math.round(edges[from] ?? 0));
-    end.value = String(Math.round(edges[to] ?? 1000));
-    el("audio-range-fill").style.left = `${(edges[from] ?? 0) / 10}%`;
-    el("audio-range-fill").style.right = `${100 - (edges[to] ?? 1000) / 10}%`;
+    range.draw();
     el("audio-start-label").textContent = chosen.length ? day(chosen[0].created_at) : "";
     el("audio-end-label").textContent = chosen.length ? day(chosen.at(-1).created_at) : "";
     el("audio-detail-summary").textContent = `Show the ${chosen.length} included recording${chosen.length === 1 ? "" : "s"}`;
     if (el("audio-detail").open) drawList(chosen);
     const speech = getModel();
     const language = getDictionaryModelName();
-    el("audio-generation-estimate").textContent = generationEstimate(seconds(chosen), unknown, getSettings()?.dictionaryModel);
-    el("audio-models").textContent = !speech
-      ? "Choose a speech model in the toolbar first."
-      : !language
-        ? (el("dictionary-model-note").hidden ? "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral in Settings › Dictionary setup to choose a suggestion model." : el("dictionary-model-note").textContent)
-        : `Transcribe ${duration(seconds(chosen))} (${chosen.length} recording${chosen.length === 1 ? "" : "s"}) with ${speech.label}, then suggest with ${language}.`;
+    const { effort } = getRunSettings();
+    el("audio-generation-estimate").textContent = workEstimate({
+      durations: chosen.map((item) => item.seconds ?? 0), unknown, speech: speech?.id, local: (timing?.local ?? []).includes(speech?.id.split("/")[0]),
+      timing, dictionaryModel: getSettings()?.dictionaryModel, effort,
+    });
+    // The footer speaks only when something stops the start.
+    el("audio-models").textContent = !speech ? "Choose a speech model first."
+      : !language ? "Choose a suggestion model with a key first." : "";
     const blocked = importing || buildBusy || !chosen.length || !speech || !language;
     el("build-audio-dictionary").disabled = blocked;
     for (const control of [start, end, el("import-app"), el("choose-audio-folder")]) control.disabled = importing || buildBusy;
@@ -165,35 +167,21 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
       player.play().catch((err) => {
         playing = null;
         el("audio-import-status").textContent = `Could not play that recording: ${errorText(err)}`;
-        drawList(list.slice(from, to));
+        drawList(list.slice(range.from, range.to));
       });
       playing = item.id;
     }
-    drawList(list.slice(from, to));
+    drawList(list.slice(range.from, range.to));
   }
-  player.addEventListener("ended", () => { playing = null; drawList(list.slice(from, to)); });
+  player.addEventListener("ended", () => { playing = null; drawList(list.slice(range.from, range.to)); });
 
-  // The two handles cannot cross; at least one whole recording stays included.
-  start.addEventListener("input", () => { from = Math.min(nearest(+start.value), to - 1); draw(); });
-  end.addEventListener("input", () => { to = Math.max(nearest(+end.value), from + 1); draw(); });
-  // Arrow, Page and Home/End keys move a handle by whole recordings.
-  for (const [handle, isStart] of [[start, true], [end, false]]) {
-    handle.addEventListener("keydown", (event) => {
-      const step = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -10, PageUp: 10, Home: -Infinity, End: Infinity }[event.key];
-      if (step === undefined) return;
-      event.preventDefault();
-      if (isStart) from = Math.max(0, Math.min(to - 1, from + (Number.isFinite(step) ? step : step > 0 ? list.length : -list.length)));
-      else to = Math.min(list.length, Math.max(from + 1, to + (Number.isFinite(step) ? step : step > 0 ? list.length : -list.length)));
-      draw();
-    });
-  }
   el("audio-other-models").addEventListener("change", choose);
   el("audio-detail").addEventListener("toggle", () => draw());
   el("audio-more").addEventListener("click", () => { shown += PAGE; draw(); });
   el("suggest-drawer").addEventListener("close", stop);
 
   async function refresh() {
-    ({ items, apps } = await api("/api/dictionary/audio"));
+    [{ items, apps }, timing] = await Promise.all([api("/api/dictionary/audio"), api("/api/dictionary/timing").catch(() => null)]);
     drawApps();
     loaded = true;
     choose();
@@ -247,7 +235,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     }
   });
   el("build-audio-dictionary").addEventListener("click", async () => {
-    const ids = list.slice(from, to).map((item) => item.id);
+    const ids = list.slice(range.from, range.to).map((item) => item.id);
     stop();
     await onBuild({ audio_ids: ids });
   });
@@ -261,5 +249,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     // Status polls repeat the same value; redraw only on a change, keeping focus in the list.
     setBuildBusy(value) { if (value !== buildBusy) { buildBusy = value; draw(); } },
     redraw: draw,
+    // Another speech model hears different recordings as new: filter the list again.
+    modelChanged() { if (loaded) choose(); },
   };
 }

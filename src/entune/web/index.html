@@ -35,6 +35,10 @@
       <div class="spacer pywebview-drag-region"></div>
       <span class="status" id="status" role="status"></span>
       <select class="select" id="model" aria-label="Default model" title="Default model: what the shortcut uses. Picking one applies at once."></select>
+      <label class="fast" id="anonymous-wrap" title="Anonymous mode: blur your transcripts, for screen sharing. The newest stays readable until you copy it.">
+        <svg class="i13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/><path d="M2.5 13.5l11-11"/></svg>
+        <input type="checkbox" id="anonymous" aria-label="Anonymous mode" />
+      </label>
       <label class="fast" id="fast-mode-wrap" title="Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop (AssemblyAI only)">
         <svg class="i13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"/></svg>
         <input type="checkbox" id="fast-mode" aria-label="Fast mode" />
@@ -44,6 +48,7 @@
       </button>
     </header>
 
+    <div class="drop-overlay" id="drop-overlay" hidden><p>Drop audio to transcribe it</p></div>
     <main class="content">
       <section class="view" id="view-history" role="tabpanel" data-active>
         <div class="history" id="history"></div>
@@ -88,18 +93,16 @@
 
             <div class="section" id="models-performance">
               <h2 class="sec-label">Speech models</h2>
-              <p class="caption section-intro">How each speech model has done on your own dictations.</p>
               <div class="scard perf-card">
                 <div class="perf-table" id="metrics-table">
                   <div class="perf-grid perf-head"><span>Model</span><span class="num">Wait per audio minute</span><span class="num">Dictionary corrections</span><span class="num">Runs</span><span class="num">Audio</span></div>
                   <div id="metrics-rows"></div>
                 </div>
                 <p class="caption perf-empty" id="metrics-empty" hidden>Nothing to compare yet. Each model you dictate with appears here.</p>
-                <div class="srow foot"><span class="caption"><b>Wait</b>: how long transcription took after you stopped, per minute of audio; fast mode uploads while you record, and processing is timed separately. <b>Corrections</b>: dictionary replacements per 100 words, in dictations where the dictionary ran. Neither is an accuracy score.</span></div>
+                <div class="srow foot"><span class="caption"><b>Wait</b>: transcription time after you stop, per minute of audio. <b>Corrections</b>: dictionary replacements per 100 words. Neither measures accuracy.</span></div>
               </div>
-              <h2 class="sec-label">Corrections &amp; formatting</h2>
-              <p class="caption section-intro">What the chosen decision model did after speech recognition, across all dictations and every speech model. It counts work done, not accuracy.</p>
-              <div class="scard activity-card" id="processing-activity">
+              <h2 class="sec-label" id="activity-label" hidden>Corrections &amp; formatting</h2>
+              <div class="scard activity-card" id="processing-activity" hidden>
                 <p class="caption activity-total" id="activity-total"></p>
                 <div class="perf-table" id="activity-table" hidden>
                   <div class="activity-grid perf-head"><span>Step</span><span class="num">Dictations</span><span class="num">Changes made</span><span class="num">Unresolved</span><span class="num">Added time</span></div>
@@ -121,8 +124,8 @@
             <div class="segmented dict-filters" role="tablist" aria-label="Show">
               <button type="button" role="tab" id="filter-all" aria-selected="true" title="Pinned entries and the ones learned for this speech model">All<span class="count" id="count-all"></span></button>
               <button type="button" role="tab" id="filter-pinned" aria-selected="false" title="Used with every speech model">Pinned<span class="count" id="count-pinned"></span></button>
-              <button type="button" role="tab" id="filter-learned" aria-selected="false"><span id="filter-learned-name">Learned</span><span class="count" id="count-learned"></span></button>
-              <button type="button" role="tab" id="filter-attention" aria-selected="false" title="Meanings without a description: Entune can't choose them yet">Needs attention<span class="count" id="count-attention"></span><span class="attention-dot" id="attention-dot" hidden></span></button>
+              <button type="button" role="tab" id="filter-learned" aria-selected="false">Learned<span class="count" id="count-learned"></span></button>
+              <button type="button" role="tab" id="filter-attention" aria-selected="false" title="Entries to check: a meaning without a description, which Entune can't choose yet, or an imported entry to confirm" hidden>To check<span class="count" id="count-attention"></span><span class="attention-dot" id="attention-dot" hidden></span></button>
             </div>
             <label class="dict-search">
               <svg class="i12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="5" cy="5" r="3.6"/><path d="M8 8l3 3"/></svg>
@@ -141,6 +144,7 @@
               <span id="suggest-label">Get suggestions</span><span class="badge" id="suggest-badge" hidden></span>
             </button>
             <button type="button" class="btn accent add-btn" id="add-entry-btn" aria-expanded="false" aria-controls="add-row"><span class="plus" aria-hidden="true">+</span>Add</button>
+            <button type="button" class="btn ghost help-btn" id="dict-help" aria-haspopup="dialog" aria-controls="help-dialog" title="How the dictionary works">Help</button>
             <div class="menu-wrap">
               <button type="button" class="btn menu-btn" id="dict-menu-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="dict-menu" aria-label="More" title="More ways to build the dictionary">
                 <svg class="i14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/><circle cx="11" cy="7" r="1.2"/></svg>
@@ -154,8 +158,7 @@
                 <hr />
                 <p class="menu-label">This dictionary</p>
                 <button type="button" role="menuitem" id="pin-all" title="Use every entry learned for this speech model with all speech models"><span class="menu-text" id="pin-all-label">Pin all learned</span><span class="menu-note" id="pin-all-count"></span></button>
-                <button type="button" role="menuitemcheckbox" id="menu-reuse" aria-checked="false"><span class="menu-text">Include used transcripts in suggestions</span><span class="menu-note" id="menu-reuse-state">Off</span></button>
-                <button type="button" role="menuitem" id="help-toggle" aria-haspopup="dialog" aria-controls="help-dialog"><span class="menu-text">How the dictionary works</span></button>
+                <button type="button" role="menuitemcheckbox" id="menu-reuse" aria-checked="false"><span class="menu-text">Reuse earlier transcripts</span><span class="menu-note" id="menu-reuse-state">Off</span></button>
               </div>
             </div>
           </div>
@@ -197,8 +200,6 @@
             <div class="dict-legend">
               <span><b>Pinned</b> · every speech model, protected from suggestions</span>
               <span><b id="legend-model">Learned</b> · learned for this model only; the list follows the toolbar picker</span>
-              <span class="spacer"></span>
-              <button type="button" class="btn link" id="legend-help" aria-haspopup="dialog" aria-controls="help-dialog">How the dictionary works</button>
             </div>
           </div>
 
@@ -218,33 +219,35 @@
                 <button type="submit" class="btn-icon" aria-label="Close guide" value="close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
               </header>
               <article class="guide">
-                <h3>What it's for</h3>
+                <h3 id="guide-about">What it's for</h3>
                 <p>Every speech model has words it keeps getting wrong: names, products, technical terms. Your dictionary remembers those mistakes and fixes them in each new dictation, before the text reaches you.</p>
-                <h3>How an entry works</h3>
+                <h3 id="guide-entry">How an entry works</h3>
                 <p>An entry pairs what the speech model <em>writes</em> with what you might have <em>meant</em>. Say it often writes “cloud” when you said “Claude”. But sometimes you really mean a cloud. So the entry keeps both meanings:</p>
                 <div class="guide-example"><code>cloud</code> → <b>Claude</b>, an AI assistant you ask to write or code<br><code>cloud</code> → <b>cloud</b>, internet storage and servers</div>
                 <p>In “Ask cloud to draft the reply”, Entune writes <b>Claude</b>. In “The backups are in the cloud”, it leaves <b>cloud</b> alone. It chooses from the surrounding words, which is why each meaning has a short description: write what the thing is and what it goes with.</p>
                 <p>One entry can list several spellings the model writes (“cloud”, “clawed”) and several meanings. Each heard spelling is linked to the meanings it can stand for.</p>
-                <h3>Getting suggestions</h3>
-                <p>You don't have to build the dictionary by hand. Entune can read your dictations and suggest entries, using the dictionary model you choose (its key is in Settings).</p>
-                <p>Choose <b>Get suggestions</b>. What it looks for depends on your dictionary:</p>
-                <ul>
-                  <li>With no entries yet for this speech model, it reads your recent transcripts and suggests first entries for the mistakes it finds.</li>
-                  <li>Once you have entries, pinned or learned, it also compares what the speech model wrote with what the dictionary changed. It suggests missing entries and fixes: a clearer description, a wider or narrower entry, or removing a learned entry that does more harm than good.</li>
-                  <li><b>Learning from audio</b>, in the <b>⋯</b> menu, transcribes recordings again with your current speech model before suggesting entries. Use it when the recordings were made with another model, or come from another dictation app or a folder. It takes longer and uses more tokens.</li>
-                </ul>
-                <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model selected in the toolbar.</p>
-                <p>Each run reads up to 300 of that model's newest transcripts that no earlier run has read, so running it again moves on to newer dictations. To read transcripts again, turn on <b>Include transcripts already used</b> in the suggestions panel or the <b>⋯</b> menu; that costs tokens again and can repeat earlier suggestions.</p>
+                <h3 id="guide-suggestions">Getting suggestions</h3>
+                <p>Entune can build the dictionary for you. A suggestion model, the language model you choose with its key in Settings, reads what your speech model wrote and suggests entries for the words it gets wrong. For the entries those transcripts show, it also suggests clearer meanings, more heard spellings, and removals.</p>
+                <p><b>Get suggestions</b> is the simple path: it reads up to 300 of your speech model's newest transcripts not yet used by suggestions you applied; a run you discard or stop uses none.</p>
+                <h3 id="guide-reuse">Reusing earlier transcripts</h3>
+                <p id="guide-reuse-state"></p>
+                <p>Each transcript is read once: after you apply a run's suggestions, the next <b>Get suggestions</b> reads only what you dictated since, so you don't pay twice for the same text. <b>Reuse earlier transcripts</b> reads them again. It shows every transcript of this speech model on a timeline, oldest on the left, with the ones used before marked under the line; drag the handles to choose how much to read.</p>
+                <p>Reuse them when the earlier suggestions no longer stand for what those transcripts can teach: you cleared or rebuilt your dictionary, you chose a stronger suggestion model or a higher reasoning effort, an update improved how Entune suggests, or an earlier run's suggestions were poor. Reading again costs tokens again. Entries already in your dictionary are shown to the suggestion model beside the transcripts they occur in, so it improves them instead of adding them twice.</p>
                 <h3 id="guide-audio">Learning from audio</h3>
-                <p>Choose a source in the <b>⋯</b> menu: your Entune recordings made with other speech models, the recordings another dictation app kept on this Mac (only the audio is copied, never its transcripts), or a folder of audio files. For Entune recordings you can include the ones this speech model already transcribed.</p>
-                <p>After you pick a source, the timeline shows all its recorded audio, oldest on the left and newest on the right. It measures recorded time, so days without recordings take no space; the dates under the handles show where you are.</p>
-                <p>Everything is selected at first. Drag the left handle right to keep only your most recent audio, or move either handle to choose any stretch. You'll see exactly how much audio and how many recordings are included, and you can list and play them. Each edge snaps to whole recordings.</p>
-                <p>Then choose <b>Transcribe and suggest</b>. Entune transcribes the selection with your speech model, then the dictionary model reads the new text. Transcribing again can take a while and your providers may charge for both steps. You can stop at any time; finished transcripts are kept for a retry.</p>
-                <h3>Reviewing suggestions</h3>
-                <p>Suggestions open in a panel beside your dictionary, grouped into new entries, changes and removals. You can edit any of them, remove the ones you don't want with ×, and then apply the rest in one step. Nothing is saved until you apply. While suggestions are open, dictation pauses, so apply or discard them when you're done.</p>
-                <h3>Pinned and learned entries</h3>
+                <p>The <b>⋯</b> menu learns from audio instead of transcripts, from one of three sources:</p>
+                <p><b>Your other models' recordings</b> are recordings already in Entune that this speech model hasn't transcribed. <b>Another dictation app</b>: Import copies the audio that app keeps on this Mac into Entune's data folder; its transcripts are never copied and its files stay as they are. Importing again adds only what is new. <b>An audio folder</b>: choose a folder of recordings of you talking, such as meetings or voice notes, in WAV, MP3, M4A, FLAC, OGG or WebM; each file is copied once.</p>
+                <p>The hours and minutes are recorded audio: the length of the recordings you choose, not how long the run takes. Entune first <b>transcribes</b> that audio with your speech model, which a cloud provider charges for, then the suggestion model reads the new transcripts. The estimate under the timeline shows both steps. The timeline runs oldest on the left; drag the handles to choose how much to use, and each edge snaps to whole recordings. An hour or two of recent audio gives quick results.</p>
+                <h3 id="guide-time">Time and settings</h3>
+                <p>Text goes to the suggestion model in parts, one after another, because each part builds on the entries found so far. With audio, parts start as soon as enough is transcribed, while the rest is still transcribing. Cloud speech models transcribe several recordings at a time; a local model takes one at a time.</p>
+                <p><b>Reasoning effort</b> is the level the suggestion model's provider names, from minimal to xhigh. Higher effort reasons longer and usually finds more; high is the default. A provider without a level maps it to one it has.</p>
+                <p>The estimate uses what Entune has measured: your speech model's transcription times, and the time per part of earlier runs with the same suggestion model and effort. A combination not used before says so.</p>
+                <p>Sometimes a reply starts and then sends only blank space. Entune stops it within a minute or two and tries that part again, three attempts in all. A ChatGPT plan also ends any single reply at about 15 minutes. If a part fails all its attempts, or runs past a time or length limit, Entune stops and keeps the finished parts. Choose a lower reasoning effort, or less audio, and press <b>Continue</b>: it picks up where it stopped. Transcripts made so far are kept for Continue while Entune stays open.</p>
+                <h3 id="guide-review">Reviewing suggestions</h3>
+                <p>Suggestions open in a panel beside your dictionary, grouped into new entries, changes and removals. Edit any of them, leave out the ones you don't want with ×, and apply the rest in one step. Nothing is saved until you apply. Dictation keeps working the whole time; only editing the dictionary waits until you apply or discard.</p>
+                <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model chosen when the run starts.</p>
+                <h3 id="guide-pinned">Pinned and learned entries</h3>
                 <p><b>Learned</b> entries are used only with the speech model they were learned for. <b>Pin</b> an entry to use it with every speech model; pinned entries are yours and suggestions can't remove them. Pinning doesn't make an entry win: Entune still reads the sentence.</p>
-                <h3>Adding an entry yourself</h3>
+                <h3 id="guide-add">Adding an entry yourself</h3>
                 <p>Choose <b>Add</b> and fill in one line: how it's written, what the speech model hears (several, separated by commas) and what it is. For several meanings, a spelling kept as written, or always replacing, open the full editor from the link under that line. <b>Edit</b> on an entry opens the same editor.</p>
               </article>
             </form>
@@ -270,20 +273,34 @@
             <div class="drawer-inner">
               <header class="drawer-head">
                 <div><h2 id="suggest-title">Get suggestions</h2><p class="caption" id="suggest-sub"></p></div>
+                <button type="button" class="btn ghost sm help-btn" id="suggest-help" aria-haspopup="dialog" aria-controls="help-dialog">Help</button>
                 <button type="button" class="btn-icon" id="suggest-close" aria-label="Close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
               </header>
               <div class="drawer-body">
                 <div class="suggest-setup" id="suggest-setup">
-                  <p id="learn-source">Suggestions from your recent transcripts. Nothing changes until you review them.</p>
-                  <p class="caption">Dictionary generation can take minutes to hours for a large history. It processes batches in sequence; the model and size of the growing dictionary affect the time.</p>
-                  <label class="check"><input type="checkbox" id="learning-reuse" /> Include transcripts already used</label>
-                  <p class="caption">Reads transcripts an earlier run already read. It costs tokens again and can repeat earlier suggestions.</p>
+                  <p id="learn-source">Reads your recent transcripts and suggests entries for the words your speech model gets wrong.</p>
+                  <div class="reuse-line">
+                    <label class="check"><input type="checkbox" id="learning-reuse" /> Reuse earlier transcripts</label>
+                    <button type="button" class="btn ghost sm help-btn" id="reuse-help" aria-haspopup="dialog" aria-controls="help-dialog">Help</button>
+                  </div>
+                  <p class="caption" id="history-state" role="status"></p>
+                  <div class="audio-pick" id="history-pick" hidden>
+                    <div class="audio-total"><span class="audio-hours" id="history-selected"></span><span class="caption" id="history-available"></span></div>
+                    <div class="range" id="history-range">
+                      <div class="range-track"><div class="range-fill" id="history-range-fill"></div></div>
+                      <div class="range-used" id="history-used-marks" aria-hidden="true"></div>
+                      <input type="range" id="history-range-start" min="0" max="1000" value="0" step="1" aria-label="Oldest included transcript" />
+                      <input type="range" id="history-range-end" min="0" max="1000" value="1000" step="1" aria-label="Newest included transcript" />
+                    </div>
+                    <div class="range-labels"><span id="history-start-label"></span><span id="history-end-label"></span></div>
+                    <p class="caption">The line under the range marks transcripts used before.</p>
+                    <p class="estimate" id="history-estimate" role="status"></p>
+                  </div>
                 </div>
                 <div class="suggest-audio" id="suggest-audio" hidden>
                   <p id="audio-intro"></p>
                   <div class="app-list" id="audio-provider-pick" role="radiogroup" aria-label="Dictation app" hidden></div>
                   <div class="source-note">
-                    <p class="caption" id="audio-source-note"></p>
                     <button type="button" class="btn sm" id="import-app" hidden>Import</button>
                     <button type="button" class="btn sm" id="choose-audio-folder" hidden>Choose folder…</button>
                     <input type="file" id="audio-folder" webkitdirectory multiple hidden />
@@ -299,26 +316,24 @@
                       <input type="range" id="audio-range-end" min="0" max="1000" value="1000" step="1" aria-label="Newest included audio" />
                     </div>
                     <div class="range-labels"><span id="audio-start-label"></span><span id="audio-end-label"></span></div>
-                    <p class="caption range-note">Drag the handles to choose a stretch of recorded time, oldest to newest.</p>
                     <details class="audio-detail" id="audio-detail"><summary id="audio-detail-summary">Show included recordings</summary><div class="audio-list" id="learning-audio-list"></div><button type="button" class="btn ghost sm" id="audio-more" hidden>Show more</button></details>
                   </div>
-                  <p id="audio-generation-estimate" role="status"></p>
-                  <p class="caption">Cloud providers may charge for both steps: transcribing, then suggestions.</p>
-                  <button type="button" class="btn link" id="audio-help" aria-haspopup="dialog" aria-controls="help-dialog">How learning from audio works</button>
-                </div>
-                <div class="suggest-shared" id="suggest-shared">
-                  <div class="suggest-model">
-                    <label for="dictionary-model">Suggestion model</label>
-                    <select class="select" id="dictionary-model" aria-describedby="dictionary-model-note"></select>
-                    <button type="button" class="btn link" id="suggest-settings">Keys in Settings</button>
-                  </div>
-                  <p class="caption learn-note" id="dictionary-model-note" hidden></p>
-                  <p class="caption">Nothing changes in your dictionary until you apply. While a run or review is open, dictation and dictionary editing are paused.</p>
                 </div>
                 <div class="learn-status" id="learn-status" hidden>
                   <div class="learn-line"><span class="spinner" id="build-spinner" aria-hidden="true" hidden></span><p class="learn-progress" id="dictionary-build-status" role="status"></p></div>
                   <details class="build-error-detail" id="build-error-detail" hidden><summary>Technical details</summary><pre id="build-error-text"></pre></details>
                   <p class="caption" id="run-note" hidden>You can close this panel; progress stays above the list. Finished parts are kept if you stop.</p>
+                </div>
+                <div class="suggest-shared" id="suggest-shared">
+                  <div class="run-settings">
+                    <label class="run-field" id="speech-field">Speech model <select class="select" id="suggest-speech"></select></label>
+                    <label class="run-field">Suggestion model <select class="select" id="dictionary-model" aria-describedby="dictionary-model-note"></select></label>
+                    <label class="run-field">Reasoning effort <select class="select" id="suggest-effort"><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option></select></label>
+                  </div>
+                  <p class="caption" id="run-effect"></p>
+                  <p class="estimate" id="audio-generation-estimate" role="status"></p>
+                  <p class="caption learn-note" id="dictionary-model-note" hidden></p>
+                  <p class="caption"><button type="button" class="btn link" id="suggest-settings">Keys in Settings</button></p>
                 </div>
                 <div class="proposal" id="proposal" hidden>
                   <p class="caption" id="proposal-title">Edit any suggestion, or leave it out with ×. Pinned entries are never changed by suggestions.</p>
@@ -330,7 +345,7 @@
                 <button type="button" class="btn primary" id="build-audio-dictionary" hidden disabled>Transcribe and suggest</button>
                 <span class="caption audio-models" id="audio-models" hidden></span>
                 <button type="button" class="btn primary" id="accept-proposal" hidden>Apply</button>
-                <button type="button" class="btn" id="retry-dictionary-build" hidden>Retry the rest</button>
+                <button type="button" class="btn" id="retry-dictionary-build" hidden>Continue</button>
                 <button type="button" class="btn ghost" id="cancel-dictionary-build" hidden>Stop</button>
                 <button type="button" class="btn ghost" id="discard-proposal" hidden>Discard all</button>
                 <button type="button" class="btn ghost" id="abandon-dictionary-build" hidden>Discard</button>
@@ -445,17 +460,17 @@
               </div>
               <div class="scard" id="decision-card">
                 <div class="scard-head"><div class="name strong">Decision model</div><div class="caption">Needed for the steps below. Choose where the decisions are made.</div></div>
-                <div class="srow"><div class="app-list decision-list" role="radiogroup" aria-label="Decision model">
+                <div class="srow wide"><div class="app-list decision-list" role="radiogroup" aria-label="Decision model">
                   <label class="app-option"><input type="radio" name="decision-model" value="jev" /><span><span class="app-name">Jev by TypeSafe</span><span class="caption">In the cloud: it receives transcript text. On your own key, about $0.04 per million tokens: a fraction of a cent per dictation.</span></span></label>
                   <label class="app-option"><input type="radio" name="decision-model" value="laya" /><span><span class="app-name">Laya, on this Mac</span><span class="caption">Open weights from Convai Innovations, for English. Text stays on this Mac. It takes memory only while it is chosen and a step below is on.</span></span></label>
                 </div></div>
                 <form id="jev-key-form" hidden>
-                  <div class="srow"><label class="name" for="key-typesafe">TypeSafe API key</label><input class="input field" id="key-typesafe" type="password" autocomplete="off" placeholder="Not set" /></div>
+                  <div class="srow key-row"><label class="name" for="key-typesafe">TypeSafe API key</label><input class="input field" id="key-typesafe" type="password" autocomplete="off" placeholder="Not set" /><a class="key-link" href="https://console.typesafe.ai/" target="_blank" rel="noopener" title="Open TypeSafe's console in your browser">Get a key</a></div>
                   <div class="srow foot"><button type="submit" class="btn accent">Save key</button><span class="caption save-status" id="jev-key-status" role="status"></span></div>
                 </form>
                 <div id="laya-setup" hidden>
-                  <div class="srow"><span class="caption" id="laya-status" role="status"></span><button type="button" class="btn sm" id="laya-retry" hidden>Start again</button></div>
-                  <div class="srow" id="laya-install" hidden><div class="caption">Install its engine once, in Terminal (about 750 MB, including PyTorch), then press Check again. Entune looks for it where uv installs tools.<pre id="laya-command"></pre></div></div>
+                  <div class="srow status"><span class="caption" id="laya-status" role="status"></span><button type="button" class="btn sm" id="laya-retry" hidden>Start again</button></div>
+                  <div class="srow wide" id="laya-install" hidden><div class="caption">Install its engine once, in Terminal (about 750 MB, including PyTorch), then press Check again. Entune looks for it where uv installs tools.<pre id="laya-command"></pre></div></div>
                 </div>
                 <div class="srow foot" id="decision-status-row"><span class="caption" id="decision-note" role="status"></span><span class="caption save-status" id="decision-status" role="status"></span></div>
               </div>
@@ -522,6 +537,14 @@
                 <div id="corrections-rows"></div>
                 <div class="srow foot"><span class="caption">Newest first. Each one is already in Pinned; remove it there if it's wrong.</span></div>
               </div>
+              <h2 class="sec-label">Tracing</h2>
+              <form class="scard" id="tracing-form">
+                <div class="scard-head"><div class="caption">See exactly what the suggestion model received and answered: each dictionary-suggestion request and reply goes to Langfuse, transcript text included. Off until both keys are saved. <a href="https://cloud.langfuse.com" target="_blank" rel="noopener">Get keys</a></div></div>
+                <div class="srow"><label class="name" for="tracing-public">Public key</label><input class="input field" id="tracing-public" type="password" autocomplete="off" /></div>
+                <div class="srow"><label class="name" for="tracing-secret">Secret key</label><input class="input field" id="tracing-secret" type="password" autocomplete="off" /></div>
+                <div class="srow"><label class="name" for="tracing-host">Host</label><input class="input field" id="tracing-host" type="url" autocomplete="off" /></div>
+                <div class="srow foot"><div><button type="submit" class="btn">Save</button> <button type="button" class="btn ghost" id="tracing-off">Turn off</button></div><span class="caption" id="tracing-state" role="status"></span></div>
+              </form>
             </div>
 
             <div class="section" id="settings-privacy">
@@ -534,6 +557,7 @@
                 <div class="srow summary"><div><div class="name">Speech recognition</div><div class="caption">Audio goes to the cloud service you pick. Models on this Mac keep it here.</div></div></div>
                 <div class="srow summary"><div><div class="name">Corrections &amp; formatting</div><div class="caption">When on, transcript text, the words in question and relevant dictionary meanings go to TypeSafe if Jev is your decision model. With Laya they stay on this Mac.</div></div></div>
                 <div class="srow summary"><div><div class="name">Dictionary suggestions</div><div class="caption">When you ask, transcripts and your dictionary go to your suggestion model. Transcripts made only for a suggestion run are not saved by Entune.</div></div></div>
+                <div class="srow summary"><div><div class="name">Tracing</div><div class="caption">Off unless you save Langfuse keys under Integrations. Then each suggestion request and reply, transcript text included, also goes to the Langfuse host you set.</div></div></div>
                 <div class="srow foot"><span class="caption">Each service's own retention rules apply.</span></div>
               </div>
               <h2 class="sec-label">Your data stays yours</h2>
@@ -601,6 +625,8 @@
                   <p>With Jev, the text goes to TypeSafe, even when speech recognition runs on this Mac. With Laya, it stays on this Mac; its first start fetches the model from Hugging Face.</p>
                   <h3>Dictionary suggestions</h3>
                   <p>Only when you choose Get suggestions, the transcripts it reads and your dictionary are sent to your suggestion model (Anthropic, OpenAI through an API key or a ChatGPT subscription, Google Gemini, Groq or Mistral). With Learn from audio, the chosen audio is first transcribed by your speech model as above. Transcripts made only for a suggestion run are not saved.</p>
+                  <h3>Tracing</h3>
+                  <p>Off unless you save Langfuse keys under Settings › Integrations. When on, each dictionary-suggestion request and reply, with the transcript text and dictionary it carries, is also sent to the Langfuse host you set, so you can see exactly what the suggestion model received and answered. Turn off removes the keys and stops sending.</p>
                   <h3>Keeping and deleting</h3>
                   <p>Entune never deletes recordings or transcripts on its own. Exports are created on this Mac and leave out your keys and settings.</p>
                   <p>What a cloud service keeps, and for how long, is up to that service and your account with it. Deleting data in Entune can't remove copies a service kept, exports you saved, or copies in Time Machine or other backups of this Mac.</p>
