@@ -99,7 +99,7 @@ a { color: var(--accent-text); text-decoration: none; }
 .select.quiet:hover { color: var(--text); }
 .input {
   height: var(--h-30); width: 100%; padding: 0 var(--sp-10); border-radius: var(--r-7);
-  background: var(--well); border: 1px solid var(--line); color: var(--text); font-size: var(--fs-13);
+  background: var(--field); border: 1px solid var(--line); color: var(--text); font-size: var(--fs-13);
   -webkit-user-select: text; user-select: text;
 }
 .input::placeholder { color: var(--text-faint); }
