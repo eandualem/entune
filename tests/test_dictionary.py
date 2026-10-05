@@ -26,6 +26,18 @@ def test_groups_round_trip_keep_distinct_meanings_and_explicit_associations(tmp_
     assert not matching.matches(original.effective("other/model"), "cloud")
 
 
+def test_evidence_an_older_version_left_on_a_literal_link_is_dropped_on_load() -> None:
+    data = json.loads(dictionary_document.dumps(Dictionary((group("Langfuse", "LogFuse"),))))
+    literal = data["pinned"][0]["recognized_forms"][1]["associations"][0]
+    literal["evidence"] = [{"source": "s_old", "start": 18, "end": 26}]
+    [form] = [
+        f
+        for f in dictionary_document.parse(json.dumps(data)).pinned[0].recognized_forms
+        if f.text == "Langfuse"
+    ]
+    assert [(a.basis, a.evidence) for a in form.associations] == [("literal", ())]
+
+
 def test_pin_shares_only_chosen_meaning_and_edges_and_context_can_still_compete() -> None:
     doc = Dictionary(learned={"one/model": (JEV,), "two/model": (CLOUD,)})
     pinned = dictionary_changes.pin(doc, "one/model", "g_jev", "a_jev")

@@ -43,7 +43,7 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
       + (again ? `. Retrying this part (${state.retryReason}), attempt ${state.partAttempt} of ${state.partAttempts}` : "")
       + (fixing ? `. The model's reply broke a dictionary rule, so it is asked to fix it: attempt ${state.attempt} of ${state.attempts}. Stop if you'd rather not wait.` : "");
     // A recording that would not transcribe, even on a second try, is skipped; say how many.
-    const skippedNote = state.skipped ? ` ${state.skipped} could not be transcribed and ${state.skipped === 1 ? "was" : "were"} skipped.` : "";
+    const skippedNote = state.skipped ? ` ${state.skipped} could not be transcribed and ${state.skipped === 1 ? "was" : "were"} skipped${state.skippedReason ? ` (${state.skippedReason}${state.skipped > 1 ? "; every reason is in entune.log" : ""})` : ""}.` : "";
     const messages = {
       idle: "", queued: `Getting ready to read your ${from === "audio" ? "audio" : "transcripts"}…`,
       transcribing: `Transcribed ${state.completed} of ${state.total} recordings${state.stepStartedAt || state.completedBatches ? `. ${building}` : "…"}${skippedNote}`,

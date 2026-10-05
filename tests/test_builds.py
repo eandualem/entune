@@ -467,7 +467,7 @@ def test_a_stopped_run_waits_for_every_transcription_under_way(
 
 
 def test_continue_with_nothing_new_to_read_keeps_the_finished_suggestions(
-    app: Entune, monkeypatch: pytest.MonkeyPatch
+    app: Entune, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 20)
     first = wav_bytes(bytes([0, 0]) * 16)
@@ -498,6 +498,8 @@ def test_continue_with_nothing_new_to_read_keeps_the_finished_suggestions(
     done = wait_for_build(client)
     # The other recording is skipped again; the finished part is still there to apply.
     assert done["phase"] == "ready" and done["skipped"] == 1
+    assert done["skippedReason"].endswith("RuntimeError: connection reset")
+    assert "suggestions: skipped " in capsys.readouterr().out  # every skip, with its reason
     assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200
 
 

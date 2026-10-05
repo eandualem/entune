@@ -106,7 +106,10 @@ def parse_groups(value: object, where: str) -> Groups:
                     if type(start) is not int or type(end) is not int or not 0 <= start < end:
                         raise ValueError(f"{loc}: evidence needs valid character offsets")
                     evidence.append(Evidence(_string(e.get("source"), loc), start, end))
-                links.append(Association(mid, tuple(evidence), basis))
+                # A literal link is the spelling written as it is and never carries
+                # evidence; evidence an older version stored there is dropped, so a
+                # suggestion that keeps the link is not refused for it.
+                links.append(Association(mid, () if basis == "literal" else tuple(evidence), basis))
             if not links or len({a.meaning_id for a in links}) != len(links):
                 raise ValueError(f"{loc}: associations must be nonempty with unique meaning IDs")
             direct = f.get("direct")
