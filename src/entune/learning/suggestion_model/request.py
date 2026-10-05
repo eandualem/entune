@@ -49,7 +49,7 @@ class ReplyStopped(ValueError):
 
 class ReplyTimedOut(ReplyStopped):
     """A reply still running at its time limit. Trying the same part again would most
-    likely take as long, so the person chooses smaller parts or faster replies instead."""
+    likely take as long, so the person chooses a lower reasoning effort instead."""
 
 
 class ReplyTooLong(ValueError):

@@ -3,7 +3,7 @@
 Audio is transcribed on worker threads, several cloud clips at a time, and suggestions
 start as soon as one part's worth of text is ready, while the rest is still being
 transcribed. Each part reads whole recordings or transcripts that no finished part has
-covered, so Retry continues from what is covered, whatever part size it uses next."""
+covered, so Retry continues from what is covered."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ class DictionaryBuilds:
         self._completed_batches = 0
         self._skipped: list[tuple[str, str]] = []  # recordings that would not transcribe
         # How far finished parts got into a text longer than one part, by its ID; Continue
-        # starts there, whatever part size it uses.
+        # starts there.
         self._consumed: dict[str, int] = {}
         self._segments: dict[str, tuple[str, int, int]] = {}  # segment ID: (text ID, end, length)
         self._operation: Operation | None = None
