@@ -283,17 +283,9 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
             before.needs_review if before else False,
         )
 
-    built = (
+    built = tuple(
         build_group(item, f"new_g{number}", None)
         for number, item in enumerate(reply["additions"], 1)
-    )
-    # An addition left with no confusion because its heard form differed only in capitals
-    # adds nothing; one that never named a confusion is still refused as a glossary.
-    additions = tuple(
-        g
-        for g in built
-        if g.id not in recased
-        or any(a.basis != "literal" for f in g.recognized_forms for a in f.associations)
     )
     revisions = []
     for item in reply["revisions"]:
@@ -301,6 +293,31 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
         if identity is None:
             raise ValueError(f"Revisions must name an entry shown here: {item['id']}")
         revisions.append(build_group(item, identity, by_id.get(identity)))
+
+    # An addition left with no confusion because its heard form differed only in capitals
+    # adds nothing, unless another entry needs it: a form confused elsewhere ("camel" for
+    # YAML) keeps it as that form's literal competitor, and a link to one of its meanings
+    # keeps the meaning defined. One that never named a confusion is still refused.
+    def needed(group: Group) -> bool:
+        others = [g for g in (*built, *revisions, *stored) if g.id != group.id]
+        confused = {
+            key(f.text)
+            for g in others
+            for f in g.recognized_forms
+            if any(a.basis != "literal" for a in f.associations)
+        }
+        linked = {a.meaning_id for g in others for f in g.recognized_forms for a in f.associations}
+        return any(key(f.text) in confused for f in group.recognized_forms) or any(
+            m.id in linked for m in group.meanings
+        )
+
+    additions = tuple(
+        g
+        for g in built
+        if g.id not in recased
+        or any(a.basis != "literal" for f in g.recognized_forms for a in f.associations)
+        or needed(g)
+    )
     removals = []
     for label in reply["removals"]:
         identity = view.group_ids.get(label)

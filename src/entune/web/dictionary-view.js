@@ -1257,7 +1257,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("suggest-badge").textContent = String(included);
     if (!proposalChanges.length) proposalBody.append(node("p", "No changes suggested. Finish to close this review; the same dictations can be used again later.", "caption"));
   }
-  el("build-dictionary").addEventListener("click", () => builds.start("history", {...historyReuse.selection(), ...runSettings()}));
+  el("build-dictionary").addEventListener("click", () => {
+    const selection = historyReuse.selection();
+    if (!selection) { flash(buildStatus, "The transcripts are still loading. Try again in a moment.", "err"); return; }
+    builds.start("history", {...selection, ...runSettings()});
+  });
 
   return { load: loadDictionary, refreshAudio: () => onboarding.load(), refreshModels: fillModels };
 }

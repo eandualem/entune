@@ -11,6 +11,8 @@ export function createHistoryReuse({ getSettings, getRunSettings }) {
   const reuse = el("learning-reuse");
   let items = [];   // oldest first: id, created_at, characters, used
   let timing = null;
+  let loads = 0;      // only the latest load's answer is shown
+  let ready = false;  // the list shown belongs to the current speech model
   const range = createRange({
     start: el("history-range-start"), end: el("history-range-end"), fill: el("history-range-fill"), onChange: () => draw(),
   });
@@ -55,7 +57,13 @@ export function createHistoryReuse({ getSettings, getRunSettings }) {
   }
 
   async function load() {
-    [{ items }, timing] = await Promise.all([api("/api/dictionary/history"), api("/api/dictionary/timing").catch(() => null)]);
+    const mine = ++loads;
+    ready = false;
+    const [listed, measured] = await Promise.all([api("/api/dictionary/history"), api("/api/dictionary/timing").catch(() => null)]);
+    if (mine !== loads) return; // a newer load, for another speech model, is under way
+    ({ items } = listed);
+    timing = measured;
+    ready = true;
     range.setWeights(items.map((item) => Math.max(item.characters, 1)));
     shade();
     draw();
@@ -64,9 +72,11 @@ export function createHistoryReuse({ getSettings, getRunSettings }) {
   return {
     load,
     redraw: draw,
-    // What Get suggestions reads: new transcripts, or the span chosen on the timeline.
+    // What Get suggestions reads: new transcripts, or the span chosen on the timeline;
+    // null while the timeline is still loading.
     selection() {
       if (!reuse.checked) return { scope: "new" };
+      if (!ready) return null;
       return { scope: "all", transcript_ids: items.slice(range.from, range.to).map((item) => item.id) };
     },
   };

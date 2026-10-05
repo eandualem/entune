@@ -379,6 +379,47 @@ def test_a_heard_form_differing_only_in_capitals_is_not_a_confusion() -> None:
     assert [(a.basis, a.evidence) for a in forms["Langfuse"]] == [("literal", ())]
 
 
+def test_a_case_only_literal_competitor_another_entry_needs_is_kept() -> None:
+    text = "Keep it in camel. The Camel sleeps."
+    camel = {
+        "meanings": [
+            {"id": "n1", "spelling": "camel", "meaning": "the desert animal", "casing": "ordinary"}
+        ],
+        "heard": [
+            {
+                "text": "Camel",
+                "links": [
+                    {
+                        "meaning": "n1",
+                        "basis": "text",
+                        "evidence": [{"dictation": "d1", "start": 22, "end": 27}],
+                    }
+                ],
+            }
+        ],
+    }
+    yaml = {
+        "meanings": [
+            {"id": "n2", "spelling": "YAML", "meaning": "configuration format", "casing": "fixed"}
+        ],
+        "heard": [
+            {
+                "text": "camel",
+                "links": [
+                    {
+                        "meaning": "n2",
+                        "basis": "text",
+                        "evidence": [{"dictation": "d1", "start": 11, "end": 16}],
+                    }
+                ],
+            }
+        ],
+    }
+    result = parse(reply(additions=[camel, yaml]), (text,))
+    spellings = sorted(m.spelling for g in result for m in g.meanings)
+    assert spellings == ["YAML", "camel"]
+
+
 def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
