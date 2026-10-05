@@ -1,3 +1,4 @@
+import { createRange } from "./range.js";
 import { THIS_DEVICE, api, el, errorText } from "./ui.js";
 
 // Learn from audio, in the suggestions panel: one source at a time (chosen from the menu), a
@@ -40,7 +41,7 @@ export function workEstimate({ durations, unknown, speech, local, timing, dictio
     : "; not timed yet with these settings";
   return `Transcribing: ${transcribe}\nSuggestions: about ${parts} part${parts === 1 ? "" : "s"}${each}, starting while transcription runs`;
 }
-const day = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "Undated";
+export const day = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "Undated";
 const moment = (iso) => iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "Undated";
 
 export function createAudioOnboarding({ getModel, getSettings, getDictionaryModelName, getRunSettings, onBuild, onBusy }) {
@@ -52,8 +53,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
   let apps = [];          // dictation apps with an importer, from the server; the stored source is the id
   let source = "entune";
   let list = [];          // this source's recordings, oldest first
-  let edges = [0];        // cumulative position of each boundary, 0..1000
-  let from = 0, to = 0;   // included recordings: list[from .. to - 1]
+  const range = createRange({ start, end, fill: el("audio-range-fill"), onChange: () => draw() });
   let shown = PAGE;
   let importing = false, buildBusy = false, loaded = false;
   let playing = null;
@@ -63,12 +63,8 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     // recording keeps its own selectable stretch of the range.
     const measured = list.filter((item) => item.seconds != null);
     const typical = measured.length ? measured.reduce((sum, item) => sum + item.seconds, 0) / measured.length : 1;
-    const widths = list.map((item) => item.seconds ?? typical);
-    const total = widths.reduce((sum, width) => sum + width, 0) || 1;
-    edges = [0];
-    for (const width of widths) edges.push(edges.at(-1) + (width / total) * 1000);
+    range.setWeights(list.map((item) => item.seconds ?? typical));
   }
-  const nearest = (value) => edges.reduce((best, edge, i) => Math.abs(edge - value) < Math.abs(edges[best] - value) ? i : best, 0);
 
   // The stored source of the recordings shown: Entune, a folder, or the app picked in the list.
   const pickedApp = () => apps.find((app) => app.id === document.querySelector('input[name="audio-provider"]:checked')?.value) ?? apps[0];
@@ -93,7 +89,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
       .map((item, order) => ({ ...item, order }))
       .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? "") || a.order - b.order);
     positions();
-    from = 0; to = list.length; shown = PAGE;
+    shown = PAGE;
     stop();
     draw();
   }
@@ -113,17 +109,14 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
       ? (items.some((item) => item.source === "entune") ? "Every recording here was already transcribed by this speech model." : "No Entune recordings yet.")
       : source === "provider" ? `Nothing imported from ${app?.name ?? "this app"} yet. Press Import to copy its recordings.`
         : "No audio files imported yet.";
-    const chosen = list.slice(from, to);
+    const chosen = list.slice(range.from, range.to);
     const seconds = (values) => values.reduce((sum, item) => sum + (item.seconds ?? 0), 0);
     const unknown = chosen.filter((item) => item.seconds == null).length;
     el("audio-selected").textContent = list.length ? `${duration(seconds(chosen))} selected` : "";
     el("audio-available").textContent = list.length
       ? `${chosen.length} of ${list.length} recordings · ${duration(seconds(list))} available${unknown ? ` · ${unknown} without a known duration` : ""}`
       : "";
-    start.value = String(Math.round(edges[from] ?? 0));
-    end.value = String(Math.round(edges[to] ?? 1000));
-    el("audio-range-fill").style.left = `${(edges[from] ?? 0) / 10}%`;
-    el("audio-range-fill").style.right = `${100 - (edges[to] ?? 1000) / 10}%`;
+    range.draw();
     el("audio-start-label").textContent = chosen.length ? day(chosen[0].created_at) : "";
     el("audio-end-label").textContent = chosen.length ? day(chosen.at(-1).created_at) : "";
     el("audio-detail-summary").textContent = `Show the ${chosen.length} included recording${chosen.length === 1 ? "" : "s"}`;
@@ -174,28 +167,14 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
       player.play().catch((err) => {
         playing = null;
         el("audio-import-status").textContent = `Could not play that recording: ${errorText(err)}`;
-        drawList(list.slice(from, to));
+        drawList(list.slice(range.from, range.to));
       });
       playing = item.id;
     }
-    drawList(list.slice(from, to));
+    drawList(list.slice(range.from, range.to));
   }
-  player.addEventListener("ended", () => { playing = null; drawList(list.slice(from, to)); });
+  player.addEventListener("ended", () => { playing = null; drawList(list.slice(range.from, range.to)); });
 
-  // The two handles cannot cross; at least one whole recording stays included.
-  start.addEventListener("input", () => { from = Math.min(nearest(+start.value), to - 1); draw(); });
-  end.addEventListener("input", () => { to = Math.max(nearest(+end.value), from + 1); draw(); });
-  // Arrow, Page and Home/End keys move a handle by whole recordings.
-  for (const [handle, isStart] of [[start, true], [end, false]]) {
-    handle.addEventListener("keydown", (event) => {
-      const step = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -10, PageUp: 10, Home: -Infinity, End: Infinity }[event.key];
-      if (step === undefined) return;
-      event.preventDefault();
-      if (isStart) from = Math.max(0, Math.min(to - 1, from + (Number.isFinite(step) ? step : step > 0 ? list.length : -list.length)));
-      else to = Math.min(list.length, Math.max(from + 1, to + (Number.isFinite(step) ? step : step > 0 ? list.length : -list.length)));
-      draw();
-    });
-  }
   el("audio-other-models").addEventListener("change", choose);
   el("audio-detail").addEventListener("toggle", () => draw());
   el("audio-more").addEventListener("click", () => { shown += PAGE; draw(); });
@@ -256,7 +235,7 @@ export function createAudioOnboarding({ getModel, getSettings, getDictionaryMode
     }
   });
   el("build-audio-dictionary").addEventListener("click", async () => {
-    const ids = list.slice(from, to).map((item) => item.id);
+    const ids = list.slice(range.from, range.to).map((item) => item.id);
     stop();
     await onBuild({ audio_ids: ids });
   });

@@ -36,7 +36,7 @@ def routes(app: Entune) -> list[Route]:
             body = await request.json()
             if (
                 not isinstance(body, dict)
-                or set(body) - {"source", "scope", "audio_ids", "effort"}
+                or set(body) - {"source", "scope", "audio_ids", "transcript_ids", "effort"}
                 or body.get("source") not in ("history", "audio")
             ):
                 raise ValueError("Choose source history or audio")
@@ -45,11 +45,17 @@ def routes(app: Entune) -> list[Route]:
                 not isinstance(ids, list) or not all(isinstance(i, str) for i in ids)
             ):
                 raise ValueError("audio_ids must list saved recording IDs")
+            chosen = body.get("transcript_ids")
+            if chosen is not None and (
+                not isinstance(chosen, list) or not all(isinstance(i, str) for i in chosen)
+            ):
+                raise ValueError("transcript_ids must list transcript IDs")
             state = await run_in_threadpool(
                 app.learning.start_dictionary_build,
                 body["source"],
                 scope=body.get("scope", "new"),
                 audio_ids=ids,
+                transcript_ids=chosen,
                 effort=body.get("effort", DEFAULT_EFFORT),
             )
         except (JobConflict, Busy) as exc:
@@ -113,6 +119,10 @@ def routes(app: Entune) -> list[Route]:
                 "local": [p.id for p in app.providers if isinstance(p, Downloadable)],
             }
         )
+
+    def history(_: Request) -> Response:
+        with app.data.using_data("transcript listing"):
+            return JSONResponse(app.learning.history_transcripts())
 
     def dictionary_audio(_: Request) -> Response:
         with app.data.using_data("audio listing"):
@@ -195,6 +205,7 @@ def routes(app: Entune) -> list[Route]:
         )
 
     return [
+        Route("/api/dictionary/history", history, methods=["GET"]),
         Route("/api/dictionary/build", build_status, methods=["GET"]),
         Route("/api/dictionary/build", start_build, methods=["POST"]),
         Route("/api/dictionary/build/{job_id}", build_status, methods=["GET"]),

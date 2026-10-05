@@ -108,7 +108,9 @@ async def _run(request: Request, chosen: Model) -> str:
                 retry = [p for p in node.request.parts if isinstance(p, RetryPromptPart)]
                 if retry:
                     attempt += 1
-                    request.retrying(attempt, _problem(retry[-1]))
+                    problem = _problem(retry[-1])
+                    _mark_rejected(problem)
+                    request.retrying(attempt, problem)
                 # Streamed: a connection that carries nothing for a minute is cut on the
                 # way (observed 2026-09-21), and a reasoning reply is silent for minutes.
                 # The HTTP timeout only limits silence between reads, so a stream that
@@ -178,6 +180,15 @@ def passing(error: Exception) -> str | None:
 
 
 PARTIAL = 50_000  # characters of an interrupted reply kept on its trace
+
+
+def _mark_rejected(problem: str) -> None:
+    """When tracing is on, mark the run whose reply was sent back as a warning with the
+    rule it broke, so a filter on level finds every rejected reply across runs."""
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.set_attribute("langfuse.observation.level", "WARNING")
+        span.set_attribute("langfuse.observation.status_message", f"Reply sent back: {problem}")
 
 
 def _keep_partial(received: list[str], blank: int) -> None:

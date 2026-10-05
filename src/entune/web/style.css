@@ -388,7 +388,8 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 #audio-intro { color: var(--text-secondary); }
 .suggest-audio .source-note { margin: 0; }
 .suggest-audio .source-note .caption:empty { display: none; }
-.suggest-audio .audio-pick { margin: 0; }
+.suggest-audio .audio-pick, .suggest-setup .audio-pick { margin: 0; }
+.reuse-line { display: flex; align-items: center; gap: var(--sp-8); }
 .suggest-audio .audio-empty { margin: 0; }
 .suggest-audio > .btn.link { align-self: flex-start; font-size: var(--fs-12); }
 .app-list { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-4); border-radius: var(--r-8); background: var(--well); }
@@ -601,6 +602,7 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 .range { position: relative; height: 1.75rem; margin: var(--sp-10) 0 var(--sp-2); }
 .range-track { position: absolute; left: 0; right: 0; top: 50%; height: 6px; margin-top: -3px; border-radius: 3px; background: var(--track); }
 .range-fill { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: var(--accent); }
+.range-used { position: absolute; left: 0; right: 0; top: 50%; height: 3px; margin-top: 6px; border-radius: 2px; }
 .range input { position: absolute; inset: 0; width: 100%; margin: 0; background: transparent; pointer-events: none; -webkit-appearance: none; appearance: none; }
 .range input::-webkit-slider-thumb { -webkit-appearance: none; pointer-events: auto; width: 1.125rem; height: 1.125rem; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 3px var(--surface-raised), var(--shadow-segment); cursor: grab; }
 .range input::-moz-range-thumb { pointer-events: auto; width: 1.125rem; height: 1.125rem; border: 0; border-radius: 50%; background: var(--text); }

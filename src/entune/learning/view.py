@@ -190,6 +190,8 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
         (m.spelling, m.meaning): m.id for g in stored for m in g.meanings if m.casing == "ordinary"
     }
     defined = {m.id for g in stored for m in g.meanings}
+    stored_spellings = {m.id: m.spelling for g in stored for m in g.meanings}
+    recased: set[str] = set()  # entries where a heard form differed only in capitals
     for item in (*reply["additions"], *reply["revisions"]):
         for m in item["meanings"]:
             if m["id"] in view.meaning_ids:
@@ -205,6 +207,14 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
         if label not in new_meanings:
             new_meanings[label] = f"new_m{len(new_meanings) + 1}"
         return new_meanings[label]
+
+    # Spellings of every meaning the reply defines, so a link to one defined in another
+    # item is still recognised as differing only in capitals.
+    reply_spellings = {
+        meaning_id(m["id"]): m["spelling"]
+        for item in (*reply["additions"], *reply["revisions"])
+        for m in item["meanings"]
+    }
 
     def build_group(item: dict[str, Any], identity: str, before: Group | None) -> Group:
         old_meanings = {m.id: m for m in (before.meanings if before else ())}
@@ -230,13 +240,20 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
                 )
             )
         old_forms = {key(f.text): f for f in (before.recognized_forms if before else ())}
-        forms = []
+        spellings = {**stored_spellings, **reply_spellings, **{m.id: m.spelling for m in meanings}}
+        forms: dict[str, Form] = {}
         for heard in item["heard"]:
             old_form = old_forms.get(key(heard["text"]))
             kept = {a.meaning_id: a for a in (old_form.associations if old_form else ())}
             links = []
             for link in heard["links"]:
                 mid = meaning_id(link["meaning"])
+                if link["basis"] == "text" and key(heard["text"]) == key(spellings.get(mid, "")):
+                    # Matching ignores case: "LangFuse" is Langfuse written as it is, not
+                    # a confusion, so it is the literal link and needs no evidence.
+                    links.append(kept.get(mid) or Association(mid, (), "literal"))
+                    recased.add(identity)
+                    continue
                 if link["basis"] == "existing":
                     if mid not in kept:
                         raise ValueError(
@@ -254,19 +271,27 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
                         )
                     evidence.append(Evidence(source, item_evidence["start"], item_evidence["end"]))
                 links.append(Association(mid, tuple(evidence), link["basis"]))
-            forms.append(
-                Form(
-                    heard["text"],
-                    tuple(links),
-                    old_form.direct if old_form else None,
-                    old_form.direct_reason if old_form else "",
-                )
+            same = forms.get(key(heard["text"]))
+            if same is not None:
+                # The same form again in another case: one form, each meaning linked once.
+                linked = {a.meaning_id for a in same.associations}
+                extra = tuple(a for a in links if a.meaning_id not in linked)
+                forms[key(heard["text"])] = replace(same, associations=same.associations + extra)
+                continue
+            forms[key(heard["text"])] = Form(
+                heard["text"],
+                tuple(links),
+                old_form.direct if old_form else None,
+                old_form.direct_reason if old_form else "",
             )
         return Group(
-            identity, tuple(meanings), tuple(forms), before.needs_review if before else False
+            identity,
+            tuple(meanings),
+            tuple(forms.values()),
+            before.needs_review if before else False,
         )
 
-    additions = tuple(
+    built = tuple(
         build_group(item, f"new_g{number}", None)
         for number, item in enumerate(reply["additions"], 1)
     )
@@ -276,12 +301,41 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
         if identity is None:
             raise ValueError(f"Revisions must name an entry shown here: {item['id']}")
         revisions.append(build_group(item, identity, by_id.get(identity)))
+
     removals = []
     for label in reply["removals"]:
         identity = view.group_ids.get(label)
         if identity is None:
             raise ValueError(f"Removals must name an entry shown here: {label}")
         removals.append(identity)
+    # An addition left with no confusion because its heard form differed only in capitals
+    # adds nothing, unless another entry needs it: a form confused elsewhere ("camel" for
+    # YAML) keeps it as that form's literal competitor, and a link to one of its meanings
+    # keeps the meaning defined, both judged on the dictionary this reply leaves. One that
+    # never named a confusion is still refused.
+    replaced = {g.id for g in revisions} | set(removals)
+    remaining = [g for g in stored if g.id not in replaced]
+
+    def needed(group: Group) -> bool:
+        others = [g for g in (*built, *revisions, *remaining) if g.id != group.id]
+        confused = {
+            key(f.text)
+            for g in others
+            for f in g.recognized_forms
+            if any(a.basis != "literal" for a in f.associations)
+        }
+        linked = {a.meaning_id for g in others for f in g.recognized_forms for a in f.associations}
+        return any(key(f.text) in confused for f in group.recognized_forms) or any(
+            m.id in linked for m in group.meanings
+        )
+
+    additions = tuple(
+        g
+        for g in built
+        if g.id not in recased
+        or any(a.basis != "literal" for f in g.recognized_forms for a in f.associations)
+        or needed(g)
+    )
     named = [g.id for g in revisions] + removals
     if len(set(named)) != len(named):
         raise ValueError("Name each entry once across revisions and removals")

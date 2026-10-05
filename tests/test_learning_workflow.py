@@ -116,6 +116,25 @@ def test_apply_consumes_only_examined_model_inputs_and_new_review_data_stays_eli
             *during,
         }
         assert store.learning_history("stub/good")[0]["outcome"] == "applied"
+        # The reuse timeline lists every transcript of the default model, used ones marked,
+        # and a run on chosen ones reads only those.
+        listed = client.get("/api/dictionary/history").json()
+        assert listed["model"] == "stub/good"
+        used = {i["id"]: i["used"] for i in listed["items"]}
+        assert used[str(first)] and not used[str(newer)]
+        assert [
+            i.id for i in store.learning_inputs("stub", "good", scope="all", ids=[str(first)])
+        ] == [str(first)]
+        refused = client.post(
+            "/api/dictionary/build",
+            json={"source": "history", "scope": "new", "transcript_ids": [str(first)]},
+        )
+        assert refused.status_code == 400
+        gone = client.post(
+            "/api/dictionary/build",
+            json={"source": "history", "scope": "all", "transcript_ids": [str(first), "999"]},
+        )
+        assert gone.status_code == 400 and "no longer available" in gone.text
         assert (
             client.put("/api/dictionary", json=client.get("/api/dictionary").json()).status_code
             == 200

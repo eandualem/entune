@@ -65,15 +65,21 @@ class Learning:
         *,
         scope: str = "new",
         audio_ids: list[str] | None = None,
+        transcript_ids: list[str] | None = None,
         effort: str = DEFAULT_EFFORT,
     ) -> dict[str, object]:
         if scope not in {"new", "all"}:
             raise ValueError("Choose new or all history")
+        if transcript_ids is not None and (source != "history" or scope != "all"):
+            raise ValueError("Chosen transcripts are reused history")
         _check(effort)
         previous = self._builds.status()
         state = self._builds.start(
             lambda: replace(
-                self._build_input(source, scope=scope, audio_ids=audio_ids), effort=effort
+                self._build_input(
+                    source, scope=scope, audio_ids=audio_ids, transcript_ids=transcript_ids
+                ),
+                effort=effort,
             )
         )
         if previous.get("phase") in {"failed", "cancelled"}:
@@ -87,6 +93,17 @@ class Learning:
                 applied=False,
             )
         return state
+
+    def history_transcripts(self) -> dict[str, object]:
+        """The default speech model's transcripts, for the reuse timeline."""
+        try:
+            ref = self._models.choose_model(None)
+        except (NoDefaultModel, UnknownModel):
+            return {"model": None, "items": []}
+        return {
+            "model": ref.id,
+            "items": self._store.learning_transcripts(ref.provider.id, ref.model),
+        }
 
     def dictionary_build_status(self, job_id: str | None = None) -> dict[str, object]:
         return self._builds.status(job_id)
@@ -192,7 +209,12 @@ class Learning:
         self._builds.accept(job_id, save)
 
     def _build_input(
-        self, source: Source, *, scope: str = "new", audio_ids: list[str] | None = None
+        self,
+        source: Source,
+        *,
+        scope: str = "new",
+        audio_ids: list[str] | None = None,
+        transcript_ids: list[str] | None = None,
     ) -> BuildInput:
         builder = self._dictionary_builder()
         try:
@@ -206,12 +228,21 @@ class Learning:
             version = self._dictionary.dictionary_version()
         if source == "history":
             inputs = self._store.learning_inputs(
-                ref.provider.id, ref.model, scope=scope, limit=batches.MAX_TRANSCRIPTS
+                ref.provider.id,
+                ref.model,
+                scope=scope,
+                limit=batches.MAX_TRANSCRIPTS,
+                ids=transcript_ids,
             )
+            if transcript_ids is not None and len(inputs) != len(transcript_ids):
+                raise ValueError(
+                    "Some of the chosen transcripts are no longer available. Close and open"
+                    " the panel to see the current ones."
+                )
             if not inputs:
                 raise ValueError(
-                    f"No new transcripts to learn from for {ref.label}. To read used ones "
-                    "again, turn on Include transcripts already used under Options."
+                    f"No new transcripts to learn from for {ref.label}. To read earlier ones "
+                    "again, turn on Reuse earlier transcripts."
                     if scope == "new"
                     else f"No transcripts to learn from for {ref.label} yet."
                 )

@@ -12,6 +12,7 @@ import sqlite3
 import threading
 import uuid
 import wave
+from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 
@@ -31,6 +32,12 @@ from entune.storage.records import (
     transcription_from_row,
 )
 from entune.storage.schema import SCHEMA
+
+# The transcripts suggestions can read: successful, finished and not empty.
+_LEARNABLE = (
+    "t.status = 'ok' AND t.provider = ? AND t.model = ?"
+    " AND t.processing_state <> 'processing' AND COALESCE(t.raw_text, t.text) <> ''"
+)
 
 
 class Store:
@@ -286,17 +293,44 @@ class Store:
             models.setdefault(row["recording_id"], set()).add(f"{row['provider']}/{row['model']}")
         return {recording: sorted(names) for recording, names in models.items()}
 
+    def learning_transcripts(self, provider: str, model: str) -> list[dict[str, object]]:
+        """Every transcript suggestions can read for this speech model, oldest first: its
+        date, length, and whether suggestions applied before have read it."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT t.id, t.created_at, LENGTH(COALESCE(t.raw_text, t.text)) AS characters,"
+                " EXISTS (SELECT 1 FROM learning_coverage c WHERE c.model = ?"
+                " AND c.source = 'history' AND c.input_id = CAST(t.id AS TEXT)) AS used"
+                f" FROM transcriptions t WHERE {_LEARNABLE} ORDER BY t.id",
+                (f"{provider}/{model}", provider, model),
+            ).fetchall()
+        return [
+            {
+                "id": str(r["id"]),
+                "created_at": r["created_at"],
+                "characters": r["characters"],
+                "used": bool(r["used"]),
+            }
+            for r in rows
+        ]
+
     def learning_inputs(
-        self, provider: str, model: str, *, scope: str = "new", limit: int = 300
+        self,
+        provider: str,
+        model: str,
+        *,
+        scope: str = "new",
+        limit: int = 300,
+        ids: Sequence[str] | None = None,
     ) -> list[LearningText]:
+        """`ids`, with scope all, reads only those transcripts: a span chosen on a timeline."""
         if scope not in {"new", "all"}:
             raise ValueError("Choose new or all history")
-        query = (
-            "SELECT t.* FROM transcriptions t WHERE t.status = 'ok' AND t.provider = ?"
-            " AND t.model = ? AND t.processing_state <> 'processing'"
-            " AND COALESCE(t.raw_text, t.text) <> ''"
-        )
+        query = f"SELECT t.* FROM transcriptions t WHERE {_LEARNABLE}"
         params: list[str | int] = [provider, model]
+        if ids is not None:
+            query += f" AND CAST(t.id AS TEXT) IN ({', '.join('?' * len(ids))})"
+            params.extend(ids)
         if scope == "new":
             query += (
                 " AND NOT EXISTS (SELECT 1 FROM learning_coverage c WHERE c.model = ?"
