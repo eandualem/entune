@@ -42,15 +42,15 @@ def _rgb(red: float, green: float, blue: float, alpha: float = 1.0) -> Any:
     return AppKit.NSColor.colorWithSRGBRed_green_blue_alpha_(red, green, blue, alpha)
 
 
-# The window's tokens (tokens.css): the dark control ground, recording coral, the accent,
-# and the success and error colours.
-GROUND = _rgb(0.149, 0.149, 0.169, 0.96)
-CORAL = _rgb(0.898, 0.396, 0.373)
-ACCENT = _rgb(0.663, 0.612, 0.949)
-QUIET = _rgb(0.6, 0.6, 0.64)
-OK = _rgb(0.561, 0.827, 0.604)
-ERROR = _rgb(0.898, 0.522, 0.498)
-MUTED = _rgb(0.79, 0.79, 0.81)
+# The window's tokens (tokens.css): the control ground and the quiet grey for each
+# appearance, recording red, the accent, and the success and error colours. The pill
+# follows the app's appearance (Entune's theme); its text uses the system label colours.
+GROUND = {True: _rgb(0.196, 0.196, 0.196, 0.96), False: _rgb(0.969, 0.969, 0.969, 0.96)}
+QUIET = {True: _rgb(0.604, 0.604, 0.604), False: _rgb(0.557, 0.557, 0.576)}
+CORAL = _rgb(1.0, 0.259, 0.271)
+ACCENT = _rgb(0.0, 0.478, 1.0)
+OK = _rgb(0.188, 0.82, 0.345)
+ERROR = _rgb(1.0, 0.259, 0.271)
 
 
 class EntunePillTarget(NSObject):  # type: ignore[misc]
@@ -63,6 +63,21 @@ class EntunePillTarget(NSObject):  # type: ignore[misc]
         return self
 
     def fire_(self, sender: Any) -> None:
+        self.call()
+
+
+class EntunePillView(AppKit.NSView):  # type: ignore[misc]
+    """The pill's content view: says when the appearance changes (Entune's theme, or the
+    system's), so a pill already on screen repaints its ground with its text."""
+
+    def initWithCall_(self, call: Callable[[], None]) -> Any:
+        self = objc.super(EntunePillView, self).init()
+        if self is not None:
+            self.call = call
+        return self
+
+    def viewDidChangeEffectiveAppearance(self) -> None:
+        objc.super(EntunePillView, self).viewDidChangeEffectiveAppearance()
         self.call()
 
 
@@ -80,6 +95,7 @@ class Indicator:
         self._placed: tuple[float, float] | None = None  # where show() put it last
         self.level: Callable[[], float] = lambda: 0.0
         self._smoothed = [0.0] * 5
+        self._quiet = False  # the bars show silence, in the quiet grey
 
     # The three things the tray asks for
 
@@ -88,16 +104,17 @@ class Indicator:
         self._mode = "recording" if recording else "status"
         self._clear_card()
         quiet = recording and text.startswith("No sound")
+        self._quiet = quiet
         self._label.setStringValue_(text)
         self._label.setFont_(AppKit.NSFont.systemFontOfSize_weight_(13, AppKit.NSFontWeightMedium))
-        self._label.setTextColor_(AppKit.NSColor.whiteColor())
+        self._label.setTextColor_(AppKit.NSColor.labelColor())
         self._label.sizeToFit()
         size = self._label.frame().size
         width = PAD + MARK + GAP + size.width + PAD
         self._label.setFrameOrigin_((PAD + MARK + GAP, (HEIGHT - size.height) / 2))
         for bar in self._bars:
             bar.setHidden_(not recording)
-            bar.setBackgroundColor_((QUIET if quiet else CORAL).CGColor())
+            bar.setBackgroundColor_((QUIET[self._dark()] if quiet else CORAL).CGColor())
         self._dot.setHidden_(recording)
         self._dot.setBackgroundColor_(ACCENT.CGColor())
         self._place(width, HEIGHT, HEIGHT / 2)
@@ -114,6 +131,7 @@ class Indicator:
     ) -> None:
         self._prepare()
         self._mode = "message"
+        self._quiet = False
         self._animate(False)
         self._clear_card()
         for bar in self._bars:
@@ -125,7 +143,7 @@ class Indicator:
         self._label.setStringValue_(title)
         bold = AppKit.NSFont.systemFontOfSize_weight_(13, AppKit.NSFontWeightSemibold)
         self._label.setFont_(bold)
-        self._label.setTextColor_(AppKit.NSColor.whiteColor())
+        self._label.setTextColor_(AppKit.NSColor.labelColor())
         self._body.setStringValue_(body)
         self._body.setHidden_(not body)
         # As wide as the text needs, up to a comfortable reading width; then it wraps.
@@ -170,7 +188,23 @@ class Indicator:
         else:
             self._save_dragged_origin()
 
+    def _dark(self) -> bool:
+        appearance = self._panel.effectiveAppearance()
+        names = [AppKit.NSAppearanceNameDarkAqua, AppKit.NSAppearanceNameAqua]
+        return bool(appearance.bestMatchFromAppearancesWithNames_(names) == names[0])
+
+    def _recolor(self) -> None:
+        """The ground, and quiet bars, for the current appearance."""
+        if self._panel is None:
+            return
+        dark = self._dark()
+        self._panel.contentView().layer().setBackgroundColor_(GROUND[dark].CGColor())
+        if self._quiet:
+            for bar in self._bars:
+                bar.setBackgroundColor_(QUIET[dark].CGColor())
+
     def _place(self, width: float, height: float, radius: float) -> None:
+        self._recolor()  # each time it shows, too: the theme may have changed meanwhile
         self._panel.contentView().layer().setCornerRadius_(radius)
         origin = self._saved_origin() or self._corner()
         self._panel.setFrame_display_(((origin[0], origin[1]), (width, height)), True)
@@ -271,9 +305,9 @@ class Indicator:
             | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
             | AppKit.NSWindowCollectionBehaviorStationary
         )
-        content = panel.contentView()
+        content = EntunePillView.alloc().initWithCall_(self._recolor)
+        panel.setContentView_(content)
         content.setWantsLayer_(True)
-        content.layer().setBackgroundColor_(GROUND.CGColor())
         content.layer().setCornerRadius_(HEIGHT / 2)
         content.setAutoresizesSubviews_(False)
 
@@ -292,11 +326,11 @@ class Indicator:
         content.layer().addSublayer_(dot)
 
         label = AppKit.NSTextField.wrappingLabelWithString_("")
-        label.setTextColor_(AppKit.NSColor.whiteColor())
+        label.setTextColor_(AppKit.NSColor.labelColor())
         label.setSelectable_(False)  # selectable, a click would make the panel take focus
         content.addSubview_(label)
         body = AppKit.NSTextField.wrappingLabelWithString_("")
-        body.setTextColor_(MUTED)
+        body.setTextColor_(AppKit.NSColor.secondaryLabelColor())
         body.setFont_(AppKit.NSFont.systemFontOfSize_(12))
         body.setSelectable_(False)  # selecting would make the panel key; History has the text
         content.addSubview_(body)

@@ -65,7 +65,16 @@ function applyTheme(theme) {
   if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
   else delete document.documentElement.dataset.theme;
   try { theme === "system" ? localStorage.removeItem("theme") : localStorage.setItem("theme", theme); } catch (e) {}
+  shareTheme();
 }
+// The Mac app takes the page's theme too, so its translucent material and the recording
+// pill match; "system" leaves it to macOS.
+function shareTheme() {
+  const theme = document.documentElement.dataset.theme ?? "system";
+  window.pywebview?.api?.set_appearance?.(theme);
+}
+window.addEventListener("pywebviewready", shareTheme);
+shareTheme();
 {
   let saved = "system";
   try { saved = localStorage.getItem("theme") || "system"; } catch (e) {}
