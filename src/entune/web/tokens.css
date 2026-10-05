@@ -95,6 +95,9 @@
   --shadow-segment: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-key: inset 0 -1px 0 rgba(0, 0, 0, 0.4);
   --on-accent: #ffffff;                     /* text on a solid accent button */
+  /* The Mac window's translucent material shows through these (style.css, .native-mac). */
+  --glass-bar: rgba(40, 40, 40, 0.45);      /* toolbar: a light veil over the material */
+  --glass-ground: rgba(30, 30, 30, 0.82);   /* content: nearly solid, a hint of the material */
   --focus: 0 0 0 3px rgba(26, 169, 255, 0.5); /* the macOS keyboard focus ring */
 }
 @media (prefers-color-scheme: light) {
@@ -132,6 +135,8 @@
     --error-wash: rgba(255, 56, 60, 0.08);
     --recording: #ff383c;
     --recording-wash: rgba(255, 56, 60, 0.14);
+    --glass-bar: rgba(255, 255, 255, 0.45);
+    --glass-ground: rgba(246, 246, 246, 0.82);
     --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
     --shadow-popover: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.16);
     --shadow-segment: 0 1px 2px rgba(0, 0, 0, 0.08);
@@ -172,6 +177,8 @@
   --error-wash: rgba(255, 56, 60, 0.08);
   --recording: #ff383c;
   --recording-wash: rgba(255, 56, 60, 0.14);
+  --glass-bar: rgba(255, 255, 255, 0.45);
+  --glass-ground: rgba(246, 246, 246, 0.82);
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
   --shadow-popover: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.16);
   --shadow-segment: 0 1px 2px rgba(0, 0, 0, 0.08);

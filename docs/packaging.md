@@ -150,6 +150,12 @@ Upgrade checks must cover these specific dependencies:
   and the parent container's frames. Check all three traffic-light controls,
   resize/text size, drag area and full-screen entry/exit. A changed hierarchy
   reports an error; full-screen positioning remains AppKit's responsibility.
+- The window's translucent material uses pywebview's `vibrancy`, which adds an
+  `NSVisualEffectView` under its web view (`BrowserView.instances[uid].webview`);
+  Entune sets that view to the sidebar material and turns off the web view's
+  `drawsBackground`, and the page lets it through only in the side rails and
+  toolbar. Check both appearances, an inactive window, and that cards, menus,
+  the suggestions drawer and dialogs stay solid.
 - `ALLOW_DOWNLOADS` delegates to pywebview's Cocoa download handling and native
   Save panel. Verify audio ZIP, transcript JSON and individual audio downloads,
   including cancel. No custom download delegate is installed by Entune.

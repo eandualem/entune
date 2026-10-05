@@ -320,6 +320,8 @@ class _Window:
             hidden=True,
             frameless=sys.platform == "darwin",
             easy_drag=False,
+            # The Mac window's translucent material behind the page (make_vibrant).
+            vibrancy=sys.platform == "darwin",
         )
         self._window.events.closing += self._on_closing
         self._window.events.shown += self._on_shown
@@ -330,6 +332,7 @@ class _Window:
         if sys.platform == "darwin":
             # Frameless fills the title area; restore and align the real Mac controls.
             self._window.events.before_show += self._layout_titlebar
+            self._window.events.before_show += self._make_vibrant
             self._window.events.resized += self._resize_titlebar
             self._window.expose(self.layout_titlebar)
 
@@ -345,6 +348,11 @@ class _Window:
         from entune.desktop.macos.webview import layout_titlebar
 
         layout_titlebar(self._window.native, self._toolbar_height)
+
+    def _make_vibrant(self) -> None:
+        from entune.desktop.macos.webview import make_vibrant
+
+        make_vibrant(self._window.uid)
 
     def show(self, fragment: str = "") -> None:
         if self._window is None:
