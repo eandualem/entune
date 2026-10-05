@@ -1031,7 +1031,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     guide.querySelector(".guide").scrollTop = topic ? el(topic).offsetTop - guide.querySelector(".guide").offsetTop : 0;
   }
   el("dict-help").addEventListener("click", () => showHelp());
-  el("suggest-help").addEventListener("click", () => setupSource === "history" ? showHelp(null, "history") : showHelp(null, "audio"));
+  // About the run under way when there is one, else about the source being set up.
+  el("suggest-help").addEventListener("click", () => {
+    const source = stage(run) === "setup" ? setupSource : run.source;
+    showHelp(null, source === "history" ? "history" : "audio");
+  });
   el("reuse-help").addEventListener("click", () => showHelp("guide-reuse", "history"));
 
   // ---- Suggestions: a side panel, and a banner above the list while a run is open ----
