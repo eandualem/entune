@@ -33,17 +33,18 @@
   --rail: 12.5rem;         /* 200: the settings side rail */
   --content-max: 51.25rem; /* 820: settings content */
 
-  /* The first launch's introduction: a dark stage in either theme, lit in the accent. */
-  --intro-bg: #0f0f12;
-  --intro-text: #f1f0ee;
-  --intro-muted: #a3a2ab;
+  /* The first launch's introduction: the window's own ground, lit in the macOS accent
+     (system blue, with the system indigo and teal for the light around the mark). */
+  --intro-bg: #1e1e1e;
+  --intro-text: #f2f2f2;
+  --intro-muted: #9a9a9a;
   --intro-line: rgba(255, 255, 255, 0.14);
-  --intro-accent: #a99cf2;
-  --intro-accent-text: #cfc6fa;
-  --intro-wash: rgba(169, 156, 242, 0.16);
-  --intro-glow-a: rgba(169, 156, 242, 0.42);
-  --intro-glow-b: rgba(94, 124, 232, 0.30);
-  --intro-glow-c: rgba(226, 120, 196, 0.22);
+  --intro-accent: #0a84ff;
+  --intro-accent-text: #64b2ff;
+  --intro-wash: rgba(10, 132, 255, 0.16);
+  --intro-glow-a: rgba(10, 132, 255, 0.40);
+  --intro-glow-b: rgba(94, 92, 230, 0.28);
+  --intro-glow-c: rgba(100, 210, 255, 0.20);
 }
 :root[data-scale="small"] { font-size: 14px; }
 :root[data-scale="large"] { font-size: 18px; }
@@ -137,6 +138,16 @@
     --recording-wash: rgba(255, 56, 60, 0.14);
     --glass-bar: rgba(246, 246, 246, 0.45);
     --glass-ground: rgba(236, 236, 236, 0.82);
+    --intro-bg: #ececec;
+    --intro-text: #1d1d1f;
+    --intro-muted: #6e6e6e;
+    --intro-line: rgba(0, 0, 0, 0.14);
+    --intro-accent: #007aff;
+    --intro-accent-text: #0068da;
+    --intro-wash: rgba(0, 122, 255, 0.12);
+    --intro-glow-a: rgba(0, 122, 255, 0.28);
+    --intro-glow-b: rgba(88, 86, 214, 0.20);
+    --intro-glow-c: rgba(50, 173, 230, 0.16);
     --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
     --shadow-popover: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.16);
     --shadow-segment: 0 1px 2px rgba(0, 0, 0, 0.08);
@@ -179,6 +190,16 @@
   --recording-wash: rgba(255, 56, 60, 0.14);
   --glass-bar: rgba(246, 246, 246, 0.45);
   --glass-ground: rgba(236, 236, 236, 0.82);
+  --intro-bg: #ececec;
+  --intro-text: #1d1d1f;
+  --intro-muted: #6e6e6e;
+  --intro-line: rgba(0, 0, 0, 0.14);
+  --intro-accent: #007aff;
+  --intro-accent-text: #0068da;
+  --intro-wash: rgba(0, 122, 255, 0.12);
+  --intro-glow-a: rgba(0, 122, 255, 0.28);
+  --intro-glow-b: rgba(88, 86, 214, 0.20);
+  --intro-glow-c: rgba(50, 173, 230, 0.16);
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
   --shadow-popover: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.16);
   --shadow-segment: 0 1px 2px rgba(0, 0, 0, 0.08);

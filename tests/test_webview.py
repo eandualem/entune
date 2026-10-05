@@ -24,8 +24,12 @@ def test_dragged_indicator_position_survives_a_status_change(
         frame.origin = SimpleNamespace(x=rect[0][0], y=rect[0][1])
 
     pill = Indicator()
-    layer = SimpleNamespace(setCornerRadius_=lambda radius: None)
+    layer = SimpleNamespace(
+        setCornerRadius_=lambda radius: None, setBackgroundColor_=lambda c: None
+    )
+    dark = SimpleNamespace(bestMatchFromAppearancesWithNames_=lambda names: names[0])
     pill._panel = SimpleNamespace(
+        effectiveAppearance=lambda: dark,
         frame=lambda: frame,
         setFrame_display_=move,
         orderFrontRegardless=lambda: None,
