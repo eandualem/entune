@@ -191,3 +191,11 @@ def make_vibrant(uid: str) -> None:
             _active.failure("Window material")
         else:
             logging.getLogger(__name__).exception("Cocoa window material failed")
+
+
+def set_appearance(theme: str) -> None:
+    """Entune's theme for the whole app, so the window's material and the recording pill
+    match the page: light or dark, or the system's when the theme follows the system."""
+    names = {"light": AppKit.NSAppearanceNameAqua, "dark": AppKit.NSAppearanceNameDarkAqua}
+    name = names.get(theme)
+    AppKit.NSApp.setAppearance_(AppKit.NSAppearance.appearanceNamed_(name) if name else None)
