@@ -420,6 +420,31 @@ def test_a_case_only_literal_competitor_another_entry_needs_is_kept() -> None:
     assert spellings == ["YAML", "camel"]
 
 
+def test_a_case_only_literal_is_judged_on_the_dictionary_the_reply_leaves() -> None:
+    # The reply removes the only entry that confused "camel"; its case-only literal is
+    # then needed by nothing and goes, and the removal applies.
+    text = "The Camel sleeps."
+    camel = {
+        "meanings": [
+            {"id": "n1", "spelling": "camel", "meaning": "the desert animal", "casing": "ordinary"}
+        ],
+        "heard": [
+            {
+                "text": "Camel",
+                "links": [
+                    {
+                        "meaning": "n1",
+                        "basis": "text",
+                        "evidence": [{"dictation": "d1", "start": 4, "end": 9}],
+                    }
+                ],
+            }
+        ],
+    }
+    result = parse(reply(additions=[camel], removals=["e1"]), (text,), (group("YAML", "camel"),))
+    assert result == ()
+
+
 def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

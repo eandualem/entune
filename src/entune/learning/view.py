@@ -294,12 +294,22 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
             raise ValueError(f"Revisions must name an entry shown here: {item['id']}")
         revisions.append(build_group(item, identity, by_id.get(identity)))
 
+    removals = []
+    for label in reply["removals"]:
+        identity = view.group_ids.get(label)
+        if identity is None:
+            raise ValueError(f"Removals must name an entry shown here: {label}")
+        removals.append(identity)
     # An addition left with no confusion because its heard form differed only in capitals
     # adds nothing, unless another entry needs it: a form confused elsewhere ("camel" for
     # YAML) keeps it as that form's literal competitor, and a link to one of its meanings
-    # keeps the meaning defined. One that never named a confusion is still refused.
+    # keeps the meaning defined, both judged on the dictionary this reply leaves. One that
+    # never named a confusion is still refused.
+    replaced = {g.id for g in revisions} | set(removals)
+    remaining = [g for g in stored if g.id not in replaced]
+
     def needed(group: Group) -> bool:
-        others = [g for g in (*built, *revisions, *stored) if g.id != group.id]
+        others = [g for g in (*built, *revisions, *remaining) if g.id != group.id]
         confused = {
             key(f.text)
             for g in others
@@ -318,12 +328,6 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
         or any(a.basis != "literal" for f in g.recognized_forms for a in f.associations)
         or needed(g)
     )
-    removals = []
-    for label in reply["removals"]:
-        identity = view.group_ids.get(label)
-        if identity is None:
-            raise ValueError(f"Removals must name an entry shown here: {label}")
-        removals.append(identity)
     named = [g.id for g in revisions] + removals
     if len(set(named)) != len(named):
         raise ValueError("Name each entry once across revisions and removals")
