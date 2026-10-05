@@ -398,6 +398,9 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 .app-option input { margin: 0; accent-color: var(--accent); }
 .app-option .caption { display: block; }
 .srow.wide { grid-template-columns: minmax(0, 1fr); }
+/* A status line with its action at the end, the way macOS settings place a button. */
+.srow.status { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); }
+.srow.status .caption { margin-top: 0; }
 /* The two decision models side by side across the card, each its own option. */
 .decision-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); }
 .decision-list .app-option { align-items: flex-start; padding: var(--sp-10) var(--sp-12); }
