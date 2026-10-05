@@ -738,6 +738,33 @@ def test_a_request_waits_five_seconds_to_connect_and_twenty_minutes_to_read(
     assert all(t["connect"] == providers.CONNECT and t["read"] == providers.TIMEOUT for t in limits)
 
 
+@pytest.mark.parametrize("effort", ["high", "xhigh"])
+def test_claude_thinks_within_its_output_limit_at_every_effort(
+    monkeypatch: pytest.MonkeyPatch, effort: str
+) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def respond(outgoing: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(outgoing.content))
+        return httpx2.Response(500, json={"error": "stop here"})
+
+    factory = providers._http2
+
+    def offline(header: str, value: str) -> Any:
+        client = factory(header, value)
+        client._transport = httpx2.MockTransport(respond)
+        return client
+
+    monkeypatch.setattr(providers, "_http2", offline)
+    claude = replace(
+        request(), provider="anthropic", model="anthropic:claude-haiku-4-5", effort=effort
+    )
+    with pytest.raises(ModelHTTPError):
+        asyncio.run(suggestion_model.call_model(claude))
+    (body,) = bodies
+    assert body["thinking"]["budget_tokens"] < body["max_tokens"]
+
+
 @pytest.mark.parametrize("plan", [False, True])
 def test_a_reply_that_keeps_streaming_past_the_limit_is_cut(
     monkeypatch: pytest.MonkeyPatch, plan: bool
