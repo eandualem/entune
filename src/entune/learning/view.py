@@ -55,14 +55,30 @@ def build(working: Groups, pinned: Groups, snippets: Sequence[Any]) -> View:
     """The entries that occur in `snippets` (pinned and learned), and the dictations.
 
     `working` is the effective dictionary, where a pinned group carries its model-local
-    competitors under the same ID; a pinned group missing from it is added. An entry
-    whose heard form links to another entry's meaning brings that entry along, so every
-    link can be shown and kept."""
+    competitors under the same ID; a pinned group missing from it is added. An entry also
+    shows when a dictation's recorded decision chose one of its meanings. Entries linked
+    to each other show together, in both directions, so every link can be kept, changed
+    or removed with the entries it joins."""
     texts = [s.text for s in snippets]
     pinned_meanings = frozenset(m.id for g in pinned for m in g.meanings)
     every = (*working, *(g for g in pinned if g.id not in {w.id for w in working}))
-    owner = {m.id: g for g in every for m in g.meanings}
-    wanted = {
+    owner = {m.id: g.id for g in every for m in g.meanings}
+    joined: dict[str, set[str]] = {g.id: set() for g in every}
+    for group in every:
+        for form in group.recognized_forms:
+            for link in form.associations:
+                other = owner.get(link.meaning_id)
+                if other is not None and other != group.id:
+                    joined[group.id].add(other)
+                    joined[other].add(group.id)
+    chosen = {
+        m
+        for s in snippets
+        if s.result is not None
+        for selection in s.result.selections or ()
+        for m in selection.meaning_ids
+    }
+    wanted = {owner[m] for m in chosen if m in owner} | {
         g.id
         for g in every
         if any(
@@ -76,14 +92,9 @@ def build(working: Groups, pinned: Groups, snippets: Sequence[Any]) -> View:
     }
     pending = list(wanted)
     while pending:
-        identity = pending.pop()
-        group = next(g for g in every if g.id == identity)
-        for form in group.recognized_forms:
-            for link in form.associations:
-                linked = owner.get(link.meaning_id)
-                if linked is not None and linked.id not in wanted:
-                    wanted.add(linked.id)
-                    pending.append(linked.id)
+        for other in joined[pending.pop()] - wanted:
+            wanted.add(other)
+            pending.append(other)
     shown = [g for g in every if g.id in wanted]
     group_ids: dict[str, str] = {}
     meaning_ids: dict[str, str] = {}

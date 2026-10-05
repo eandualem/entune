@@ -255,6 +255,36 @@ def test_a_pinned_entry_is_shown_with_its_local_competitors_and_cross_links() ->
     assert {g.id: g for g in result}["g_cloud"].meanings == CLOUD.meanings
 
 
+def test_an_entry_others_link_to_and_a_decided_entry_are_shown() -> None:
+    from entune.learning.inputs import DictionaryResult
+    from entune.processing.results import Selection
+
+    claude = group("Claude", "cloud")
+    linked = Group("g_linked", (), (Form("clawed", (Association("a_claude"),)),))
+    keep = group("Keep", "keep term")
+    # "cloud" shows Claude, which brings the entry linking to it, so both can go.
+    texts = ("the cloud",)
+    shown = view.build((claude, linked, keep), (), snippets(*texts))
+    assert len(json.loads(shown.dictionary)) == 2
+    result = replies.parse_reply(
+        json.dumps(reply(removals=["e1", "e2"])),
+        shown,
+        (claude, linked, keep),
+        transcripts=texts,
+    )
+    assert result == (keep,)
+    # A decision chose Keep where the text no longer matches its heard forms.
+    decided = batches.Snippet(
+        "s_1",
+        "raw_speech",
+        "keep turn",
+        DictionaryResult((), (Selection(0, 9, ("a_keep",), "contextual"),)),
+    )
+    shown = view.build((keep,), (), [decided])
+    (entry,) = json.loads(shown.dictations)
+    assert entry["decisions"][0]["meanings"] == ["e1a"]
+
+
 def test_an_identical_ordinary_meaning_not_shown_is_reused() -> None:
     cache = Meaning("m_cache", "cache", "stored copy of data", casing="ordinary")
     stored = Group("g_cache", (cache,), (Form("cash", (Association("m_cache"),)),))
