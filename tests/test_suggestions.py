@@ -21,11 +21,11 @@ from pydantic_ai.models import StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
-from entune.dictionary.entries import Dictionary, Group
+from entune.dictionary.entries import Association, Dictionary, Form, Group, Meaning
 from entune.learning import batches, generate, replies, suggestion_model, view
 from entune.learning import inputs as learning_inputs
 from entune.learning.suggestion_model import Request, call, chatgpt, providers
-from tests.dictionary_samples import JEV, group, proposed
+from tests.dictionary_samples import CLOUD, JEV, group, proposed
 
 TEXT = "I use cloud code."
 REPLY = json.dumps(proposed(TEXT))
@@ -221,6 +221,59 @@ def test_an_added_literal_competitor_beside_protected_pinned_knowledge() -> None
     )
     assert result[-1].meanings[0].spelling == "cloud"
     assert pinned.meanings[0].spelling == "Claude"
+
+
+def test_a_pinned_entry_is_shown_with_its_local_competitors_and_cross_links() -> None:
+    from entune.dictionary import changes
+
+    current = changes.pin(Dictionary(learned={"s/m": (CLOUD,)}), "s/m", "g_cloud", "a_claude")
+    working = current.effective("s/m")
+    linked = Group(
+        "g_linked",
+        (),
+        (Form("clawed", (Association("a_claude"),)),),
+    )
+    shown = view.build((*working, linked), current.pinned, snippets("ask clawed"))
+    entries = json.loads(shown.dictionary)
+    # The entry that links to Claude brings Claude's whole entry, competitors included.
+    assert [len(e["meanings"]) for e in entries] == [3, 0]
+    assert entries[0]["pinned"] is True and entries[1]["heard"] == {"clawed": ["e1a"]}
+    revised = {
+        "id": "e2",
+        "meanings": [],
+        "heard": [
+            {"text": "clawed", "links": [{"meaning": "e1a", "basis": "existing", "evidence": []}]}
+        ],
+    }
+    result = replies.parse_reply(
+        json.dumps(reply(revisions=[revised])),
+        shown,
+        (*working, linked),
+        transcripts=["ask clawed"],
+        pinned=current.pinned,
+    )
+    assert {g.id: g for g in result}["g_cloud"].meanings == CLOUD.meanings
+
+
+def test_an_identical_ordinary_meaning_not_shown_is_reused() -> None:
+    cache = Meaning("m_cache", "cache", "stored copy of data", casing="ordinary")
+    stored = Group("g_cache", (cache,), (Form("cash", (Association("m_cache"),)),))
+    text = "clear the catch now"
+    meaning = {
+        "id": "n1",
+        "spelling": "cache",
+        "meaning": "stored copy of data",
+        "casing": "ordinary",
+    }
+    evidence = [{"dictation": "d1", "start": 10, "end": 15}]
+    heard = {"text": "catch", "links": [{"meaning": "n1", "basis": "text", "evidence": evidence}]}
+    (merged,) = parse(
+        reply(additions=[{"meanings": [meaning], "heard": [heard]}]), (text,), (stored,)
+    )
+    assert merged.meanings == (cache,) and {f.text for f in merged.recognized_forms} == {
+        "cash",
+        "catch",
+    }
 
 
 def test_a_name_already_stored_joins_its_entry_instead_of_a_new_one() -> None:

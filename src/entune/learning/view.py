@@ -52,12 +52,19 @@ def _lines(items: Sequence[object]) -> str:
 
 
 def build(working: Groups, pinned: Groups, snippets: Sequence[Any]) -> View:
-    """The entries that occur in `snippets` (pinned and learned), and the dictations."""
+    """The entries that occur in `snippets` (pinned and learned), and the dictations.
+
+    `working` is the effective dictionary, where a pinned group carries its model-local
+    competitors under the same ID; a pinned group missing from it is added. An entry
+    whose heard form links to another entry's meaning brings that entry along, so every
+    link can be shown and kept."""
     texts = [s.text for s in snippets]
     pinned_meanings = frozenset(m.id for g in pinned for m in g.meanings)
-    shown = [
-        g
-        for g in (*pinned, *(g for g in working if g.id not in {p.id for p in pinned}))
+    every = (*working, *(g for g in pinned if g.id not in {w.id for w in working}))
+    owner = {m.id: g for g in every for m in g.meanings}
+    wanted = {
+        g.id
+        for g in every
         if any(
             occurs(text, phrase)
             for text in texts
@@ -66,25 +73,37 @@ def build(working: Groups, pinned: Groups, snippets: Sequence[Any]) -> View:
                 *(f.text for f in g.recognized_forms),
             )
         )
-    ]
+    }
+    pending = list(wanted)
+    while pending:
+        identity = pending.pop()
+        group = next(g for g in every if g.id == identity)
+        for form in group.recognized_forms:
+            for link in form.associations:
+                linked = owner.get(link.meaning_id)
+                if linked is not None and linked.id not in wanted:
+                    wanted.add(linked.id)
+                    pending.append(linked.id)
+    shown = [g for g in every if g.id in wanted]
     group_ids: dict[str, str] = {}
     meaning_ids: dict[str, str] = {}
     labels: dict[str, str] = {}  # stored meaning ID -> label
+    for number, group in enumerate(shown, 1):
+        group_ids[f"e{number}"] = group.id
+        for index, meaning in enumerate(group.meanings):
+            meaning_ids[f"e{number}{_letters(index)}"] = meaning.id
+            labels[meaning.id] = f"e{number}{_letters(index)}"
     entries = []
     for number, group in enumerate(shown, 1):
-        label = f"e{number}"
-        group_ids[label] = group.id
-        meanings = []
-        for index, meaning in enumerate(group.meanings):
-            tag = f"{label}{_letters(index)}"
-            meaning_ids[tag] = meaning.id
-            labels[meaning.id] = tag
-            meanings.append({"id": tag, "spelling": meaning.spelling, "meaning": meaning.meaning})
+        meanings = [
+            {"id": labels[m.id], "spelling": m.spelling, "meaning": m.meaning}
+            for m in group.meanings
+        ]
         heard = {
-            f.text: [labels.get(a.meaning_id, a.meaning_id) for a in f.associations]
+            f.text: [labels[a.meaning_id] for a in f.associations if a.meaning_id in labels]
             for f in group.recognized_forms
         }
-        entry: dict[str, object] = {"id": label, "meanings": meanings, "heard": heard}
+        entry: dict[str, object] = {"id": f"e{number}", "meanings": meanings, "heard": heard}
         if any(m.id in pinned_meanings for m in group.meanings):
             entry["pinned"] = True
         entries.append(entry)
@@ -153,17 +172,21 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
     by_id = {g.id: g for g in stored}
     new_meanings: dict[str, str] = {}  # the model's n1 -> new_m1
     # A name is written one way: a new name spelled exactly like a stored one is that
-    # meaning, which may live in an entry this part did not show.
+    # meaning, which may live in an entry this part did not show. An ordinary word is
+    # the stored meaning only when its definition is the same too.
     names = {m.spelling: m.id for g in stored for m in g.meanings if m.casing == "fixed"}
+    words = {
+        (m.spelling, m.meaning): m.id for g in stored for m in g.meanings if m.casing == "ordinary"
+    }
     defined = {m.id for g in stored for m in g.meanings}
     for item in (*reply["additions"], *reply["revisions"]):
         for m in item["meanings"]:
-            if (
-                m["id"] not in view.meaning_ids
-                and m["casing"] == "fixed"
-                and m["spelling"] in names
-            ):
+            if m["id"] in view.meaning_ids:
+                continue
+            if m["casing"] == "fixed" and m["spelling"] in names:
                 new_meanings[m["id"]] = names[m["spelling"]]
+            elif m["casing"] == "ordinary" and (m["spelling"], m["meaning"].strip()) in words:
+                new_meanings[m["id"]] = words[(m["spelling"], m["meaning"].strip())]
 
     def meaning_id(label: str) -> str:
         if label in view.meaning_ids:
