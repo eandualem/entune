@@ -44,13 +44,13 @@ def _rgb(red: float, green: float, blue: float, alpha: float = 1.0) -> Any:
 
 # The window's tokens (tokens.css): the dark control ground, recording coral, the accent,
 # and the success and error colours.
-GROUND = _rgb(0.149, 0.149, 0.169, 0.96)
-CORAL = _rgb(0.898, 0.396, 0.373)
-ACCENT = _rgb(0.663, 0.612, 0.949)
-QUIET = _rgb(0.6, 0.6, 0.64)
-OK = _rgb(0.561, 0.827, 0.604)
-ERROR = _rgb(0.898, 0.522, 0.498)
-MUTED = _rgb(0.79, 0.79, 0.81)
+GROUND = _rgb(0.196, 0.196, 0.196, 0.96)
+CORAL = _rgb(1.0, 0.259, 0.271)
+ACCENT = _rgb(0.0, 0.478, 1.0)
+QUIET = _rgb(0.604, 0.604, 0.604)
+OK = _rgb(0.188, 0.82, 0.345)
+ERROR = _rgb(1.0, 0.259, 0.271)
+MUTED = _rgb(0.776, 0.776, 0.776)
 
 
 class EntunePillTarget(NSObject):  # type: ignore[misc]

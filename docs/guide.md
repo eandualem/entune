@@ -308,7 +308,7 @@ Explicit associations decide which meanings can compete for a form; context deci
 which one applies. Edit entries directly, or ask the configured language model to
 suggest them: **Get suggestions** reads this speech model's raw history, finds the
 words it gets wrong, and can also improve or remove the entries those transcripts show,
-judging what the dictionary step made of each one. **How the dictionary works** opens a short guide.
+judging what the dictionary step made of each one. **Help**, next to **Add**, opens a short guide.
 Additions, before/after updates, and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
 then apply the remainder once. Dismissing a proposal does not delete active knowledge.
 

@@ -244,8 +244,8 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .badge { padding: 0 var(--sp-6); border-radius: 999px; background: var(--accent); color: var(--surface); font-size: var(--fs-11); font-weight: 600; font-variant-numeric: tabular-nums; }
 .add-btn { font-weight: 600; gap: var(--sp-4); }
 .add-btn .plus { font-size: var(--fs-16); line-height: 1; }
-.btn.primary { background: var(--accent); color: var(--surface); border-color: transparent; font-weight: 600; padding: 0 var(--sp-14); }
-.btn.primary:hover { color: var(--surface); }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; padding: 0 var(--sp-14); }
+.btn.primary:hover { color: var(--on-accent); }
 .btn.primary:disabled { opacity: 0.45; }
 
 /* The ⋯ menu: less common ways to build the dictionary, and whole-dictionary actions. */
@@ -397,7 +397,11 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 .app-option:has(input:checked) { background: var(--card); box-shadow: var(--shadow-card); }
 .app-option input { margin: 0; accent-color: var(--accent); }
 .app-option .caption { display: block; }
-.decision-list { flex: 1; }
+.srow.wide { grid-template-columns: minmax(0, 1fr); }
+/* The two decision models side by side across the card, each its own option. */
+.decision-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); }
+.decision-list .app-option { align-items: flex-start; padding: var(--sp-10) var(--sp-12); }
+.decision-list .app-option input { margin-top: 3px; }
 #decision-status-row:has(#decision-note:empty):not(:has(.show)) { display: none; }
 #laya-status.err { color: var(--error); overflow-wrap: anywhere; }
 #dm-signin-state strong { -webkit-user-select: all; user-select: all; }

@@ -64,10 +64,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   // What the choice does, in one line; on a ChatGPT plan, also its limit per reply.
   function drawEffect() {
     const model = getSettings()?.dictionaryModel ?? "";
-    const plan = model.startsWith("chatgpt:")
-      ? " On a ChatGPT plan each reply must finish within about 15 minutes."
+    // What effort does is in Help; only a ChatGPT plan's limit per reply is said here.
+    el("run-effect").textContent = model.startsWith("chatgpt:")
+      ? "On a ChatGPT plan each reply must finish within about 15 minutes."
       : "";
-    el("run-effect").textContent = `Higher effort reasons longer and usually finds more; high is the default.${plan}`;
+    el("run-effect").hidden = !el("run-effect").textContent;
   }
   // The speech model the dictionary is for: the same choice as the toolbar's default model.
   const speechSelect = el("suggest-speech");
@@ -269,7 +270,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const counts = { all: groups.length, pinned: dict.pinned.length, learned, attention: groups.filter((v) => attention(v.g)).length };
     for (const [name, count] of Object.entries(counts)) el(`count-${name}`).textContent = count ? String(count) : "";
     el("attention-dot").hidden = !counts.attention;
-    el("filter-learned-name").textContent = shortName(model);
+    // "To check" shows only while something needs checking.
+    el("filter-attention").hidden = !counts.attention;
+    if (filter === "attention" && !counts.attention) { filter = "all"; selectFilter("all"); }
     el("filter-learned").title = model ? `Learned only for ${speechName(model)}` : "Choose a speech model in the toolbar first";
     el("filter-learned").disabled = !model;
     el("legend-model").textContent = shortName(model);
@@ -1006,17 +1009,30 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   el("menu-reuse").addEventListener("click", () => { reuse.checked = !reuse.checked; drawReuse(); });
 
   // The guide is a modal over the page, so drafts and scroll position stay as they are.
-  function showHelp(topic = null) {
+  // Help in the toolbar shows all of it; Help in the suggestions panel shows only the
+  // sections about what that panel does, under its own title.
+  const HELP_TITLE = el("help-title").textContent;
+  const PANEL_HELP = {
+    history: ["Getting suggestions", ["guide-suggestions", "guide-reuse", "guide-time", "guide-review"]],
+    audio: ["Learning from audio", ["guide-audio", "guide-time", "guide-review"]],
+  };
+  function showHelp(topic = null, panel = null) {
     const guide = el("help-dialog");
     closeMenu();
     if (guide.open) return;
+    const [title, sections] = panel ? PANEL_HELP[panel] : [HELP_TITLE, null];
+    el("help-title").textContent = title;
+    let section = null;
+    for (const part of guide.querySelector(".guide").children) {
+      if (part.tagName === "H3") section = part.id;
+      part.hidden = Boolean(sections) && !sections.includes(section);
+    }
     guide.showModal();
     guide.querySelector(".guide").scrollTop = topic ? el(topic).offsetTop - guide.querySelector(".guide").offsetTop : 0;
   }
-  el("help-toggle").addEventListener("click", () => showHelp());
-  el("legend-help").addEventListener("click", () => showHelp());
-  el("suggest-help").addEventListener("click", () => showHelp("guide-suggestions"));
-  el("reuse-help").addEventListener("click", () => showHelp("guide-reuse"));
+  el("dict-help").addEventListener("click", () => showHelp());
+  el("suggest-help").addEventListener("click", () => setupSource === "history" ? showHelp(null, "history") : showHelp(null, "audio"));
+  el("reuse-help").addEventListener("click", () => showHelp("guide-reuse", "history"));
 
   // ---- Suggestions: a side panel, and a banner above the list while a run is open ----
   const RUNNING = ["queued", "transcribing", "building", "cancelling", "cleaning"];

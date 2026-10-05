@@ -124,8 +124,8 @@
             <div class="segmented dict-filters" role="tablist" aria-label="Show">
               <button type="button" role="tab" id="filter-all" aria-selected="true" title="Pinned entries and the ones learned for this speech model">All<span class="count" id="count-all"></span></button>
               <button type="button" role="tab" id="filter-pinned" aria-selected="false" title="Used with every speech model">Pinned<span class="count" id="count-pinned"></span></button>
-              <button type="button" role="tab" id="filter-learned" aria-selected="false"><span id="filter-learned-name">Learned</span><span class="count" id="count-learned"></span></button>
-              <button type="button" role="tab" id="filter-attention" aria-selected="false" title="Meanings without a description: Entune can't choose them yet">Needs attention<span class="count" id="count-attention"></span><span class="attention-dot" id="attention-dot" hidden></span></button>
+              <button type="button" role="tab" id="filter-learned" aria-selected="false">Learned<span class="count" id="count-learned"></span></button>
+              <button type="button" role="tab" id="filter-attention" aria-selected="false" title="Entries to check: a meaning without a description, which Entune can't choose yet, or an imported entry to confirm" hidden>To check<span class="count" id="count-attention"></span><span class="attention-dot" id="attention-dot" hidden></span></button>
             </div>
             <label class="dict-search">
               <svg class="i12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="5" cy="5" r="3.6"/><path d="M8 8l3 3"/></svg>
@@ -144,6 +144,7 @@
               <span id="suggest-label">Get suggestions</span><span class="badge" id="suggest-badge" hidden></span>
             </button>
             <button type="button" class="btn accent add-btn" id="add-entry-btn" aria-expanded="false" aria-controls="add-row"><span class="plus" aria-hidden="true">+</span>Add</button>
+            <button type="button" class="btn ghost help-btn" id="dict-help" aria-haspopup="dialog" aria-controls="help-dialog" title="How the dictionary works">Help</button>
             <div class="menu-wrap">
               <button type="button" class="btn menu-btn" id="dict-menu-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="dict-menu" aria-label="More" title="More ways to build the dictionary">
                 <svg class="i14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/><circle cx="11" cy="7" r="1.2"/></svg>
@@ -158,7 +159,6 @@
                 <p class="menu-label">This dictionary</p>
                 <button type="button" role="menuitem" id="pin-all" title="Use every entry learned for this speech model with all speech models"><span class="menu-text" id="pin-all-label">Pin all learned</span><span class="menu-note" id="pin-all-count"></span></button>
                 <button type="button" role="menuitemcheckbox" id="menu-reuse" aria-checked="false"><span class="menu-text">Reuse earlier transcripts</span><span class="menu-note" id="menu-reuse-state">Off</span></button>
-                <button type="button" role="menuitem" id="help-toggle" aria-haspopup="dialog" aria-controls="help-dialog"><span class="menu-text">How the dictionary works</span></button>
               </div>
             </div>
           </div>
@@ -200,8 +200,6 @@
             <div class="dict-legend">
               <span><b>Pinned</b> · every speech model, protected from suggestions</span>
               <span><b id="legend-model">Learned</b> · learned for this model only; the list follows the toolbar picker</span>
-              <span class="spacer"></span>
-              <button type="button" class="btn link" id="legend-help" aria-haspopup="dialog" aria-controls="help-dialog">How the dictionary works</button>
             </div>
           </div>
 
@@ -221,9 +219,9 @@
                 <button type="submit" class="btn-icon" aria-label="Close guide" value="close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
               </header>
               <article class="guide">
-                <h3>What it's for</h3>
+                <h3 id="guide-about">What it's for</h3>
                 <p>Every speech model has words it keeps getting wrong: names, products, technical terms. Your dictionary remembers those mistakes and fixes them in each new dictation, before the text reaches you.</p>
-                <h3>How an entry works</h3>
+                <h3 id="guide-entry">How an entry works</h3>
                 <p>An entry pairs what the speech model <em>writes</em> with what you might have <em>meant</em>. Say it often writes “cloud” when you said “Claude”. But sometimes you really mean a cloud. So the entry keeps both meanings:</p>
                 <div class="guide-example"><code>cloud</code> → <b>Claude</b>, an AI assistant you ask to write or code<br><code>cloud</code> → <b>cloud</b>, internet storage and servers</div>
                 <p>In “Ask cloud to draft the reply”, Entune writes <b>Claude</b>. In “The backups are in the cloud”, it leaves <b>cloud</b> alone. It chooses from the surrounding words, which is why each meaning has a short description: write what the thing is and what it goes with.</p>
@@ -236,19 +234,20 @@
                 <p>Each transcript is read once: after you apply a run's suggestions, the next <b>Get suggestions</b> reads only what you dictated since, so you don't pay twice for the same text. <b>Reuse earlier transcripts</b> reads them again. It shows every transcript of this speech model on a timeline, oldest on the left, with the ones used before marked under the line; drag the handles to choose how much to read.</p>
                 <p>Reuse them when the earlier suggestions no longer stand for what those transcripts can teach: you cleared or rebuilt your dictionary, you chose a stronger suggestion model or a higher reasoning effort, an update improved how Entune suggests, or an earlier run's suggestions were poor. Reading again costs tokens again. Entries already in your dictionary are shown to the suggestion model beside the transcripts they occur in, so it improves them instead of adding them twice.</p>
                 <h3 id="guide-audio">Learning from audio</h3>
-                <p>The <b>⋯</b> menu learns from audio instead: Entune recordings made with other speech models, another dictation app's recordings on this Mac (only the audio is copied, never its transcripts), or a folder of WAV, MP3, M4A, FLAC, OGG or WebM files. Entune first <b>transcribes</b> that audio with your speech model, then the suggestion model reads the new text, so this path takes longer and providers may charge for both steps.</p>
-                <p>The timeline shows the source's recorded time, oldest on the left. Drag the handles to choose how much to use; each edge snaps to whole recordings, and the dates show where you are. Starting with your most recent hour or two gives quick results.</p>
-                <h3>Time and settings</h3>
+                <p>The <b>⋯</b> menu learns from audio instead of transcripts, from one of three sources:</p>
+                <p><b>Your other models' recordings</b> are recordings already in Entune that this speech model hasn't transcribed. <b>Another dictation app</b>: Import copies the audio that app keeps on this Mac into Entune's data folder; its transcripts are never copied and its files stay as they are. Importing again adds only what is new. <b>An audio folder</b>: choose a folder of recordings of you talking, such as meetings or voice notes, in WAV, MP3, M4A, FLAC, OGG or WebM; each file is copied once.</p>
+                <p>The hours and minutes are recorded audio: the length of the recordings you choose, not how long the run takes. Entune first <b>transcribes</b> that audio with your speech model, which a cloud provider charges for, then the suggestion model reads the new transcripts. The estimate under the timeline shows both steps. The timeline runs oldest on the left; drag the handles to choose how much to use, and each edge snaps to whole recordings. An hour or two of recent audio gives quick results.</p>
+                <h3 id="guide-time">Time and settings</h3>
                 <p>Text goes to the suggestion model in parts, one after another, because each part builds on the entries found so far. With audio, parts start as soon as enough is transcribed, while the rest is still transcribing. Cloud speech models transcribe several recordings at a time; a local model takes one at a time.</p>
                 <p><b>Reasoning effort</b> is the level the suggestion model's provider names, from minimal to xhigh. Higher effort reasons longer and usually finds more; high is the default. A provider without a level maps it to one it has.</p>
                 <p>The estimate uses what Entune has measured: your speech model's transcription times, and the time per part of earlier runs with the same suggestion model and effort. A combination not used before says so.</p>
                 <p>Sometimes a reply starts and then sends only blank space. Entune stops it within a minute or two and tries that part again, three attempts in all. A ChatGPT plan also ends any single reply at about 15 minutes. If a part fails all its attempts, or runs past a time or length limit, Entune stops and keeps the finished parts. Choose a lower reasoning effort, or less audio, and press <b>Continue</b>: it picks up where it stopped. Transcripts made so far are kept for Continue while Entune stays open.</p>
-                <h3>Reviewing suggestions</h3>
+                <h3 id="guide-review">Reviewing suggestions</h3>
                 <p>Suggestions open in a panel beside your dictionary, grouped into new entries, changes and removals. Edit any of them, leave out the ones you don't want with ×, and apply the rest in one step. Nothing is saved until you apply. Dictation keeps working the whole time; only editing the dictionary waits until you apply or discard.</p>
                 <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model chosen when the run starts.</p>
-                <h3>Pinned and learned entries</h3>
+                <h3 id="guide-pinned">Pinned and learned entries</h3>
                 <p><b>Learned</b> entries are used only with the speech model they were learned for. <b>Pin</b> an entry to use it with every speech model; pinned entries are yours and suggestions can't remove them. Pinning doesn't make an entry win: Entune still reads the sentence.</p>
-                <h3>Adding an entry yourself</h3>
+                <h3 id="guide-add">Adding an entry yourself</h3>
                 <p>Choose <b>Add</b> and fill in one line: how it's written, what the speech model hears (several, separated by commas) and what it is. For several meanings, a spelling kept as written, or always replacing, open the full editor from the link under that line. <b>Edit</b> on an entry opens the same editor.</p>
               </article>
             </form>
@@ -334,7 +333,7 @@
                   <p class="caption" id="run-effect"></p>
                   <p class="estimate" id="audio-generation-estimate" role="status"></p>
                   <p class="caption learn-note" id="dictionary-model-note" hidden></p>
-                  <p class="caption">Your dictionary changes only when you apply. Dictation keeps working meanwhile. <button type="button" class="btn link" id="suggest-settings">Keys in Settings</button></p>
+                  <p class="caption"><button type="button" class="btn link" id="suggest-settings">Keys in Settings</button></p>
                 </div>
                 <div class="proposal" id="proposal" hidden>
                   <p class="caption" id="proposal-title">Edit any suggestion, or leave it out with ×. Pinned entries are never changed by suggestions.</p>
@@ -461,12 +460,12 @@
               </div>
               <div class="scard" id="decision-card">
                 <div class="scard-head"><div class="name strong">Decision model</div><div class="caption">Needed for the steps below. Choose where the decisions are made.</div></div>
-                <div class="srow"><div class="app-list decision-list" role="radiogroup" aria-label="Decision model">
+                <div class="srow wide"><div class="app-list decision-list" role="radiogroup" aria-label="Decision model">
                   <label class="app-option"><input type="radio" name="decision-model" value="jev" /><span><span class="app-name">Jev by TypeSafe</span><span class="caption">In the cloud: it receives transcript text. On your own key, about $0.04 per million tokens: a fraction of a cent per dictation.</span></span></label>
                   <label class="app-option"><input type="radio" name="decision-model" value="laya" /><span><span class="app-name">Laya, on this Mac</span><span class="caption">Open weights from Convai Innovations, for English. Text stays on this Mac. It takes memory only while it is chosen and a step below is on.</span></span></label>
                 </div></div>
                 <form id="jev-key-form" hidden>
-                  <div class="srow"><label class="name" for="key-typesafe">TypeSafe API key</label><input class="input field" id="key-typesafe" type="password" autocomplete="off" placeholder="Not set" /></div>
+                  <div class="srow key-row"><label class="name" for="key-typesafe">TypeSafe API key</label><input class="input field" id="key-typesafe" type="password" autocomplete="off" placeholder="Not set" /><a class="key-link" href="https://console.typesafe.ai/" target="_blank" rel="noopener" title="Open TypeSafe's console in your browser">Get a key</a></div>
                   <div class="srow foot"><button type="submit" class="btn accent">Save key</button><span class="caption save-status" id="jev-key-status" role="status"></span></div>
                 </form>
                 <div id="laya-setup" hidden>
