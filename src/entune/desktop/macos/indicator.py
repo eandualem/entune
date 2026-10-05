@@ -66,6 +66,21 @@ class EntunePillTarget(NSObject):  # type: ignore[misc]
         self.call()
 
 
+class EntunePillView(AppKit.NSView):  # type: ignore[misc]
+    """The pill's content view: says when the appearance changes (Entune's theme, or the
+    system's), so a pill already on screen repaints its ground with its text."""
+
+    def initWithCall_(self, call: Callable[[], None]) -> Any:
+        self = objc.super(EntunePillView, self).init()
+        if self is not None:
+            self.call = call
+        return self
+
+    def viewDidChangeEffectiveAppearance(self) -> None:
+        objc.super(EntunePillView, self).viewDidChangeEffectiveAppearance()
+        self.call()
+
+
 class Indicator:
     def __init__(self) -> None:
         self._panel: Any = None
@@ -80,6 +95,7 @@ class Indicator:
         self._placed: tuple[float, float] | None = None  # where show() put it last
         self.level: Callable[[], float] = lambda: 0.0
         self._smoothed = [0.0] * 5
+        self._quiet = False  # the bars show silence, in the quiet grey
 
     # The three things the tray asks for
 
@@ -88,6 +104,7 @@ class Indicator:
         self._mode = "recording" if recording else "status"
         self._clear_card()
         quiet = recording and text.startswith("No sound")
+        self._quiet = quiet
         self._label.setStringValue_(text)
         self._label.setFont_(AppKit.NSFont.systemFontOfSize_weight_(13, AppKit.NSFontWeightMedium))
         self._label.setTextColor_(AppKit.NSColor.labelColor())
@@ -114,6 +131,7 @@ class Indicator:
     ) -> None:
         self._prepare()
         self._mode = "message"
+        self._quiet = False
         self._animate(False)
         self._clear_card()
         for bar in self._bars:
@@ -175,9 +193,18 @@ class Indicator:
         names = [AppKit.NSAppearanceNameDarkAqua, AppKit.NSAppearanceNameAqua]
         return bool(appearance.bestMatchFromAppearancesWithNames_(names) == names[0])
 
+    def _recolor(self) -> None:
+        """The ground, and quiet bars, for the current appearance."""
+        if self._panel is None:
+            return
+        dark = self._dark()
+        self._panel.contentView().layer().setBackgroundColor_(GROUND[dark].CGColor())
+        if self._quiet:
+            for bar in self._bars:
+                bar.setBackgroundColor_(QUIET[dark].CGColor())
+
     def _place(self, width: float, height: float, radius: float) -> None:
-        # Each time it shows: the theme may have changed since the last time.
-        self._panel.contentView().layer().setBackgroundColor_(GROUND[self._dark()].CGColor())
+        self._recolor()  # each time it shows, too: the theme may have changed meanwhile
         self._panel.contentView().layer().setCornerRadius_(radius)
         origin = self._saved_origin() or self._corner()
         self._panel.setFrame_display_(((origin[0], origin[1]), (width, height)), True)
@@ -278,7 +305,8 @@ class Indicator:
             | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
             | AppKit.NSWindowCollectionBehaviorStationary
         )
-        content = panel.contentView()
+        content = EntunePillView.alloc().initWithCall_(self._recolor)
+        panel.setContentView_(content)
         content.setWantsLayer_(True)
         content.layer().setCornerRadius_(HEIGHT / 2)
         content.setAutoresizesSubviews_(False)
