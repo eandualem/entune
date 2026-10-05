@@ -1,6 +1,6 @@
 import { PART_CHARS, day, duration } from "./audio-onboarding.js";
 import { createRange } from "./range.js";
-import { api, el } from "./ui.js";
+import { api, el, errorText } from "./ui.js";
 
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 
@@ -35,10 +35,12 @@ export function createHistoryReuse({ getSettings, getRunSettings }) {
     return `Suggestions you applied have read ${used} of your ${plural(items.length, "transcript")}; ${fresh ? `${fresh} ${fresh === 1 ? "is" : "are"} new` : "none is new"}.`;
   }
 
+  let problem = ""; // why the latest load failed
   function draw() {
-    el("history-state").textContent = state();
-    el("guide-reuse-state").textContent = state();
-    const open = reuse.checked && items.length > 0;
+    const said = problem || (ready ? state() : "Loading your transcripts…");
+    el("history-state").textContent = said;
+    el("guide-reuse-state").textContent = said;
+    const open = ready && reuse.checked && items.length > 0;
     el("history-pick").hidden = !open;
     if (!open) return;
     range.draw();
@@ -59,7 +61,15 @@ export function createHistoryReuse({ getSettings, getRunSettings }) {
   async function load() {
     const mine = ++loads;
     ready = false;
-    const [listed, measured] = await Promise.all([api("/api/dictionary/history"), api("/api/dictionary/timing").catch(() => null)]);
+    problem = "";
+    draw(); // the previous model's timeline goes while this one loads
+    let listed, measured;
+    try {
+      [listed, measured] = await Promise.all([api("/api/dictionary/history"), api("/api/dictionary/timing").catch(() => null)]);
+    } catch (err) {
+      if (mine === loads) { problem = `Could not load your transcripts: ${errorText(err)}`; draw(); }
+      throw err;
+    }
     if (mine !== loads) return; // a newer load, for another speech model, is under way
     ({ items } = listed);
     timing = measured;

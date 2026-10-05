@@ -208,6 +208,14 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
             new_meanings[label] = f"new_m{len(new_meanings) + 1}"
         return new_meanings[label]
 
+    # Spellings of every meaning the reply defines, so a link to one defined in another
+    # item is still recognised as differing only in capitals.
+    reply_spellings = {
+        meaning_id(m["id"]): m["spelling"]
+        for item in (*reply["additions"], *reply["revisions"])
+        for m in item["meanings"]
+    }
+
     def build_group(item: dict[str, Any], identity: str, before: Group | None) -> Group:
         old_meanings = {m.id: m for m in (before.meanings if before else ())}
         meanings = []
@@ -232,7 +240,7 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
                 )
             )
         old_forms = {key(f.text): f for f in (before.recognized_forms if before else ())}
-        spellings = {**stored_spellings, **{m.id: m.spelling for m in meanings}}
+        spellings = {**stored_spellings, **reply_spellings, **{m.id: m.spelling for m in meanings}}
         forms: dict[str, Form] = {}
         for heard in item["heard"]:
             old_form = old_forms.get(key(heard["text"]))

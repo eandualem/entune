@@ -234,6 +234,11 @@ class Learning:
                 limit=batches.MAX_TRANSCRIPTS,
                 ids=transcript_ids,
             )
+            if transcript_ids is not None and len(inputs) != len(transcript_ids):
+                raise ValueError(
+                    "Some of the chosen transcripts are no longer available. Close and open"
+                    " the panel to see the current ones."
+                )
             if not inputs:
                 raise ValueError(
                     f"No new transcripts to learn from for {ref.label}. To read earlier ones "

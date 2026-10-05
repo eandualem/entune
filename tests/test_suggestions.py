@@ -445,6 +445,24 @@ def test_a_case_only_literal_is_judged_on_the_dictionary_the_reply_leaves() -> N
     assert result == ()
 
 
+def test_a_case_only_link_to_a_meaning_defined_in_another_addition_is_literal() -> None:
+    text = "Two pars and PRS here."
+
+    def link(meaning: str, start: int, end: int) -> dict[str, Any]:
+        evidence = [{"dictation": "d1", "start": start, "end": end}]
+        return {"meaning": meaning, "basis": "text", "evidence": evidence}
+
+    prs = {
+        "meanings": [
+            {"id": "n1", "spelling": "PRs", "meaning": "pull requests", "casing": "fixed"}
+        ],
+        "heard": [{"text": "pars", "links": [link("n1", 4, 8)]}],
+    }
+    again = {"meanings": [], "heard": [{"text": "PRS", "links": [link("n1", 13, 16)]}]}
+    result = parse(reply(additions=[prs, again]), (text,))
+    assert [[f.text for f in g.recognized_forms] for g in result] == [["pars"]]
+
+
 def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
