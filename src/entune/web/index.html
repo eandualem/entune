@@ -157,7 +157,7 @@
                 <hr />
                 <p class="menu-label">This dictionary</p>
                 <button type="button" role="menuitem" id="pin-all" title="Use every entry learned for this speech model with all speech models"><span class="menu-text" id="pin-all-label">Pin all learned</span><span class="menu-note" id="pin-all-count"></span></button>
-                <button type="button" role="menuitemcheckbox" id="menu-reuse" aria-checked="false"><span class="menu-text">Include used transcripts in suggestions</span><span class="menu-note" id="menu-reuse-state">Off</span></button>
+                <button type="button" role="menuitemcheckbox" id="menu-reuse" aria-checked="false"><span class="menu-text">Reuse earlier transcripts</span><span class="menu-note" id="menu-reuse-state">Off</span></button>
                 <button type="button" role="menuitem" id="help-toggle" aria-haspopup="dialog" aria-controls="help-dialog"><span class="menu-text">How the dictionary works</span></button>
               </div>
             </div>
@@ -230,7 +230,11 @@
                 <p>One entry can list several spellings the model writes (“cloud”, “clawed”) and several meanings. Each heard spelling is linked to the meanings it can stand for.</p>
                 <h3 id="guide-suggestions">Getting suggestions</h3>
                 <p>Entune can build the dictionary for you. A suggestion model, the language model you choose with its key in Settings, reads what your speech model wrote and suggests entries for the words it gets wrong. For the entries those transcripts show, it also suggests clearer meanings, more heard spellings, and removals.</p>
-                <p><b>Get suggestions</b> is the simple path: it reads up to 300 of your speech model's newest transcripts not yet used by suggestions you applied; a run you discard or stop uses none. <b>Include transcripts already used</b> reads them again, which costs tokens again and can repeat earlier suggestions.</p>
+                <p><b>Get suggestions</b> is the simple path: it reads up to 300 of your speech model's newest transcripts not yet used by suggestions you applied; a run you discard or stop uses none.</p>
+                <h3 id="guide-reuse">Reusing earlier transcripts</h3>
+                <p id="guide-reuse-state"></p>
+                <p>Each transcript is read once: after you apply a run's suggestions, the next <b>Get suggestions</b> reads only what you dictated since, so you don't pay twice for the same text. <b>Reuse earlier transcripts</b> reads them again. It shows every transcript of this speech model on a timeline, oldest on the left, with the ones used before marked under the line; drag the handles to choose how much to read.</p>
+                <p>Reuse them when the earlier suggestions no longer stand for what those transcripts can teach: you cleared or rebuilt your dictionary, you chose a stronger suggestion model or a higher reasoning effort, an update improved how Entune suggests, or an earlier run's suggestions were poor. Reading again costs tokens again. Entries already in your dictionary are shown to the suggestion model beside the transcripts they occur in, so it improves them instead of adding them twice.</p>
                 <h3 id="guide-audio">Learning from audio</h3>
                 <p>The <b>⋯</b> menu learns from audio instead: Entune recordings made with other speech models, another dictation app's recordings on this Mac (only the audio is copied, never its transcripts), or a folder of WAV, MP3, M4A, FLAC, OGG or WebM files. Entune first <b>transcribes</b> that audio with your speech model, then the suggestion model reads the new text, so this path takes longer and providers may charge for both steps.</p>
                 <p>The timeline shows the source's recorded time, oldest on the left. Drag the handles to choose how much to use; each edge snaps to whole recordings, and the dates show where you are. Starting with your most recent hour or two gives quick results.</p>
@@ -276,7 +280,23 @@
               <div class="drawer-body">
                 <div class="suggest-setup" id="suggest-setup">
                   <p id="learn-source">Reads your recent transcripts and suggests entries for the words your speech model gets wrong.</p>
-                  <label class="check"><input type="checkbox" id="learning-reuse" /> Include transcripts already used</label>
+                  <div class="reuse-line">
+                    <label class="check"><input type="checkbox" id="learning-reuse" /> Reuse earlier transcripts</label>
+                    <button type="button" class="btn ghost sm help-btn" id="reuse-help" aria-haspopup="dialog" aria-controls="help-dialog">Help</button>
+                  </div>
+                  <p class="caption" id="history-state" role="status"></p>
+                  <div class="audio-pick" id="history-pick" hidden>
+                    <div class="audio-total"><span class="audio-hours" id="history-selected"></span><span class="caption" id="history-available"></span></div>
+                    <div class="range" id="history-range">
+                      <div class="range-track"><div class="range-fill" id="history-range-fill"></div></div>
+                      <div class="range-used" id="history-used-marks" aria-hidden="true"></div>
+                      <input type="range" id="history-range-start" min="0" max="1000" value="0" step="1" aria-label="Oldest included transcript" />
+                      <input type="range" id="history-range-end" min="0" max="1000" value="1000" step="1" aria-label="Newest included transcript" />
+                    </div>
+                    <div class="range-labels"><span id="history-start-label"></span><span id="history-end-label"></span></div>
+                    <p class="caption">The line under the range marks transcripts used before.</p>
+                    <p class="estimate" id="history-estimate" role="status"></p>
+                  </div>
                 </div>
                 <div class="suggest-audio" id="suggest-audio" hidden>
                   <p id="audio-intro"></p>

@@ -35,10 +35,16 @@ a literal competitor or a narrower link.
   dictations and entries do not show, leave it out.
 - Heard text is the words actually got wrong, as written, whole words. Do not include
   correct neighbouring words.
+- Heard forms match regardless of capitals, and a name is always written with its
+  spelling's capitals. A heard form that differs from a spelling only in capitals is
+  already covered by that spelling: never list it, and never add an entry for capitals
+  alone.
 - Spelling is exactly what should be written: official spelling for names, the plural or
   tense the context shows.
-- A literal meaning (the heard words meant as written) only when a dictation uses them
-  correctly.
+- A literal meaning (the heard words meant as written) when a dictation uses them
+  correctly, and also when the heard words are an everyday word or a common name in their
+  own right: without one, the app replaces every occurrence. One literal meaning per heard
+  form, describing its usual sense.
 - casing: "fixed" for names, products and acronyms; "ordinary" for ordinary words.
 - Meaning: a short phrase, usually 3 to 10 words, at most 120 characters, that says what
   the term is and sets it apart from the other meanings of the same heard words. No

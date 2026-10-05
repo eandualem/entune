@@ -339,6 +339,46 @@ def test_case_only_duplicates_and_changes_to_approved_outputs_are_rejected() -> 
         )
 
 
+def test_a_heard_form_differing_only_in_capitals_is_not_a_confusion() -> None:
+    # Both replies a real run rejected: "LangFuse" beside Langfuse, and an entry "PRs"
+    # whose only heard form was "PRS". Neither breaks the reply any more.
+    pinned = (group("Langfuse", "LogFuse"),)
+    text = "This LangFuse trace has PRS in it."
+    evidence = [{"dictation": "d1", "start": 5, "end": 13}]
+    heard = [
+        {"text": "LogFuse", "links": [{"meaning": "e1a", "basis": "existing", "evidence": []}]},
+        {"text": "Langfuse", "links": [{"meaning": "e1a", "basis": "existing", "evidence": []}]},
+        {"text": "LangFuse", "links": [{"meaning": "e1a", "basis": "text", "evidence": evidence}]},
+    ]
+    meanings = [{"id": "e1a", "spelling": "Langfuse", "meaning": "tracing", "casing": "fixed"}]
+    prs = {
+        "meanings": [
+            {"id": "n1", "spelling": "PRs", "meaning": "pull requests", "casing": "fixed"}
+        ],
+        "heard": [
+            {
+                "text": "PRS",
+                "links": [
+                    {
+                        "meaning": "n1",
+                        "basis": "text",
+                        "evidence": [{"dictation": "d1", "start": 24, "end": 27}],
+                    }
+                ],
+            }
+        ],
+    }
+    result = parse(
+        reply(additions=[prs], revisions=[{"id": "e1", "meanings": meanings, "heard": heard}]),
+        (text,),
+        pinned=pinned,
+    )
+    assert [g.id for g in result] == ["g_langfuse"]
+    forms = {f.text: f.associations for f in result[0].recognized_forms}
+    assert set(forms) == {"LogFuse", "Langfuse"}
+    assert [(a.basis, a.evidence) for a in forms["Langfuse"]] == [("literal", ())]
+
+
 def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

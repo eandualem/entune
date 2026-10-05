@@ -245,7 +245,7 @@ def test_shutdown_deadline_also_bounds_waiting_for_a_source_snapshot(
 
 
 def test_a_fix_request_is_shown_with_its_rule_and_stop_still_stops_it(
-    app: Entune, monkeypatch: pytest.MonkeyPatch
+    app: Entune, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     seen: list[dict[str, object]] = []
 
@@ -263,6 +263,11 @@ def test_a_fix_request_is_shown_with_its_rule_and_stop_still_stops_it(
     assert wait_for_build(client)["phase"] == "cancelled"
     assert seen[0]["attempt"] == 2 and seen[0]["attempts"] == 3
     assert seen[0]["brokenRule"] == "evidence: List should have at most 0 items"
+    # The log keeps the rejection after the run, with its part and rule.
+    assert (
+        "suggestions part 1: reply sent back to fix (attempt 2 of 3):"
+        " evidence: List should have at most 0 items"
+    ) in capsys.readouterr().out
 
 
 def test_a_retried_part_is_shown_and_kept_in_the_runs_record(

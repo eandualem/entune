@@ -301,3 +301,30 @@ def test_keys_and_host_are_written_and_read_together(tmp_path: Path) -> None:
         assert store.get_settings("a", "b", "c") == ("1", "2", None)
         store.set_settings({"a": None, "b": "3"})
         assert store.get_settings("a", "b") == (None, "3")
+
+
+def test_a_reply_sent_back_is_marked_as_a_warning_with_its_rule(
+    tmp_path: Path, langfuse: Langfuse
+) -> None:
+    from entune.learning import suggestion_model
+    from tests.test_suggestions import request, scripted
+
+    empty = '{"additions": [], "revisions": [], "removals": []}'
+    answers = iter([ValueError("Evidence must reference the exact whole recognized form"), None])
+
+    def check(reply: str) -> None:
+        if (problem := next(answers)) is not None:
+            raise problem
+
+    model, _ = scripted(empty, empty)
+    with closing(Store(tmp_path)) as store:
+        t = tracing.Tracing(store)
+        t.save("pk", "sk", None)
+        settle(t)
+        with t.run("rejected"):
+            asyncio.run(suggestion_model.call_model(request(check), model))
+        assert t._provider is not None
+        t._provider.force_flush()
+        body = langfuse.sent()
+        assert b"langfuse.observation.level" in body and b"WARNING" in body
+        assert b"Reply sent back: Evidence must reference the exact whole recognized form" in body

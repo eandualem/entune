@@ -1,5 +1,6 @@
 import { THIS_DEVICE, api, el, errorText, flash, modelName, segmentedGroup } from "./ui.js";
 import { createAudioOnboarding } from "./audio-onboarding.js";
+import { createHistoryReuse } from "./history-reuse.js";
 import { createDictionaryBuild } from "./dictionary-build.js";
 
 // The dictionary owns its document, revision and pending proposal. Model selection
@@ -44,6 +45,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     onBuild(selection) { return builds.start("audio", { ...selection, ...runSettings() }); },
     onBusy(value) { importing = value; gate(); },
   });
+  const historyReuse = createHistoryReuse({ getSettings, getRunSettings: runSettings });
 
   const builds = createDictionaryBuild({
     onBusy(value) { building = value; gate(); onboarding.setBuildBusy(value); lockEditors(); },
@@ -57,6 +59,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     try { localStorage.setItem("entune.suggest.effort", effortSelect.value); } catch { /* not remembered */ }
     drawEffect();
     onboarding.redraw();
+    historyReuse.redraw();
   });
   // What the choice does, in one line; on a ChatGPT plan, also its limit per reply.
   function drawEffect() {
@@ -176,6 +179,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     gate();
     drawEffect();
     onboarding.redraw(); // the audio estimate depends on the suggestion model
+    historyReuse.redraw();
   }
   modelSelect.addEventListener("change", async () => {
     try {
@@ -196,6 +200,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     if (getModel()?.id !== shownModel) {
       shownModel = getModel()?.id;
       onboarding.modelChanged();
+      historyReuse.load().catch(() => { /* shown again when the panel opens */ });
     }
     dictVersion = null;
     const res = await fetch("/api/dictionary");
@@ -995,6 +1000,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   function drawReuse() {
     el("menu-reuse").setAttribute("aria-checked", String(reuse.checked));
     el("menu-reuse-state").textContent = reuse.checked ? "On" : "Off";
+    historyReuse.redraw();
   }
   reuse.addEventListener("change", drawReuse);
   el("menu-reuse").addEventListener("click", () => { reuse.checked = !reuse.checked; drawReuse(); });
@@ -1010,6 +1016,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   el("help-toggle").addEventListener("click", () => showHelp());
   el("legend-help").addEventListener("click", () => showHelp());
   el("suggest-help").addEventListener("click", () => showHelp("guide-suggestions"));
+  el("reuse-help").addEventListener("click", () => showHelp("guide-reuse"));
 
   // ---- Suggestions: a side panel, and a banner above the list while a run is open ----
   const RUNNING = ["queued", "transcribing", "building", "cancelling", "cleaning"];
@@ -1032,6 +1039,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     closeMenu();
     if (source) setupSource = source;
     if (source && source !== "history") onboarding.show(source).catch((err) => toast(errorText(err), "err"));
+    if (setupSource === "history") historyReuse.load().catch((err) => toast(errorText(err), "err"));
     showRun(run);
     if (!suggestDrawer.open) suggestDrawer.showModal();
   }
@@ -1249,8 +1257,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("suggest-badge").textContent = String(included);
     if (!proposalChanges.length) proposalBody.append(node("p", "No changes suggested. Finish to close this review; the same dictations can be used again later.", "caption"));
   }
-  const scope = () => reuse.checked ? "all" : "new";
-  el("build-dictionary").addEventListener("click", () => builds.start("history", {scope: scope(), ...runSettings()}));
+  el("build-dictionary").addEventListener("click", () => builds.start("history", {...historyReuse.selection(), ...runSettings()}));
 
   return { load: loadDictionary, refreshAudio: () => onboarding.load(), refreshModels: fillModels };
 }

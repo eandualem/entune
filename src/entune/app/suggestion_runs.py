@@ -259,6 +259,12 @@ class DictionaryBuilds:
 
     def _retrying(self, attempt: int, rule: str) -> None:
         # Called inside the model call; Stop cancels that task, so no checkpoint here.
+        # The log keeps every rejected reply, so a run's rejections can be read afterwards.
+        print(
+            f"suggestions part {self._completed_batches + 1}: reply sent back to fix"
+            f" (attempt {attempt} of {suggestion_model.MAX_FIXES + 1}): {rule}",
+            flush=True,
+        )
         with self._lock:
             self._state.update(
                 attempt=attempt, attempts=suggestion_model.MAX_FIXES + 1, brokenRule=rule

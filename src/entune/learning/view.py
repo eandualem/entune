@@ -190,6 +190,8 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
         (m.spelling, m.meaning): m.id for g in stored for m in g.meanings if m.casing == "ordinary"
     }
     defined = {m.id for g in stored for m in g.meanings}
+    stored_spellings = {m.id: m.spelling for g in stored for m in g.meanings}
+    recased: set[str] = set()  # entries where a heard form differed only in capitals
     for item in (*reply["additions"], *reply["revisions"]):
         for m in item["meanings"]:
             if m["id"] in view.meaning_ids:
@@ -230,13 +232,20 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
                 )
             )
         old_forms = {key(f.text): f for f in (before.recognized_forms if before else ())}
-        forms = []
+        spellings = {**stored_spellings, **{m.id: m.spelling for m in meanings}}
+        forms: dict[str, Form] = {}
         for heard in item["heard"]:
             old_form = old_forms.get(key(heard["text"]))
             kept = {a.meaning_id: a for a in (old_form.associations if old_form else ())}
             links = []
             for link in heard["links"]:
                 mid = meaning_id(link["meaning"])
+                if link["basis"] == "text" and key(heard["text"]) == key(spellings.get(mid, "")):
+                    # Matching ignores case: "LangFuse" is Langfuse written as it is, not
+                    # a confusion, so it is the literal link and needs no evidence.
+                    links.append(kept.get(mid) or Association(mid, (), "literal"))
+                    recased.add(identity)
+                    continue
                 if link["basis"] == "existing":
                     if mid not in kept:
                         raise ValueError(
@@ -254,21 +263,37 @@ def groups(reply: dict[str, Any], view: View, stored: Groups) -> tuple[Groups, G
                         )
                     evidence.append(Evidence(source, item_evidence["start"], item_evidence["end"]))
                 links.append(Association(mid, tuple(evidence), link["basis"]))
-            forms.append(
-                Form(
-                    heard["text"],
-                    tuple(links),
-                    old_form.direct if old_form else None,
-                    old_form.direct_reason if old_form else "",
-                )
+            same = forms.get(key(heard["text"]))
+            if same is not None:
+                # The same form again in another case: one form, each meaning linked once.
+                linked = {a.meaning_id for a in same.associations}
+                extra = tuple(a for a in links if a.meaning_id not in linked)
+                forms[key(heard["text"])] = replace(same, associations=same.associations + extra)
+                continue
+            forms[key(heard["text"])] = Form(
+                heard["text"],
+                tuple(links),
+                old_form.direct if old_form else None,
+                old_form.direct_reason if old_form else "",
             )
         return Group(
-            identity, tuple(meanings), tuple(forms), before.needs_review if before else False
+            identity,
+            tuple(meanings),
+            tuple(forms.values()),
+            before.needs_review if before else False,
         )
 
-    additions = tuple(
+    built = (
         build_group(item, f"new_g{number}", None)
         for number, item in enumerate(reply["additions"], 1)
+    )
+    # An addition left with no confusion because its heard form differed only in capitals
+    # adds nothing; one that never named a confusion is still refused as a glossary.
+    additions = tuple(
+        g
+        for g in built
+        if g.id not in recased
+        or any(a.basis != "literal" for f in g.recognized_forms for a in f.associations)
     )
     revisions = []
     for item in reply["revisions"]:
