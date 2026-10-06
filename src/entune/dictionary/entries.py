@@ -124,9 +124,11 @@ def _forms(forms: tuple[Form, ...]) -> tuple[Form, ...]:
         links = {a.meaning_id: a for a in previous.associations}
         for link in form.associations:
             old = links.get(link.meaning_id)
+            kept = old or link
+            # A literal link never carries evidence, even merged with a text link.
+            evidence = (*(old.evidence if old else ()), *link.evidence)
             links[link.meaning_id] = replace(
-                old or link,
-                evidence=tuple(dict.fromkeys((*(old.evidence if old else ()), *link.evidence))),
+                kept, evidence=() if kept.basis == "literal" else tuple(dict.fromkeys(evidence))
             )
         direct = {d for d in (previous.direct, form.direct) if d}
         chosen = next(iter(direct)) if len(direct) == 1 else None

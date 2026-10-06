@@ -409,6 +409,8 @@ class DictionaryBuilds:
                         if isinstance(exc, generate.StepFailed)
                         else f"{type(exc).__name__}: {exc}"
                     )
+                    # The log keeps why, so a run's skipped recordings can be read afterwards.
+                    print(f"suggestions: skipped {item.name}: {why}", flush=True)
                     with self._lock:
                         self._skipped.append((item.name, why))
         return None
@@ -465,7 +467,12 @@ class DictionaryBuilds:
                     ready.put(result)
                 done += 1
                 with self._lock:
-                    self._state.update(completed=done, skipped=len(self._skipped))
+                    self._state.update(
+                        completed=done,
+                        skipped=len(self._skipped),
+                        # The first reason; the log has every one.
+                        skippedReason=": ".join(self._skipped[0]) if self._skipped else None,
+                    )
         except BaseException as exc:
             halt.set()  # the other workers take no further recordings
             ready.put(exc)
@@ -484,7 +491,7 @@ class DictionaryBuilds:
             ready: queue.Queue[object] = queue.Queue()
             if spec.source == "audio":
                 self._skipped.clear()
-                self._progress(phase="transcribing", skipped=0)
+                self._progress(phase="transcribing", skipped=0, skippedReason=None)
                 transcriber = threading.Thread(
                     target=self._transcribe, args=(spec, ready), daemon=True
                 )
