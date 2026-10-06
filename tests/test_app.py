@@ -973,7 +973,7 @@ def test_a_hung_microphone_relaunches_the_mac_app_once_all_is_idle(
     monkeypatch.setenv("ENTUNE_APP", "/Applications/Entune.app")
     engine.press("cmd")
     engine.press("alt_r")
-    app.recorder.stuck = True  # type: ignore[attr-defined]  # its close hung
+    app.recorder.stuck = True  # type: ignore[misc]  # its close hung
     assert app._operation is not None
     assert entune.desktop.stop_recording(app._operation.id)
     [(_, check)] = [t for t in platform.timers if t[1] == app._restart_when_idle]
@@ -1000,7 +1000,7 @@ def test_a_hung_microphone_with_too_short_a_clip_still_schedules_the_restart(
     assert engine is not None
     engine.press("cmd")
     engine.press("alt_r")
-    app.recorder.stuck = True  # type: ignore[attr-defined]
+    app.recorder.stuck = True  # type: ignore[misc]
     assert app._operation is not None
     assert entune.desktop.stop_recording(app._operation.id)
     assert any(action == app._restart_when_idle for _, action in platform.timers)

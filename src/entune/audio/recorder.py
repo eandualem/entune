@@ -29,8 +29,8 @@ LEVEL_FLOOR_DB = -55.0  # the pill's level bars: this is empty, 0 dBFS is full
 STOP_TIMEOUT_SECONDS = 3.0  # a microphone takes milliseconds to close; longer means it hung
 ENDING_SECONDS = 1.0  # for the audio thread to end the stream; its next callback is ms away
 STUCK = (
-    "The microphone stopped responding. Entune restarts itself to free it once nothing is"
-    " running; if it does not, quit and reopen Entune."
+    "The microphone stopped responding. The Mac app restarts itself to free it once nothing"
+    " is running; otherwise, quit and reopen Entune."
 )
 
 

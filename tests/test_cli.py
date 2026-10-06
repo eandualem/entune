@@ -423,9 +423,9 @@ def test_a_cold_start_is_announced_once_before_anything_slow_loads(
     monkeypatch.setattr(first_start, "__file__", str(package / "first_start.py"))
     spawned: list[list[str]] = []
     monkeypatch.setattr(
-        first_start.subprocess, "Popen", lambda command, **_: spawned.append(command)
+        "entune.first_start.subprocess.Popen", lambda command, **_: spawned.append(command)
     )
-    monkeypatch.setattr(first_start.sys, "platform", "darwin")
+    monkeypatch.setattr("entune.first_start.sys.platform", "darwin")
     monkeypatch.setenv("ENTUNE_APP", "/Applications/Entune.app")
     assert first_start.cold()
     first_start.announce()

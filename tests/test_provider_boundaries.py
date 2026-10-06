@@ -85,7 +85,9 @@ def test_a_mac_without_ffmpeg_decodes_m4a_with_afconvert(
     source, m4a = tmp_path / "clip.wav", tmp_path / "clip.m4a"
     source.write_bytes(wav_bytes(bytes(3200), 16_000))
     subprocess.run(
-        [convert.AFCONVERT, "-f", "m4af", "-d", "aac", str(source), str(m4a)], check=True
+        [convert.AFCONVERT, "-f", "m4af", "-d", "aac", str(source), str(m4a)],
+        check=True,
+        timeout=300,
     )
     monkeypatch.setattr("entune.audio.convert.shutil.which", lambda _: None)
     monkeypatch.setattr("entune.audio.convert.FFMPEG_DIRS", ())

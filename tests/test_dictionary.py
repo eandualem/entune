@@ -30,6 +30,13 @@ def test_evidence_an_older_version_left_on_a_literal_link_is_dropped_on_load() -
     data = json.loads(dictionary_document.dumps(Dictionary((group("Langfuse", "LogFuse"),))))
     literal = data["pinned"][0]["recognized_forms"][1]["associations"][0]
     literal["evidence"] = [{"source": "s_old", "start": 18, "end": 26}]
+    # The same form again as a text link: merging the two must not bring evidence back.
+    again = json.loads(json.dumps(data["pinned"][0]["recognized_forms"][1]))
+    again["text"] = "LangFuse"
+    again["associations"][0].update(
+        basis="text", evidence=[{"source": "s_new", "start": 0, "end": 8}]
+    )
+    data["pinned"][0]["recognized_forms"].append(again)
     [form] = [
         f
         for f in dictionary_document.parse(json.dumps(data)).pinned[0].recognized_forms
