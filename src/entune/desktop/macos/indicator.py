@@ -294,7 +294,10 @@ class Indicator:
         panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             ((0, 0), (120, HEIGHT)), mask, AppKit.NSBackingStoreBuffered, False
         )
-        panel.setLevel_(AppKit.NSStatusWindowLevel)
+        # Above everything a full-screen app can put up: video players, presentations and
+        # non-native full screen cover the screen above the status level, which hid the
+        # pill entirely; at the screen-saver level it shows over them (checked on macOS 26).
+        panel.setLevel_(AppKit.NSScreenSaverWindowLevel)
         panel.setOpaque_(False)
         panel.setBackgroundColor_(AppKit.NSColor.clearColor())
         panel.setMovableByWindowBackground_(True)  # drag it anywhere; the drop point is kept
