@@ -1249,11 +1249,13 @@ PLAN_SCOPES = "chatgpt.tokens.use.direct email offline_access openid profile res
 def test_chatgpt_sign_in_registers_entune_then_checks_the_id_token() -> None:
     from urllib.parse import urlsplit
 
-    attempt, url = chatgpt.start(None, "urn:uuid:host-1", 4187, now=1_900_000_000.0)
+    attempt, url = chatgpt.start(None, 4187, now=1_900_000_000.0)
     query = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
     assert url.startswith(chatgpt.AUTHORIZE + "?")
     assert query["client_id"] == "dynamic_agent_client"  # the first sign-in registers Entune
-    assert query["agent_name_hint"] == "Entune" and query["ext_agent_host_id"] == "urn:uuid:host-1"
+    assert query["agent_name_hint"] == "Entune"
+    # Sent only where OpenAI's sign-in accepts it, which its reference kit leaves off.
+    assert "ext_agent_host_id" not in query
     assert query["redirect_uri"] == "http://127.0.0.1:4187/auth/callback"
     assert query["scope"] == chatgpt.SCOPES and query["resource"] == chatgpt.API
     challenge = (
@@ -1309,7 +1311,7 @@ def test_chatgpt_sign_in_registers_entune_then_checks_the_id_token() -> None:
     with pytest.raises(ValueError, match="not from this sign-in"):
         chatgpt.finish(attempt, back, issuer.transport(), now=1_900_000_000.0)
     # A later sign-in uses the ID OpenAI issued, so it does not register again.
-    again, _ = chatgpt.start("oaiapp_1", "urn:uuid:host-1", 4187)
+    again, _ = chatgpt.start("oaiapp_1", 4187)
     assert again.client_id == "oaiapp_1"
 
 

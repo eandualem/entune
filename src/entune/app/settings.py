@@ -22,7 +22,6 @@ DICTIONARY_MODEL_KEY = "dictionary_model"
 CHATGPT_LOGIN_KEY = "chatgpt_login"
 CHATGPT_SIGN_IN_KEY = "chatgpt_sign_in"  # the sign-in waiting for the browser, if any
 CHATGPT_CLIENT_KEY = "chatgpt_client_id"  # the ID OpenAI issued Entune; kept after sign-out
-CHATGPT_HOST_KEY = "chatgpt_host_id"  # this installation, as OpenAI's sign-in knows it
 CHATGPT_MODELS_KEY = "chatgpt_models"  # the signed-in account's catalog: [[slug, name]]
 FAST_MODE_KEY = "fast_mode"
 JEV_PROVIDER = "typesafe"  # the key is stored like a speech provider's
@@ -230,15 +229,6 @@ class Settings:
 
     def set_chatgpt_client_id(self, client_id: str) -> None:
         self._store.set_setting(CHATGPT_CLIENT_KEY, client_id)
-
-    def chatgpt_host_id(self) -> str:
-        """Chosen once and kept, as OpenAI asks: it names this installation."""
-        with self._login_lock:
-            saved = self._store.get_setting(CHATGPT_HOST_KEY)
-            if saved is None:
-                saved = chatgpt.host_id()
-                self._store.set_setting(CHATGPT_HOST_KEY, saved)
-            return saved
 
     def chatgpt_models(self) -> list[tuple[str, str]] | None:
         """The signed-in account's models, or None before its catalog has been read."""

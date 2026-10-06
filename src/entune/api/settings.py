@@ -191,9 +191,7 @@ def routes(app: Entune) -> list[Route]:
     def start_sign_in(port: int) -> Response:
         try:
             with app.data.using_data("ChatGPT sign-in"):
-                attempt, url = chatgpt.start(
-                    app.settings.chatgpt_client_id(), app.settings.chatgpt_host_id(), port
-                )
+                attempt, url = chatgpt.start(app.settings.chatgpt_client_id(), port)
                 with lock:
                     app.settings.set_chatgpt_sign_in(attempt)
                     outcome["error"] = None

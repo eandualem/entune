@@ -18,7 +18,6 @@ import hashlib
 import json
 import secrets
 import time
-import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -90,14 +89,7 @@ class Login:
             return None
 
 
-def host_id() -> str:
-    """A stable identifier for this installation, chosen once and kept."""
-    return f"urn:uuid:{uuid.uuid4()}"
-
-
-def start(
-    client_id: str | None, host: str, port: int, now: float | None = None
-) -> tuple[Attempt, str]:
+def start(client_id: str | None, port: int, now: float | None = None) -> tuple[Attempt, str]:
     """A new sign-in and the OpenAI page to open for it. `client_id` is the ID issued at an
     earlier sign-in, if any; without one, this sign-in registers Entune."""
     verifier = secrets.token_urlsafe(64)
@@ -113,7 +105,6 @@ def start(
     query = {
         "client_id": attempt.client_id,
         "agent_name_hint": NAME,
-        "ext_agent_host_id": host,
         "response_type": "code",
         "redirect_uri": attempt.redirect_uri,
         "scope": SCOPES,
