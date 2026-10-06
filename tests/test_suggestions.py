@@ -1449,3 +1449,27 @@ def test_a_reply_cut_at_the_output_limit_asks_for_a_lower_effort() -> None:
                 call=long,
             )
         )
+
+
+def test_a_plan_limit_sent_inside_the_reply_stops_at_once_and_says_so() -> None:
+    import openai
+
+    def streamed(code: str, message: str) -> ModelAPIError:
+        cause = openai.APIError(
+            message, httpx2.Request("POST", f"{chatgpt.API}/responses"), body={"code": code}
+        )
+        error = ModelAPIError("gpt-6-astra", message)
+        error.__cause__ = cause
+        return error
+
+    limit = (
+        "The ChatGPT user has reached their Subscription Sharing usage limit. Ask the user to"
+        " try again after their usage limit resets or use an API key instead."
+    )
+    error = streamed("subscription_sharing_usage_limit_exceeded", limit)
+    assert suggestion_model.passing(error) is None  # no second or third attempt
+    shown = generate._service_problem(f"ModelAPIError: {limit}")
+    assert "usage limit" in shown and "refused the key" not in shown
+    # A temporary error in the stream, and a dropped connection, are still tried again.
+    assert suggestion_model.passing(streamed("server_error", "try again")) is not None
+    assert suggestion_model.passing(ModelAPIError("m", "Connection error.")) is not None
