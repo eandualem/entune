@@ -43,15 +43,15 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
       + (again ? `. Retrying this part (${state.retryReason}), attempt ${state.partAttempt} of ${state.partAttempts}` : "")
       + (fixing ? `. The model's reply broke a dictionary rule, so it is asked to fix it: attempt ${state.attempt} of ${state.attempts}. Stop if you'd rather not wait.` : "");
     // A recording that would not transcribe, even on a second try, is skipped; say how many.
-    const skippedNote = state.skipped ? ` ${state.skipped} could not be transcribed and ${state.skipped === 1 ? "was" : "were"} skipped.` : "";
+    const skippedNote = state.skipped ? ` ${state.skipped} could not be transcribed and ${state.skipped === 1 ? "was" : "were"} skipped${state.skippedReason ? ` (${state.skippedReason}${state.skipped > 1 ? "; every reason is in the terminal or entune.log" : ""})` : ""}.` : "";
     const messages = {
       idle: "", queued: `Getting ready to read your ${from === "audio" ? "audio" : "transcripts"}…`,
       transcribing: `Transcribed ${state.completed} of ${state.total} recordings${state.stepStartedAt || state.completedBatches ? `. ${building}` : "…"}${skippedNote}`,
       building,
       cancelling: "Stopping… a transcription already under way may need to finish.",
       cleaning: "Finishing…", ready: "Suggestions are ready to review.",
-      cancelled: `Stopped after ${state.completedBatches ?? 0} part${state.completedBatches === 1 ? "" : "s"}. Continue, or discard.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept.` : ""}`,
-      failed: `${state.error} Your dictionary is unchanged.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept; your audio is kept.` : ""}`,
+      cancelled: `Stopped after ${state.completedBatches ?? 0} part${state.completedBatches === 1 ? "" : "s"}. Continue, or discard.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept.` : ""}${skippedNote}`,
+      failed: `${state.error} Your dictionary is unchanged.${from === "audio" ? ` ${kept(state.cachedTranscripts)} kept; your audio is kept.` : ""}${skippedNote}`,
       accepted: state.applied ? "Applied. Your dictionary is updated." : "Closed without changes.",
       discarded: from === "audio" ? "Proposal discarded. Original audio is kept." : "Proposal discarded.",
     };

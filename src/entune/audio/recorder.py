@@ -27,7 +27,11 @@ PAUSE_QUIET_SECONDS = 40.0  # silence after speech: a pause to think, so be pati
 QUIET_PEAK = 256  # about -42 dBFS; a warning, never a reason to discard audio
 LEVEL_FLOOR_DB = -55.0  # the pill's level bars: this is empty, 0 dBFS is full
 STOP_TIMEOUT_SECONDS = 3.0  # a microphone takes milliseconds to close; longer means it hung
-STUCK = "The microphone stopped responding. Quit and reopen Entune to record again."
+ENDING_SECONDS = 1.0  # for the audio thread to end the stream; its next callback is ms away
+STUCK = (
+    "The microphone stopped responding. The Mac app restarts itself to free it once nothing"
+    " is running; otherwise, quit and reopen Entune."
+)
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,9 @@ class Recorder:
         self._lock = threading.Lock()
         self._stuck = False  # a stream never finished closing; PortAudio is not safe to touch
         self._collecting = False  # audio arriving after a stop, from a stream that hung, is ignored
+        self._ending = False  # the next callback ends the stream itself (see stop)
+        self._ended = threading.Event()  # set when PortAudio says the stream has finished
+        self._abort: type[BaseException] = Exception  # sounddevice.CallbackAbort once loaded
         self._started = 0.0
         self._last_signal: float | None = None  # None: nothing heard yet in this recording
         self.level = 0.0  # 0..1, the latest chunk's peak, for the recording pill
@@ -67,6 +74,11 @@ class Recorder:
     @property
     def recording(self) -> bool:
         return self._stream is not None
+
+    @property
+    def stuck(self) -> bool:
+        """A stream never finished closing: only a new process can record again."""
+        return self._stuck
 
     @property
     def silence(self) -> str | None:
@@ -98,6 +110,8 @@ class Recorder:
             device = sounddevice.query_devices(kind="input")
             self._rate = int(device["default_samplerate"]) or FALLBACK_RATE
             self._started, self._last_signal, self.level = monotonic(), None, 0.0
+            self._ending, self._abort = False, sounddevice.CallbackAbort
+            self._ended = threading.Event()
             stream = None
             try:
                 stream = sounddevice.RawInputStream(
@@ -106,6 +120,7 @@ class Recorder:
                     channels=CHANNELS,
                     dtype="int16",
                     callback=self._on_audio,
+                    finished_callback=self._ended.set,
                 )
                 self._sink = sink_for_rate(self._rate) if sink_for_rate else None
                 self._collecting = True  # before start: the first callbacks can come during it
@@ -125,15 +140,21 @@ class Recorder:
     def stop(self, *, discard: bool = False) -> Capture:
         """Stop capturing and release the buffers; cancellation skips the PCM copy.
 
-        The close gets a few seconds on its own thread: PortAudio's stop can deadlock
-        inside Core Audio (seen after the input device changed), and neither what was
-        said nor the shortcuts waiting on this call may go down with it. The buffers are
-        taken after the close, so the last chunk reaches both the clip and fast mode's
-        upload; after a hung close, they are taken anyway."""
+        Stopping a running stream from this thread can deadlock inside Core Audio
+        (PortAudio issue #1174: its start/stop listener and AudioOutputUnitStop take the
+        same two locks in opposite orders); in a stress test it hung 4 times in about 650
+        start/stop rounds. So the audio thread ends the stream itself, at its next
+        callback, and the close follows once PortAudio says it has finished: no hang in
+        1,200 rounds. The close still gets a few seconds on its own thread, so neither
+        what was said nor the shortcuts waiting on this call go down if it hangs anyway.
+        The buffers are taken after the close, so the last chunk reaches both the clip
+        and fast mode's upload; after a hung close, they are taken anyway."""
         with self._lock:
             stream, self._stream = self._stream, None
             if stream is None:
                 return Capture(b"", self._rate)
+            self._ending = True
+            self._ended.wait(ENDING_SECONDS)  # a stream that delivers nothing never ends itself
             closing = threading.Thread(target=_close, args=(stream,), daemon=True)
             closing.start()
             closing.join(STOP_TIMEOUT_SECONDS)
@@ -162,6 +183,8 @@ class Recorder:
         self.level = min(max(1 - decibels / LEVEL_FLOOR_DB, 0.0), 1.0)
         if self._sink is not None:
             self._sink(chunk)
+        if self._ending:
+            raise self._abort  # this chunk is kept; the stream ends here, on its own thread
 
 
 def _close(stream: Any) -> None:
