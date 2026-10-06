@@ -477,7 +477,7 @@ def test_continue_with_nothing_new_to_read_keeps_the_finished_suggestions(
         if clip.data == first:
             return Transcript("temporary words here")  # one part's worth
         stopping.wait(5)
-        raise RuntimeError("connection reset")  # this recording never transcribes
+        raise RuntimeError("connection reset by speech-secret")  # never transcribes
 
     async def fake(_: Request) -> str:
         return '{"additions": [], "revisions": [], "removals": []}'
@@ -498,8 +498,10 @@ def test_continue_with_nothing_new_to_read_keeps_the_finished_suggestions(
     done = wait_for_build(client)
     # The other recording is skipped again; the finished part is still there to apply.
     assert done["phase"] == "ready" and done["skipped"] == 1
-    assert done["skippedReason"].endswith("RuntimeError: connection reset")
-    assert "suggestions: skipped " in capsys.readouterr().out  # every skip, with its reason
+    # Its reason is shown, and logged, without the key a provider's error may contain.
+    assert done["skippedReason"].endswith("RuntimeError: connection reset by [redacted]")
+    logged = capsys.readouterr().out
+    assert "suggestions: skipped " in logged and "speech-secret" not in logged  # with its reason
     assert client.post(f"/api/dictionary/build/{job['id']}/accept").status_code == 200
 
 

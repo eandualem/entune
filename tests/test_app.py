@@ -984,6 +984,11 @@ def test_a_hung_microphone_relaunches_the_mac_app_once_all_is_idle(
     check()
     assert not spawned and not platform.quit_called
     entune.operations.finish(learning)
+    # So does the clipboard the paste still has to put back.
+    [(_, restore)] = [t for t in platform.timers if t[1].__name__ == "restore"]
+    check()
+    assert not spawned and not platform.quit_called
+    restore()
     check()
     assert spawned and spawned[0][-1] == "/Applications/Entune.app" and platform.quit_called
 
