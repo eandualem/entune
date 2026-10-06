@@ -361,6 +361,9 @@ class EntuneApp:
             capture = self.recorder.stop()
             upload, self._upload = self._upload, None
             self._recording = False
+            if self.recorder.stuck and not self._restart_pending:
+                self._restart_pending = True  # however short the clip, the next one needs it
+                self.platform.call_later(RESTART_CHECK_SECONDS, self._restart_when_idle)
             if operation.cancel.is_set() and upload is not None:
                 upload.abort()
                 upload = None
@@ -378,9 +381,6 @@ class EntuneApp:
                 with contextlib.suppress(CancelledError):
                     self.entune.operations.stage(operation, "saving")
             self._captures.put((capture, upload, operation))
-            if self.recorder.stuck and not self._restart_pending:
-                self._restart_pending = True
-                self.platform.call_later(RESTART_CHECK_SECONDS, self._restart_when_idle)
 
     def _restart_when_idle(self) -> None:
         """The microphone hung while closing (a Core Audio deadlock inside PortAudio), so
@@ -391,7 +391,14 @@ class EntuneApp:
         bundle = os.environ.get("ENTUNE_APP")
         if sys.platform != "darwin" or not bundle:
             return
-        if self._recording or self._captures.unfinished_tasks or self.entune.operations.status():
+        operations = self.entune.operations
+        # Dictionary suggestions, running or waiting for review, would be lost by a quit.
+        if (
+            self._recording
+            or self._captures.unfinished_tasks
+            or operations.status()
+            or operations.learning is not None
+        ):
             self.platform.call_later(RESTART_CHECK_SECONDS, self._restart_when_idle)
             return
         print("microphone stopped responding: restarting Entune to free it", flush=True)
