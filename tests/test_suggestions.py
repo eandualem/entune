@@ -1203,74 +1203,174 @@ def test_starting_entune_loads_no_suggestion_sdk() -> None:
     assert loaded.stdout.strip() == "[]"
 
 
-def jwt(claims: dict[str, Any]) -> str:
-    """An unsigned token carrying `claims`, as Entune reads them."""
-    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
-    return f"e30.{payload}.signature"
+class Issuer:
+    """Stands in for OpenAI's sign-in: signs ID tokens with a throwaway RSA key and
+    publishes it, and records every request it is sent."""
+
+    def __init__(self) -> None:
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        self.key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        self.sent: list[httpx.Request] = []
+        self.tokens: dict[str, Any] = {}
+
+    def id_token(self, **claims: Any) -> str:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+
+        def part(value: dict[str, Any]) -> str:
+            return base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
+
+        body = {"iss": chatgpt.AUTH, "aud": "oaiapp_1", "exp": 2_000_000_000, "sub": "user-1"}
+        signing = f"{part({'alg': 'RS256', 'kid': 'k1'})}.{part({**body, **claims})}"
+        signature = self.key.sign(signing.encode(), padding.PKCS1v15(), hashes.SHA256())
+        return f"{signing}.{base64.urlsafe_b64encode(signature).decode().rstrip('=')}"
+
+    def respond(self, request: httpx.Request) -> httpx.Response:
+        self.sent.append(request)
+        if request.url.path.endswith("/jwks.json"):
+            numbers = self.key.public_key().public_numbers()
+
+            def b64(n: int) -> str:
+                raw = n.to_bytes((n.bit_length() + 7) // 8, "big")
+                return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+            key = {"kty": "RSA", "kid": "k1", "n": b64(numbers.n), "e": b64(numbers.e)}
+            return httpx.Response(200, json={"keys": [key]})
+        return httpx.Response(200, json=self.tokens)
+
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self.respond)
 
 
-ACCOUNT = {"https://api.openai.com/auth": {"chatgpt_account_id": "acct-1"}}
+PLAN_SCOPES = "chatgpt.tokens.use.direct email offline_access openid profile resource.invoke"
 
 
-def test_chatgpt_sign_in_waits_for_approval_then_exchanges_the_code() -> None:
-    sent: list[httpx.Request] = []
+def test_chatgpt_sign_in_registers_entune_then_checks_the_id_token() -> None:
+    from urllib.parse import urlsplit
 
-    def respond(request: httpx.Request) -> httpx.Response:
-        sent.append(request)
-        if request.url.path.endswith("/usercode"):
-            code = {"device_auth_id": "d1", "user_code": "ABCD-1234", "interval": "7"}
-            return httpx.Response(200, json={**code, "expires_at": "2030-03-17T17:46:40+00:00"})
-        if request.url.path.endswith("/deviceauth/token"):
-            approved = {"authorization_code": "c1", "code_verifier": "v1"}
-            return httpx.Response(403 if len(sent) == 2 else 200, json=approved)
-        tokens = {
-            "access_token": jwt({**ACCOUNT, "exp": 2_000_000_000}),
-            "refresh_token": "r1",
-            "id_token": jwt({"email": "a@example.com"}),
-        }
-        return httpx.Response(200, json=tokens)
-
-    transport = httpx.MockTransport(respond)
-    code = chatgpt.start(transport)
-    assert code == chatgpt.DeviceCode("d1", "ABCD-1234", 7, 1_900_000_000.0)
-    assert chatgpt.check(code, transport, now=code.expires_at - 60) is None  # not yet approved
-    login = chatgpt.check(code, transport, now=code.expires_at - 55)
-    assert login == chatgpt.Login(
-        jwt({**ACCOUNT, "exp": 2_000_000_000}), "r1", "a@example.com", 2e9
+    attempt, url = chatgpt.start(None, "urn:uuid:host-1", 4187, now=1_900_000_000.0)
+    query = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
+    assert url.startswith(chatgpt.AUTHORIZE + "?")
+    assert query["client_id"] == "dynamic_agent_client"  # the first sign-in registers Entune
+    assert query["agent_name_hint"] == "Entune" and query["ext_agent_host_id"] == "urn:uuid:host-1"
+    assert query["redirect_uri"] == "http://127.0.0.1:4187/auth/callback"
+    assert query["scope"] == chatgpt.SCOPES and query["resource"] == chatgpt.API
+    challenge = (
+        base64.urlsafe_b64encode(__import__("hashlib").sha256(attempt.verifier.encode()).digest())
+        .decode()
+        .rstrip("=")
     )
-    assert chatgpt.account_id(login.access_token) == "acct-1"
-    exchange = parse_qs(sent[-1].content.decode())
-    assert exchange["code"] == ["c1"] and exchange["code_verifier"] == ["v1"]
-    with pytest.raises(ValueError, match="code expired"):  # never asks OpenAI again
-        chatgpt.check(code, transport, now=code.expires_at + 1)
-    assert len(sent) == 4
+    assert query["code_challenge"] == challenge and query["code_challenge_method"] == "S256"
+
+    issuer = Issuer()
+    issuer.tokens = {
+        "access_token": "access-1",
+        "refresh_token": "refresh-1",
+        "id_token": issuer.id_token(nonce=attempt.nonce, email="a@example.com"),
+        "expires_in": 3600,
+        "scope": PLAN_SCOPES,
+    }
+    back = {"code": "c1", "state": attempt.state, "client_id": "oaiapp_1", "scope": PLAN_SCOPES}
+    login = chatgpt.finish(attempt, back, issuer.transport(), now=1_900_000_000.0)
+    assert (login.access_token, login.refresh_token, login.client_id) == (
+        "access-1",
+        "refresh-1",
+        "oaiapp_1",
+    )
+    assert (login.subject, login.email, login.expires_at) == (
+        "user-1",
+        "a@example.com",
+        1_900_003_600.0,
+    )
+    exchange = parse_qs(issuer.sent[0].content.decode())
+    assert exchange["client_id"] == ["oaiapp_1"]  # the issued ID, not dynamic_agent_client
+    assert exchange["code_verifier"] == [attempt.verifier]
+    assert exchange["resource"] == [chatgpt.API]
+
+    # A reply for another sign-in, a refusal, and a sign-in without plan consent all stop.
+    with pytest.raises(ValueError, match="not from the sign-in Entune started"):
+        chatgpt.finish(attempt, {**back, "state": "other"}, issuer.transport(), now=1.9e9)
+    with pytest.raises(ValueError, match="declined"):
+        chatgpt.finish(attempt, {"state": attempt.state, "error": "access_denied"}, now=1.9e9)
+    issuer.tokens = {**issuer.tokens, "scope": "openid profile email offline_access"}
+    with pytest.raises(ValueError, match="did not allow Entune to use your ChatGPT plan"):
+        chatgpt.finish(attempt, back, issuer.transport(), now=1_900_000_000.0)
+    # An ID token signed by any other key, or from another sign-in, is refused.
+    other = Issuer()
+    issuer.tokens = {
+        **issuer.tokens,
+        "scope": PLAN_SCOPES,
+        "id_token": other.id_token(nonce=attempt.nonce),
+    }
+    with pytest.raises(ValueError, match="signature does not match"):
+        chatgpt.finish(attempt, back, issuer.transport(), now=1_900_000_000.0)
+    issuer.tokens = {**issuer.tokens, "id_token": issuer.id_token(nonce="another")}
+    with pytest.raises(ValueError, match="not from this sign-in"):
+        chatgpt.finish(attempt, back, issuer.transport(), now=1_900_000_000.0)
+    # A later sign-in uses the ID OpenAI issued, so it does not register again.
+    again, _ = chatgpt.start("oaiapp_1", "urn:uuid:host-1", 4187)
+    assert again.client_id == "oaiapp_1"
+
+
+def plan_login(expires_at: float = 100_000.0) -> chatgpt.Login:
+    return chatgpt.Login("old", "r1", "id", "oaiapp_1", "user-1", "a@example.com", expires_at, 0.0)
 
 
 def test_a_chatgpt_login_is_renewed_only_when_due_and_failures_read_as_openais() -> None:
-    login = chatgpt.Login("old", "r1", "a@example.com", 100_000.0)
-
-    def renew(request: httpx.Request) -> httpx.Response:
-        assert json.loads(request.content)["refresh_token"] == "r1"
-        return httpx.Response(200, json={"access_token": "new", "refresh_token": "r2"})
-
-    transport = httpx.MockTransport(renew)
-    assert chatgpt.renewed(login, transport, now=100_000.0 - 2 * chatgpt.RENEW_WITHIN) is None
-    fresh = chatgpt.renewed(login, transport, now=99_000.0)
+    login = plan_login()
+    issuer = Issuer()
+    issuer.tokens = {"access_token": "new", "refresh_token": "r2", "expires_in": 3600}
+    assert (
+        chatgpt.renewed(login, issuer.transport(), now=100_000.0 - 2 * chatgpt.RENEW_WITHIN) is None
+    )
+    fresh = chatgpt.renewed(login, issuer.transport(), now=99_900.0)
     assert fresh is not None and (fresh.access_token, fresh.refresh_token) == ("new", "r2")
-    assert fresh.email == "a@example.com"  # kept when the renewal names no account
+    assert (fresh.subject, fresh.email, fresh.client_id) == ("user-1", "a@example.com", "oaiapp_1")
+    renew = parse_qs(issuer.sent[0].content.decode())
+    assert renew == {
+        "grant_type": ["refresh_token"],
+        "client_id": ["oaiapp_1"],
+        "refresh_token": ["r1"],
+        "resource": [chatgpt.API],
+    }
+    # OpenAI's earliest refresh time is respected.
+    early = replace(login, earliest_refresh_at=99_950.0)
+    assert chatgpt.renewed(early, issuer.transport(), now=99_900.0) is None
 
-    refused = httpx.MockTransport(lambda _: httpx.Response(401, text="refresh_token_reused"))
-    with pytest.raises(ValueError, match=r"\(401\): refresh_token_reused"):
-        chatgpt.renewed(login, refused, now=99_000.0)
+    refused = httpx.MockTransport(lambda _: httpx.Response(400, text="refresh_token_reused"))
+    with pytest.raises(ValueError, match=r"\(400\): refresh_token_reused"):
+        chatgpt.renewed(login, refused, now=99_900.0)
 
     def offline(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("offline", request=request)
 
     with pytest.raises(ValueError, match="Could not reach OpenAI"):
-        chatgpt.start(httpx.MockTransport(offline))
+        chatgpt.renewed(login, httpx.MockTransport(offline), now=99_900.0)
+    assert chatgpt.revoke(login, httpx.MockTransport(offline)) is False
 
 
-def test_a_chatgpt_plan_is_asked_at_its_endpoint_for_its_account_without_an_output_limit(
+def test_the_plan_offers_the_models_its_account_catalog_lists() -> None:
+    catalog = {
+        "models": [
+            {"slug": "gpt-6-sol", "display_name": "GPT-6 Sol", "visibility": "list"},
+            {"slug": "internal", "display_name": "Hidden", "visibility": "hide"},
+            {"slug": "gpt-6-luna"},
+        ]
+    }
+    seen: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=catalog)
+
+    found = chatgpt.models("access-1", httpx.MockTransport(respond))
+    assert found == [("gpt-6-sol", "GPT-6 Sol"), ("gpt-6-luna", "gpt-6-luna")]
+    assert str(seen[0].url) == f"{chatgpt.API}/models"
+    assert seen[0].headers["authorization"] == "Bearer access-1"
+
+
+def test_a_chatgpt_plan_is_asked_at_the_public_api_within_the_preview_limits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sent: list[httpx2.Request] = []
@@ -1287,20 +1387,21 @@ def test_a_chatgpt_plan_is_asked_at_its_endpoint_for_its_account_without_an_outp
             event_hooks=providers._credential(header, value),
         ),
     )
-    token = jwt(ACCOUNT)
-    plan = replace(request(), provider="chatgpt", api_key=token, model="chatgpt:gpt-6-sol")
+    plan = replace(request(), provider="chatgpt", api_key="access-1", model="chatgpt:gpt-6-sol")
     assert json.loads(asyncio.run(suggestion_model.call_model(plan)))["additions"] == []
     [outgoing] = sent
-    assert str(outgoing.url) == f"{chatgpt.BACKEND}/responses"
-    assert outgoing.headers["authorization"] == f"Bearer {token}"
-    assert outgoing.headers["chatgpt-account-id"] == "acct-1"
+    assert str(outgoing.url) == f"{chatgpt.API}/responses"  # never ChatGPT's backend
+    assert outgoing.headers["authorization"] == "Bearer access-1"
+    assert "chatgpt-account-id" not in outgoing.headers
     body = json.loads(outgoing.content)
     assert body["store"] is False and body["stream"] is True
-    assert "max_output_tokens" not in body
-    # The schema is in the instructions, not a strict json_schema format (endless blank space).
-    assert body.get("text", {}).get("format", {}).get("type") != "json_schema"
-    system = next(item for item in body["input"] if item.get("role") == "system")
-    assert '"title": "Reply"' in system["content"]  # the schema reaches the model
+    for omitted in ("max_output_tokens", "temperature", "metadata", "truncation", "user"):
+        assert omitted not in body
+    # No system-role input item (the preview rejects them): the schema rides in
+    # `instructions`, and no JSON format is asked for; the reply is checked here.
+    assert all(item.get("role") != "system" for item in body["input"])
+    assert '"title": "Reply"' in body["instructions"]
+    assert "format" not in body.get("text", {})
 
 
 def test_a_reply_past_its_time_limit_is_not_tried_again_and_says_what_to_change() -> None:

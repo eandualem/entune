@@ -84,21 +84,24 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
         from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
         from pydantic_ai.providers.openai import OpenAIProvider
 
-        # A ChatGPT plan answers at its own endpoint, for the account its sign-in names;
-        # `api_key` is then the sign-in's access token.
+        # A ChatGPT plan uses the same public Responses API, with the sign-in's access token
+        # as `api_key`. Its preview rejects system-role input items, which the library adds
+        # only for JSON-object mode; the reply is checked against the schema here anyway,
+        # so the plan route goes without it and the instructions stay in `instructions`.
         plan = provider == CHATGPT
-        account = chatgpt.account_id(api_key) if plan else None
         async with AsyncOpenAI(
             api_key=api_key,
-            base_url=chatgpt.BACKEND if plan else "https://api.openai.com/v1",
+            base_url=chatgpt.API,
             max_retries=0,
             timeout=httpx2.Timeout(TIMEOUT, connect=CONNECT),
-            default_headers={"ChatGPT-Account-Id": account} if account else None,
             http_client=_http2("authorization", f"Bearer {api_key}"),
         ) as openai:
+            backend = OpenAIProvider(openai_client=openai)
+            profile = {**(backend.model_profile(name) or {}), "supports_json_object_output": False}
             yield OpenAIResponsesModel(
                 name,
-                provider=OpenAIProvider(openai_client=openai),
+                provider=backend,
+                profile=profile if plan else None,  # type: ignore[arg-type]
                 settings=OpenAIResponsesModelSettings(openai_store=False),
             )
         return

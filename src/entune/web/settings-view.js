@@ -82,7 +82,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       el("dm-caption").textContent = provider.keyHint ? `key saved ${provider.keyHint}` : `no key for ${provider.name} yet: add one to build the dictionary`;
     } else {
       el("dm-title").textContent = "No model";
-      el("dm-caption").textContent = anyKey ? "" : "Add a key for Anthropic, OpenAI, Google Gemini, Groq or Mistral, or sign in with ChatGPT, to build the dictionary from your history.";
+      el("dm-caption").textContent = anyKey ? "" : "Sign in with ChatGPT, or add a key for OpenAI, Anthropic, Google Gemini, Groq or Mistral, to build the dictionary from your history.";
     }
   }
   function splitRef(ref) {
@@ -94,9 +94,9 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const shown = (id) => (id === PLAN ? "openai" : id);
     dm.provider.replaceChildren(...settings.llmProviders.filter((p) => p.id !== PLAN).map((p) => new Option(p.name, p.id, false, p.id === shown(savedId))));
     if (!savedId) dm.provider.value = shown(settings.llmProviders.find((p) => p.keyHint)?.id ?? settings.llmProviders[0]?.id ?? "");
-    // OpenAI's access: as saved; with nothing saved for OpenAI, a signed-in plan without a key.
+    // OpenAI's access: as saved; otherwise the ChatGPT sign-in, unless an API key is saved.
     const key = (id) => settings.llmProviders.find((p) => p.id === id)?.keyHint;
-    const plan = savedId === PLAN || (savedId !== "openai" && !key("openai") && Boolean(key(PLAN)));
+    const plan = savedId === PLAN || (savedId !== "openai" && !key("openai"));
     for (const input of dm.access) input.checked = input.value === (plan ? PLAN : "openai");
     fillDictionaryModelChoices(modelId);
   }
@@ -151,7 +151,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     renderSignIn();
     flash(el("dm-status"), message, "ok");
   }
-  let starting = false; // one start at a time, so the code shown is the one the server has
+  let starting = false; // one start at a time
   el("dm-signin-start").addEventListener("click", async () => {
     if (starting) return;
     starting = true;
@@ -159,46 +159,33 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     stopSignIn();
     const run = signInRun;
     try {
-      const request = api("/api/chatgpt/sign-in", { method: "POST" });
-      // The code goes to the clipboard where there is one. WebKit only allows a clipboard
-      // write that starts in the click, so hand it the pending code.
-      let copied = Promise.resolve(false);
-      try {
-        copied = navigator.clipboard
-          .write([new ClipboardItem({ "text/plain": request.then((s) => new Blob([s.userCode], { type: "text/plain" })) })])
-          .then(() => true, () => false);
-      } catch { /* no clipboard: the code is shown to enter by hand */ }
-      const start = await request;
-      const pasted = await copied;
+      // OpenAI's sign-in opens in the browser and comes back to Entune once approved.
+      const start = await api("/api/chatgpt/sign-in", { method: "POST" });
       if (run !== signInRun) return; // the form changed while OpenAI answered
-      const code = document.createElement("strong");
-      code.className = "mono";
-      code.textContent = start.userCode;
       const page = document.createElement("a");
-      page.href = start.verificationUrl;
+      page.href = start.url;
       page.target = "_blank";
       page.rel = "noopener";
       page.textContent = "OpenAI's sign-in page";
-      const opened = start.opened ? " (open in your browser)" : "";
       el("dm-signin-state").replaceChildren(
-        ...(pasted ? ["Copied ", code, ": paste it on "] : ["Enter ", code, " on "]),
-        page, `${opened} and approve it. Waiting…`,
+        start.opened ? "Approve Entune on " : "Open ", page, start.opened ? " in your browser. Waiting…" : " to sign in. Waiting…",
       );
       el("dm-signin-start").hidden = true;
       const check = async () => {
         if (run !== signInRun) return;
         try {
-          const result = await api("/api/chatgpt/sign-in/check", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userCode: start.userCode }) });
+          const result = await api("/api/chatgpt/sign-in");
           if (run !== signInRun) return;
-          if (result.state === "waiting") signInTimer = setTimeout(check, start.interval * 1000);
-          else await signInChanged("Signed in");
+          if (result.state === "waiting") signInTimer = setTimeout(check, 2000);
+          else if (result.state === "signed-in") await signInChanged("Signed in");
+          else { renderSignIn(); if (result.error) flash(el("dm-status"), result.error, "err"); }
         } catch (err) {
           if (run !== signInRun) return;
           renderSignIn();
           flash(el("dm-status"), errorText(err), "err");
         }
       };
-      signInTimer = setTimeout(check, start.interval * 1000);
+      signInTimer = setTimeout(check, 2000);
     } catch (err) {
       if (run === signInRun) flash(el("dm-status"), errorText(err), "err");
     } finally {
@@ -208,8 +195,9 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   });
   el("dm-signout").addEventListener("click", async () => {
     try {
-      await api("/api/chatgpt/sign-in", { method: "DELETE" });
-      await signInChanged("Signed out");
+      const result = await api("/api/chatgpt/sign-in", { method: "DELETE" });
+      await signInChanged(result.revoked ? "Signed out"
+        : "Signed out here. OpenAI did not confirm it: disconnect Entune in ChatGPT Settings › Usage.");
     } catch (err) {
       flash(el("dm-status"), errorText(err), "err");
     }

@@ -378,20 +378,22 @@ def test_dictionary_direct_mappings_are_explicit_and_scope_is_preserved(
 
 def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     settings = client.get("/api/settings").json()
+    # Signing in with ChatGPT comes first, then OpenAI's API key.
     assert [p["id"] for p in settings["llmProviders"]] == [
-        "anthropic",
-        "openai",
         "chatgpt",
+        "openai",
+        "anthropic",
         "google",
         "groq",
         "mistral",
     ]
-    assert settings["llmProviders"][0]["defaultModel"] == "anthropic:claude-sonnet-5"
-    assert settings["llmProviders"][0]["models"][0] == {
+    providers = {p["id"]: p for p in settings["llmProviders"]}
+    assert providers["anthropic"]["defaultModel"] == "anthropic:claude-sonnet-5"
+    assert providers["anthropic"]["models"][0] == {
         "id": "anthropic:claude-sonnet-5",
         "name": "Claude Sonnet 5",
     }
-    assert settings["llmProviders"][1]["models"][0]["id"] == "openai:gpt-5.4-mini"
+    assert providers["openai"]["models"][0]["id"] == "openai:gpt-5.4-mini"
     assert settings["dictionaryModel"] is None
     bad = client.put("/api/settings", json={"dictionaryModel": "gemini:pro"})
     assert bad.status_code == 400 and "provider:model" in bad.text
@@ -399,14 +401,21 @@ def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
     assert ok.status_code == 200
     settings = client.get("/api/settings").json()
     # A key is enough: the suggested model of the first provider with one is the default.
-    assert settings["dictionaryModel"] == "anthropic:claude-sonnet-5"
-    assert settings["llmProviders"][0]["keyHint"] == "••••1234"
+    assert settings["dictionaryModel"] == "openai:gpt-5.4-mini"
+    keyed = {p["id"]: p for p in settings["llmProviders"]}
+    assert keyed["anthropic"]["keyHint"] == "••••1234"
     client.put("/api/settings", json={"dictionaryModel": "openai:gpt-6-astra"})
     assert client.get("/api/settings").json()["dictionaryModel"] == "openai:gpt-6-astra"
     # One Groq key serves speech and suggestions.
     client.put("/api/settings", json={"keys": {"groq": "gsk-5678"}})
     groq = next(p for p in client.get("/api/settings").json()["llmProviders"] if p["id"] == "groq")
     assert groq["keyHint"] == "••••5678"
+
+
+def plan_login(access: str, refresh: str, expires_at: float) -> chatgpt.Login:
+    return chatgpt.Login(
+        access, refresh, "id", "oaiapp_1", "user-1", "a@example.com", expires_at, 0.0
+    )
 
 
 def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
@@ -418,11 +427,24 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
         calls.append((request.model, request.api_key))
         return json.dumps(proposed("hello there, I use cloud code"))
 
-    login = chatgpt.Login("access", "refresh", "a@example.com", time.time() + 7 * 86400)
-    checks = iter([None, login])
-    code = chatgpt.DeviceCode("d1", "ABCD-1234", 5, time.time() + 900)
-    monkeypatch.setattr(chatgpt, "start", lambda: code)
-    monkeypatch.setattr(chatgpt, "check", lambda code: next(checks))
+    login = plan_login("access", "refresh", time.time() + 3600)
+    finished: list[dict[str, str]] = []
+
+    def finish(attempt: chatgpt.Attempt, query: dict[str, str]) -> chatgpt.Login:
+        finished.append(query)
+        if query.get("state") != attempt.state:
+            raise ValueError("This sign-in reply is not from the sign-in Entune started")
+        return login
+
+    monkeypatch.setattr(chatgpt, "finish", finish)
+    monkeypatch.setattr(chatgpt, "models", lambda token: [("gpt-6-sol", "GPT-6 Sol")])
+    revoked: list[str] = []
+
+    def revoke(login: chatgpt.Login) -> bool:
+        revoked.append(login.refresh_token)
+        return True
+
+    monkeypatch.setattr(chatgpt, "revoke", revoke)
     opened: list[str] = []
 
     def open_page(url: str) -> bool:
@@ -430,27 +452,28 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
         return True
 
     monkeypatch.setattr("webbrowser.open", open_page)
-    client = TestClient(
-        create_app(Entune(Store(tmp_path), [stub], llm_call=fake)), base_url="http://localhost"
-    )
+    entune = Entune(Store(tmp_path), [stub], llm_call=fake)
+    client = TestClient(create_app(entune), base_url="http://localhost:4187")
 
-    shown = {"userCode": "ABCD-1234"}
-    assert client.post("/api/chatgpt/sign-in/check", json=shown).status_code == 409  # none
-    assert client.post("/api/chatgpt/sign-in").json() == {
-        **shown,
-        "verificationUrl": chatgpt.VERIFICATION_URL,
-        "interval": 5,
-        "opened": True,
+    assert client.get("/api/chatgpt/sign-in").json() == {"state": "signed-out"}
+    assert "No sign-in is waiting" in client.get("/auth/callback?state=x&code=y").text
+    started = client.post("/api/chatgpt/sign-in").json()
+    assert started["opened"] is True and opened == [started["url"]]  # OpenAI's page opens
+    assert "redirect_uri=http%3A%2F%2F127.0.0.1%3A4187%2Fauth%2Fcallback" in started["url"]
+    assert client.get("/api/chatgpt/sign-in").json() == {"state": "waiting"}
+    state = entune.settings.chatgpt_sign_in().state  # type: ignore[union-attr]
+    page = client.get(f"/auth/callback?state={state}&code=c1&client_id=oaiapp_1")
+    assert page.status_code == 200 and "Signed in to ChatGPT" in page.text
+    assert finished[-1]["code"] == "c1"
+    assert client.get("/api/chatgpt/sign-in").json() == {
+        "state": "signed-in",
+        "account": "a@example.com",
     }
-    assert opened == [chatgpt.VERIFICATION_URL]  # OpenAI's page opens in the browser
-    replaced = {"userCode": "WXYZ-0000"}  # a code a newer start replaced
-    assert client.post("/api/chatgpt/sign-in/check", json=replaced).status_code == 409
-    assert client.post("/api/chatgpt/sign-in/check", json=shown).json() == {"state": "waiting"}
-    signed_in = client.post("/api/chatgpt/sign-in/check", json=shown).json()
-    assert signed_in == {"state": "signed-in", "account": "a@example.com"}
+    assert entune.settings.chatgpt_client_id() == "oaiapp_1"  # kept for the next sign-in
     settings = client.get("/api/settings").json()
     plan = next(p for p in settings["llmProviders"] if p["id"] == "chatgpt")
     assert plan["keyHint"] == "a@example.com" and "refresh" not in json.dumps(settings)
+    assert [m["id"] for m in plan["models"]] == ["chatgpt:gpt-6-sol"]  # the account's catalog
     assert settings["dictionaryModel"] == "chatgpt:gpt-6-sol"  # the sign-in is enough
     assert client.put("/api/settings", json={"keys": {"chatgpt": "sk-1"}}).status_code == 400
 
@@ -463,24 +486,39 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
     assert first["proposal"] and calls == [("chatgpt:gpt-6-sol", "access")]
     client.delete(f"/api/dictionary/build/{first['id']}")
 
-    assert client.delete("/api/chatgpt/sign-in").json() == {"state": "signed-out"}
+    assert client.delete("/api/chatgpt/sign-in").json() == {"state": "signed-out", "revoked": True}
+    assert revoked == ["refresh"]  # ended at OpenAI too
     res = client.post("/api/dictionary/build", json=build)
     assert res.status_code == 400 and "Sign in with ChatGPT" in res.text
 
-    # Deleting all data forgets a sign-in still waiting for approval.
+    # A refused or forged return says why on both the page and in Entune.
+    client.post("/api/chatgpt/sign-in")
+    assert "Sign-in did not finish" in client.get("/auth/callback?state=forged&code=c2").text
+    failed = client.get("/api/chatgpt/sign-in").json()
+    assert failed["state"] == "failed" and "not from the sign-in" in failed["error"]
+
+    # Deleting all data forgets a sign-in still waiting for the browser.
     client.post("/api/chatgpt/sign-in")
     assert (
         client.post("/api/data/reset", json={"confirm": data_api.RESET_PHRASE}).status_code == 200
     )
-    assert client.post("/api/chatgpt/sign-in/check", json=shown).status_code == 409
+    assert entune.settings.chatgpt_sign_in() is None
+
+
+def test_a_login_from_the_old_codex_sign_in_reads_as_signed_out(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    old = {"access_token": "a", "refresh_token": "r", "email": "a@example.com", "expires_at": 1.0}
+    store.set_setting("chatgpt_login", json.dumps(old))
+    settings = Entune(store, []).settings
+    assert settings.chatgpt_login() is None and settings.chatgpt_access_token() is None
 
 
 def test_a_chatgpt_login_due_to_run_out_is_renewed_and_kept_unless_signed_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings = Entune(Store(tmp_path), []).settings
-    settings.set_chatgpt_login(chatgpt.Login("old", "r1", "a@example.com", time.time() + 60))
-    renewed = chatgpt.Login("new", "r2", "a@example.com", time.time() + 7 * 86400)
+    settings.set_chatgpt_login(plan_login("old", "r1", time.time() + 60))
+    renewed = plan_login("new", "r2", time.time() + 3600)
     monkeypatch.setattr(
         chatgpt, "renewed", lambda login: renewed if login.access_token == "old" else None
     )
@@ -489,7 +527,7 @@ def test_a_chatgpt_login_due_to_run_out_is_renewed_and_kept_unless_signed_out(
     assert settings.chatgpt_access_token() == "new"
 
     # Signing out while a renewal is on its way stands: the renewal is not kept.
-    settings.set_chatgpt_login(chatgpt.Login("old", "r1", "a@example.com", time.time() + 60))
+    settings.set_chatgpt_login(plan_login("old", "r1", time.time() + 60))
 
     def signed_out_meanwhile(login: chatgpt.Login) -> chatgpt.Login:
         settings.set_chatgpt_login(None)

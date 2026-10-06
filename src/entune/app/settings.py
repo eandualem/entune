@@ -20,7 +20,10 @@ from entune.storage.store import Store
 DEFAULT_MODEL_KEY = "default_model"
 DICTIONARY_MODEL_KEY = "dictionary_model"
 CHATGPT_LOGIN_KEY = "chatgpt_login"
-CHATGPT_SIGN_IN_KEY = "chatgpt_sign_in"  # the code waiting for approval, if any
+CHATGPT_SIGN_IN_KEY = "chatgpt_sign_in"  # the sign-in waiting for the browser, if any
+CHATGPT_CLIENT_KEY = "chatgpt_client_id"  # the ID OpenAI issued Entune; kept after sign-out
+CHATGPT_HOST_KEY = "chatgpt_host_id"  # this installation, as OpenAI's sign-in knows it
+CHATGPT_MODELS_KEY = "chatgpt_models"  # the signed-in account's catalog: [[slug, name]]
 FAST_MODE_KEY = "fast_mode"
 JEV_PROVIDER = "typesafe"  # the key is stored like a speech provider's
 DECISION_MODEL_KEY = "decision_model"
@@ -184,10 +187,19 @@ class Settings:
                 name,
                 self._credential_hint(provider_id),
                 default_model,
-                tuple(suggestion_model.catalog(provider_id)),
+                tuple(self._models(provider_id)),
             )
             for provider_id, (name, default_model) in suggestion_model.LLM_PROVIDERS.items()
         ]
+
+    def _models(self, provider_id: str) -> list[suggestion_model.ModelChoice]:
+        """A ChatGPT plan offers the models its account catalog lists, once signed in."""
+        account = self.chatgpt_models() if provider_id == CHATGPT else None
+        if account:
+            return [
+                suggestion_model.ModelChoice(f"{CHATGPT}:{slug}", name) for slug, name in account
+            ]
+        return list(suggestion_model.catalog(provider_id))
 
     def _credential_hint(self, provider_id: str) -> str | None:
         """A masked key, or for a ChatGPT plan the signed-in account; None when neither."""
@@ -199,20 +211,44 @@ class Settings:
 
     def chatgpt_login(self) -> chatgpt.Login | None:
         saved = self._store.get_setting(CHATGPT_LOGIN_KEY)
-        return None if saved is None else chatgpt.Login.from_json(saved)
+        return None if saved is None else chatgpt.Login.from_json(saved)  # None: an old sign-in
 
     def set_chatgpt_login(self, login: chatgpt.Login | None) -> None:
         with self._login_lock:
             self._store.set_setting(CHATGPT_LOGIN_KEY, None if login is None else login.to_json())
         self._changed()
 
-    def chatgpt_sign_in(self) -> chatgpt.DeviceCode | None:
+    def chatgpt_sign_in(self) -> chatgpt.Attempt | None:
         saved = self._store.get_setting(CHATGPT_SIGN_IN_KEY)
-        return None if saved is None else chatgpt.DeviceCode(**json.loads(saved))
+        return None if saved is None else chatgpt.Attempt.from_json(saved)
 
-    def set_chatgpt_sign_in(self, code: chatgpt.DeviceCode | None) -> None:
-        saved = None if code is None else json.dumps(asdict(code))
-        self._store.set_setting(CHATGPT_SIGN_IN_KEY, saved)
+    def set_chatgpt_sign_in(self, attempt: chatgpt.Attempt | None) -> None:
+        self._store.set_setting(CHATGPT_SIGN_IN_KEY, None if attempt is None else attempt.to_json())
+
+    def chatgpt_client_id(self) -> str | None:
+        return self._store.get_setting(CHATGPT_CLIENT_KEY)
+
+    def set_chatgpt_client_id(self, client_id: str) -> None:
+        self._store.set_setting(CHATGPT_CLIENT_KEY, client_id)
+
+    def chatgpt_host_id(self) -> str:
+        """Chosen once and kept, as OpenAI asks: it names this installation."""
+        with self._login_lock:
+            saved = self._store.get_setting(CHATGPT_HOST_KEY)
+            if saved is None:
+                saved = chatgpt.host_id()
+                self._store.set_setting(CHATGPT_HOST_KEY, saved)
+            return saved
+
+    def chatgpt_models(self) -> list[tuple[str, str]] | None:
+        """The signed-in account's models, or None before its catalog has been read."""
+        saved = self._store.get_setting(CHATGPT_MODELS_KEY)
+        return None if saved is None else [(slug, name) for slug, name in json.loads(saved)]
+
+    def set_chatgpt_models(self, models: list[tuple[str, str]] | None) -> None:
+        saved = None if models is None else json.dumps(models)
+        self._store.set_setting(CHATGPT_MODELS_KEY, saved)
+        self._changed()
 
     def chatgpt_access_token(self) -> str | None:
         """The signed-in plan's access token, renewed first when it runs out soon."""

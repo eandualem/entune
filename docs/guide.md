@@ -317,9 +317,9 @@ meaning and its associations across models, without giving it priority over comp
 Confirmed agent corrections still use the existing local API. The dictionary model is chosen on
 the Dictionary page and serves every learning run; keys are added in Settings.
 The dictionary model can come from Anthropic, OpenAI, Google Gemini, Groq or Mistral;
-Groq uses the same key as Groq speech. The current integration also offers experimental ChatGPT sign-in
-instead of an API key (see [its access limitation](models.md#dictionary-generation)): choose OpenAI, then **ChatGPT subscription** under Access, then
-**Sign in with ChatGPT** and enter the code it shows on OpenAI's page. The plan decides
+Groq uses the same key as Groq speech. ChatGPT sign-in can stand in for an API key
+(see [how it works](models.md#dictionary-generation)): choose OpenAI, then **ChatGPT subscription** under Access, then
+**Sign in with ChatGPT** and approve Entune on the OpenAI page your browser opens. The plan decides
 which models it allows. For our current recommendation and what the model selector accepts, see
 [Choosing models](models.md#dictionary-generation). The built-in suggested-model list
 may contain older models; it also accepts a custom model ID. **Add an entry** creates a group by
