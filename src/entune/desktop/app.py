@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import queue
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -32,6 +34,7 @@ PASTE_KEYS = {"darwin": "Cmd+V", "linux": "Shift+Insert"}.get(sys.platform, "Ctr
 QUIT_FLUSH_SECONDS = 3.0  # bound on waiting for a just-stopped clip to reach disk at quit
 PERMISSION_POLL_SECONDS = 5.0  # permissions are granted in System Settings; notice when they are
 WATCH_SECONDS = 1.0  # while recording: notice silence soon after it starts
+RESTART_CHECK_SECONDS = 2.0  # after a hung microphone: how often to see if all is idle
 CLIPBOARD_RESTORE_SECONDS = 0.8  # after a paste: apps read the clipboard a moment later
 SERVER_WAIT_SECONDS = 10.0  # the page is served from a thread that may still be starting
 
@@ -56,6 +59,7 @@ class EntuneApp:
         self._upload: Upload | None = None  # fast mode's stream for the current recording
         self._recording = False
         self._quiet_notified = False
+        self._restart_pending = False  # a hung microphone: relaunch once idle
         self._capture_error: str | None = None
         self._quitting = False
         self._closed = False
@@ -374,6 +378,42 @@ class EntuneApp:
                 with contextlib.suppress(CancelledError):
                     self.entune.operations.stage(operation, "saving")
             self._captures.put((capture, upload, operation))
+            if self.recorder.stuck and not self._restart_pending:
+                self._restart_pending = True
+                self.platform.call_later(RESTART_CHECK_SECONDS, self._restart_when_idle)
+
+    def _restart_when_idle(self) -> None:
+        """The microphone hung while closing (a Core Audio deadlock inside PortAudio), so
+        this process can never record again. Once this clip is delivered and nothing else
+        runs, the Mac app relaunches itself; elsewhere the refusal says to reopen."""
+        if self._quitting:
+            return
+        bundle = os.environ.get("ENTUNE_APP")
+        if sys.platform != "darwin" or not bundle:
+            return
+        if self._recording or self._captures.unfinished_tasks or self.entune.operations.status():
+            self.platform.call_later(RESTART_CHECK_SECONDS, self._restart_when_idle)
+            return
+        print("microphone stopped responding: restarting Entune to free it", flush=True)
+        self.platform.actions.notify(
+            "Entune restarted", "The microphone stopped responding, so Entune restarted to free it."
+        )
+        # Opened again once this app, and the launcher that is its parent, have quit.
+        subprocess.Popen(
+            [
+                "/bin/sh",
+                "-c",
+                'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec /usr/bin/open "$2"',
+                "sh",
+                str(os.getppid()),
+                bundle,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        self.quit()
 
     def _request_stop(self, operation_id: str) -> None:
         engine = self.engine

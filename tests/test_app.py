@@ -186,6 +186,7 @@ class FakeRecorder:
         self.recording = False
         self.silence: str | None = None
         self.level = 0.0
+        self.stuck = False
 
     def start(self, sink_for_rate: SinkFactory | None = None) -> None:
         self.recording = True
@@ -953,3 +954,30 @@ def test_quit_waits_for_capture_start_then_saves_it(
     assert not capture.is_alive() and not quitting.is_alive()
     assert platform.quit_called and not app._recording
     assert len(entune.store.list_recordings()) == 1
+
+
+def test_a_hung_microphone_relaunches_the_mac_app_once_all_is_idle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, platform, entune = make(tmp_path)
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_shortcuts(None, "cmd+alt_r")
+    engine = app.engine
+    assert engine is not None
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(
+        "entune.desktop.app.subprocess.Popen", lambda command, **_: spawned.append(command)
+    )
+    monkeypatch.setattr("entune.desktop.app.sys.platform", "darwin")
+    monkeypatch.setenv("ENTUNE_APP", "/Applications/Entune.app")
+    engine.press("cmd")
+    engine.press("alt_r")
+    app.recorder.stuck = True  # type: ignore[attr-defined]  # its close hung
+    assert app._operation is not None
+    assert entune.desktop.stop_recording(app._operation.id)
+    [(_, check)] = [t for t in platform.timers if t[1] == app._restart_when_idle]
+    wait_for(lambda: platform.actions.pasted == 1)  # the clip is still delivered first
+    wait_for(lambda: entune.operations.status() is None)
+    check()
+    assert spawned and spawned[0][-1] == "/Applications/Entune.app" and platform.quit_called

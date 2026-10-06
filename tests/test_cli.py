@@ -410,3 +410,37 @@ def test_first_start_modules_exist() -> None:
 
     for name in cli.FIRST_START_MODULES:  # each platform imports only its own
         assert importlib.util.find_spec(name) is not None, name
+
+
+def test_a_cold_start_is_announced_once_before_anything_slow_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from entune import first_start
+
+    package = tmp_path / "entune"
+    (package / "desktop").mkdir(parents=True)
+    (package / "desktop" / "app.py").write_text("")
+    monkeypatch.setattr(first_start, "__file__", str(package / "first_start.py"))
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(
+        first_start.subprocess, "Popen", lambda command, **_: spawned.append(command)
+    )
+    monkeypatch.setattr(first_start.sys, "platform", "darwin")
+    monkeypatch.setenv("ENTUNE_APP", "/Applications/Entune.app")
+    assert first_start.cold()
+    first_start.announce()
+    assert spawned and spawned[0][0] == "/usr/bin/osascript"
+    # Once Python has cached the app's code, starts are fast and nothing is said.
+    import importlib.util
+
+    cache = Path(importlib.util.cache_from_source(str(package / "desktop" / "app.py")))
+    cache.parent.mkdir()
+    cache.write_bytes(b"")
+    spawned.clear()
+    first_start.announce()
+    assert not first_start.cold() and not spawned
+    # Only the Mac app announces: not a terminal run.
+    cache.unlink()
+    monkeypatch.delenv("ENTUNE_APP")
+    first_start.announce()
+    assert not spawned

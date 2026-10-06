@@ -1,6 +1,7 @@
 import io
 import sys
 import threading
+import time
 import wave
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -35,6 +36,16 @@ def test_capture_keeps_its_own_rate() -> None:
         assert wav.getframerate() == 24_000 and wav.getnframes() == 24_000
 
 
+@pytest.fixture(autouse=True)
+def quick_ending(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stand-in streams never report finishing; do not wait out the real limit."""
+    monkeypatch.setattr("entune.audio.recorder.ENDING_SECONDS", 0.05)
+
+
+class Abort(Exception):
+    """Stands in for sounddevice.CallbackAbort."""
+
+
 def test_stop_releases_audio_and_cancel_does_not_copy_it(monkeypatch: pytest.MonkeyPatch) -> None:
     stream = Mock()
     monkeypatch.setitem(
@@ -42,6 +53,7 @@ def test_stop_releases_audio_and_cancel_does_not_copy_it(monkeypatch: pytest.Mon
         "sounddevice",
         SimpleNamespace(
             _initialized=1,
+            CallbackAbort=Abort,
             _terminate=Mock(),
             _initialize=Mock(),
             query_devices=lambda **kw: {"index": 0, "name": "Mic", "default_samplerate": 48_000},
@@ -71,6 +83,7 @@ def test_a_microphone_that_fails_to_stop_still_hands_over_its_audio(
         "sounddevice",
         SimpleNamespace(
             _initialized=1,
+            CallbackAbort=Abort,
             _terminate=Mock(),
             _initialize=Mock(),
             query_devices=lambda **kw: {"index": 0, "name": "Mic", "default_samplerate": 48_000},
@@ -92,6 +105,7 @@ def test_a_microphone_that_hangs_on_stop_still_hands_over_its_audio(
     stream.stop.side_effect = lambda: release.wait()  # PortAudio deadlocked in Core Audio
     backend = SimpleNamespace(
         _initialized=1,
+        CallbackAbort=Abort,
         _terminate=Mock(),
         _initialize=Mock(),
         _exit_handler=Mock(),
@@ -110,7 +124,7 @@ def test_a_microphone_that_hangs_on_stop_still_hands_over_its_audio(
     unregister.assert_called_once_with(backend._exit_handler)
     recorder._on_audio(b"\x02\x00" * 100, 100, None, None)  # the hung stream still delivers
     assert recorder._chunks == []  # nothing is kept after the stop
-    with pytest.raises(RuntimeError, match="Quit and reopen Entune"):
+    with pytest.raises(RuntimeError, match="restarts itself to free it"):
         recorder.start()  # never touch PortAudio again while a stream is stuck in it
     backend._terminate.assert_called_once()  # by the first start only
     release.set()
@@ -127,6 +141,7 @@ def test_audio_delivered_while_the_microphone_starts_is_kept(
         "sounddevice",
         SimpleNamespace(
             _initialized=1,
+            CallbackAbort=Abort,
             _terminate=Mock(),
             _initialize=Mock(),
             query_devices=lambda **kw: {"index": 0, "name": "Mic", "default_samplerate": 48_000},
@@ -143,6 +158,7 @@ def test_microphone_open_failure_releases_the_upload_sink(monkeypatch: pytest.Mo
         "sounddevice",
         SimpleNamespace(
             _initialized=1,
+            CallbackAbort=Abort,
             _terminate=Mock(),
             _initialize=Mock(),
             query_devices=lambda **kw: {"index": 0, "name": "Mic", "default_samplerate": 48_000},
@@ -219,3 +235,48 @@ def test_silence_at_the_start_shows_soon_and_a_pause_after_speech_much_later(
     assert recorder.silence == "pause"
     assert recorder.stop().pcm == quiet + speech
     assert recorder.silence is None
+
+
+def test_the_audio_thread_ends_the_stream_before_it_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Stopping a running stream from another thread can deadlock in Core Audio; the
+    # callback ends it instead, keeping its last chunk, and the close follows.
+    made: dict[str, object] = {}
+    stream = Mock()
+
+    def open_stream(**kw: object) -> Mock:
+        made.update(kw)
+        return stream
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sounddevice",
+        SimpleNamespace(
+            _initialized=1,
+            CallbackAbort=Abort,
+            _terminate=Mock(),
+            _initialize=Mock(),
+            query_devices=lambda **kw: {"index": 0, "name": "Mic", "default_samplerate": 48_000},
+            RawInputStream=open_stream,
+        ),
+    )
+    recorder = Recorder()
+    recorder.start()
+    recorder._on_audio(b"\x01\x00" * 10, 10, None, None)
+
+    def audio_thread() -> None:
+        while not recorder._ending:
+            time.sleep(0.001)
+        with pytest.raises(Abort):
+            recorder._on_audio(b"\x02\x00" * 10, 10, None, None)  # the last chunk
+        made["finished_callback"]()  # type: ignore[operator]
+
+    thread = threading.Thread(target=audio_thread)
+    thread.start()
+    started = time.monotonic()
+    capture = recorder.stop()
+    thread.join()
+    assert time.monotonic() - started < 0.5  # it did not wait out the ending limit
+    assert capture.pcm == b"\x01\x00" * 10 + b"\x02\x00" * 10
+    stream.stop.assert_called_once()
