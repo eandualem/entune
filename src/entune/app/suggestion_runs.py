@@ -409,6 +409,10 @@ class DictionaryBuilds:
                         if isinstance(exc, generate.StepFailed)
                         else f"{type(exc).__name__}: {exc}"
                     )
+                    # Never a key, in the log or the page, as for a run's own error.
+                    for secret in (spec.speech_key, spec.builder[1]):
+                        if secret:
+                            why = why.replace(secret, "[redacted]")
                     # The log keeps why, so a run's skipped recordings can be read afterwards.
                     print(f"suggestions: skipped {item.name}: {why}", flush=True)
                     with self._lock:

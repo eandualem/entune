@@ -60,6 +60,7 @@ class EntuneApp:
         self._recording = False
         self._quiet_notified = False
         self._restart_pending = False  # a hung microphone: relaunch once idle
+        self._restoring = 0  # clipboard restorations still to run after a paste
         self._capture_error: str | None = None
         self._quitting = False
         self._closed = False
@@ -398,6 +399,7 @@ class EntuneApp:
             or self._captures.unfinished_tasks
             or operations.status()
             or operations.learning is not None
+            or self._restoring
         ):
             self.platform.call_later(RESTART_CHECK_SECONDS, self._restart_when_idle)
             return
@@ -668,9 +670,11 @@ class EntuneApp:
                     # Pasted, so the clipboard was only the way in: put back what was there.
 
                     def restore() -> None:
+                        self._restoring -= 1
                         if delivery == self._deliveries:  # a later dictation owns it now
                             actions.restore_clipboard(saved)
 
+                    self._restoring += 1  # a restart waits for it: the clipboard is the user's
                     self.platform.call_later(CLIPBOARD_RESTORE_SECONDS, restore)
             else:
                 permissions.request_post()
