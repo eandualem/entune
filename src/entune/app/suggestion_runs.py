@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from concurrent.futures import CancelledError
 from contextlib import AbstractContextManager, contextmanager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -292,6 +292,17 @@ class DictionaryBuilds:
                 retries=[*self._state.get("retries", ()), failed],
             )
 
+    async def _asking(self, request: suggestion_model.Request) -> str:
+        """One request to the suggestion model. On a ChatGPT plan each one, a part's
+        corrections and retries included, goes with the current access, renewed when due."""
+        if request.provider == suggestion_model.CHATGPT:
+            access = await asyncio.to_thread(self._plan_access)
+            if access is not None and access != request.api_key:
+                with self._lock:
+                    self._renewed.append(access)
+                request = replace(request, api_key=access)
+        return await self._call(request)
+
     async def _part(self, spec: BuildInput, step: batches.Batch, number: int) -> None:
         """One part from the working dictionary; a validated result becomes the proposal."""
         with self._lock:
@@ -299,13 +310,6 @@ class DictionaryBuilds:
             self._task = asyncio.current_task()
             working = self._working
         current = dictionary_changes.share(spec.dictionary, set())
-        builder = spec.builder
-        if builder[0] == suggestion_model.CHATGPT:
-            access = self._plan_access()
-            if access is not None and access != builder[1]:
-                builder = (builder[0], access, builder[2])
-                with self._lock:
-                    self._renewed.append(access)
         began = time.monotonic()
         try:
             self._checkpoint()
@@ -318,13 +322,13 @@ class DictionaryBuilds:
                 effort=spec.effort,
             ):
                 groups = await generate.propose_part(
-                    *builder,
+                    *spec.builder,
                     current,
                     current.effective(spec.speech.id) if working is None else working,
                     step,
                     spec.speech.id,
                     f"Part {number}",
-                    self._call,
+                    self._asking,
                     effort=spec.effort,
                     started=lambda size: self._progress(
                         step=number,

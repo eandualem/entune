@@ -1242,6 +1242,9 @@ class Issuer:
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.respond)
 
+    def token_request(self) -> httpx.Request:
+        return next(r for r in self.sent if r.url.path.endswith("/oauth/token"))
+
 
 PLAN_SCOPES = "chatgpt.tokens.use.direct email offline_access openid profile resource.invoke"
 
@@ -1285,7 +1288,7 @@ def test_chatgpt_sign_in_registers_entune_then_checks_the_id_token() -> None:
         "a@example.com",
         1_900_003_600.0,
     )
-    exchange = parse_qs(issuer.sent[0].content.decode())
+    exchange = parse_qs(issuer.token_request().content.decode())
     assert exchange["client_id"] == ["oaiapp_1"]  # the issued ID, not dynamic_agent_client
     assert exchange["code_verifier"] == [attempt.verifier]
     assert exchange["resource"] == [chatgpt.API]
@@ -1329,7 +1332,7 @@ def test_a_chatgpt_login_is_renewed_only_when_due_and_failures_read_as_openais()
     fresh = chatgpt.renewed(login, issuer.transport(), now=99_900.0)
     assert fresh is not None and (fresh.access_token, fresh.refresh_token) == ("new", "r2")
     assert (fresh.subject, fresh.email, fresh.client_id) == ("user-1", "a@example.com", "oaiapp_1")
-    renew = parse_qs(issuer.sent[0].content.decode())
+    renew = parse_qs(issuer.token_request().content.decode())
     assert renew == {
         "grant_type": ["refresh_token"],
         "client_id": ["oaiapp_1"],
@@ -1349,6 +1352,20 @@ def test_a_chatgpt_login_is_renewed_only_when_due_and_failures_read_as_openais()
 
     with pytest.raises(ValueError, match="Could not reach OpenAI"):
         chatgpt.renewed(login, httpx.MockTransport(offline), now=99_900.0)
+
+    # OpenAI's keys are read before the single-use refresh token is spent, so failing to
+    # read them leaves it unspent for the next try.
+    tried: list[str] = []
+
+    def keys_unreachable(request: httpx.Request) -> httpx.Response:
+        tried.append(request.url.path)
+        if request.url.path.endswith("/jwks.json"):
+            raise httpx.ConnectError("offline", request=request)
+        return httpx.Response(200, json={"access_token": "new", "refresh_token": "r2"})
+
+    with pytest.raises(ValueError, match="Could not reach OpenAI"):
+        chatgpt.renewed(login, httpx.MockTransport(keys_unreachable), now=99_900.0)
+    assert tried == ["/.well-known/jwks.json"]
     assert chatgpt.revoke(login, httpx.MockTransport(offline)) is False
 
 

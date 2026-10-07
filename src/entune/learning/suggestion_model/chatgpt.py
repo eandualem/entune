@@ -140,6 +140,7 @@ def finish(
     if not code or client_id == DYNAMIC_CLIENT:
         raise ValueError("OpenAI's sign-in reply had no code or no issued client ID; sign in again")
     with _session(transport) as http:
+        keys = _published_keys(http)
         tokens = _checked(
             http.post(
                 TOKEN,
@@ -153,7 +154,7 @@ def finish(
                 },
             )
         ).json()
-        return _login(tokens, client_id, attempt.nonce, None, http, now)
+        return _login(tokens, client_id, attempt.nonce, None, keys, now)
 
 
 def renewed(
@@ -165,6 +166,9 @@ def renewed(
     if login.expires_at - moment > RENEW_WITHIN or moment < login.earliest_refresh_at:
         return None
     with _session(transport) as http:
+        # OpenAI's keys are read first: once the single-use refresh token is spent, its
+        # reply must not be lost to a failure reading them.
+        keys = _published_keys(http)
         tokens = _checked(
             http.post(
                 TOKEN,
@@ -176,7 +180,7 @@ def renewed(
                 },
             )
         ).json()
-        return _login(tokens, login.client_id, None, login, http, now)
+        return _login(tokens, login.client_id, None, login, keys, now)
 
 
 def revoke(login: Login, transport: httpx.BaseTransport | None = None) -> bool:
@@ -224,13 +228,13 @@ def _login(
     client_id: str,
     nonce: str | None,
     before: Login | None,
-    http: httpx.Client,
+    keys: list[dict[str, Any]],
     now: float | None,
 ) -> Login:
     moment = time.time() if now is None else now
     id_token = tokens.get("id_token")
     if isinstance(id_token, str) and id_token:
-        claims = verify_id_token(id_token, client_id, nonce, http, moment)
+        claims = verify_id_token(id_token, client_id, nonce, keys, moment)
     elif before is not None:  # a refresh need not send one: the account stays the same
         id_token, claims = before.id_token, {"sub": before.subject, "email": before.email}
     else:
@@ -262,11 +266,17 @@ def _login(
     )
 
 
+def _published_keys(http: httpx.Client) -> list[dict[str, Any]]:
+    """OpenAI's published signing keys (its JWKS)."""
+    keys = _checked(http.get(JWKS)).json().get("keys", [])
+    return [k for k in keys if isinstance(k, dict)] if isinstance(keys, list) else []
+
+
 def verify_id_token(
-    token: str, audience: str, nonce: str | None, http: httpx.Client, now: float
+    token: str, audience: str, nonce: str | None, keys: list[dict[str, Any]], now: float
 ) -> dict[str, Any]:
-    """The ID token's claims once its RS256 signature matches OpenAI's published keys and
-    its issuer, audience, expiry and (on sign-in) nonce are the expected ones."""
+    """The ID token's claims once its RS256 signature matches one of OpenAI's published
+    `keys` and its issuer, audience, expiry and (on sign-in) nonce are the expected ones."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -280,7 +290,6 @@ def verify_id_token(
         raise ValueError("OpenAI's ID token could not be read") from exc
     if header.get("alg") != "RS256" or not isinstance(claims, dict):
         raise ValueError("OpenAI's ID token is not signed the documented way")
-    keys = _checked(http.get(JWKS)).json().get("keys", [])
     key = next(
         (k for k in keys if k.get("kid") == header.get("kid") and k.get("kty") == "RSA"), None
     )
