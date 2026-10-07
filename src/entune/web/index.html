@@ -463,10 +463,15 @@
                 <div class="srow wide"><div class="app-list decision-list" role="radiogroup" aria-label="Decision model">
                   <label class="app-option"><input type="radio" name="decision-model" value="jev" /><span><span class="app-name">Jev by TypeSafe</span><span class="caption">In the cloud: it receives transcript text. On your own key, about $0.04 per million tokens: a fraction of a cent per dictation.</span></span></label>
                   <label class="app-option"><input type="radio" name="decision-model" value="laya" /><span><span class="app-name">Laya, on this Mac</span><span class="caption">Open weights from Convai Innovations, for English. Text stays on this Mac. It takes memory only while it is chosen and a step below is on.</span></span></label>
+                  <label class="app-option"><input type="radio" name="decision-model" value="openai" /><span><span class="app-name">OpenAI</span><span class="caption">In the cloud: it receives transcript text. On an OpenAI API key, $0.10 per million input tokens; a ChatGPT sign-in cannot be used for it.</span></span></label>
                 </div></div>
                 <form id="jev-key-form" hidden>
                   <div class="srow key-row"><label class="name" for="key-typesafe">TypeSafe API key</label><input class="input field" id="key-typesafe" type="password" autocomplete="off" placeholder="Not set" /><a class="key-link" href="https://console.typesafe.ai/" target="_blank" rel="noopener" title="Open TypeSafe's console in your browser">Get a key</a></div>
                   <div class="srow foot"><button type="submit" class="btn accent">Save key</button><span class="caption save-status" id="jev-key-status" role="status"></span></div>
+                </form>
+                <form id="openai-key-form" hidden>
+                  <div class="srow key-row"><label class="name" for="key-openai-decisions">OpenAI API key</label><input class="input field" id="key-openai-decisions" type="password" autocomplete="off" placeholder="Not set" /><a class="key-link" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" title="Open OpenAI's API keys page in your browser">Get a key</a></div>
+                  <div class="srow foot"><span class="caption">The same key as OpenAI in Dictionary setup.</span><button type="submit" class="btn accent">Save key</button><span class="caption save-status" id="openai-key-status" role="status"></span></div>
                 </form>
                 <div id="laya-setup" hidden>
                   <div class="srow status"><span class="caption" id="laya-status" role="status"></span><button type="button" class="btn sm" id="laya-retry" hidden>Start again</button></div>

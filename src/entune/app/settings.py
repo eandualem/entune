@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import asdict, dataclass
 
 from entune.app import shortcuts
@@ -26,7 +26,9 @@ CHATGPT_MODELS_KEY = "chatgpt_models"  # the signed-in account's catalog: [[slug
 FAST_MODE_KEY = "fast_mode"
 JEV_PROVIDER = "typesafe"  # the key is stored like a speech provider's
 DECISION_MODEL_KEY = "decision_model"
-DECISION_MODELS = ("jev", "laya")
+DECISION_MODELS = ("jev", "laya", "openai")
+# The key each decision model is asked with; OpenAI's is the suggestion model's OpenAI key.
+DECISION_KEYS = {"jev": JEV_PROVIDER, "openai": "openai"}
 JEV_DICTIONARY_KEY = "jev_dictionary"
 JEV_FORMATTING_KEY = "jev_formatting"
 JEV_CLEANUP_KEY = "jev_cleanup"
@@ -116,11 +118,11 @@ class Settings:
         dictionary: bool | None = None,
         formatting: bool | None = None,
         cleanup: bool | None = None,
-        key_saved: bool | None = None,
+        keys_saved: Collection[str] = (),
     ) -> None:
         """Refuse a change whose final state has a step on that the decision model cannot run,
         so the setting never promises what a dictation cannot do. Turning steps off is always
-        allowed. `key_saved` counts a TypeSafe key saved by the same request."""
+        allowed. `keys_saved` names the keys saved by the same request."""
         if model is not None and model not in DECISION_MODELS:
             raise ValueError(f"Unknown decision model: {model}")
         status = self.jev_status()
@@ -131,12 +133,17 @@ class Settings:
         ]
         if not any(on) or not (model is not None or dictionary or formatting or cleanup):
             return
-        key = self.key(JEV_PROVIDER) is not None if key_saved is None else key_saved
-        chosen = model or self.decision_model() or ("jev" if key else None)
+
+        def saved(provider: str) -> bool:
+            return provider in keys_saved or self.key(provider) is not None
+
+        chosen = model or self.decision_model() or ("jev" if saved(JEV_PROVIDER) else None)
         if chosen is None:
             raise ValueError("Choose a decision model first.")
-        if chosen == "jev" and not key:
+        if chosen == "jev" and not saved(JEV_PROVIDER):
             raise ValueError("Save a TypeSafe API key first.")
+        if chosen == "openai" and not saved(DECISION_KEYS["openai"]):
+            raise ValueError("Save an OpenAI API key first.")
         if chosen == "laya" and not self._laya_installed():
             raise ValueError(f"Install Laya's engine first: {LAYA_INSTALL}")
 
@@ -159,6 +166,11 @@ class Settings:
             if value is not None:
                 self._store.set_setting(name, "1" if value else None)
         self._changed()
+
+    def decision_key(self, model: str | None) -> str | None:
+        """The key decision model `model` is asked with; Laya needs none."""
+        provider = DECISION_KEYS.get(model or "")
+        return None if provider is None else self.key(provider)
 
     def jev_status(self) -> JevStatus:
         key = self.key(JEV_PROVIDER)

@@ -246,8 +246,12 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const shown = picked ?? selected;
     for (const input of document.querySelectorAll('input[name="decision-model"]')) input.checked = input.value === shown;
     el("jev-key-form").hidden = shown !== "jev";
+    el("openai-key-form").hidden = shown !== "openai";
     el("laya-setup").hidden = shown !== "laya";
-    const names = { jev: "Jev", laya: "Laya" };
+    const openaiKey = settings.llmProviders.find((p) => p.id === "openai")?.keyHint;
+    el("key-openai-decisions").value = "";
+    el("key-openai-decisions").placeholder = openaiKey ? `saved ${openaiKey} · type to replace` : "Not set";
+    const names = { jev: "Jev", laya: "Laya", openai: "OpenAI" };
     el("decision-note").textContent = picked ? `Not switched yet: ${refusal}${selected ? ` The steps still use ${names[selected]}.` : ""}` : "";
     el("laya-status").textContent = laya.state === "failed" ? laya.error : LAYA[laya.state];
     el("laya-status").classList.toggle("err", laya.state === "failed");
@@ -351,6 +355,14 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     // A key saved while Jev is picked but not yet chosen completes the switch.
     const choice = picked === "jev" ? { decisionModel: "jev" } : {};
     if (await saveSetting({ keys: { typesafe: key }, ...choice }, el("jev-key-status"))) { picked = null; await loadSettings(); }
+  });
+  el("openai-key-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const key = el("key-openai-decisions").value.trim();
+    if (!key) { flash(el("openai-key-status"), "Nothing to save", "ok"); return; }
+    // A key saved while OpenAI is picked but not yet chosen completes the switch.
+    const choice = picked === "openai" ? { decisionModel: "openai" } : {};
+    if (await saveSetting({ keys: { openai: key }, ...choice }, el("openai-key-status"))) { picked = null; await loadSettings(); }
   });
   for (const name of ["dictionary", "formatting", "cleanup"]) {
     jev[name].addEventListener("change", async () => {

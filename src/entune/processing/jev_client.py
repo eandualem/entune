@@ -1,8 +1,8 @@
 """Talking to a decision model: one call, its time limit and retries.
 
-Both decision models speak TypeSafe's System One API: Jev at TypeSafe, and Laya in a
-server on this Mac. A decision model answers questions about the text with
-probabilities; it never writes text.
+Jev at TypeSafe and Laya in a server on this Mac speak TypeSafe's System One API; OpenAI's
+Decisions API is asked the same questions in its own shape. A decision model answers
+questions about the text with probabilities; it never writes text.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextlib
+import json
 import math
 import threading
 import time
@@ -39,6 +40,9 @@ class Endpoint:
 
 
 JEV = Endpoint("jev", URL, MODEL, "TypeSafe API key")
+# Reached with an OpenAI API key, the one the suggestion model uses; a ChatGPT sign-in is
+# refused there.
+OPENAI = Endpoint("openai", "https://api.openai.com/v1/decisions", "gpt-6-luna", "OpenAI API key")
 
 
 class JevError(Exception):
@@ -187,7 +191,7 @@ class Client:
                     response = await http.post(
                         call.endpoint.url,
                         headers=_authorization(call),
-                        json={"model": call.endpoint.model, "state": state, "questions": questions},
+                        json=_request(call.endpoint, state, questions),
                         timeout=budget,
                     )
                 if response.is_success:
@@ -195,6 +199,8 @@ class Client:
                         data = response.json()
                     except ValueError as exc:
                         raise JevError("unusable answer: invalid JSON") from exc
+                    if call.endpoint.id == OPENAI.id:
+                        data = _from_openai(data)
                     return _answers(data, questions)
                 detail = response.text.replace(call.key, "")[:300]
                 error = f"HTTP {response.status_code}: {detail}"
@@ -268,6 +274,17 @@ class Call:
             raise JevError(self.endpoint.unavailable)
         if self.endpoint.key_name and not self.key:
             raise JevError(f"no {self.endpoint.key_name}")
+        if self.endpoint.id == OPENAI.id:
+            # OpenAI refuses a question with a single option; its answer can only be that
+            # option, so it is not asked.
+            only = {
+                name: {next(iter(q["criteria"])): 1.0}
+                for name, q in questions.items()
+                if len(q["criteria"]) == 1
+            }
+            if only:
+                rest = {name: q for name, q in questions.items() if name not in only}
+                return only | (self.ask(state, rest) if rest else {})
         size = self.endpoint.max_questions
         if size and len(questions) > size:
             names = list(questions)
@@ -315,6 +332,59 @@ def _retry_after(value: str | None) -> float:
         except (ValueError, TypeError, OverflowError):
             return 0.0
     return max(0.0, seconds) if math.isfinite(seconds) else 0.0
+
+
+def _request(endpoint: Endpoint, state: object, questions: dict[str, Any]) -> dict[str, Any]:
+    """The request body. OpenAI's Decisions API takes the same questions in its own shape:
+    the shared state as the input, and instructions and option descriptions as text, so
+    structured ones are sent as their JSON."""
+    if endpoint.id != OPENAI.id:
+        return {"model": endpoint.model, "state": state, "questions": questions}
+    return {
+        "model": endpoint.model,
+        "input": _text(state),
+        "questions": [
+            {
+                "type": question["type"],
+                "name": name,
+                "instructions": _text(question["instructions"]),
+                "choices": [
+                    {"value": value, "description": _text(description)}
+                    for value, description in question["criteria"].items()
+                ],
+            }
+            for name, question in questions.items()
+        ],
+    }
+
+
+def _text(value: object) -> str:
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
+def _from_openai(data: Any) -> dict[str, Any]:
+    """OpenAI's answers, a list with probabilities as a list, in the shape Jev's are read."""
+    answers = data.get("answers") if isinstance(data, dict) else None
+    if not isinstance(answers, list):
+        raise JevError("unusable answer: answers do not match the questions")
+    shaped: dict[str, Any] = {}
+    for answer in answers:
+        name = answer.get("name") if isinstance(answer, dict) else None
+        listed = answer.get("probabilities") if isinstance(answer, dict) else None
+        if not isinstance(name, str) or name in shaped or not isinstance(listed, list):
+            raise JevError("unusable answer: answers do not match the questions")
+        probabilities: dict[str, Any] = {}
+        for item in listed:
+            value = item.get("value") if isinstance(item, dict) else None
+            if not isinstance(value, str) or value in probabilities:
+                raise JevError("unusable answer: probabilities missing or malformed")
+            probabilities[value] = item.get("probability")
+        shaped[name] = {
+            "type": answer.get("type"),
+            "choice": answer.get("choice"),
+            "probabilities": probabilities,
+        }
+    return {"answers": shaped}
 
 
 def _answers(data: Any, questions: dict[str, Any]) -> dict[str, dict[str, float]]:

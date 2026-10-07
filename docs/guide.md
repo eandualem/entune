@@ -412,13 +412,14 @@ model in Settings › Corrections & formatting:
 |---|---|---|
 | Jev, from [TypeSafe](https://typesafe.ai) | TypeSafe's API | a TypeSafe API key, on your own account |
 | Laya, from [Convai Innovations](https://huggingface.co/convaiinnovations/laya) | on your computer | its engine, installed once in a terminal with `uv tool install 'laya[serve]'` (about 750 MB, including PyTorch) |
+| OpenAI's [Decisions API](https://developers.openai.com/api/docs/guides/decisions) | OpenAI's API | an OpenAI API key, the same one Dictionary setup uses; a ChatGPT sign-in cannot be used for it |
 
 Laya is an open-weight (Apache-2.0) English model. Entune runs its server only while
 Laya is chosen and a step is on, and only for itself (on 127.0.0.1); its first start
 downloads the model, about 850 MB, into Entune's models folder. Laya reads a limited
 amount of text per question, 512 tokens including the question, so in a long dictation
-its filler and paragraph decisions see only part of the transcript. Both answer the same
-questions; History names the decision model each step asked.
+its filler and paragraph decisions see only part of the transcript. All of them answer the
+same questions; History names the decision model each step asked.
 
 A literal Jeff or GIF is a meaning in its own right. Every valid response selects the
 highest-scoring eligible meaning, even when scores are close. Exact ties use the decision
@@ -542,7 +543,8 @@ Enabled features determine what is sent out:
   meaning's spelling, definition and personal context. Filler reduction sends its input
   text and code-proposed deletion spans; formatting sends the text being formatted and
   its sentence spans. With Jev, all of this goes to TypeSafe, even when speech
-  recognition is local. With Laya, it stays on your computer.
+  recognition is local. With OpenAI, it goes to OpenAI. With Laya, it stays on your
+  computer.
 - **Optional model downloads:** Hugging Face serves local model weights, Laya's
   included; no dictation audio or text is included. The separately installed engines
   of Parakeet and Laya have their own package downloads. Export files are generated locally and saved through the
