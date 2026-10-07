@@ -596,3 +596,27 @@ def test_a_refused_plan_renewal_fails_the_run_with_openais_reason(
     client.post("/api/dictionary/build", json={"source": "audio"})
     done = wait_for_build(client)
     assert done["outcome"] == "failed" and "refresh_token_reused" in done["errorDetail"]
+
+
+def test_signing_out_during_a_plan_run_stops_it_at_the_next_request(
+    app: Entune, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    signed_in = iter([True])  # signed in when the run starts, signed out after
+
+    monkeypatch.setattr(
+        app.settings, "chatgpt_access_token", lambda: "access-1" if next(signed_in, False) else None
+    )
+    app.settings.set_dictionary_model("chatgpt:gpt-6-sol")
+    asked: list[str] = []
+
+    async def fake(request: Request) -> str:
+        asked.append(request.api_key)
+        return '{"additions": [], "revisions": [], "removals": []}'
+
+    monkeypatch.setattr(app.providers[0], "transcribe", lambda c, m, k: Transcript("words"))
+    monkeypatch.setattr(app.builds, "_call", fake)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    client.post("/api/dictionary/build", json={"source": "audio"})
+    done = wait_for_build(client)
+    assert asked == []  # the access it started with is not used once signed out
+    assert done["outcome"] == "failed" and "you signed out of ChatGPT" in done["error"]

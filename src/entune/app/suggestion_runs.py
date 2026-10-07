@@ -297,18 +297,19 @@ class DictionaryBuilds:
         request within it (a reply's corrections), goes with the current access."""
         if request.provider == suggestion_model.CHATGPT:
             access = await asyncio.to_thread(self._current_access)
-            request = replace(
-                request, api_key=access or request.api_key, access=self._current_access
-            )
+            request = replace(request, api_key=access, access=self._current_access)
         return await self._call(request)
 
-    def _current_access(self) -> str | None:
-        """The plan's current access, renewed when due; a renewed one is kept out of errors."""
+    def _current_access(self) -> str:
+        """The plan's current access, renewed when due; a renewed one is kept out of errors.
+        Signed out during the run, it stops at the next request instead of going on with
+        the access it started with."""
         access = self._plan_access()
-        if access is not None:
-            with self._lock:
-                if access not in self._renewed:
-                    self._renewed.append(access)
+        if access is None:
+            raise ValueError("Signed out of ChatGPT: sign in again under Settings to continue.")
+        with self._lock:
+            if access not in self._renewed:
+                self._renewed.append(access)
         return access
 
     async def _part(self, spec: BuildInput, step: batches.Batch, number: int) -> None:
