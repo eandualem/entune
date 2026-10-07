@@ -21,6 +21,9 @@ class _Actions:
     def copy_to_clipboard(self, text: str) -> None:
         _actions.copy_to_clipboard(text)
 
+    def prepare_paste(self) -> None:
+        _actions.prepare_paste()
+
     def paste_into_focused_app(
         self, text: str, check: Callable[[], None] | None = None
     ) -> Delivery:

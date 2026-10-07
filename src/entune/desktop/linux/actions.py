@@ -137,6 +137,9 @@ class Actions:
         on_ui_thread_wait(lambda: _copy(text))
         _copy_wayland(text)
 
+    def prepare_paste(self) -> None:
+        """Linux sends the paste without reading the focused field."""
+
     def paste_into_focused_app(
         self, text: str, check: Callable[[], None] | None = None
     ) -> Delivery:

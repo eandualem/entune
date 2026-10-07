@@ -183,6 +183,9 @@ class Actions:
     def copy_to_clipboard(self, text: str) -> None:
         copy_to_clipboard(text)
 
+    def prepare_paste(self) -> None:
+        """Windows reports the focused field without preparation."""
+
     def paste_into_focused_app(
         self, text: str, check: Callable[[], None] | None = None
     ) -> Delivery:

@@ -152,7 +152,7 @@ limits of our recommendations.
 
 ## Teach Entune your vocabulary
 
-Use **Dictionary → Suggest new entries** to learn from the selected speech
+Use **Dictionary → Get suggestions** to learn from the selected speech
 model's history. Or choose **Learn from audio** to import recordings from
 another dictation app or an audio folder. Entune transcribes imported audio
 with your chosen speech model, then proposes entries for review.

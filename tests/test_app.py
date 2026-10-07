@@ -97,9 +97,13 @@ class FakeActions:
         self.pasted = 0
         self.outcome: Delivery = "inserted"
         self.notices: list[tuple[str, str]] = []
+        self.prepared = threading.Event()
 
     def copy_to_clipboard(self, text: str) -> None:
         self.clipboard = text
+
+    def prepare_paste(self) -> None:
+        self.prepared.set()
 
     def paste_into_focused_app(
         self, text: str, check: Callable[[], None] | None = None
@@ -360,6 +364,17 @@ def test_starting_a_recording_opens_the_provider_and_jev_connections(tmp_path: P
     entune.settings.set_processing(formatting=True)
     app.start_recording()
     assert provider.preconnected.wait(2) and jev_opened.wait(2)
+    app.stop_recording()
+    wait_for(lambda: entune.operations.status() is None)
+    entune.close()
+
+
+def test_starting_a_recording_readies_the_app_in_front_for_the_paste(tmp_path: Path) -> None:
+    app, platform, entune = make(tmp_path)
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    app.start_recording()
+    assert platform.actions.prepared.wait(2)  # while the person speaks, not at paste time
     app.stop_recording()
     wait_for(lambda: entune.operations.status() is None)
     entune.close()
