@@ -14,7 +14,7 @@ own app: hold a shortcut in any app, speak, and the text is pasted where you are
 Choose a cloud or local speech model, and keep your recordings on your computer.
 Its personal dictionary learns from your dictation; a decision model chooses
 when a dictionary replacement actually fits the sentence, and where paragraphs and
-bullets belong.
+bullets belong. Learn more at **[entune.app](https://entune.app)**.
 
 A 42-second tour of Entune on a Mac:
 
@@ -130,7 +130,7 @@ Entune separates three jobs, so you can choose each independently:
 | Job | Our starting recommendation | When it runs |
 |---|---|---|
 | Turn audio into text | **Parakeet** on Apple Silicon, or **AssemblyAI** in the cloud | After each recording |
-| Build your dictionary | **GPT-6.1 Sol**, medium effort, 24,000-character batches; our October test used **GPT-6 Astra**, high effort | When you request suggestions |
+| Build your dictionary | **GPT-6 Astra**, high effort, on a ChatGPT plan or an API key | When you request suggestions |
 | Choose dictionary replacements and formatting | **Jev** for the best result in our test; **OpenAI's Decisions API**; **Laya** for local processing | After transcription, when enabled |
 
 Speech options also include Groq, Soniox, ElevenLabs, xAI and local Whisper.cpp.

@@ -1,6 +1,6 @@
 [project]
 name = "entune"
-version = "0.4.1"
+version = "0.4.2"
 description = "Dictation with your choice of speech model and a personal dictionary that selects corrections in context."
 readme = "README.md"
 license = "MIT"
@@ -14,7 +14,7 @@ dependencies = [
   "opentelemetry-api>=1.28",  # an interrupted reply's text goes on its trace (call.py)
   "pillow",
   "pydantic>=2",
-  "pydantic-ai-slim[anthropic,google,groq,mistral,openai]>=2.48",
+  "pydantic-ai-slim[anthropic,google,groq,mistral,openai]>=2.54",
   "pynput>=1.7,<2 ; sys_platform == 'darwin' or sys_platform == 'win32'",
   "pyobjc-framework-applicationservices>=10 ; sys_platform == 'darwin'",
   "pyobjc-framework-AVFoundation>=10 ; sys_platform == 'darwin'",

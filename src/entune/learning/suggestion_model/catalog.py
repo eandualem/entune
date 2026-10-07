@@ -11,7 +11,7 @@ CHATGPT = "chatgpt"
 # Signing in with ChatGPT comes first: most people have a plan, and it needs no key. The
 # order is also which provider a dictionary without a chosen model uses first.
 LLM_PROVIDERS: dict[str, tuple[str, str]] = {
-    CHATGPT: ("OpenAI · ChatGPT subscription", "chatgpt:gpt-6-sol"),
+    CHATGPT: ("OpenAI · ChatGPT subscription", "chatgpt:gpt-6-astra"),
     "openai": ("OpenAI", "openai:gpt-5.4-mini"),
     "anthropic": ("Anthropic", "anthropic:claude-sonnet-5"),
     "google": ("Google Gemini", "google:gemini-3.5-flash"),
@@ -48,8 +48,8 @@ _MODELS = {
     ),
     # The plan decides which of these it allows; per-token price does not apply.
     CHATGPT: (
-        ("gpt-6-sol", "GPT-6 Sol"),
         ("gpt-6-astra", "GPT-6 Astra"),
+        ("gpt-6-sol", "GPT-6 Sol"),
         ("gpt-6-luna", "GPT-6 Luna"),
         ("gpt-5.4-mini", "GPT-5.4 mini"),
     ),
