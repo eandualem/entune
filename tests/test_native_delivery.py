@@ -144,3 +144,61 @@ def test_a_caret_range_is_read_from_the_tuple_pyobjc_returns(
         "entune.desktop.macos.actions.AX.AXValueGetValue", lambda value, kind, _: (False, None)
     )
     assert actions._range(object()) is None
+
+
+class FakeApp:
+    def processIdentifier(self) -> int:
+        return 42
+
+    def bundleIdentifier(self) -> str:
+        return "com.example.browser"
+
+
+def test_a_whole_page_in_focus_switches_the_tree_on_and_finds_the_text_box(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A browser or Electron app with its accessibility tree off reports the web page as
+    focused; switched on, it reports the text box inside it."""
+    page, box = {"AXRole": "AXWebArea"}, {"AXRole": "AXTextArea"}
+    switched: list[str] = []
+
+    class FakeAX:
+        @staticmethod
+        def AXUIElementCreateSystemWide() -> dict[str, Any]:
+            return {"system": True}
+
+        @staticmethod
+        def AXUIElementCreateApplication(pid: int) -> dict[str, Any]:
+            return {"app": pid}
+
+        @staticmethod
+        def AXUIElementSetMessagingTimeout(element: Any, seconds: float) -> None:
+            pass
+
+        @staticmethod
+        def AXUIElementSetAttributeValue(element: Any, name: str, value: bool) -> int:
+            switched.append(name)
+            return 0
+
+    def attribute(element: Any, key: str) -> Any:
+        if key == "AXFocusedUIElement":
+            return box if switched else page
+        return element.get(key)
+
+    class FakeWorkspace:
+        @staticmethod
+        def sharedWorkspace() -> Any:
+            return FakeWorkspace()
+
+        def frontmostApplication(self) -> FakeApp:
+            return FakeApp()
+
+    monkeypatch.setattr(actions, "AX", FakeAX)
+    monkeypatch.setattr(actions, "NSWorkspace", FakeWorkspace)
+    monkeypatch.setattr(actions, "_attribute", attribute)
+    assert actions._focused() is box
+    assert set(switched) == set(actions._TREE_SWITCHES)
+    # Started with the recording, the switch is already on by paste time.
+    switched.clear()
+    actions.prepare_paste()
+    assert set(switched) == set(actions._TREE_SWITCHES)
