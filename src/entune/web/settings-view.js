@@ -148,12 +148,14 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   }
   async function signInChanged(message) {
     const custom = dm.model.value === "__custom__" ? dm.custom.value : null;
-    const kept = custom === null ? dm.model.value : null;
+    const picked = custom === null ? dm.model.value : null;
     await loadSettings();
-    // The account's own models arrive with the sign-in: offer them, keeping the pick if
-    // listed, and a custom model as typed.
+    // The account's own models arrive with the sign-in: offer them, keeping the pick only
+    // if the account offers it (else its suggested model), and a custom model as typed.
     if (!dm.edit.hidden) {
-      fillDictionaryModelChoices(kept);
+      const provider = chosenProvider();
+      const offered = provider?.models.some((m) => m.id === `${provider.id}:${picked}`);
+      fillDictionaryModelChoices(offered ? picked : null);
       if (custom !== null) {
         dm.model.value = "__custom__";
         dm.custom.hidden = false;
