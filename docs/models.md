@@ -93,9 +93,11 @@ a large import can take hours. Each part receives the dictionary produced so
 far, so parts depend on earlier results and run one after another. Dictionary size,
 transcript length, reasoning, provider load and retries all affect the wait.
 
-Our 540-transcript Sol build processed 20 parts in about **2 hours 15 minutes**
-of elapsed time, including recovery from one failed request. That example excludes
-speech transcription and is not a promised completion time. Importing recordings
+In our October test, 387 transcripts (7.5 hours of speech, 222,892 characters) took
+**39 minutes** in 10 parts, 2 to 7 minutes each, with GPT-6 Astra at high effort on a
+ChatGPT plan. An earlier 540-transcript build with GPT-6.1 Sol at medium effort took
+about 2 hours 15 minutes for 20 parts, including recovery from one failed request.
+These exclude speech transcription and are not promised completion times. Importing recordings
 first transcribes them with the target speech model, several at a time with a cloud
 model, and parts start while the rest is still being transcribed.
 
@@ -139,9 +141,9 @@ contextual dictionary correction.
 
 | Choose | Setup | Tradeoff |
 |---|---|---|
-| **Jev** | Enter a TypeSafe API key | Better correction/preservation balance in our fresh-data test; matched context is sent to TypeSafe |
-| **Laya** | Install `uv tool install 'laya[serve]'`, then choose Laya | Runs locally; made more incorrect replacements and missed more valid corrections in that test |
-| **OpenAI** | Enter an OpenAI API key (the same key as OpenAI in Dictionary setup) | OpenAI's Decisions API, a public beta at $0.10 per million input tokens; matched context is sent to OpenAI; not yet in our comparison. A ChatGPT sign-in cannot be used for it |
+| **Jev** | Enter a TypeSafe API key | Fewest wrong replacements (1 in 39) and the most useful formatting in our test; matched context is sent to TypeSafe |
+| **OpenAI** | Enter an OpenAI API key (the same key as OpenAI in Dictionary setup) | OpenAI's Decisions API, a public beta at $0.10 per million input tokens. Caught the most correct replacements but made 8 wrong ones in 50, and rarely formats; matched context is sent to OpenAI. A ChatGPT sign-in cannot be used for it |
+| **Laya** | Install `uv tool install 'laya[serve]'`, then choose Laya | Runs locally and fastest; 8 wrong replacements in 36, fewer correct ones caught, and poor formatting in our test |
 
 Laya's first start downloads about 850 MB of weights. Its engine includes
 PyTorch and uses additional memory. Entune manages its local server while Laya
@@ -152,9 +154,9 @@ Every decision model chooses only among the dictionary's eligible meanings. They
 invent a missing correct spelling or choose a literal meaning that the dictionary
 has not supplied. Check the entries if a recurring correct word keeps changing.
 
-In our test, a recording needing a decision had median dictionary-processing
-times of 0.38 seconds with Jev and 0.17 seconds with Laya, excluding local model
-startup. Those observations came from normal machine load, not a controlled
+In our October test, a recording needing a decision had median dictionary-processing
+times of 0.54 seconds with Jev, 0.34 seconds with OpenAI and 0.15 seconds with Laya,
+excluding local model startup; formatting took 0.73, 0.58 and 0.45 seconds. Those observations came from normal machine load, not a controlled
 speed benchmark, and are not end-to-end dictation times. Read the
 [complete comparison](decision-model-results.md) before interpreting the counts
 or using them to choose a model.
