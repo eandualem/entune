@@ -1491,7 +1491,10 @@ def test_a_plan_limit_sent_inside_the_reply_stops_at_once_and_says_so() -> None:
     error = streamed("subscription_sharing_usage_limit_exceeded", limit)
     assert suggestion_model.passing(error) is None  # no second or third attempt
     shown = generate._service_problem(f"ModelAPIError: {limit}")
-    assert "usage limit" in shown and "refused the key" not in shown
+    assert "ChatGPT plan's usage limit" in shown and "refused the key" not in shown
+    # Another provider's limit is not taken for the ChatGPT plan's.
+    other = generate._service_problem("429: You have reached your specified API usage limits")
+    assert "ChatGPT" not in other and "limit or quota" in other
     # A temporary error in the stream, and a dropped connection, are still tried again.
     assert suggestion_model.passing(streamed("server_error", "try again")) is not None
     assert suggestion_model.passing(ModelAPIError("m", "Connection error.")) is not None

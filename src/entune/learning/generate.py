@@ -53,7 +53,7 @@ def _service_problem(detail: str) -> str:
         return (
             "you signed out of ChatGPT; sign in again in Settings, Dictionary setup, to continue."
         )
-    if "usage limit" in words:  # a ChatGPT plan's share for apps; its text mentions API keys
+    if "subscription sharing" in words:  # a ChatGPT plan's share for apps; it mentions API keys
         return (
             "your ChatGPT plan's usage limit for apps such as Entune is reached;"
             " try again after it resets, or check Entune's limit in ChatGPT Settings > Usage."

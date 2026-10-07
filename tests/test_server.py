@@ -1174,3 +1174,14 @@ def test_the_introduction_plays_once_and_only_on_a_first_launch(tmp_path: Path) 
     used.create_recording(wav_bytes(b"\x00\x00" * 16))
     upgraded = TestClient(create_app(Entune(used, [])), base_url="http://localhost")
     assert upgraded.post("/api/intro").json() == {"play": False}  # not for an existing install
+
+
+def test_a_plan_whose_catalog_lacks_the_suggested_model_suggests_one_it_offers(
+    tmp_path: Path,
+) -> None:
+    settings = Entune(Store(tmp_path), []).settings
+    settings.set_chatgpt_login(plan_login("access", "refresh", time.time() + 3600))
+    settings.set_chatgpt_models([("gpt-6-astra", "GPT-6 Astra"), ("gpt-5.6-sol", "GPT-5.6 Sol")])
+    plan = next(p for p in settings.suggestion_providers() if p.id == "chatgpt")
+    assert plan.default_model == "chatgpt:gpt-6-astra"
+    assert settings.dictionary_model() == "chatgpt:gpt-6-astra"

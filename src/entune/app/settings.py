@@ -185,11 +185,18 @@ class Settings:
                 provider_id,
                 name,
                 self._credential_hint(provider_id),
-                default_model,
+                self._suggested(provider_id),
                 tuple(self._models(provider_id)),
             )
-            for provider_id, (name, default_model) in suggestion_model.LLM_PROVIDERS.items()
+            for provider_id, (name, _) in suggestion_model.LLM_PROVIDERS.items()
         ]
+
+    def _suggested(self, provider_id: str) -> str:
+        """The provider's suggested model; on a ChatGPT plan whose catalog does not list
+        it, the catalog's first model, so the suggestion is always one it offers."""
+        suggested = suggestion_model.LLM_PROVIDERS[provider_id][1]
+        offered = [m.id for m in self._models(provider_id)]
+        return suggested if provider_id != CHATGPT or suggested in offered else offered[0]
 
     def _models(self, provider_id: str) -> list[suggestion_model.ModelChoice]:
         """A ChatGPT plan offers the models its account catalog lists, once signed in."""
@@ -263,9 +270,9 @@ class Settings:
         saved = self._store.get_setting(DICTIONARY_MODEL_KEY)
         if saved is not None:
             return saved
-        for provider_id, (_, default_model) in suggestion_model.LLM_PROVIDERS.items():
+        for provider_id in suggestion_model.LLM_PROVIDERS:
             if self._credential_hint(provider_id) is not None:
-                return default_model
+                return self._suggested(provider_id)
         return None
 
     def set_dictionary_model(self, ref: str | None) -> None:
