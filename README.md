@@ -16,9 +16,9 @@ Its personal dictionary learns from your dictation; a decision model chooses
 when a dictionary replacement actually fits the sentence, and where paragraphs and
 bullets belong.
 
-A 40-second tour of Entune on a Mac:
+A 42-second tour of Entune on a Mac:
 
-https://github.com/user-attachments/assets/322a7a1f-07ba-4d40-9709-d7396d204666
+https://github.com/user-attachments/assets/bcbc632c-c74e-441f-a802-a3b9f4fe6d5f
 
 ## Install
 
