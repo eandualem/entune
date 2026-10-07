@@ -52,7 +52,13 @@ class Entune:
         )
         self.tracing = Tracing(store)
         self._listeners.append(self.tracing.sync)  # Delete everything removes its keys
-        self.builds = DictionaryBuilds(self.speech, llm_call, self.operations, self.tracing.run)
+        self.builds = DictionaryBuilds(
+            self.speech,
+            llm_call,
+            self.operations,
+            self.tracing.run,
+            plan_access=lambda: self.settings.chatgpt_access_token(),
+        )
         laya = laya or Laya(store.data_dir / "models")
         self.settings = Settings(
             store, providers, self._changed, laya_installed=lambda: laya.engine() is not None

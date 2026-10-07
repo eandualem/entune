@@ -7,6 +7,7 @@ The client is closed when the call ends.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -24,13 +25,17 @@ PLAN_TIMEOUT = 870.0
 CONNECT = 5.0  # seconds to open a connection
 
 
-def _credential(header: str, value: str) -> dict[str, list[Callable[[Any], Awaitable[None]]]]:
+def _credential(
+    header: str, value: str, current: Callable[[], str | None] | None = None
+) -> dict[str, list[Callable[[Any], Awaitable[None]]]]:
     """Set the saved key on every request. The SDKs merge headers from the environment
     (ANTHROPIC_CUSTOM_HEADERS and the like) over their own, so only the last step before
-    sending can guarantee which key goes out."""
+    sending can guarantee which key goes out. `current`, when given, is read before each
+    request for the value to send now, else `value` goes."""
 
     async def set_credential(request: Any) -> None:
-        request.headers[header] = value
+        now = None if current is None else await asyncio.to_thread(current)
+        request.headers[header] = now or value
 
     return {"request": [set_credential]}
 
@@ -42,15 +47,19 @@ async def _connect_limit(request: Any) -> None:
     request.extensions["timeout"] = {**request.extensions.get("timeout", {}), "connect": CONNECT}
 
 
-def _hooks(header: str, value: str) -> dict[str, list[Callable[[Any], Awaitable[None]]]]:
-    return {"request": [*_credential(header, value)["request"], _connect_limit]}
+def _hooks(
+    header: str, value: str, current: Callable[[], str | None] | None = None
+) -> dict[str, list[Callable[[Any], Awaitable[None]]]]:
+    return {"request": [*_credential(header, value, current)["request"], _connect_limit]}
 
 
-def _http2(header: str, value: str) -> httpx2.AsyncClient:
+def _http2(
+    header: str, value: str, current: Callable[[], str | None] | None = None
+) -> httpx2.AsyncClient:
     return httpx2.AsyncClient(
         timeout=httpx2.Timeout(TIMEOUT, connect=CONNECT),
         trust_env=False,
-        event_hooks=_hooks(header, value),
+        event_hooks=_hooks(header, value, current),
     )
 
 
@@ -64,7 +73,11 @@ def _http(header: str, value: str) -> httpx.AsyncClient:
 
 
 @asynccontextmanager
-async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterator[Model]:
+async def provider_model(
+    provider: str, api_key: str, name: str, access: Callable[[], str | None] | None = None
+) -> AsyncIterator[Model]:
+    """`access`, on a ChatGPT plan, gives the current access token before each HTTP request,
+    so a correction or retry within one call never goes out on an access that ran out."""
     if provider == "anthropic":
         from anthropic import AsyncAnthropic
         from pydantic_ai.models.anthropic import AnthropicModel
@@ -84,21 +97,28 @@ async def provider_model(provider: str, api_key: str, name: str) -> AsyncIterato
         from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
         from pydantic_ai.providers.openai import OpenAIProvider
 
-        # A ChatGPT plan answers at its own endpoint, for the account its sign-in names;
-        # `api_key` is then the sign-in's access token.
+        # A ChatGPT plan uses the same public Responses API, with the sign-in's access token
+        # as `api_key`. Its preview rejects system-role input items, which the library adds
+        # only for JSON-object mode; the reply is checked against the schema here anyway,
+        # so the plan route goes without it and the instructions stay in `instructions`.
         plan = provider == CHATGPT
-        account = chatgpt.account_id(api_key) if plan else None
         async with AsyncOpenAI(
             api_key=api_key,
-            base_url=chatgpt.BACKEND if plan else "https://api.openai.com/v1",
+            base_url=chatgpt.API,
             max_retries=0,
             timeout=httpx2.Timeout(TIMEOUT, connect=CONNECT),
-            default_headers={"ChatGPT-Account-Id": account} if account else None,
-            http_client=_http2("authorization", f"Bearer {api_key}"),
+            http_client=_http2(
+                "authorization",
+                f"Bearer {api_key}",
+                None if access is None else lambda: (t := access()) and f"Bearer {t}",
+            ),
         ) as openai:
+            backend = OpenAIProvider(openai_client=openai)
+            profile = {**(backend.model_profile(name) or {}), "supports_json_object_output": False}
             yield OpenAIResponsesModel(
                 name,
-                provider=OpenAIProvider(openai_client=openai),
+                provider=backend,
+                profile=profile if plan else None,  # type: ignore[arg-type]
                 settings=OpenAIResponsesModelSettings(openai_store=False),
             )
         return

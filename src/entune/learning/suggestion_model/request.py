@@ -29,6 +29,8 @@ class Request:
     check: Callable[[str], object]  # raises ValueError naming the rule a reply breaks
     retrying: Callable[[int, str], None]  # (attempt about to start, the rule broken)
     effort: str = "high"  # reasoning effort, by the level's own name
+    # On a ChatGPT plan: the current access token, read before each HTTP request.
+    access: Callable[[], str | None] | None = None
 
 
 Caller = Callable[[Request], Coroutine[Any, Any, str]]
