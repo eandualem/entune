@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from collections.abc import Iterator
@@ -542,3 +543,33 @@ def test_each_part_is_traced_under_its_run(app: Entune, monkeypatch: pytest.Monk
     wait_for_build(client)
     assert traced and traced[0][0] == job["id"]
     assert traced[0][1]["part"] == 1 and traced[0][1]["effort"] == "low"
+
+
+def test_a_run_on_a_chatgpt_plan_asks_each_part_with_the_current_access(
+    app: Entune, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A plan's access lasts an hour and is renewed when due; a run can take longer.
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 20)
+    access = {"current": "access-1"}
+    monkeypatch.setattr(app.settings, "chatgpt_access_token", lambda: access["current"])
+    app.settings.set_dictionary_model("chatgpt:gpt-6-sol")
+    asked: list[str] = []
+
+    async def fake(request: Request) -> str:
+        asked.append(request.api_key)
+        access["current"] = f"access-{len(asked) + 1}"  # renewed before the next part
+        if len(asked) == 2:
+            raise ValueError(f"refused {request.api_key}")
+        return '{"additions": [], "revisions": [], "removals": []}'
+
+    def transcribe(clip: Clip, model: str, key: str) -> Transcript:
+        return Transcript("temporary words here")
+
+    monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
+    monkeypatch.setattr(app.builds, "_call", fake)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    client.post("/api/dictionary/build", json={"source": "audio"})
+    done = wait_for_build(client)
+    assert asked == ["access-1", "access-2"]
+    # A renewed access is kept out of the error, as the first one is.
+    assert done["outcome"] == "failed" and "access-2" not in json.dumps(done)

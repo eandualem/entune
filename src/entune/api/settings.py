@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import webbrowser
 from dataclasses import asdict
 
@@ -202,6 +203,12 @@ def routes(app: Entune) -> list[Route]:
 
     def sign_in_status() -> Response:
         login = app.settings.chatgpt_login()
+        attempt = app.settings.chatgpt_sign_in()
+        if login is None and attempt is not None and attempt.expires_at < time.time():
+            with lock:  # the browser never came back: say so, so it can be started again
+                if app.settings.chatgpt_sign_in() == attempt:
+                    app.settings.set_chatgpt_sign_in(None)
+                    outcome["error"] = "The sign-in was not finished in time. Start it again."
         if login is not None:
             return JSONResponse({"state": "signed-in", "account": login.email or "signed in"})
         if outcome["error"]:
@@ -215,21 +222,30 @@ def routes(app: Entune) -> list[Route]:
                 attempt = app.settings.chatgpt_sign_in()
                 if attempt is None:
                     return _page("No sign-in is waiting", "Start it again from Entune's settings.")
+                if query.get("state") != attempt.state:
+                    # An older tab or a stray request: the sign-in waiting goes on.
+                    return _page(
+                        "Sign-in did not finish",
+                        "This page is not from the sign-in Entune is waiting for. Finish that"
+                        " one, or start again from Entune's settings.",
+                    )
                 try:
                     login = chatgpt.finish(attempt, query)
                 except ValueError as exc:
                     app.settings.set_chatgpt_sign_in(None)
                     outcome["error"] = str(exc)
                     return _page("Sign-in did not finish", str(exc))
+                try:  # the plan's own models; the suggested list stands in when this fails
+                    catalog = chatgpt.models(login.access_token) or None
+                except ValueError:
+                    catalog = None
+                # Saved together, so the page shows the account's models once signed in.
                 app.settings.set_chatgpt_sign_in(None)
                 app.settings.set_chatgpt_client_id(login.client_id)
+                app.settings.set_chatgpt_models(catalog)
                 app.settings.set_chatgpt_login(login)
         except Busy as exc:
             return _page("Sign-in did not finish", str(exc))
-        try:  # the plan's own models; the suggested list stands in when this fails
-            app.settings.set_chatgpt_models(chatgpt.models(login.access_token) or None)
-        except ValueError:
-            app.settings.set_chatgpt_models(None)
         return _page("Signed in to ChatGPT", "You can close this tab and go back to Entune.")
 
     def sign_out() -> Response:

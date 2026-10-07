@@ -7,6 +7,7 @@ import json
 import sqlite3
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -432,8 +433,8 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
 
     def finish(attempt: chatgpt.Attempt, query: dict[str, str]) -> chatgpt.Login:
         finished.append(query)
-        if query.get("state") != attempt.state:
-            raise ValueError("This sign-in reply is not from the sign-in Entune started")
+        if "error" in query:
+            raise ValueError("You declined Entune's use of your ChatGPT plan")
         return login
 
     monkeypatch.setattr(chatgpt, "finish", finish)
@@ -491,11 +492,24 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
     res = client.post("/api/dictionary/build", json=build)
     assert res.status_code == 400 and "Sign in with ChatGPT" in res.text
 
-    # A refused or forged return says why on both the page and in Entune.
+    # A return from another sign-in leaves the one waiting to finish; a refused one says
+    # why on both the page and in Entune.
     client.post("/api/chatgpt/sign-in")
-    assert "Sign-in did not finish" in client.get("/auth/callback?state=forged&code=c2").text
-    failed = client.get("/api/chatgpt/sign-in").json()
-    assert failed["state"] == "failed" and "not from the sign-in" in failed["error"]
+    assert "not from the sign-in" in client.get("/auth/callback?state=forged&code=c2").text
+    assert client.get("/api/chatgpt/sign-in").json() == {"state": "waiting"}
+    state = entune.settings.chatgpt_sign_in().state  # type: ignore[union-attr]
+    refused = client.get(f"/auth/callback?state={state}&error=access_denied")
+    assert "Sign-in did not finish" in refused.text
+    assert client.get("/api/chatgpt/sign-in").json()["state"] == "failed"
+
+    # A sign-in the browser never returns from stops waiting once it has run out.
+    client.post("/api/chatgpt/sign-in")
+    attempt = entune.settings.chatgpt_sign_in()
+    assert attempt is not None
+    entune.settings.set_chatgpt_sign_in(replace(attempt, expires_at=time.time() - 1))
+    expired = client.get("/api/chatgpt/sign-in").json()
+    assert expired["state"] == "failed" and "not finished in time" in expired["error"]
+    assert entune.settings.chatgpt_sign_in() is None
 
     # Deleting all data forgets a sign-in still waiting for the browser.
     client.post("/api/chatgpt/sign-in")

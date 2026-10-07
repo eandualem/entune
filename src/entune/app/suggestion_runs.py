@@ -66,8 +66,13 @@ class DictionaryBuilds:
         call: suggestion_model.Caller,
         operations: Operations,
         trace: Callable[..., AbstractContextManager[None]] = lambda *a, **k: nullcontext(),
+        plan_access: Callable[[], str | None] = lambda: None,
     ) -> None:
         self._speech, self._call, self._operations = speech, call, operations
+        # A ChatGPT plan's access lasts an hour and a run can take longer, so each part asks
+        # with the current access, renewed when it is due to run out.
+        self._plan_access = plan_access
+        self._renewed: list[str] = []  # accesses renewed during this run, kept out of errors
         self._trace = trace  # groups a run's requests in Langfuse when tracing is on
         self._lock = threading.RLock()
         self._state: dict[str, Any] = {"phase": "idle"}
@@ -294,6 +299,13 @@ class DictionaryBuilds:
             self._task = asyncio.current_task()
             working = self._working
         current = dictionary_changes.share(spec.dictionary, set())
+        builder = spec.builder
+        if builder[0] == suggestion_model.CHATGPT:
+            access = self._plan_access()
+            if access is not None and access != builder[1]:
+                builder = (builder[0], access, builder[2])
+                with self._lock:
+                    self._renewed.append(access)
         began = time.monotonic()
         try:
             self._checkpoint()
@@ -306,7 +318,7 @@ class DictionaryBuilds:
                 effort=spec.effort,
             ):
                 groups = await generate.propose_part(
-                    *spec.builder,
+                    *builder,
                     current,
                     current.effective(spec.speech.id) if working is None else working,
                     step,
@@ -410,7 +422,7 @@ class DictionaryBuilds:
                         else f"{type(exc).__name__}: {exc}"
                     )
                     # Never a key, in the log or the page, as for a run's own error.
-                    for secret in (spec.speech_key, spec.builder[1]):
+                    for secret in (spec.speech_key, spec.builder[1], *self._renewed):
                         if secret:
                             why = why.replace(secret, "[redacted]")
                     # The log keeps why, so a run's skipped recordings can be read afterwards.
@@ -488,6 +500,7 @@ class DictionaryBuilds:
     def _run(self) -> None:
         spec = self._spec
         assert spec is not None
+        self._renewed = []
         outcome, error, detail = "complete", None, None
         transcriber: threading.Thread | None = None
         try:
@@ -516,7 +529,7 @@ class DictionaryBuilds:
                 if isinstance(exc, generate.StepFailed)
                 else f"{type(exc).__name__}: {exc}"
             )
-            for secret in (spec.speech_key, spec.builder[1]):
+            for secret in (spec.speech_key, spec.builder[1], *self._renewed):
                 if secret:
                     error = error.replace(secret, "[redacted]")
                     detail = detail.replace(secret, "[redacted]")

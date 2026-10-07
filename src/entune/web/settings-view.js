@@ -147,8 +147,11 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     el("dm-signin-note").hidden = Boolean(account);
   }
   async function signInChanged(message) {
+    const kept = dm.model.value === "__custom__" ? null : dm.model.value;
     await loadSettings();
-    renderSignIn();
+    // The account's own models arrive with the sign-in: offer them, keeping the pick if listed.
+    if (!dm.edit.hidden) fillDictionaryModelChoices(kept);
+    else renderSignIn();
     flash(el("dm-status"), message, "ok");
   }
   let starting = false; // one start at a time
