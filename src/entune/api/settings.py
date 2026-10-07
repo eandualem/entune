@@ -109,7 +109,7 @@ def routes(app: Entune) -> list[Route]:
             if "fastMode" in body and not isinstance(body["fastMode"], bool):
                 raise ValueError("fastMode must be a boolean")
             if "decisionModel" in body and body["decisionModel"] not in DECISION_MODELS:
-                raise ValueError("decisionModel must be jev or laya")
+                raise ValueError("decisionModel must be jev, laya or openai")
             jev_settings = body.get("jev", {})
             if not isinstance(jev_settings, dict) or set(jev_settings) - {
                 "dictionary",
@@ -145,7 +145,7 @@ def routes(app: Entune) -> list[Route]:
             )
             app.settings.check_processing(
                 *processing,
-                key_saved=JEV_PROVIDER in keys or app.settings.key(JEV_PROVIDER) is not None,
+                keys_saved=keys.keys(),
             )
             shortcut_settings = body.get("shortcuts", {})
             if not isinstance(shortcut_settings, dict):

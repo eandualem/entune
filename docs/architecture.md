@@ -31,7 +31,8 @@ src/entune/
                   local/: Whisper.cpp and Parakeet, lifecycle capability, shared
                   downloads; Parakeet's helper runs in its external engine
   processing/     after speech: pipeline.py runs the stages, results.py records them;
-                  jev_client.py calls the decision model, Jev or Laya, over TypeSafe's API;
+                  jev_client.py calls the decision model: Jev or Laya over TypeSafe's API,
+                  or OpenAI's Decisions API with the same questions in its shape;
                   laya.py runs Laya's server from its external engine; jev.py asks the
                   meaning, filler and paragraph questions; formatting.py, cleanup.py,
                   text_edits.py

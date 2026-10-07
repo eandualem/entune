@@ -141,13 +141,14 @@ contextual dictionary correction.
 |---|---|---|
 | **Jev** | Enter a TypeSafe API key | Better correction/preservation balance in our fresh-data test; matched context is sent to TypeSafe |
 | **Laya** | Install `uv tool install 'laya[serve]'`, then choose Laya | Runs locally; made more incorrect replacements and missed more valid corrections in that test |
+| **OpenAI** | Enter an OpenAI API key (the same key as OpenAI in Dictionary setup) | OpenAI's Decisions API, a public beta at $0.10 per million input tokens; matched context is sent to OpenAI; not yet in our comparison. A ChatGPT sign-in cannot be used for it |
 
 Laya's first start downloads about 850 MB of weights. Its engine includes
 PyTorch and uses additional memory. Entune manages its local server while Laya
 is selected and an applicable processing feature is enabled. Parakeet and Laya
 can both be selected; leave enough memory for both engines and your other apps.
 
-Both models choose only among the dictionary's eligible meanings. They cannot
+Every decision model chooses only among the dictionary's eligible meanings. They cannot
 invent a missing correct spelling or choose a literal meaning that the dictionary
 has not supplied. Check the entries if a recurring correct word keeps changing.
 

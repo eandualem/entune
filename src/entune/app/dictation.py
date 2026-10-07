@@ -18,7 +18,7 @@ from entune.app.decision_models import DecisionModels
 from entune.app.dictionary_file import DictionaryFile
 from entune.app.models import NoDefaultModel, SpeechModels, UnknownModel
 from entune.app.operations import Operation, Operations
-from entune.app.settings import JEV_PROVIDER, JevStatus, Settings
+from entune.app.settings import JevStatus, Settings
 from entune.audio.formats import sniff_mime
 from entune.dictionary.entries import Groups
 from entune.processing import results
@@ -346,7 +346,7 @@ class Dictation:
             contextual=status.dictionary,
             formatting=status.formatting,
             cleanup=status.cleanup,
-            key=self._settings.key(JEV_PROVIDER),
+            key=self._settings.decision_key(),
             client=self._jev,
             policy=self._settings.jev_policy(),
             endpoint=self._decisions.endpoint(),
