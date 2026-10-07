@@ -198,7 +198,9 @@ def passing(error: Exception) -> str | None:
 # Codes of streamed errors worth another attempt: a server error, and a ChatGPT plan's
 # usage briefly unavailable (OpenAI's Sign in with ChatGPT error list).
 STREAMED_TEMPORARY = frozenset({"server_error", "usage_unavailable"})
-_STATED_CODE = re.compile(r"([a-z][a-z0-9_]*): ")
+# A service code leading the message, always snake_case ("server_error"), so a plain
+# "error: connection reset" is not taken for one.
+_STATED_CODE = re.compile(r"([a-z][a-z0-9]*(?:_[a-z0-9]+)+): ")
 
 
 PARTIAL = 50_000  # characters of an interrupted reply kept on its trace

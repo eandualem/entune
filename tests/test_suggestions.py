@@ -1504,3 +1504,5 @@ def test_a_plan_limit_sent_inside_the_reply_stops_at_once_and_says_so() -> None:
     stated = ModelAPIError("m", f"subscription_sharing_usage_limit_exceeded: {limit}")
     assert suggestion_model.passing(stated) is None
     assert suggestion_model.passing(ModelAPIError("m", "server_error: boom")) is not None
+    # A word and a colon that is not a service code stays a connection problem.
+    assert suggestion_model.passing(ModelAPIError("m", "error: connection reset")) is not None
