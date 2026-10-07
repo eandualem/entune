@@ -2,7 +2,7 @@
 
 For setup, start with [Choosing models](models.md) and [Using Entune](guide.md#personal-dictionary).
 The [fresh decision-model comparison](decision-model-results.md) measures actual
-replacements with Jev and Laya; this page describes the dictionary format and behavior.
+replacements and formatting with Jev, OpenAI's Decisions API and Laya; this page describes the dictionary format and behavior.
 
 `dictionary.json` uses version 2. The primary record is a confusion group with
 stable meaning IDs and explicit recognized-form associations. `pinned` is shared;

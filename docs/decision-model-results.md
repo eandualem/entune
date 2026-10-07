@@ -1,152 +1,140 @@
 # Does a decision model prevent wrong dictionary replacements?
 
-**Yes, in this test.** With the same learned dictionary and the same fresh
-Parakeet transcripts, Jev prevented 58 of 61 incorrect automatic replacements;
-Laya prevented 41. Jev retained 30 of 31 available correct replacements, and
-Laya retained 22. These are decisions at dictionary matches, not an overall
-speech-recognition accuracy score.
+**Yes, in our test.** On 2.1 hours of new dictation, replacing every dictionary match
+would have made 121 changes, 72 of them wrong. Choosing with **Jev** made 39 changes,
+**1** of them wrong. OpenAI's Decisions API made 50 changes with 8 wrong, and Laya,
+running locally, made 36 with 8 wrong. Jev also placed the most correct paragraph
+breaks. These are decisions at dictionary matches and sentence boundaries, not an
+overall speech-recognition accuracy score.
 
-## The combined result
+## The data
 
-Measured September 30, 2026, using 56 recordings in three consecutive batches:
+Measured October 7, 2026, with Entune 0.4.0, on one person's own dictation: the
+maintainer's everyday use of Entune over six days.
 
-| Method | Replacements made | Correct | Incorrect | Uncertain | Correct replacements missed |
-|---|---:|---:|---:|---:|---:|
-| Unconditional replacement | 93 | 31 | 61 | 1 | 0 |
-| Jev | 34 | 30 | 3 | 1 | 1 |
-| Laya | 42 | 22 | 20 | 0 | 9 |
+| | Recordings | Audio | Transcript text |
+|---|---:|---:|---:|
+| **Training** (October 2–5): the dictionary learned from these | 406 (387 with speech) | 7.5 hours | 222,892 characters |
+| **Test** (October 6–7): never shown to the dictionary | 160 (158 with speech) | 2.1 hours | 75,578 characters |
 
-“Correct” means the saved replacement agrees with the context-based expected
-answer. “Incorrect” includes changing a word that should stay unchanged or
-choosing the wrong replacement. “Missed” means leaving a word unchanged when
-an available dictionary correction was judged appropriate. One passage could
-not be judged confidently; it stays uncertain, not a counted success or error.
+The split is by date, so the dictionary learned from the past and was tested on later
+dictation, as it is in daily use.
 
-**Fewer wrong replacements:** `(61 − 3) / 61 = 95.1%` for Jev and
-`(61 − 20) / 61 = 67.2%` for Laya. Rounded headline figures are 95% and 67%.
+1. **Speech:** Parakeet (`parakeet-tdt-0.6b-v3`) on the Mac transcribed every
+   recording. The raw transcripts, before any dictionary step, are the input.
+2. **Dictionary:** a new dictionary learned only from the training transcripts by
+   **GPT-6 Astra at high effort on a ChatGPT plan**, with Entune's own suggestion
+   code: **64 entries** in 10 parts, 39 minutes. No entries were added by hand.
+3. **Expected answers:** before any decision model ran, the reviewing assistant read
+   every dictionary match and every sentence of the test set in context and wrote down
+   the right reading and the right formatting. AssemblyAI's transcripts of the same
+   recordings were used only as a reading aid. The answers were not revised after the
+   models' outputs were seen.
+4. **Decision models:** Jev (`jev-1.13.0`), OpenAI's Decisions API (`gpt-6-luna`) and
+   Laya (package 0.4.0, on the Mac), each through Entune's own processing code with its
+   default five-second limit.
 
-**Replacement precision**, among replacements that could be judged:
+## Corrections
 
-- Unconditional replacement: 31 correct out of 92 judged replacements, **33.7%**.
-- Jev: 30 correct out of 33 judged replacements, **90.9%**.
-- Laya: 22 correct out of 42 judged replacements, **52.4%**.
+The dictionary offered another reading at **121 places** in 51 test recordings. In
+context, 47 of them should change, 72 should stay as Parakeet wrote them, and 2 could
+not be judged.
 
-That is a precision increase of 57.2 percentage points for Jev and 18.7 for
-Laya on this sample. It is not “95% more accurate transcription.” Unchanged
-text does not inflate the replacement-precision denominator.
+| Method | Changes made | Correct | Incorrect | Correct changes caught (of 47) |
+|---|---:|---:|---:|---:|
+| Replace every dictionary match | 121 | 47 | 72 | 47 |
+| Choose with **Jev** | 39 | 38 | **1** | 38 |
+| Choose with **OpenAI** | 50 | 42 | **8** | 42 |
+| Choose with **Laya**, locally | 36 | 28 | **8** | 28 |
 
-## Each batch separately
+- **Jev** avoided 71 of the 72 wrong replacements (99%) and kept 38 of the 47 correct
+  ones (81%). 38 of its 39 changes were right (97%).
+- **OpenAI** avoided 64 (89%) and kept 42 (89%): the most correct changes, with
+  eight wrong ones, such as “on the top” → “tab” and “more or less” → “let's”.
+- **Laya** avoided 64 (89%) and kept 28 (60%).
+- None of the three changed the 2 places that could not be judged.
 
-The first batch was selected chronologically, not because it had the best result.
-The following two batches check whether the direction repeats.
+Most of the dictionary's risky entries pair a name with an everyday word: “from” and
+Chrome, “start” and star, “code” and quote, “top” and tab, “posters” and posts. In
+this test the everyday word was right far more often, which is what the decision
+model is for. 107 of the 121 places were real choices between meanings; at the other
+14 the dictionary offered one meaning only, so every model applied it.
 
-| Batch | Method | Replacements made | Correct | Incorrect | Uncertain | Correct replacements missed |
-|---|---|---:|---:|---:|---:|---:|
-| First: 21 recordings | Unconditional | 21 | 9 | 12 | 0 | 0 |
-| | Jev | 10 | 9 | 1 | 0 | 0 |
-| | Laya | 11 | 8 | 3 | 0 | 1 |
-| Second: 13 recordings | Unconditional | 32 | 6 | 26 | 0 | 0 |
-| | Jev | 7 | 6 | 1 | 0 | 0 |
-| | Laya | 13 | 6 | 7 | 0 | 0 |
-| Third: 22 recordings | Unconditional | 40 | 16 | 23 | 1 | 0 |
-| | Jev | 17 | 15 | 1 | 1 | 1 |
-| | Laya | 18 | 8 | 10 | 0 | 8 |
+“Correct” judges the meaning the model chose. The learned dictionary spelled the
+product name **Intune**, because the recordings only ever say it; 15 of the 47 places
+that should change take that entry, which gives the right meaning but not the right
+spelling.
+Pin the spellings you care about; a pinned entry is not learned again.
 
-Jev avoided 92%, 96% and 96% of wrong automatic replacements in the three
-batches. Laya avoided 75%, 73% and 57%. Both helped in each batch, but Laya's
-third-batch result also missed half of the available correct corrections.
-The first batch alone would give an incomplete picture of that tradeoff.
+### What the dictionary itself caught
 
-## What ran
+Reading the test transcripts against AssemblyAI's found **94 places where Parakeet
+got a name or term wrong** (for example “in tune” for Entune, “Jeff” for Jev,
+“cloud” for Claude, “open A” for OpenAI). The learned dictionary covered **39** of
+them and missed 55: it never learned Jev, which the training recordings mention only a
+few times, and some errors never occurred in training at all. A decision model can only
+choose among the dictionary's meanings, so this is where a better or pinned dictionary
+helps.
 
-1. Freeze one **185-group dictionary**, generated earlier by GPT-6.1 Sol with
-   medium reasoning and 24,000-character requests. It was learned from 540
-   earlier Parakeet transcripts; it was not constructed from a reference key.
-2. Select the earliest newer recordings in chronological order, excluding prior
-   experiment audio and duplicate training text. Group whole transcripts into
-   three batches below 24,000 characters: 22,863, 22,287 and 21,990 characters.
-   Two successful but empty Parakeet transcripts stay in the recording count.
-3. Reuse each recording's saved **raw Parakeet transcript**, before any dictionary
-   processing. A live change to the selected speech provider cannot change this
-   frozen input. Do not regenerate, refine or edit the dictionary between batches.
-4. Find dictionary matches using Entune's existing matcher. Freeze a context-based
-   expected answer for each matched passage before running either decision model.
-5. Run unconditional replacement, Jev and Laya on identical raw text and dictionary
-   candidates. Compare the saved outputs with the frozen expected answers.
+## Formatting
 
-The unconditional comparator applies the **first changed interpretation in
-matching order** whenever one is available. It does not ask whether the word
-was already correct. This is an explicit comparison baseline, not Entune's
-normal decision-model-off behavior: the app applies only user-approved direct
-mappings when contextual correction is off.
+The same test transcripts were formatted with paragraph breaks and bullets: 108
+dictations of two or more sentences, 670 places between sentences, of which **92**
+should break, judged before formatting ran.
 
-Jev used `jev-1.13.0`. Local Laya used package `0.3.20`, English checkpoint
-`55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851`. Both used the current product's
-prompts, candidate order, highest-score selection and default five-second
-processing budget. Laya received one occurrence per request, as in the product.
-No prompts or thresholds were tuned on these batches.
+| Model | Breaks made | At a right place | Right kind | Unwanted |
+|---|---:|---:|---:|---:|
+| **Jev** | 47 | 35 | 34 | 12 |
+| **OpenAI** | 9 | 8 | 7 | 1 |
+| **Laya**, locally | 42 | 5 | 0 | 37 |
 
-There were 93 matched replacement opportunities, including **70 questions with
-more than one eligible meaning**. Single-option results are included in the
-workflow totals but are not evidence of a model's ability to choose correctly.
-Neither model can invent an answer missing from the dictionary.
+- **Jev** formatted most usefully: three in four of its breaks were right, and it
+  found 35 of the 92.
+- **OpenAI** almost never breaks. With its probabilities recorded, its first choice was
+  a break at only 10 of the 89 labelled sentences, so this is its own answer, not
+  Entune's 0.6 confidence threshold.
+- **Laya** turned two whole dictations into bullet lists (44 bullets) and formatted
+  nothing else.
+
+Where a paragraph should start is partly a matter of taste, so treat these as the
+judgment of one careful reader, not ground truth.
+
+## Speed and reliability
+
+Median time of the decision step for a dictation that needed one, measured under normal
+machine load, not a controlled benchmark:
+
+| | Corrections | Formatting |
+|---|---:|---:|
+| Laya, on the Mac | 0.15 s | 0.45 s |
+| OpenAI | 0.34 s | 0.58 s |
+| Jev | 0.54 s | 0.73 s |
+
+None of the correction requests failed. In formatting, OpenAI's first four requests
+of the run timed out at the five-second limit and all succeeded when repeated; Jev had
+two timeouts that succeeded when repeated, and one dictation for which it returned an
+answer Entune could not use, every time. Laya had no failures; its first start took
+about ten minutes, mostly downloading its model, and seven seconds after that.
 
 ## What limits the conclusion?
 
-**One person's dictation, one dictionary, one pass.** These are new recordings
-relative to dictionary training, not proof of identical performance for new
-users, accents, speech models or kinds of text. Recordings came from September
-27–28, after the last training recording. Audio hashes and raw text were checked
-for overlap; no fresh-test answers were supplied to dictionary generation.
-The dictionary used an experimental generation prompt, which differs from the
-shipped prompt. The decision step used the unchanged shipped prompts.
+**One person, one judge, one pass.** These are one speaker's recordings and one
+reviewer's judgments; they do not promise the same result for other voices, speech
+models or kinds of text. The reviewing assistant read the text, not the audio, so its
+answers are judgments of context, not audio-verified truth. Small samples have wide
+uncertainty: one wrong replacement against eight is a clear difference here, but it is
+not a statistically established ranking.
 
-**Expected answers were AI judgments of text context.** The reviewing assistant
-read all 93 passages before model outputs were available: 92 were judged and
-one remained uncertain. The reference was not revised after seeing results.
-This controls answer leakage but does not remove judgment error or turn the
-labels into audio-verified truth. Private recordings and their contents are not
-published with the aggregate results.
+**One dictionary.** A different suggestion model, more training dictation or pinned
+entries would change what the dictionary offers, and so every row above.
 
-**Repeated forms matter.** Thirty of the 61 wrong unconditional replacements
-were `m` fragments inside “I'm.” Jev prevented all 30; Laya prevented 13.
-Outside those fragments, each prevented 28 wrong replacements. Three remaining
-wrong replacements had no correct literal meaning in the dictionary, so neither
-model had a correct answer to choose. The useful next step for those cases is
-improving the dictionary, not attributing the forced choice to model reasoning.
+**Private data.** The recordings and their contents stay private, so the aggregate
+results are not an independently reproducible public dataset.
 
-**Laya's current integration truncates input.** Its actual tokenizer/packer
-shortened 70 of 93 question instructions and 167 of 169 option descriptions;
-none of the 93 context states were shortened. The results describe that
-integration, not Laya's best achievable performance after prompt changes.
+## An earlier test
 
-**Small samples have wide uncertainty.** Resampling whole recordings 2,000 times
-with a fixed random seed gave these 95% intervals for reduction in incorrect
-replacements, relative to the unconditional comparator:
-
-| Batch | Jev | Laya |
-|---|---:|---:|
-| First | 71–100% | 50–100% |
-| Second | 87–100% | 55–92% |
-| Third | 92–100% | 37–90% |
-
-These intervals describe variation within this sample, not uncertainty from
-incorrect reference judgments or performance on a new population. They also
-should not be used alone to claim a statistically established model ranking.
-
-## Time and verification
-
-All conditions completed. Jev made 30 API requests and Laya made 93 local
-requests, with no retries or failures. Total dictionary-processing time across
-56 recordings was 12.61 seconds for Jev and 9.89 seconds for Laya, excluding
-Laya's roughly five-second startup. Among recordings that required a request,
-median processing times were 0.38 seconds and 0.17 seconds. These were measured
-under normal machine load, not a controlled latency benchmark; they exclude
-speech recognition and paste.
-
-All 168 saved transcript outputs were replayed through the matching and decision
-code. All 56 audio hashes and frozen dictionary, transcript, prompt and label
-files were rechecked. Every replacement mapped to one reviewed passage; no
-model calls were made during validation. Raw artifacts remain private to protect
-the recordings, so the published aggregates are not an independently reproducible
-public dataset.
+On September 30, 2026, with a different dictionary (185 entries, learned by GPT-6.1 Sol
+from 540 older transcripts) and 56 newer Parakeet recordings, replacing every match made
+93 changes with 61 wrong; Jev made 34 with 3 wrong, and Laya 42 with 20 wrong. Thirty of
+those wrong replacements were the fragment “m” inside “I'm.” OpenAI's Decisions API was
+not available yet. The direction matches the test above.

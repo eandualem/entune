@@ -84,32 +84,60 @@ _TREE_SWITCHES = ("AXManualAccessibility", "AXEnhancedUserInterface")
 _TEXT_ROLES = {"AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"}
 
 
+TREE_SECONDS = 1.0  # how long a page's text field may take to appear once switched on
+
+
 def _focused() -> Any:
     system = AX.AXUIElementCreateSystemWide()
     AX.AXUIElementSetMessagingTimeout(system, 0.2)
-    element = _attribute(system, "AXFocusedUIElement") or _focused_in_frontmost_app()
+    element = _attribute(system, "AXFocusedUIElement")
+    if element is None or _page(element):
+        element = _focused_in_frontmost_app() or element
     if element is not None:
         AX.AXUIElementSetMessagingTimeout(element, 0.2)
     return element
 
 
+def _page(element: Any) -> bool:
+    """A whole web page, which a browser or Electron app reports as focused, instead of
+    the text box in it, while its accessibility tree is off."""
+    return bool(_attribute(element, "AXRole") == "AXWebArea")
+
+
+def _switch_tree_on(app: Any) -> Any:
+    """The app's accessibility element, with its tree switched on. Left on, as screen readers
+    leave it; Chromium and Electron switch it off again after a while without one."""
+    element = AX.AXUIElementCreateApplication(app.processIdentifier())
+    AX.AXUIElementSetMessagingTimeout(element, 0.2)
+    for name in _TREE_SWITCHES:
+        AX.AXUIElementSetAttributeValue(element, name, True)
+    return element
+
+
+def prepare_paste() -> None:
+    """A recording started: switch the front app's tree on now, so a browser or Electron
+    app has rebuilt it, text field included, by the time the transcript is pasted."""
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    if app is not None and _trusted():
+        _switch_tree_on(app)
+
+
 def _focused_in_frontmost_app() -> Any:
-    """Ask the frontmost app itself, switching its accessibility tree on when it has none."""
+    """Ask the frontmost app itself, switching its accessibility tree on when it reports
+    no focus or only a whole page, and waiting briefly for the real field."""
     app = NSWorkspace.sharedWorkspace().frontmostApplication()
     if app is None:
         return None
     element = AX.AXUIElementCreateApplication(app.processIdentifier())
     AX.AXUIElementSetMessagingTimeout(element, 0.2)
     focused = _attribute(element, "AXFocusedUIElement")
-    if focused is not None:
+    if focused is not None and not _page(focused):
         return focused
-    # Left on, as screen readers leave it: the app builds the tree once, not per dictation.
-    for name in _TREE_SWITCHES:
-        AX.AXUIElementSetAttributeValue(element, name, True)
-    deadline = time.monotonic() + 0.5
-    while focused is None and time.monotonic() < deadline:
+    element = _switch_tree_on(app)
+    deadline = time.monotonic() + TREE_SECONDS
+    while (focused is None or _page(focused)) and time.monotonic() < deadline:
         time.sleep(0.05)
-        focused = _attribute(element, "AXFocusedUIElement")
+        focused = _attribute(element, "AXFocusedUIElement") or focused
     return focused
 
 
@@ -169,6 +197,14 @@ def paste_into_focused_app(text: str, check: Callable[[], None] | None = None) -
         if check:
             check()
         if not _editable(target):
+            # Why the transcript was copied instead, for the log: never the text itself.
+            app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            role = None if target is None else _attribute(target, "AXRole")
+            print(
+                f"paste: no text field in {app.bundleIdentifier() if app else None}"
+                f" (focused: {role}); copied instead",
+                flush=True,
+            )
             return "no_target"
         before, selection = _attribute(target, "AXValue"), _range(target)
         expected, caret = None, None

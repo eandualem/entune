@@ -309,6 +309,12 @@ class EntuneApp:
             except Exception:
                 logging.getLogger(__name__).exception("A shortcut action failed")
 
+    def _prepare_paste(self) -> None:
+        try:
+            self.platform.actions.prepare_paste()
+        except Exception:
+            logging.getLogger(__name__).exception("Could not prepare the paste")
+
     def start_recording(self, engine: ShortcutEngine | None = None, start: int = 0) -> None:
         """`engine` and `start` say which key press asked; a failure resets only that one."""
 
@@ -345,6 +351,8 @@ class EntuneApp:
                 return
             self.entune.desktop.report_status(lastRecordingStarted=time.time(), lastError=None)
             self.entune.dictation.prepare()
+            # The app in front gets ready to show its text field while the person speaks.
+            threading.Thread(target=self._prepare_paste, daemon=True, name="entune-paste").start()
             self._quiet_notified = False
             self._recording = True
             self._later(self._refresh_state)

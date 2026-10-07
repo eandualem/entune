@@ -13,11 +13,12 @@ Entune is an open-source dictation app for macOS, Windows and Linux. It runs as 
 own app: hold a shortcut in any app, speak, and the text is pasted where you are.
 Choose a cloud or local speech model, and keep your recordings on your computer.
 Its personal dictionary learns from your dictation; a decision model chooses
-when a dictionary replacement actually fits the sentence.
+when a dictionary replacement actually fits the sentence, and where paragraphs and
+bullets belong.
 
-A 40-second tour of Entune on a Mac:
+A 42-second tour of Entune on a Mac:
 
-https://github.com/user-attachments/assets/322a7a1f-07ba-4d40-9709-d7396d204666
+https://github.com/user-attachments/assets/bcbc632c-c74e-441f-a802-a3b9f4fe6d5f
 
 ## Install
 
@@ -93,32 +94,34 @@ The decision model **selects from your dictionary**. It does not generate or
 rewrite your dictation. Entune applies the stored spelling you can inspect
 and edit.
 
-### 95% fewer incorrect replacements with Jev in our test
+### 72 wrong replacements become 1 with Jev, in our test
 
-We tested a fixed learned dictionary on **56 new Parakeet recordings**, in
-three consecutive batches. These recordings were not used to build the
-dictionary. Here are the combined results:
+We let Entune learn a dictionary from **7.5 hours** of the maintainer's own dictation
+(406 recordings), then tested it on the next **2.1 hours** (160 recordings) that it
+never saw. Parakeet transcribed everything on the Mac; GPT-6 Astra learned the
+dictionary on a ChatGPT plan. At the 121 places where the dictionary offered another
+reading, the expected answer was written down before any decision model ran (2 could
+not be judged and are left out):
 
-| Method | Replacements made | Correct | Incorrect | Uncertain |
-|---|---:|---:|---:|---:|
-| Replace every dictionary match | 93 | 31 | 61 | 1 |
-| Choose with **Jev** | 34 | 30 | **3** | 1 |
-| Choose with **Laya**, locally | 42 | 22 | **20** | 0 |
+| Method | Changes made | Correct | Incorrect |
+|---|---:|---:|---:|
+| Replace every dictionary match | 121 | 47 | 72 |
+| Choose with **Jev** | 39 | 38 | **1** |
+| Choose with **OpenAI's Decisions API** | 50 | 42 | **8** |
+| Choose with **Laya**, locally | 36 | 28 | **8** |
 
-- **Jev prevented 58 of 61 wrong replacements (95%)**, while keeping
-  30 of the 31 correct replacements.
-- **Laya prevented 41 of 61 wrong replacements (67%)**, while keeping
-  22 of the 31 correct replacements.
+- **Jev** avoided 71 of the 72 wrong replacements and kept 38 of the 47 correct ones.
+- **OpenAI** caught the most correct ones, 42, with 8 wrong.
+- **Laya** keeps the decisions on your computer and is the fastest, a median 0.15 s
+  per dictation; it kept 28 correct ones.
 
-Both reduced wrong replacements in every batch. Jev retained more valid
-corrections; Laya keeps decision processing on your computer.
+**Formatting** was tested on the same dictation: of 92 places that should start a
+paragraph or bullet, Jev placed 35 with 12 unwanted breaks, OpenAI 8 with 1, and Laya 5
+with 37, turning two whole dictations into bullet lists.
 
-This is a small, single-user test, judged from text context before the models
-ran—not an overall transcription-accuracy claim. Repeated contractions
-contributed substantially to the result. The comparison applies the first
-available replacement unconditionally; it is not the app's decision-model-off
-setting. Read the [per-batch results and method](https://github.com/eandualem/entune/blob/develop/docs/decision-model-results.md)
-for the denominators, limitations and current Laya input constraints.
+This is one person's dictation judged from the text by one reviewer, not an overall
+transcription-accuracy claim. Read the [data, method and limits](https://github.com/eandualem/entune/blob/develop/docs/decision-model-results.md),
+including what the learned dictionary missed and an earlier test with the same direction.
 
 ## Choose the models that suit you
 
@@ -127,20 +130,21 @@ Entune separates three jobs, so you can choose each independently:
 | Job | Our starting recommendation | When it runs |
 |---|---|---|
 | Turn audio into text | **Parakeet** on Apple Silicon, or **AssemblyAI** in the cloud | After each recording |
-| Build your dictionary | **GPT-6.1 Sol**, medium effort, 24,000-character batches | When you request suggestions |
-| Choose dictionary replacements | **Jev** for the stronger result in our test; **Laya** for local processing | After transcription, when enabled |
+| Build your dictionary | **GPT-6.1 Sol**, medium effort, 24,000-character batches; our October test used **GPT-6 Astra**, high effort | When you request suggestions |
+| Choose dictionary replacements and formatting | **Jev** for the best result in our test; **OpenAI's Decisions API**; **Laya** for local processing | After transcription, when enabled |
 
 Speech options also include Groq, Soniox, ElevenLabs, xAI and local Whisper.cpp.
 Cloud services use your own provider accounts and keys; Entune does not sell
 inference credits.
 
-**Use your ChatGPT subscription to build the dictionary.** Choose **OpenAI →
-ChatGPT subscription → Sign in with ChatGPT** in dictionary setup. This access
-option does not require an OpenAI API key; your plan's model access and usage
-limits apply. An OpenAI API key is also available as a separate access option.
-ChatGPT sign-in is currently experimental; see the
-[access details](https://github.com/eandualem/entune/blob/develop/docs/models.md#dictionary-generation).
-It covers dictionary generation, not cloud speech recognition or Jev.
+**Use your ChatGPT subscription to build the dictionary.** Dictionary setup opens on
+**OpenAI → ChatGPT subscription**: choose **Sign in with ChatGPT** and approve Entune
+in your browser. Entune uses OpenAI's documented sign-in for open-source apps, so no
+API key is needed, and you can set a limit for Entune in ChatGPT **Settings → Usage**.
+Your plan's model access and usage limits apply. An OpenAI API key is also available.
+See the [access details](https://github.com/eandualem/entune/blob/develop/docs/models.md#dictionary-generation).
+The subscription covers dictionary generation, not speech recognition or the decision
+models; OpenAI's Decisions API needs an API key.
 
 The [model guide](https://github.com/eandualem/entune/blob/develop/docs/models.md)
 covers exact model IDs, local-engine installation, account access, and the
@@ -148,15 +152,15 @@ limits of our recommendations.
 
 ## Teach Entune your vocabulary
 
-Use **Dictionary → Suggest new entries** to learn from the selected speech
+Use **Dictionary → Get suggestions** to learn from the selected speech
 model's history. Or choose **Learn from audio** to import recordings from
 another dictation app or an audio folder. Entune transcribes imported audio
 with your chosen speech model, then proposes entries for review.
 
 **Dictionary generation takes time.** Text goes to the suggestion model in parts,
 one after another, each with the dictionary entries that occur in its text. Large
-histories can take minutes to hours; our 540-transcript Sol build took about
-**2 hours 15 minutes**. Imported audio is transcribed first, several recordings at a
+histories take longer; in our October test, 7.5 hours of dictation (387 transcripts)
+took **39 minutes** in 10 parts with GPT-6 Astra at high effort on a ChatGPT plan. Imported audio is transcribed first, several recordings at a
 time with a cloud speech model, and parts start as soon as enough text is ready. The
 setup lets you choose the reasoning effort, and estimates the time from
 what Entune has measured. This is separate from the fast decision step on each new
@@ -184,13 +188,23 @@ guarantee a better dictionary.
 - **Local data:** audio, transcripts, settings and keys stay in Entune's data
   folder. Export or delete them in **Settings → Data & Privacy**.
 - **Optional processing:** dictionary correction, repeated-filler reduction,
-  and paragraph/bullet formatting have separate controls.
+  and paragraph/bullet formatting have separate controls, each run by the decision
+  model you choose: Jev, OpenAI's Decisions API, or Laya on your computer.
+- **Fast mode:** uploads the audio while you speak, so a cloud transcript arrives
+  sooner; the **Performance** chart shows each model's measured wait.
+- **Drop audio to transcribe it:** drop files anywhere on the window, such as a
+  recording another app could not transcribe.
+- **Anonymous mode:** the eye switch blurs transcripts for screen recordings.
+- **For agents and tools:** a [local API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md)
+  accepts corrections you have confirmed, and optional
+  [Langfuse tracing](https://github.com/eandualem/entune/blob/develop/docs/guide.md#tracing-dictionary-suggestions)
+  shows every dictionary-suggestion request.
 
 There is no Entune account, telemetry or hosted history. Cloud speech sends
 audio to your chosen provider; dictionary generation sends its selected
 transcripts and dictionary to the chosen language-model provider. **Jev sends
-matched context to TypeSafe even when speech recognition is local.** Laya
-keeps that step local. See [data and privacy](https://github.com/eandualem/entune/blob/develop/docs/guide.md#data-and-privacy).
+matched context to TypeSafe, and OpenAI's Decisions API to OpenAI, even when speech
+recognition is local.** Laya keeps that step local. See [data and privacy](https://github.com/eandualem/entune/blob/develop/docs/guide.md#data-and-privacy).
 
 Entune is for a trusted, single-user machine. Its loopback API has no
 authentication: other local processes can read or change data through it.
