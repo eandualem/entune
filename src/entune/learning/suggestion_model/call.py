@@ -13,6 +13,7 @@ overcome.
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import cast
 
 import httpx
@@ -177,20 +178,27 @@ def passing(error: Exception) -> str | None:
         return f"the service returned error {code}" if code >= 500 else None
     if isinstance(error, ModelAPIError | httpx.TransportError | httpx2.TransportError):
         # An error the service sent inside a streamed reply (a ChatGPT plan's usage limit,
-        # for one) has no status code; only a temporary one there may pass.
+        # for one) has no status code; only a temporary one there may pass. Older library
+        # versions keep the SDK's error as the cause; newer ones lead the message with its
+        # code ("code: message").
         cause = error.__cause__
         if isinstance(cause, openai.APIError) and not isinstance(cause, openai.APIConnectionError):
             body = cause.body if isinstance(cause.body, dict) else {}
-            if body.get("code") not in STREAMED_TEMPORARY:
-                return None
-            return f"the service reported {body['code']}"
-        return "the connection failed"
+            reported = body.get("code")
+        elif cause is None and (stated := _STATED_CODE.match(str(error))):
+            reported = stated.group(1)
+        else:
+            return "the connection failed"
+        if reported not in STREAMED_TEMPORARY:
+            return None
+        return f"the service reported {reported}"
     return None
 
 
 # Codes of streamed errors worth another attempt: a server error, and a ChatGPT plan's
 # usage briefly unavailable (OpenAI's Sign in with ChatGPT error list).
 STREAMED_TEMPORARY = frozenset({"server_error", "usage_unavailable"})
+_STATED_CODE = re.compile(r"([a-z][a-z0-9_]*): ")
 
 
 PARTIAL = 50_000  # characters of an interrupted reply kept on its trace

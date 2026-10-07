@@ -793,7 +793,9 @@ def test_only_a_stream_the_provider_finished_is_used_and_it_carries_the_saved_ke
     if ending == "completed":
         assert json.loads(asyncio.run(run))["additions"] == []
     else:
-        with pytest.raises(ValueError, match="did not finish its reply"):
+        # A failed reply is never used: either its error, with the service's own code and
+        # words, or a reply that did not finish.
+        with pytest.raises((ValueError, ModelAPIError), match=r"did not finish|server_error"):
             asyncio.run(run)
     assert sent == ["Bearer k"]  # the saved key, not the environment's
 
@@ -1498,3 +1500,7 @@ def test_a_plan_limit_sent_inside_the_reply_stops_at_once_and_says_so() -> None:
     # A temporary error in the stream, and a dropped connection, are still tried again.
     assert suggestion_model.passing(streamed("server_error", "try again")) is not None
     assert suggestion_model.passing(ModelAPIError("m", "Connection error.")) is not None
+    # Newer library versions give no cause and lead the message with the service's code.
+    stated = ModelAPIError("m", f"subscription_sharing_usage_limit_exceeded: {limit}")
+    assert suggestion_model.passing(stated) is None
+    assert suggestion_model.passing(ModelAPIError("m", "server_error: boom")) is not None

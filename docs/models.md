@@ -36,9 +36,10 @@ requires [ffmpeg](https://ffmpeg.org/); with Homebrew, install it using
 
 ## Dictionary generation
 
-Our current recommendation is **GPT-6.1 Sol (`gpt-6.1-sol`) with medium
-reasoning effort and 24,000 transcript characters per batch**. OpenAI documents
-this model ID and medium effort in its [model reference](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
+Our current recommendation is **GPT-6 Astra (`gpt-6-astra`) at high reasoning
+effort**, Entune's default effort, with 24,000 transcript characters per part. It is
+available on ChatGPT plans as well as with an OpenAI API key, and it is the suggested
+model when you sign in with ChatGPT.
 
 Choose **OpenAI** in dictionary setup, then choose how to access it:
 
@@ -51,9 +52,9 @@ Choose **OpenAI** in dictionary setup, then choose how to access it:
 - **API key:** enter your OpenAI API key. Usage is billed to that API account,
   separately from a ChatGPT subscription.
 
-Then choose the dictionary model on the Dictionary page. If it is missing from
-the suggested list, open **Settings → Dictionary setup → Custom** and enter
-just `gpt-6.1-sol`, for either access option. Entune adds the provider prefix
+Then choose the dictionary model on the Dictionary page. For a model that is not in
+the suggested list, open **Settings → Dictionary setup → Custom** and enter just its
+ID, such as `gpt-6.1-sol`, for either access option. Entune adds the provider prefix
 automatically. The selected account must have access to the model. The suggestions
 setup chooses the reasoning effort by the provider's level names (minimal, low, medium,
 high, xhigh; high by default).
@@ -73,12 +74,19 @@ still use their own keys; Parakeet and Laya run locally.
 
 ### Why this recommendation?
 
-In our dictionary experiment, one completed Sol 24k build learned 48 of 64
+In our October test, GPT-6 Astra at high effort on a ChatGPT plan learned a 64-entry
+dictionary from 7.5 hours of dictation in 39 minutes; on the next 2.1 hours, which it
+never saw, Jev's choices among its entries were right in 38 of 39 changes (see the
+[results](decision-model-results.md)). It is offered on ChatGPT plans, where GPT-6.1
+Sol may not be, and it was tested end to end with the shipped prompts.
+
+In an earlier September experiment, one completed GPT-6.1 Sol 24k build learned 48 of 64
 recurring correction pairs, versus 40 for Astra 24k and 45 for Astra 48k.
 Sol 48k did not finish, so it has no complete dictionary score. Sol 24k offered
 the broadest coverage of the completed configurations, but also offered more
 changes to correctly recognized words; this is why contextual decisions and
-reviewing the proposed entries matter.
+reviewing the proposed entries matter. Sol remains a good choice where your account
+offers it.
 
 These were single builds using an experimental prompt, not a replicated ranking
 of all models. The experiment's prompt differs from the shipped prompt, and
