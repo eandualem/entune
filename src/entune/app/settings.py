@@ -133,6 +133,7 @@ class Settings:
         ]
         if not any(on) or not (model is not None or dictionary or formatting or cleanup):
             return
+
         def saved(provider: str) -> bool:
             return provider in keys_saved or self.key(provider) is not None
 
@@ -166,9 +167,9 @@ class Settings:
                 self._store.set_setting(name, "1" if value else None)
         self._changed()
 
-    def decision_key(self) -> str | None:
-        """The key the chosen decision model is asked with; Laya needs none."""
-        provider = DECISION_KEYS.get(self.decision_model() or "")
+    def decision_key(self, model: str | None) -> str | None:
+        """The key decision model `model` is asked with; Laya needs none."""
+        provider = DECISION_KEYS.get(model or "")
         return None if provider is None else self.key(provider)
 
     def jev_status(self) -> JevStatus:

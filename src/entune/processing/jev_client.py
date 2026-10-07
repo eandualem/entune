@@ -274,6 +274,17 @@ class Call:
             raise JevError(self.endpoint.unavailable)
         if self.endpoint.key_name and not self.key:
             raise JevError(f"no {self.endpoint.key_name}")
+        if self.endpoint.id == OPENAI.id:
+            # OpenAI refuses a question with a single option; its answer can only be that
+            # option, so it is not asked.
+            only = {
+                name: {next(iter(q["criteria"])): 1.0}
+                for name, q in questions.items()
+                if len(q["criteria"]) == 1
+            }
+            if only:
+                rest = {name: q for name, q in questions.items() if name not in only}
+                return only | (self.ask(state, rest) if rest else {})
         size = self.endpoint.max_questions
         if size and len(questions) > size:
             names = list(questions)

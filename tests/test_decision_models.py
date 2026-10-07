@@ -382,10 +382,12 @@ def test_openai_is_asked_the_same_questions_in_its_own_shape_on_the_openai_key(
             )
         return httpx.Response(200, json={"answers": answers})
 
-    groups = entries.Dictionary(learned={"s/m": (group("Jev", "Jeff"),)}).effective("s/m")
+    jev = group("Jev", "Jeff", literal="Jeff: a person's first name.")
+    one = group("Entune", "in tune")  # a single meaning: OpenAI refuses one-option questions
+    groups = entries.Dictionary(learned={"s/m": (jev, one)}).effective("s/m")
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
-            "Then ask Jeff.",
+            "Then ask Jeff about in tune.",
             groups,
             contextual=True,
             formatting=False,
@@ -395,18 +397,20 @@ def test_openai_is_asked_the_same_questions_in_its_own_shape_on_the_openai_key(
             endpoint=jev_client.OPENAI,
         )
     assert result.correction.status == "succeeded" and result.correction.model == "openai"
+    # OpenAI's choice is applied (the stub picks the last option, the literal Jeff), and
+    # the one-option occurrence is answered with its only option, without asking.
+    assert result.correction.output == "Then ask Jeff about Entune."
     [request] = asked
     assert str(request.url) == "https://api.openai.com/v1/decisions"
     assert request.headers["authorization"] == "Bearer sk-openai"
     body = json.loads(request.content)
     assert body["model"] == "gpt-6-luna" and isinstance(body["input"], str)
-    assert json.loads(body["input"])["occurrences"]["o0"] == "Then ask ⟦Jeff⟧."
+    assert json.loads(body["input"])["occurrences"]["o0"] == "Then ask ⟦Jeff⟧ about in tune."
     [question] = body["questions"]
     assert question["type"] == "choice" and question["name"] == "o0"
     assert "Jeff" in question["instructions"]
-    assert question["choices"] and all(
-        set(c) == {"value", "description"} for c in question["choices"]
-    )
+    assert len(question["choices"]) == 2
+    assert all(set(c) == {"value", "description"} for c in question["choices"])
 
 
 def test_openai_is_chosen_with_the_openai_key_the_suggestion_model_uses(tmp_path: Path) -> None:
@@ -421,4 +425,4 @@ def test_openai_is_chosen_with_the_openai_key_the_suggestion_model_uses(tmp_path
         assert client.put("/api/settings", json={**choose, "keys": {"openai": "sk-1"}}).is_success
         assert client.get("/api/settings").json()["decisionModel"]["selected"] == "openai"
         assert service.decisions.endpoint() is jev_client.OPENAI
-        assert service.settings.decision_key() == "sk-1"
+        assert service.decisions.chosen() == (jev_client.OPENAI, "sk-1")

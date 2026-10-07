@@ -340,16 +340,17 @@ class Dictation:
         checkpoint: Callable[[Processed], None] | None = None,
         operation: Operation | None = None,
     ) -> Processed:
+        endpoint, key = self._decisions.chosen()
         return process_text(
             raw,
             groups,
             contextual=status.dictionary,
             formatting=status.formatting,
             cleanup=status.cleanup,
-            key=self._settings.decision_key(),
+            key=key,
             client=self._jev,
             policy=self._settings.jev_policy(),
-            endpoint=self._decisions.endpoint(),
+            endpoint=endpoint,
             checkpoint=checkpoint,
             progress=(
                 (lambda stage: self._operations.stage(operation, stage)) if operation else None

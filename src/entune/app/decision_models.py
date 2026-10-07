@@ -13,7 +13,15 @@ class DecisionModels:
 
     def endpoint(self) -> Endpoint:
         """Where the steps ask now; an endpoint that cannot answer says why."""
+        return self._endpoint(self._settings.decision_model())
+
+    def chosen(self) -> tuple[Endpoint, str | None]:
+        """Where the steps ask now and the key it takes, from one reading of the choice, so
+        a switch meanwhile never sends one model's key to another."""
         model = self._settings.decision_model()
+        return self._endpoint(model), self._settings.decision_key(model)
+
+    def _endpoint(self, model: str | None) -> Endpoint:
         if model == "laya":
             return self.laya.endpoint()
         if model == "openai":
