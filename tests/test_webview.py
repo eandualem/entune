@@ -231,6 +231,44 @@ def test_titlebar_fullscreen_and_missing_native_hierarchy(cocoa: Any) -> None:
     assert "Title-bar layout" in cocoa.notices[0][1]
 
 
+def test_the_window_controls_stay_aligned_when_appkit_resets_the_title_bar() -> None:
+    appkit = pytest.importorskip("AppKit", reason="macOS only")
+
+    from entune.desktop.macos import webview as cocoa_webview
+
+    style = (
+        appkit.NSWindowStyleMaskTitled
+        | appkit.NSWindowStyleMaskClosable
+        | appkit.NSWindowStyleMaskMiniaturizable
+        | appkit.NSWindowStyleMaskResizable
+        | appkit.NSWindowStyleMaskFullSizeContentView
+    )
+    window = appkit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+        ((100, 100), (900, 600)), style, appkit.NSBackingStoreBuffered, False
+    )
+    try:
+        close = window.standardWindowButton_(appkit.NSWindowCloseButton)
+        titlebar = close.superview()
+        container = titlebar.superview()
+        centred = (52 - close.frame().size.height) / 2  # the button size differs by macOS
+        cocoa_webview.layout_titlebar(window, 52)
+        assert container.frame().size.height == 52 and close.frame().origin.y == centred
+        # AppKit lays the title bar out again at its standard height, as when the app
+        # comes back to the front; the controls would hang clipped above it.
+        frame = container.frame()
+        frame.origin.y += frame.size.height - 28
+        frame.size.height = 28
+        container.setFrame_(frame)
+        assert container.frame().size.height == 52 and titlebar.frame().size.height == 52
+        assert close.frame().origin.y == centred  # on the toolbar again, not clipped
+    finally:
+        number = window.windowNumber()
+        for token in cocoa_webview._titlebar_watchers.pop(number, []):
+            appkit.NSNotificationCenter.defaultCenter().removeObserver_(token)
+        cocoa_webview._titlebar_heights.pop(number, None)
+        window.close()
+
+
 def test_native_quit_saves_capture_and_closes_processing_before_termination(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

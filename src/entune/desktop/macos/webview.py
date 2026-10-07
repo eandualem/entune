@@ -140,8 +140,16 @@ def _install_selectors() -> None:
     _installed = True
 
 
+_titlebar_heights: dict[int, float] = {}  # by window number: the height last laid out
+_titlebar_watchers: dict[int, list[Any]] = {}  # kept, so the observers stay registered
+
+
 def layout_titlebar(window: Any, height: float) -> None:
-    """Restore real Mac controls in the frameless window; preserve full-screen layout."""
+    """Restore real Mac controls in the frameless window; preserve full-screen layout.
+
+    AppKit lays the title bar out again at its standard height at times of its own (for
+    example when the app comes back to the front), which leaves the controls clipped at
+    the top; the layout is put back whenever that happens."""
     try:
         if window.styleMask() & AppKit.NSWindowStyleMaskFullScreen:
             return
@@ -157,6 +165,7 @@ def layout_titlebar(window: Any, height: float) -> None:
         container = titlebar.superview() if titlebar is not None else None
         if container is None:
             raise RuntimeError("Native title-bar hierarchy changed.")
+        _titlebar_heights[window.windowNumber()] = height
         frame = container.frame()
         frame.origin.y += frame.size.height - height
         frame.size.height = height
@@ -165,11 +174,34 @@ def layout_titlebar(window: Any, height: float) -> None:
         for index, button in enumerate(buttons):
             button.setHidden_(False)
             button.setFrameOrigin_((14 + index * 20, (height - button.frame().size.height) / 2))
+        _keep_titlebar(window, (container, titlebar))
     except Exception:
         if _active is not None:
             _active.failure("Title-bar layout")
         else:
             logging.getLogger(__name__).exception("Cocoa title-bar layout failed")
+
+
+def _keep_titlebar(window: Any, views: tuple[Any, ...]) -> None:
+    """Lay the title bar out again whenever AppKit resizes it to another height."""
+    number = window.windowNumber()
+    if number in _titlebar_watchers:
+        return
+
+    def changed(_note: Any) -> None:
+        height = _titlebar_heights.get(number)
+        if height is not None and any(abs(v.frame().size.height - height) > 0.5 for v in views):
+            layout_titlebar(window, height)
+
+    center = AppKit.NSNotificationCenter.defaultCenter()
+    _titlebar_watchers[number] = []
+    for view in views:
+        view.setPostsFrameChangedNotifications_(True)
+        _titlebar_watchers[number].append(
+            center.addObserverForName_object_queue_usingBlock_(
+                AppKit.NSViewFrameDidChangeNotification, view, None, changed
+            )
+        )
 
 
 def make_vibrant(uid: str) -> None:
