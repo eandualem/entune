@@ -1,6 +1,6 @@
 [project]
 name = "entune"
-version = "0.4.0"
+version = "0.4.1"
 description = "Dictation with your choice of speech model and a personal dictionary that selects corrections in context."
 readme = "README.md"
 license = "MIT"
