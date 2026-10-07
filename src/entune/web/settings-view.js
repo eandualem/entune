@@ -247,11 +247,15 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     for (const input of document.querySelectorAll('input[name="decision-model"]')) input.checked = input.value === shown;
     el("jev-key-form").hidden = shown !== "jev";
     el("openai-key-form").hidden = shown !== "openai";
+    el("perplexity-key-form").hidden = shown !== "perplexity";
+    const perplexityKey = settings.decisionModel.perplexityKey;
+    el("key-perplexity").value = "";
+    el("key-perplexity").placeholder = perplexityKey ? `saved ${perplexityKey} · type to replace` : "Not set";
     el("laya-setup").hidden = shown !== "laya";
     const openaiKey = settings.llmProviders.find((p) => p.id === "openai")?.keyHint;
     el("key-openai-decisions").value = "";
     el("key-openai-decisions").placeholder = openaiKey ? `saved ${openaiKey} · type to replace` : "Not set";
-    const names = { jev: "Jev", laya: "Laya", openai: "OpenAI" };
+    const names = { jev: "Jev", laya: "Laya", openai: "OpenAI", perplexity: "Perplexity" };
     el("decision-note").textContent = picked ? `Not switched yet: ${refusal}${selected ? ` The steps still use ${names[selected]}.` : ""}` : "";
     el("laya-status").textContent = laya.state === "failed" ? laya.error : LAYA[laya.state];
     el("laya-status").classList.toggle("err", laya.state === "failed");
@@ -355,6 +359,14 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     // A key saved while Jev is picked but not yet chosen completes the switch.
     const choice = picked === "jev" ? { decisionModel: "jev" } : {};
     if (await saveSetting({ keys: { typesafe: key }, ...choice }, el("jev-key-status"))) { picked = null; await loadSettings(); }
+  });
+  el("perplexity-key-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const key = el("key-perplexity").value.trim();
+    if (!key) { flash(el("perplexity-key-status"), "Nothing to save", "ok"); return; }
+    // A key saved while Perplexity is picked but not yet chosen completes the switch.
+    const choice = picked === "perplexity" ? { decisionModel: "perplexity" } : {};
+    if (await saveSetting({ keys: { perplexity: key }, ...choice }, el("perplexity-key-status"))) { picked = null; await loadSettings(); }
   });
   el("openai-key-form").addEventListener("submit", async (e) => {
     e.preventDefault();

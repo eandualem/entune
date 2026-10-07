@@ -122,6 +122,7 @@ def test_laya_runs_on_this_mac_while_chosen_and_stops_when_not(
             settings = client.get("/api/settings").json()["decisionModel"]
             assert settings == {
                 "selected": None,
+                "perplexityKey": None,
                 "laya": {
                     "state": "stopped",
                     "error": None,
@@ -426,3 +427,69 @@ def test_openai_is_chosen_with_the_openai_key_the_suggestion_model_uses(tmp_path
         assert client.get("/api/settings").json()["decisionModel"]["selected"] == "openai"
         assert service.decisions.endpoint() is jev_client.OPENAI
         assert service.decisions.chosen() == (jev_client.OPENAI, "sk-1")
+
+
+def test_perplexity_is_asked_in_typesafes_shape_with_text_instructions(tmp_path: Path) -> None:
+    import httpx
+
+    from entune.dictionary import entries
+    from entune.processing import jev_client
+    from entune.processing.pipeline import process_text
+
+    asked: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        asked.append(request)
+        body = json.loads(request.content)
+        answers = {}
+        for name, question in body["questions"].items():
+            options = list(question["criteria"])
+            top = 1 - 0.1 * (len(options) - 1)
+            probabilities = {o: top if o == options[0] else 0.1 for o in options}
+            answers[name] = {
+                "type": "choice",
+                "choice": options[0],
+                "confidence": 0.9,
+                "probabilities": probabilities,
+            }
+        return httpx.Response(200, json={"answers": answers, "usage": {"input_tokens": 1}})
+
+    jev = group("Jev", "Jeff", literal="Jeff: a person's first name.")
+    groups = entries.Dictionary(learned={"s/m": (jev,)}).effective("s/m")
+    with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
+        result = process_text(
+            "Then ask Jeff.",
+            groups,
+            contextual=True,
+            formatting=False,
+            key="pplx-key",
+            client=client,
+            policy=jev_client.Policy(),
+            endpoint=jev_client.PERPLEXITY,
+        )
+    assert result.correction.status == "succeeded" and result.correction.model == "perplexity"
+    [request] = asked
+    assert str(request.url) == "https://api.perplexity.ai/v1/decisions"
+    assert request.headers["authorization"] == "Bearer pplx-key"
+    body = json.loads(request.content)
+    assert body["model"] == "pplx-decider-v1.1-27b" and "occurrences" in body["state"]
+    [question] = body["questions"].values()
+    assert isinstance(question["instructions"], str) and "Jeff" in question["instructions"]
+    assert all(isinstance(d, str) for d in question["criteria"].values())
+
+
+def test_perplexity_is_chosen_with_its_own_key(tmp_path: Path) -> None:
+    from entune.processing import jev_client
+
+    service = Entune(Store(tmp_path), [StubProvider()])
+    with TestClient(create_app(service), base_url="http://localhost") as client:
+        choose = {"decisionModel": "perplexity", "jev": {"dictionary": True}}
+        refused = client.put("/api/settings", json=choose)
+        assert refused.status_code == 400 and refused.text == "Save a Perplexity API key first."
+        saved = client.put(
+            "/api/settings", json={**choose, "keys": {"perplexity": "pplx-12345678"}}
+        )
+        assert saved.is_success
+        decision = client.get("/api/settings").json()["decisionModel"]
+        assert decision["selected"] == "perplexity" and decision["perplexityKey"] == "••••5678"
+        assert service.decisions.chosen() == (jev_client.PERPLEXITY, "pplx-12345678")

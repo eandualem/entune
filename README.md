@@ -131,7 +131,7 @@ Entune separates three jobs, so you can choose each independently:
 |---|---|---|
 | Turn audio into text | **Parakeet** on Apple Silicon, or **AssemblyAI** in the cloud | After each recording |
 | Build your dictionary | **GPT-6 Astra**, high effort, on a ChatGPT plan or an API key | When you request suggestions |
-| Choose dictionary replacements and formatting | **Jev** for the best result in our test; **OpenAI's Decisions API**; **Laya** for local processing | After transcription, when enabled |
+| Choose dictionary replacements and formatting | **Jev** for the best result in our test; **OpenAI's Decisions API**; **Perplexity's** decision model; **Laya** for local processing | After transcription, when enabled |
 
 Speech options also include Groq, Soniox, ElevenLabs, xAI and local Whisper.cpp.
 Cloud services use your own provider accounts and keys; Entune does not sell
@@ -189,7 +189,7 @@ guarantee a better dictionary.
   folder. Export or delete them in **Settings → Data & Privacy**.
 - **Optional processing:** dictionary correction, repeated-filler reduction,
   and paragraph/bullet formatting have separate controls, each run by the decision
-  model you choose: Jev, OpenAI's Decisions API, or Laya on your computer.
+  model you choose: Jev, OpenAI's Decisions API, Perplexity's, or Laya on your computer.
 - **Fast mode:** uploads the audio while you speak, so a cloud transcript arrives
   sooner; the **Performance** chart shows each model's measured wait.
 - **Drop audio to transcribe it:** drop files anywhere on the window, such as a
@@ -203,8 +203,8 @@ guarantee a better dictionary.
 There is no Entune account, telemetry or hosted history. Cloud speech sends
 audio to your chosen provider; dictionary generation sends its selected
 transcripts and dictionary to the chosen language-model provider. **Jev sends
-matched context to TypeSafe, and OpenAI's Decisions API to OpenAI, even when speech
-recognition is local.** Laya keeps that step local. See [data and privacy](https://github.com/eandualem/entune/blob/develop/docs/guide.md#data-and-privacy).
+matched context to TypeSafe, OpenAI's Decisions API to OpenAI and Perplexity's to
+Perplexity, even when speech recognition is local.** Laya keeps that step local. See [data and privacy](https://github.com/eandualem/entune/blob/develop/docs/guide.md#data-and-privacy).
 
 Entune is for a trusted, single-user machine. Its loopback API has no
 authentication: other local processes can read or change data through it.

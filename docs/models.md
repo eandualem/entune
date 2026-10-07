@@ -151,6 +151,7 @@ contextual dictionary correction.
 |---|---|---|
 | **Jev** | Enter a TypeSafe API key | Fewest wrong replacements (1 in 39) and the most useful formatting in our test; matched context is sent to TypeSafe |
 | **OpenAI** | Enter an OpenAI API key (the same key as OpenAI in Dictionary setup) | OpenAI's Decisions API, a public beta at $0.10 per million input tokens. Caught the most correct replacements but made 8 wrong ones in 50, and rarely formats; matched context is sent to OpenAI. A ChatGPT sign-in cannot be used for it |
+| **Perplexity** | Enter a Perplexity API key ([get one](https://console.perplexity.ai/project/keys)) | Perplexity's Decisions API with `pplx-decider-v1.1-27b`, $0.02 per million input tokens, open weights on Hugging Face; matched context is sent to Perplexity; not yet in our comparison |
 | **Laya** | Install `uv tool install 'laya[serve]'`, then choose Laya | Runs locally and fastest; 8 wrong replacements in 36, fewer correct ones caught, and poor formatting in our test |
 
 Laya's first start downloads about 850 MB of weights. Its engine includes

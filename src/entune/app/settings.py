@@ -26,9 +26,9 @@ CHATGPT_MODELS_KEY = "chatgpt_models"  # the signed-in account's catalog: [[slug
 FAST_MODE_KEY = "fast_mode"
 JEV_PROVIDER = "typesafe"  # the key is stored like a speech provider's
 DECISION_MODEL_KEY = "decision_model"
-DECISION_MODELS = ("jev", "laya", "openai")
+DECISION_MODELS = ("jev", "laya", "openai", "perplexity")
 # The key each decision model is asked with; OpenAI's is the suggestion model's OpenAI key.
-DECISION_KEYS = {"jev": JEV_PROVIDER, "openai": "openai"}
+DECISION_KEYS = {"jev": JEV_PROVIDER, "openai": "openai", "perplexity": "perplexity"}
 JEV_DICTIONARY_KEY = "jev_dictionary"
 JEV_FORMATTING_KEY = "jev_formatting"
 JEV_CLEANUP_KEY = "jev_cleanup"
@@ -85,7 +85,7 @@ class Settings:
         known = (
             any(p.id == provider_id for p in self._providers)
             or (provider_id in suggestion_model.LLM_PROVIDERS and provider_id != CHATGPT)
-            or provider_id == JEV_PROVIDER
+            or provider_id in DECISION_KEYS.values()
         )
         if not known:
             raise ValueError(f"Unknown provider: {provider_id}")
@@ -144,6 +144,8 @@ class Settings:
             raise ValueError("Save a TypeSafe API key first.")
         if chosen == "openai" and not saved(DECISION_KEYS["openai"]):
             raise ValueError("Save an OpenAI API key first.")
+        if chosen == "perplexity" and not saved(DECISION_KEYS["perplexity"]):
+            raise ValueError("Save a Perplexity API key first.")
         if chosen == "laya" and not self._laya_installed():
             raise ValueError(f"Install Laya's engine first: {LAYA_INSTALL}")
 
