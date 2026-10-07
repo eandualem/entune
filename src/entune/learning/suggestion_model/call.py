@@ -66,7 +66,7 @@ async def run(request: Request, model: Model | None = None) -> str:
         raise ValueError("The dictionary model must belong to the selected provider")
     if model is not None:
         return await _run(request, model)
-    async with provider_model(request.provider, request.api_key, name) as chosen:
+    async with provider_model(request.provider, request.api_key, name, request.access) as chosen:
         return await _run(request, chosen)
 
 

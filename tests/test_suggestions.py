@@ -784,9 +784,9 @@ def test_only_a_stream_the_provider_finished_is_used_and_it_carries_the_saved_ke
     monkeypatch.setattr(
         providers,
         "_http2",
-        lambda header, value: httpx2.AsyncClient(
+        lambda header, value, current=None: httpx2.AsyncClient(
             transport=httpx2.MockTransport(respond),
-            event_hooks=providers._credential(header, value),
+            event_hooks=providers._credential(header, value, current),
         ),
     )
     run = suggestion_model.call_model(request())
@@ -846,8 +846,8 @@ def test_a_request_waits_five_seconds_to_connect_and_twenty_minutes_to_read(
         limits.append(outgoing.extensions["timeout"])
         return library.Response(500, json={"error": "stop here"})
 
-    def offline(header: str, value: str) -> Any:
-        client = factory(header, value)  # the real limits and hooks; only the network is fake
+    def offline(header: str, value: str, *current: Any) -> Any:
+        client = factory(header, value, *current)  # the real limits and hooks; a fake network
         client._transport = library.MockTransport(respond)
         return client
 
@@ -1401,14 +1401,19 @@ def test_a_chatgpt_plan_is_asked_at_the_public_api_within_the_preview_limits(
     monkeypatch.setattr(
         providers,
         "_http2",
-        lambda header, value: httpx2.AsyncClient(
+        lambda header, value, current=None: httpx2.AsyncClient(
             transport=httpx2.MockTransport(respond),
-            event_hooks=providers._credential(header, value),
+            event_hooks=providers._credential(header, value, current),
         ),
     )
     plan = replace(request(), provider="chatgpt", api_key="access-1", model="chatgpt:gpt-6-sol")
     assert json.loads(asyncio.run(suggestion_model.call_model(plan)))["additions"] == []
-    [outgoing] = sent
+    # The current access is read before each HTTP request, so a correction within a call
+    # goes out on one renewed meanwhile.
+    renewed = replace(plan, access=lambda: "access-2")
+    assert json.loads(asyncio.run(suggestion_model.call_model(renewed)))["additions"] == []
+    outgoing, again = sent
+    assert again.headers["authorization"] == "Bearer access-2"
     assert str(outgoing.url) == f"{chatgpt.API}/responses"  # never ChatGPT's backend
     assert outgoing.headers["authorization"] == "Bearer access-1"
     assert "chatgpt-account-id" not in outgoing.headers

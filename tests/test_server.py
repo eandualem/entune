@@ -463,7 +463,22 @@ def test_signing_in_with_chatgpt_builds_on_the_plan_until_signed_out(
     assert "redirect_uri=http%3A%2F%2F127.0.0.1%3A4187%2Fauth%2Fcallback" in started["url"]
     assert client.get("/api/chatgpt/sign-in").json() == {"state": "waiting"}
     state = entune.settings.chatgpt_sign_in().state  # type: ignore[union-attr]
+    # A status read while the sign-in is being saved waits for it, never reading signed out.
+    seen: list[dict[str, str]] = []
+    save_models = entune.settings.set_chatgpt_models
+
+    def saving(models: list[tuple[str, str]] | None) -> None:
+        poll = threading.Thread(target=lambda: seen.append(client.get(status).json()))
+        poll.start()
+        time.sleep(0.2)
+        save_models(models)
+        threads.append(poll)
+
+    status, threads = "/api/chatgpt/sign-in", list[threading.Thread]()
+    monkeypatch.setattr(entune.settings, "set_chatgpt_models", saving)
     page = client.get(f"/auth/callback?state={state}&code=c1&client_id=oaiapp_1")
+    threads[0].join(5)
+    assert seen == [{"state": "signed-in", "account": "a@example.com"}]
     assert page.status_code == 200 and "Signed in to ChatGPT" in page.text
     assert finished[-1]["code"] == "c1"
     assert client.get("/api/chatgpt/sign-in").json() == {

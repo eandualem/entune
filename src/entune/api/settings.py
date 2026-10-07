@@ -202,19 +202,21 @@ def routes(app: Entune) -> list[Route]:
         return JSONResponse({"url": url, "opened": webbrowser.open(url)})
 
     def sign_in_status() -> Response:
-        login = app.settings.chatgpt_login()
-        attempt = app.settings.chatgpt_sign_in()
-        if login is None and attempt is not None and attempt.expires_at < time.time():
-            with lock:  # the browser never came back: say so, so it can be started again
-                if app.settings.chatgpt_sign_in() == attempt:
-                    app.settings.set_chatgpt_sign_in(None)
-                    outcome["error"] = "The sign-in was not finished in time. Start it again."
+        # Read under the callback's lock, so a sign-in being saved never reads as signed out.
+        with lock:
+            login = app.settings.chatgpt_login()
+            attempt = app.settings.chatgpt_sign_in()
+            if login is None and attempt is not None and attempt.expires_at < time.time():
+                # The browser never came back: say so, so it can be started again.
+                app.settings.set_chatgpt_sign_in(None)
+                attempt = None
+                outcome["error"] = "The sign-in was not finished in time. Start it again."
+            error = outcome["error"]
         if login is not None:
             return JSONResponse({"state": "signed-in", "account": login.email or "signed in"})
-        if outcome["error"]:
-            return JSONResponse({"state": "failed", "error": outcome["error"]})
-        waiting = app.settings.chatgpt_sign_in() is not None
-        return JSONResponse({"state": "waiting" if waiting else "signed-out"})
+        if error:
+            return JSONResponse({"state": "failed", "error": error})
+        return JSONResponse({"state": "waiting" if attempt is not None else "signed-out"})
 
     def finish_sign_in(query: dict[str, str]) -> Response:
         try:

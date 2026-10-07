@@ -293,15 +293,23 @@ class DictionaryBuilds:
             )
 
     async def _asking(self, request: suggestion_model.Request) -> str:
-        """One request to the suggestion model. On a ChatGPT plan each one, a part's
-        corrections and retries included, goes with the current access, renewed when due."""
+        """One request to the suggestion model. On a ChatGPT plan each one, and each HTTP
+        request within it (a reply's corrections), goes with the current access."""
         if request.provider == suggestion_model.CHATGPT:
-            access = await asyncio.to_thread(self._plan_access)
-            if access is not None and access != request.api_key:
-                with self._lock:
-                    self._renewed.append(access)
-                request = replace(request, api_key=access)
+            access = await asyncio.to_thread(self._current_access)
+            request = replace(
+                request, api_key=access or request.api_key, access=self._current_access
+            )
         return await self._call(request)
+
+    def _current_access(self) -> str | None:
+        """The plan's current access, renewed when due; a renewed one is kept out of errors."""
+        access = self._plan_access()
+        if access is not None:
+            with self._lock:
+                if access not in self._renewed:
+                    self._renewed.append(access)
+        return access
 
     async def _part(self, spec: BuildInput, step: batches.Batch, number: int) -> None:
         """One part from the working dictionary; a validated result becomes the proposal."""
