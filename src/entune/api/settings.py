@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import threading
+import time
 import webbrowser
 from dataclasses import asdict
 
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from entune.api.common import bad, optional_text, shortcuts_json
@@ -108,7 +109,7 @@ def routes(app: Entune) -> list[Route]:
             if "fastMode" in body and not isinstance(body["fastMode"], bool):
                 raise ValueError("fastMode must be a boolean")
             if "decisionModel" in body and body["decisionModel"] not in DECISION_MODELS:
-                raise ValueError("decisionModel must be jev or laya")
+                raise ValueError("decisionModel must be jev, laya or openai")
             jev_settings = body.get("jev", {})
             if not isinstance(jev_settings, dict) or set(jev_settings) - {
                 "dictionary",
@@ -144,7 +145,7 @@ def routes(app: Entune) -> list[Route]:
             )
             app.settings.check_processing(
                 *processing,
-                key_saved=JEV_PROVIDER in keys or app.settings.key(JEV_PROVIDER) is not None,
+                keys_saved=keys.keys(),
             )
             shortcut_settings = body.get("shortcuts", {})
             if not isinstance(shortcut_settings, dict):
@@ -181,68 +182,95 @@ def routes(app: Entune) -> list[Route]:
             return bad(str(exc))
         return JSONResponse({"ok": True})
 
-    # Signing in with ChatGPT: start gives the code to enter at OpenAI, the page then
-    # checks until the person has approved it. The waiting code is kept with the
-    # settings, so a newer start replaces it and deleting all data forgets it; each step
-    # counts as work on the data, so that deletion waits for a check in progress.
-    lock = threading.Lock()  # a sign-out waits for a check, so neither undoes the other
+    # Signing in with ChatGPT: start opens OpenAI's sign-in in the browser, which comes
+    # back to /auth/callback here once the person has approved. The waiting sign-in is
+    # kept with the settings, so a newer start replaces it and deleting all data forgets
+    # it; each step counts as work on the data, so that deletion waits for one in progress.
+    lock = threading.Lock()  # a sign-out waits for a callback, so neither undoes the other
+    outcome: dict[str, str | None] = {"error": None}  # why the latest sign-in failed
 
-    def start_sign_in() -> Response:
+    def start_sign_in(port: int) -> Response:
         try:
             with app.data.using_data("ChatGPT sign-in"):
-                code = chatgpt.start()
+                attempt, url = chatgpt.start(app.settings.chatgpt_client_id(), port)
                 with lock:
-                    app.settings.set_chatgpt_sign_in(code)
-        except ValueError as exc:
-            return bad(str(exc), 409 if isinstance(exc, Busy) else 400)
-        # OpenAI's page opens where the person is signed in to ChatGPT: their own browser.
-        opened = webbrowser.open(chatgpt.VERIFICATION_URL)
-        return JSONResponse(
-            {
-                "userCode": code.user_code,
-                "verificationUrl": chatgpt.VERIFICATION_URL,
-                "interval": code.interval,
-                "opened": opened,
-            }
-        )
-
-    def check_sign_in(user_code: object) -> Response:
-        try:
-            with app.data.using_data("ChatGPT sign-in"), lock:
-                code = app.settings.chatgpt_sign_in()
-                # The page names the code it shows: a newer start replaced any other.
-                if code is None or code.user_code != user_code:
-                    return bad("This ChatGPT sign-in is no longer waiting; sign in again", 409)
-                try:
-                    login = chatgpt.check(code)
-                except ValueError as exc:
-                    app.settings.set_chatgpt_sign_in(None)
-                    return bad(str(exc))
-                if login is None:
-                    return JSONResponse({"state": "waiting"})
-                app.settings.set_chatgpt_sign_in(None)
-                app.settings.set_chatgpt_login(login)
+                    app.settings.set_chatgpt_sign_in(attempt)
+                    outcome["error"] = None
         except Busy as exc:
             return bad(str(exc), 409)
-        return JSONResponse({"state": "signed-in", "account": login.email})
+        # OpenAI's page opens where the person is signed in to ChatGPT: their own browser.
+        return JSONResponse({"url": url, "opened": webbrowser.open(url)})
+
+    def sign_in_status() -> Response:
+        # Read under the callback's lock, so a sign-in being saved never reads as signed out.
+        with lock:
+            login = app.settings.chatgpt_login()
+            attempt = app.settings.chatgpt_sign_in()
+            if login is None and attempt is not None and attempt.expires_at < time.time():
+                # The browser never came back: say so, so it can be started again.
+                app.settings.set_chatgpt_sign_in(None)
+                attempt = None
+                outcome["error"] = "The sign-in was not finished in time. Start it again."
+            error = outcome["error"]
+        if login is not None:
+            return JSONResponse({"state": "signed-in", "account": login.email or "signed in"})
+        if error:
+            return JSONResponse({"state": "failed", "error": error})
+        return JSONResponse({"state": "waiting" if attempt is not None else "signed-out"})
+
+    def finish_sign_in(query: dict[str, str]) -> Response:
+        try:
+            with app.data.using_data("ChatGPT sign-in"), lock:
+                attempt = app.settings.chatgpt_sign_in()
+                if attempt is None:
+                    return _page("No sign-in is waiting", "Start it again from Entune's settings.")
+                if query.get("state") != attempt.state:
+                    # An older tab or a stray request: the sign-in waiting goes on.
+                    return _page(
+                        "Sign-in did not finish",
+                        "This page is not from the sign-in Entune is waiting for. Finish that"
+                        " one, or start again from Entune's settings.",
+                    )
+                try:
+                    login = chatgpt.finish(attempt, query)
+                except ValueError as exc:
+                    app.settings.set_chatgpt_sign_in(None)
+                    outcome["error"] = str(exc)
+                    return _page("Sign-in did not finish", str(exc))
+                try:  # the plan's own models; the suggested list stands in when this fails
+                    catalog = chatgpt.models(login.access_token) or None
+                except ValueError:
+                    catalog = None
+                # Saved together, so the page shows the account's models once signed in.
+                app.settings.set_chatgpt_sign_in(None)
+                app.settings.set_chatgpt_client_id(login.client_id)
+                app.settings.set_chatgpt_models(catalog)
+                app.settings.set_chatgpt_login(login)
+        except Busy as exc:
+            return _page("Sign-in did not finish", str(exc))
+        return _page("Signed in to ChatGPT", "You can close this tab and go back to Entune.")
 
     def sign_out() -> Response:
         with lock:
+            login = app.settings.chatgpt_login()
             app.settings.set_chatgpt_sign_in(None)
             app.settings.set_chatgpt_login(None)
-        return JSONResponse({"state": "signed-out"})
+            app.settings.set_chatgpt_models(None)
+            outcome["error"] = None
+        # Ended at OpenAI too when it answers; otherwise the person can disconnect Entune
+        # in ChatGPT Settings, which the page says.
+        revoked = login is None or chatgpt.revoke(login)
+        return JSONResponse({"state": "signed-out", "revoked": revoked})
 
     async def chatgpt_sign_in(request: Request) -> Response:
-        action = {"POST": start_sign_in, "DELETE": sign_out}[request.method]
-        return await run_in_threadpool(action)
+        if request.method == "POST":
+            return await run_in_threadpool(start_sign_in, request.url.port or 80)
+        if request.method == "DELETE":
+            return await run_in_threadpool(sign_out)
+        return await run_in_threadpool(sign_in_status)
 
-    async def chatgpt_sign_in_check(request: Request) -> Response:
-        try:
-            body = await request.json()
-        except ValueError as exc:
-            return bad(str(exc))
-        user_code = body.get("userCode") if isinstance(body, dict) else None
-        return await run_in_threadpool(check_sign_in, user_code)
+    async def chatgpt_callback(request: Request) -> Response:
+        return await run_in_threadpool(finish_sign_in, dict(request.query_params))
 
     async def tracing(request: Request) -> Response:
         """Langfuse tracing: its keys (masked), host and state. PUT saves keys (blank keeps
@@ -264,6 +292,21 @@ def routes(app: Entune) -> list[Route]:
         Route("/api/tracing", tracing, methods=["GET", "PUT", "DELETE"]),
         Route("/api/settings", get_settings, methods=["GET"]),
         Route("/api/settings", put_settings, methods=["PUT"]),
-        Route("/api/chatgpt/sign-in", chatgpt_sign_in, methods=["POST", "DELETE"]),
-        Route("/api/chatgpt/sign-in/check", chatgpt_sign_in_check, methods=["POST"]),
+        Route("/api/chatgpt/sign-in", chatgpt_sign_in, methods=["GET", "POST", "DELETE"]),
+        Route(chatgpt.CALLBACK_PATH, chatgpt_callback, methods=["GET"]),
     ]
+
+
+def _page(title: str, body: str) -> Response:
+    """What the browser shows when OpenAI's sign-in returns to Entune."""
+    from html import escape
+
+    html = (
+        "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+        f"<title>{escape(title)} · Entune</title>"
+        "<style>body{font:15px -apple-system,system-ui,sans-serif;margin:15vh auto;max-width:28rem;"
+        "padding:0 1rem;color:#262626;background:#fafafa}@media(prefers-color-scheme:dark){"
+        "body{color:#ddd;background:#1e1e1e}}h1{font-size:20px}</style>"
+        f"<h1>{escape(title)}</h1><p>{escape(body)}</p>"
+    )
+    return HTMLResponse(html)

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import asdict, dataclass
 
 from entune.app import shortcuts
@@ -20,11 +20,15 @@ from entune.storage.store import Store
 DEFAULT_MODEL_KEY = "default_model"
 DICTIONARY_MODEL_KEY = "dictionary_model"
 CHATGPT_LOGIN_KEY = "chatgpt_login"
-CHATGPT_SIGN_IN_KEY = "chatgpt_sign_in"  # the code waiting for approval, if any
+CHATGPT_SIGN_IN_KEY = "chatgpt_sign_in"  # the sign-in waiting for the browser, if any
+CHATGPT_CLIENT_KEY = "chatgpt_client_id"  # the ID OpenAI issued Entune; kept after sign-out
+CHATGPT_MODELS_KEY = "chatgpt_models"  # the signed-in account's catalog: [[slug, name]]
 FAST_MODE_KEY = "fast_mode"
 JEV_PROVIDER = "typesafe"  # the key is stored like a speech provider's
 DECISION_MODEL_KEY = "decision_model"
-DECISION_MODELS = ("jev", "laya")
+DECISION_MODELS = ("jev", "laya", "openai")
+# The key each decision model is asked with; OpenAI's is the suggestion model's OpenAI key.
+DECISION_KEYS = {"jev": JEV_PROVIDER, "openai": "openai"}
 JEV_DICTIONARY_KEY = "jev_dictionary"
 JEV_FORMATTING_KEY = "jev_formatting"
 JEV_CLEANUP_KEY = "jev_cleanup"
@@ -114,11 +118,11 @@ class Settings:
         dictionary: bool | None = None,
         formatting: bool | None = None,
         cleanup: bool | None = None,
-        key_saved: bool | None = None,
+        keys_saved: Collection[str] = (),
     ) -> None:
         """Refuse a change whose final state has a step on that the decision model cannot run,
         so the setting never promises what a dictation cannot do. Turning steps off is always
-        allowed. `key_saved` counts a TypeSafe key saved by the same request."""
+        allowed. `keys_saved` names the keys saved by the same request."""
         if model is not None and model not in DECISION_MODELS:
             raise ValueError(f"Unknown decision model: {model}")
         status = self.jev_status()
@@ -129,12 +133,17 @@ class Settings:
         ]
         if not any(on) or not (model is not None or dictionary or formatting or cleanup):
             return
-        key = self.key(JEV_PROVIDER) is not None if key_saved is None else key_saved
-        chosen = model or self.decision_model() or ("jev" if key else None)
+
+        def saved(provider: str) -> bool:
+            return provider in keys_saved or self.key(provider) is not None
+
+        chosen = model or self.decision_model() or ("jev" if saved(JEV_PROVIDER) else None)
         if chosen is None:
             raise ValueError("Choose a decision model first.")
-        if chosen == "jev" and not key:
+        if chosen == "jev" and not saved(JEV_PROVIDER):
             raise ValueError("Save a TypeSafe API key first.")
+        if chosen == "openai" and not saved(DECISION_KEYS["openai"]):
+            raise ValueError("Save an OpenAI API key first.")
         if chosen == "laya" and not self._laya_installed():
             raise ValueError(f"Install Laya's engine first: {LAYA_INSTALL}")
 
@@ -157,6 +166,11 @@ class Settings:
             if value is not None:
                 self._store.set_setting(name, "1" if value else None)
         self._changed()
+
+    def decision_key(self, model: str | None) -> str | None:
+        """The key decision model `model` is asked with; Laya needs none."""
+        provider = DECISION_KEYS.get(model or "")
+        return None if provider is None else self.key(provider)
 
     def jev_status(self) -> JevStatus:
         key = self.key(JEV_PROVIDER)
@@ -183,11 +197,27 @@ class Settings:
                 provider_id,
                 name,
                 self._credential_hint(provider_id),
-                default_model,
-                tuple(suggestion_model.catalog(provider_id)),
+                self._suggested(provider_id),
+                tuple(self._models(provider_id)),
             )
-            for provider_id, (name, default_model) in suggestion_model.LLM_PROVIDERS.items()
+            for provider_id, (name, _) in suggestion_model.LLM_PROVIDERS.items()
         ]
+
+    def _suggested(self, provider_id: str) -> str:
+        """The provider's suggested model; on a ChatGPT plan whose catalog does not list
+        it, the catalog's first model, so the suggestion is always one it offers."""
+        suggested = suggestion_model.LLM_PROVIDERS[provider_id][1]
+        offered = [m.id for m in self._models(provider_id)]
+        return suggested if provider_id != CHATGPT or suggested in offered else offered[0]
+
+    def _models(self, provider_id: str) -> list[suggestion_model.ModelChoice]:
+        """A ChatGPT plan offers the models its account catalog lists, once signed in."""
+        account = self.chatgpt_models() if provider_id == CHATGPT else None
+        if account:
+            return [
+                suggestion_model.ModelChoice(f"{CHATGPT}:{slug}", name) for slug, name in account
+            ]
+        return list(suggestion_model.catalog(provider_id))
 
     def _credential_hint(self, provider_id: str) -> str | None:
         """A masked key, or for a ChatGPT plan the signed-in account; None when neither."""
@@ -199,20 +229,35 @@ class Settings:
 
     def chatgpt_login(self) -> chatgpt.Login | None:
         saved = self._store.get_setting(CHATGPT_LOGIN_KEY)
-        return None if saved is None else chatgpt.Login.from_json(saved)
+        return None if saved is None else chatgpt.Login.from_json(saved)  # None: an old sign-in
 
     def set_chatgpt_login(self, login: chatgpt.Login | None) -> None:
         with self._login_lock:
             self._store.set_setting(CHATGPT_LOGIN_KEY, None if login is None else login.to_json())
         self._changed()
 
-    def chatgpt_sign_in(self) -> chatgpt.DeviceCode | None:
+    def chatgpt_sign_in(self) -> chatgpt.Attempt | None:
         saved = self._store.get_setting(CHATGPT_SIGN_IN_KEY)
-        return None if saved is None else chatgpt.DeviceCode(**json.loads(saved))
+        return None if saved is None else chatgpt.Attempt.from_json(saved)
 
-    def set_chatgpt_sign_in(self, code: chatgpt.DeviceCode | None) -> None:
-        saved = None if code is None else json.dumps(asdict(code))
-        self._store.set_setting(CHATGPT_SIGN_IN_KEY, saved)
+    def set_chatgpt_sign_in(self, attempt: chatgpt.Attempt | None) -> None:
+        self._store.set_setting(CHATGPT_SIGN_IN_KEY, None if attempt is None else attempt.to_json())
+
+    def chatgpt_client_id(self) -> str | None:
+        return self._store.get_setting(CHATGPT_CLIENT_KEY)
+
+    def set_chatgpt_client_id(self, client_id: str) -> None:
+        self._store.set_setting(CHATGPT_CLIENT_KEY, client_id)
+
+    def chatgpt_models(self) -> list[tuple[str, str]] | None:
+        """The signed-in account's models, or None before its catalog has been read."""
+        saved = self._store.get_setting(CHATGPT_MODELS_KEY)
+        return None if saved is None else [(slug, name) for slug, name in json.loads(saved)]
+
+    def set_chatgpt_models(self, models: list[tuple[str, str]] | None) -> None:
+        saved = None if models is None else json.dumps(models)
+        self._store.set_setting(CHATGPT_MODELS_KEY, saved)
+        self._changed()
 
     def chatgpt_access_token(self) -> str | None:
         """The signed-in plan's access token, renewed first when it runs out soon."""
@@ -237,9 +282,9 @@ class Settings:
         saved = self._store.get_setting(DICTIONARY_MODEL_KEY)
         if saved is not None:
             return saved
-        for provider_id, (_, default_model) in suggestion_model.LLM_PROVIDERS.items():
+        for provider_id in suggestion_model.LLM_PROVIDERS:
             if self._credential_hint(provider_id) is not None:
-                return default_model
+                return self._suggested(provider_id)
         return None
 
     def set_dictionary_model(self, ref: str | None) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from collections.abc import Iterator
@@ -542,3 +543,80 @@ def test_each_part_is_traced_under_its_run(app: Entune, monkeypatch: pytest.Monk
     wait_for_build(client)
     assert traced and traced[0][0] == job["id"]
     assert traced[0][1]["part"] == 1 and traced[0][1]["effort"] == "low"
+
+
+def test_a_run_on_a_chatgpt_plan_asks_each_request_with_the_current_access(
+    app: Entune, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A plan's access lasts an hour and is renewed when due; a run can take longer.
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 20)
+    access = {"current": "access-1"}
+    monkeypatch.setattr(app.settings, "chatgpt_access_token", lambda: access["current"])
+    app.settings.set_dictionary_model("chatgpt:gpt-6-sol")
+    asked: list[str] = []
+
+    async def fake(request: Request) -> str:
+        asked.append(request.api_key)
+        access["current"] = f"access-{len(asked) + 1}"  # renewed before the next part
+        if len(asked) == 1:  # tried again within the part, with the renewed access
+            raise ModelHTTPError(503, "gpt-6-sol", "busy")
+        if len(asked) == 3:
+            raise ValueError(f"refused {request.api_key}")
+        return '{"additions": [], "revisions": [], "removals": []}'
+
+    def transcribe(clip: Clip, model: str, key: str) -> Transcript:
+        return Transcript("temporary words here")
+
+    monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
+    monkeypatch.setattr(app.builds, "_call", fake)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    client.post("/api/dictionary/build", json={"source": "audio"})
+    done = wait_for_build(client)
+    assert asked == ["access-1", "access-2", "access-3"]
+    # A renewed access is kept out of the error, as the first one is.
+    assert done["outcome"] == "failed" and "access-3" not in json.dumps(done)
+
+
+def test_a_refused_plan_renewal_fails_the_run_with_openais_reason(
+    app: Entune, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+
+    def refused() -> str:  # valid when the run starts, refused when renewed during it
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return "access-1"
+        raise ValueError("OpenAI refused the sign-in (400): refresh_token_reused")
+
+    monkeypatch.setattr(app.settings, "chatgpt_access_token", refused)
+    app.settings.set_dictionary_model("chatgpt:gpt-6-sol")
+    monkeypatch.setattr(app.providers[0], "transcribe", lambda c, m, k: Transcript("words"))
+    client = TestClient(create_app(app), base_url="http://localhost")
+    client.post("/api/dictionary/build", json={"source": "audio"})
+    done = wait_for_build(client)
+    assert done["outcome"] == "failed" and "refresh_token_reused" in done["errorDetail"]
+
+
+def test_signing_out_during_a_plan_run_stops_it_at_the_next_request(
+    app: Entune, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    signed_in = iter([True])  # signed in when the run starts, signed out after
+
+    monkeypatch.setattr(
+        app.settings, "chatgpt_access_token", lambda: "access-1" if next(signed_in, False) else None
+    )
+    app.settings.set_dictionary_model("chatgpt:gpt-6-sol")
+    asked: list[str] = []
+
+    async def fake(request: Request) -> str:
+        asked.append(request.api_key)
+        return '{"additions": [], "revisions": [], "removals": []}'
+
+    monkeypatch.setattr(app.providers[0], "transcribe", lambda c, m, k: Transcript("words"))
+    monkeypatch.setattr(app.builds, "_call", fake)
+    client = TestClient(create_app(app), base_url="http://localhost")
+    client.post("/api/dictionary/build", json={"source": "audio"})
+    done = wait_for_build(client)
+    assert asked == []  # the access it started with is not used once signed out
+    assert done["outcome"] == "failed" and "you signed out of ChatGPT" in done["error"]

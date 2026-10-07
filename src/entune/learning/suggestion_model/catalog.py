@@ -8,10 +8,12 @@ from dataclasses import dataclass
 # the same ID as its saved API key, so Groq shares the key already saved for speech.
 # CHATGPT runs OpenAI's models on a ChatGPT plan through a sign-in instead of a key.
 CHATGPT = "chatgpt"
+# Signing in with ChatGPT comes first: most people have a plan, and it needs no key. The
+# order is also which provider a dictionary without a chosen model uses first.
 LLM_PROVIDERS: dict[str, tuple[str, str]] = {
-    "anthropic": ("Anthropic", "anthropic:claude-sonnet-5"),
-    "openai": ("OpenAI", "openai:gpt-5.4-mini"),
     CHATGPT: ("OpenAI · ChatGPT subscription", "chatgpt:gpt-6-sol"),
+    "openai": ("OpenAI", "openai:gpt-5.4-mini"),
+    "anthropic": ("Anthropic", "anthropic:claude-sonnet-5"),
     "google": ("Google Gemini", "google:gemini-3.5-flash"),
     "groq": ("Groq", "groq:openai/gpt-oss-120b"),
     "mistral": ("Mistral", "mistral:mistral-large-latest"),

@@ -349,3 +349,80 @@ def test_more_questions_than_laya_takes_are_asked_in_batches(
         assert [len(json.loads(line)["questions"]) for line in lines[1:]] == [64, 6]
     finally:
         laya.stop()
+
+
+def test_openai_is_asked_the_same_questions_in_its_own_shape_on_the_openai_key(
+    tmp_path: Path,
+) -> None:
+    import httpx
+
+    from entune.dictionary import entries
+    from entune.processing import jev_client
+    from entune.processing.pipeline import process_text
+
+    asked: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        asked.append(request)
+        body = json.loads(request.content)
+        answers = []
+        for question in body["questions"]:
+            values = [c["value"] for c in question["choices"]]
+            # The last option wins, in OpenAI's answer shape; the probabilities sum to one.
+            top = 1 - 0.1 * (len(values) - 1)
+            listed = [{"value": v, "probability": top if v == values[-1] else 0.1} for v in values]
+            answers.append(
+                {
+                    "type": "choice",
+                    "name": question["name"],
+                    "choice": values[-1],
+                    "probabilities": listed,
+                    "confidence": 0.8,
+                }
+            )
+        return httpx.Response(200, json={"answers": answers})
+
+    jev = group("Jev", "Jeff", literal="Jeff: a person's first name.")
+    one = group("Entune", "in tune")  # a single meaning: OpenAI refuses one-option questions
+    groups = entries.Dictionary(learned={"s/m": (jev, one)}).effective("s/m")
+    with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
+        result = process_text(
+            "Then ask Jeff about in tune.",
+            groups,
+            contextual=True,
+            formatting=False,
+            key="sk-openai",
+            client=client,
+            policy=jev_client.Policy(),
+            endpoint=jev_client.OPENAI,
+        )
+    assert result.correction.status == "succeeded" and result.correction.model == "openai"
+    # OpenAI's choice is applied (the stub picks the last option, the literal Jeff), and
+    # the one-option occurrence is answered with its only option, without asking.
+    assert result.correction.output == "Then ask Jeff about Entune."
+    [request] = asked
+    assert str(request.url) == "https://api.openai.com/v1/decisions"
+    assert request.headers["authorization"] == "Bearer sk-openai"
+    body = json.loads(request.content)
+    assert body["model"] == "gpt-6-luna" and isinstance(body["input"], str)
+    assert json.loads(body["input"])["occurrences"]["o0"] == "Then ask ⟦Jeff⟧ about in tune."
+    [question] = body["questions"]
+    assert question["type"] == "choice" and question["name"] == "o0"
+    assert "Jeff" in question["instructions"]
+    assert len(question["choices"]) == 2
+    assert all(set(c) == {"value", "description"} for c in question["choices"])
+
+
+def test_openai_is_chosen_with_the_openai_key_the_suggestion_model_uses(tmp_path: Path) -> None:
+    from entune.processing import jev_client
+
+    service = Entune(Store(tmp_path), [StubProvider()])
+    with TestClient(create_app(service), base_url="http://localhost") as client:
+        choose = {"decisionModel": "openai", "jev": {"dictionary": True}}
+        refused = client.put("/api/settings", json=choose)
+        assert refused.status_code == 400 and refused.text == "Save an OpenAI API key first."
+        # A key saved with the choice is enough, and it is the suggestion model's key.
+        assert client.put("/api/settings", json={**choose, "keys": {"openai": "sk-1"}}).is_success
+        assert client.get("/api/settings").json()["decisionModel"]["selected"] == "openai"
+        assert service.decisions.endpoint() is jev_client.OPENAI
+        assert service.decisions.chosen() == (jev_client.OPENAI, "sk-1")

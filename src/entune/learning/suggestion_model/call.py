@@ -17,6 +17,7 @@ from typing import cast
 
 import httpx
 import httpx2
+import openai
 import pydantic_ai
 from opentelemetry import trace
 from pydantic import BaseModel
@@ -65,7 +66,7 @@ async def run(request: Request, model: Model | None = None) -> str:
         raise ValueError("The dictionary model must belong to the selected provider")
     if model is not None:
         return await _run(request, model)
-    async with provider_model(request.provider, request.api_key, name) as chosen:
+    async with provider_model(request.provider, request.api_key, name, request.access) as chosen:
         return await _run(request, chosen)
 
 
@@ -175,8 +176,21 @@ def passing(error: Exception) -> str | None:
         code = error.status_code
         return f"the service returned error {code}" if code >= 500 else None
     if isinstance(error, ModelAPIError | httpx.TransportError | httpx2.TransportError):
+        # An error the service sent inside a streamed reply (a ChatGPT plan's usage limit,
+        # for one) has no status code; only a temporary one there may pass.
+        cause = error.__cause__
+        if isinstance(cause, openai.APIError) and not isinstance(cause, openai.APIConnectionError):
+            body = cause.body if isinstance(cause.body, dict) else {}
+            if body.get("code") not in STREAMED_TEMPORARY:
+                return None
+            return f"the service reported {body['code']}"
         return "the connection failed"
     return None
+
+
+# Codes of streamed errors worth another attempt: a server error, and a ChatGPT plan's
+# usage briefly unavailable (OpenAI's Sign in with ChatGPT error list).
+STREAMED_TEMPORARY = frozenset({"server_error", "usage_unavailable"})
 
 
 PARTIAL = 50_000  # characters of an interrupted reply kept on its trace

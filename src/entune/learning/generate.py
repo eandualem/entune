@@ -49,6 +49,15 @@ def _service_problem(detail: str) -> str:
             "the suggestion model's reply ran into empty output, so it was stopped;"
             " try again in a little while."
         )
+    if "signed out of chatgpt" in words:
+        return (
+            "you signed out of ChatGPT; sign in again in Settings, Dictionary setup, to continue."
+        )
+    if "subscription sharing" in words:  # a ChatGPT plan's share for apps; it mentions API keys
+        return (
+            "your ChatGPT plan's usage limit for apps such as Entune is reached;"
+            " try again after it resets, or check Entune's limit in ChatGPT Settings > Usage."
+        )
     if any(sign in words for sign in ("401", "403", "authentication", "api key", "api_key")):
         return (
             "the suggestion model's service refused the key;"

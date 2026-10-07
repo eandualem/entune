@@ -454,9 +454,10 @@ wheels = [
 
 [[package]]
 name = "entune"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "httpx" },
     { name = "httpx2" },
     { name = "numpy" },
@@ -499,6 +500,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=42" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx2" },
     { name = "numpy" },

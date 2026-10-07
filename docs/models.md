@@ -42,9 +42,10 @@ this model ID and medium effort in its [model reference](https://developers.open
 
 Choose **OpenAI** in dictionary setup, then choose how to access it:
 
-- **ChatGPT subscription:** choose **Sign in with ChatGPT**, follow the account
-  sign-in page, and enter the displayed code. No OpenAI API key is needed for
-  this option. Your plan decides which models you can use and applies its usage
+- **ChatGPT subscription:** choose **Sign in with ChatGPT**. Your browser opens
+  OpenAI's sign-in; choose your account and approve Entune's use of your ChatGPT
+  plan, and the browser comes back to Entune. No OpenAI API key is needed for
+  this option, and no ChatGPT setting has to be turned on first. Your plan decides which models you can use and applies its usage
   limits; signing in does not provide unlimited generation. Our dictionary
   experiments used this access option.
 - **API key:** enter your OpenAI API key. Usage is billed to that API account,
@@ -57,13 +58,15 @@ automatically. The selected account must have access to the model. The suggestio
 setup chooses the reasoning effort by the provider's level names (minimal, low, medium,
 high, xhigh; high by default).
 
-**Current sign-in limitation:** the ChatGPT integration is experimental. It
-predates OpenAI's documented open-source sign-in route and does not yet implement
-that route's registration and inference contract. Successful experiments show
-that the current integration worked for the tested account; they do not establish
-supported access for every account. The migration is tracked in
-[issue #182](https://github.com/eandualem/entune/issues/182), against OpenAI's
-[documented account catalog and inference flow](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference).
+**How the sign-in works:** Entune uses OpenAI's documented [Sign in with ChatGPT
+route for open-source, locally hosted apps](https://developers.openai.com/siwc/token-sharing-open-source).
+The first sign-in registers Entune for your account; requests then go to OpenAI's
+public Responses API on your plan, with the models your account's catalog lists. Entune
+then appears in ChatGPT **Settings → Usage**, where you can set a limit for it or
+disconnect it. Your conversations and account context are not shared. OpenAI describes
+the route as a preview; the plan's own usage limits apply (on Plus, the five-hour limit
+is shared across apps). Signing in again is needed once after updating from a version
+of Entune that used the earlier Codex sign-in.
 
 ChatGPT access is for dictionary generation. Cloud speech services and Jev
 still use their own keys; Parakeet and Laya run locally.
@@ -138,13 +141,14 @@ contextual dictionary correction.
 |---|---|---|
 | **Jev** | Enter a TypeSafe API key | Better correction/preservation balance in our fresh-data test; matched context is sent to TypeSafe |
 | **Laya** | Install `uv tool install 'laya[serve]'`, then choose Laya | Runs locally; made more incorrect replacements and missed more valid corrections in that test |
+| **OpenAI** | Enter an OpenAI API key (the same key as OpenAI in Dictionary setup) | OpenAI's Decisions API, a public beta at $0.10 per million input tokens; matched context is sent to OpenAI; not yet in our comparison. A ChatGPT sign-in cannot be used for it |
 
 Laya's first start downloads about 850 MB of weights. Its engine includes
 PyTorch and uses additional memory. Entune manages its local server while Laya
 is selected and an applicable processing feature is enabled. Parakeet and Laya
 can both be selected; leave enough memory for both engines and your other apps.
 
-Both models choose only among the dictionary's eligible meanings. They cannot
+Every decision model chooses only among the dictionary's eligible meanings. They cannot
 invent a missing correct spelling or choose a literal meaning that the dictionary
 has not supplied. Check the entries if a recurring correct word keeps changing.
 

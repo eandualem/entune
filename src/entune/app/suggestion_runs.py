@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from concurrent.futures import CancelledError
 from contextlib import AbstractContextManager, contextmanager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -66,8 +66,13 @@ class DictionaryBuilds:
         call: suggestion_model.Caller,
         operations: Operations,
         trace: Callable[..., AbstractContextManager[None]] = lambda *a, **k: nullcontext(),
+        plan_access: Callable[[], str | None] = lambda: None,
     ) -> None:
         self._speech, self._call, self._operations = speech, call, operations
+        # A ChatGPT plan's access lasts an hour and a run can take longer, so each part asks
+        # with the current access, renewed when it is due to run out.
+        self._plan_access = plan_access
+        self._renewed: list[str] = []  # accesses renewed during this run, kept out of errors
         self._trace = trace  # groups a run's requests in Langfuse when tracing is on
         self._lock = threading.RLock()
         self._state: dict[str, Any] = {"phase": "idle"}
@@ -287,6 +292,26 @@ class DictionaryBuilds:
                 retries=[*self._state.get("retries", ()), failed],
             )
 
+    async def _asking(self, request: suggestion_model.Request) -> str:
+        """One request to the suggestion model. On a ChatGPT plan each one, and each HTTP
+        request within it (a reply's corrections), goes with the current access."""
+        if request.provider == suggestion_model.CHATGPT:
+            access = await asyncio.to_thread(self._current_access)
+            request = replace(request, api_key=access, access=self._current_access)
+        return await self._call(request)
+
+    def _current_access(self) -> str:
+        """The plan's current access, renewed when due; a renewed one is kept out of errors.
+        Signed out during the run, it stops at the next request instead of going on with
+        the access it started with."""
+        access = self._plan_access()
+        if access is None:
+            raise ValueError("Signed out of ChatGPT: sign in again under Settings to continue.")
+        with self._lock:
+            if access not in self._renewed:
+                self._renewed.append(access)
+        return access
+
     async def _part(self, spec: BuildInput, step: batches.Batch, number: int) -> None:
         """One part from the working dictionary; a validated result becomes the proposal."""
         with self._lock:
@@ -312,7 +337,7 @@ class DictionaryBuilds:
                     step,
                     spec.speech.id,
                     f"Part {number}",
-                    self._call,
+                    self._asking,
                     effort=spec.effort,
                     started=lambda size: self._progress(
                         step=number,
@@ -410,7 +435,7 @@ class DictionaryBuilds:
                         else f"{type(exc).__name__}: {exc}"
                     )
                     # Never a key, in the log or the page, as for a run's own error.
-                    for secret in (spec.speech_key, spec.builder[1]):
+                    for secret in (spec.speech_key, spec.builder[1], *self._renewed):
                         if secret:
                             why = why.replace(secret, "[redacted]")
                     # The log keeps why, so a run's skipped recordings can be read afterwards.
@@ -488,6 +513,7 @@ class DictionaryBuilds:
     def _run(self) -> None:
         spec = self._spec
         assert spec is not None
+        self._renewed = []
         outcome, error, detail = "complete", None, None
         transcriber: threading.Thread | None = None
         try:
@@ -516,7 +542,7 @@ class DictionaryBuilds:
                 if isinstance(exc, generate.StepFailed)
                 else f"{type(exc).__name__}: {exc}"
             )
-            for secret in (spec.speech_key, spec.builder[1]):
+            for secret in (spec.speech_key, spec.builder[1], *self._renewed):
                 if secret:
                     error = error.replace(secret, "[redacted]")
                     detail = detail.replace(secret, "[redacted]")
