@@ -433,8 +433,8 @@ same questions; History names the decision model each step asked.
 
 A literal Jeff or GIF is a meaning in its own right. Every valid response selects the
 highest-scoring eligible meaning, even when scores are close. Exact ties use the decision
-model's declared choice. Invalid responses fail the stage; scores are never invented or
-pooled by output spelling.
+model's declared choice. Invalid responses fail the stage; scores are never invented.
+Meanings that write the same text are offered as one option.
 
 Only explicitly approved, unambiguous direct mappings bypass classification. Pinning or
 having a single recorded candidate is not enough. With **Apply your dictionary** off,
@@ -549,8 +549,9 @@ Enabled features determine what is sent out:
 - **Tracing (off by default):** with Langfuse keys saved under **Settings →
   Integrations**, each dictionary-suggestion request and reply, including its
   transcripts and dictionary, also goes to the Langfuse host you set.
-- **Decision model:** for contextual correction it receives up to 160 characters of the
-  original transcript either side of each matched occurrence, and each eligible
+- **Decision model:** for contextual correction it receives about 160 characters of the
+  original transcript either side of each matched occurrence, cut at a sentence or word
+  boundary, and each eligible
   meaning's spelling, definition and personal context. Filler removal sends the transcript
   and code-proposed deletion spans; formatting sends the transcript and its sentence
   spans. With Jev, all of this goes to TypeSafe, even when speech

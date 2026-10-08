@@ -90,11 +90,13 @@ def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> N
         )
         assert context.attempts == 1 and context.decisions == 3
         assert jev.decide(text, [], call(client)) == []
-    # Only the local text is state; each option states its own meaning, without ID hops.
+    # Only the local text is state, the other questions' words marked; each option states
+    # its own meaning, without ID hops.
     state = requests[0]["state"]
     assert set(state) == {"occurrences"}
     assert state["occurrences"]["o1"] == (
-        "My colleague Jeff called. Use \u27e6Jeff\u27e7 to classify. Send the animated GIF."
+        "My colleague \u27e8Jeff\u27e9 called. Use \u27e6Jeff\u27e7 to classify."
+        " Send the animated \u27e8GIF\u27e9."
     )
     question = requests[0]["questions"]["o1"]
     assert "Jeff" in question["instructions"]["question"]
@@ -615,17 +617,21 @@ def test_formatting_with_dictionary_disabled_does_not_apply_even_direct_mappings
     assert result.formatting.status == "succeeded" and result.formatting.decisions == 2
 
 
-def test_identical_output_senses_do_not_pool_scores() -> None:
+def test_meanings_that_write_the_same_text_are_one_option() -> None:
     from tests.dictionary_samples import CLOUD
 
-    requests, handler = answering(lambda *_: {"i0": 0.4, "i1": 0.3, "i2": 0.3})
+    requests, handler = answering(lambda *_: {"i0": 0.4, "i1": 0.6})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         decisions = jev.decide(
             "Ask cloud here.", matches((CLOUD,), "Ask cloud here."), call(client)
         )
-    assert decisions[0].edit is not None and decisions[0].edit.text == "Claude"
-    assert decisions[0].meaning_ids == ("a_claude",)
-    assert "unresolved" not in requests[0]["questions"]["o0"]["criteria"]
+    assert requests[0]["questions"]["o0"]["criteria"] == {
+        "i0": "cloud means Claude: Anthropic's AI assistant.",
+        "i1": "cloud means cloud: Remote computing infrastructure."
+        " Or: cloud means cloud: A visible cloud in the sky.",
+    }
+    assert decisions[0].edit is not None and decisions[0].edit.text == "cloud"
+    assert decisions[0].meaning_ids == ("b_cloud", "c_cloud")
 
 
 @pytest.mark.parametrize(
@@ -781,6 +787,20 @@ def test_meaning_request_variants_add_only_the_compared_context() -> None:
     examples = jev.meaning_request(text, found, jev.Variant(examples=True))
     assert len(examples.questions["o0"]["instructions"]["examples"]) == 4
     assert examples.questions["o0"]["criteria"] == focused.questions["o0"]["criteria"]
+
+
+def test_context_ends_at_the_sentence_boundary_nearest_the_window_else_a_word() -> None:
+    sentence = "Filler words keep this sentence long enough to matter. "
+    text = sentence * 4 + "Use the jif here. " + sentence * 4
+    context = jev.meaning_request(text, matches((JEV,), text)).state["occurrences"]["o0"]
+    # The sentence boundaries nearest 160 characters away: 176 before, 174 after.
+    assert (
+        context == sentence * 3 + "Use the \u27e6jif\u27e7 here. " + sentence * 2 + sentence.strip()
+    )
+    text = "word " * 100 + "jif " + "word " * 100  # no sentence ends to cut at
+    context = jev.meaning_request(text, matches((JEV,), text)).state["occurrences"]["o0"]
+    assert context.startswith("word ") and context.endswith(" word")
+    assert len(context) <= 2 * jev.WINDOW + len("\u27e6jif\u27e7")
 
 
 def test_overlapping_options_say_which_words_they_change() -> None:

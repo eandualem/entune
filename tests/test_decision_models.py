@@ -424,7 +424,7 @@ def test_openai_is_asked_the_same_questions_in_its_own_shape_on_the_openai_key(
     assert request.headers["authorization"] == "Bearer sk-openai"
     body = json.loads(request.content)
     assert body["model"] == "gpt-6-luna" and isinstance(body["input"], str)
-    assert json.loads(body["input"])["occurrences"]["o0"] == "Then ask ⟦Jeff⟧ about in tune."
+    assert json.loads(body["input"])["occurrences"]["o0"] == "Then ask ⟦Jeff⟧ about ⟨in tune⟩."
     [question] = body["questions"]
     assert question["type"] == "choice" and question["name"] == "o0"
     assert "Jeff" in question["instructions"]
