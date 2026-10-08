@@ -21,6 +21,7 @@ const stepsList = el("steps");
 
 let models = [];
 let defaultModel = null; // {id, label} from /api/models, or null
+let modelNames = ""; // the models' ids and labels the History cards were drawn with
 let settings = null; // the last /api/settings answer
 let shortcuts = { hold: null, toggle: null };
 let recordingsCount = 0;
@@ -162,6 +163,9 @@ async function loadModels() {
     defaultModel = models.find((m) => m.default) ?? null;
   }
   fillModels(models, modelSelect, defaultModel?.id ?? null, "No models: add a key or download one");
+  // History names each attempt's model from this list, which can arrive after the cards.
+  const names = models.map((m) => `${m.id}=${m.label}`).join("|");
+  if (names !== modelNames) { modelNames = names; history.redraw().catch(() => {}); }
   if (!defaultModel && models.length > 0) modelSelect.prepend(new Option("Pick a model", "", true, true));
   fastInput.disabled = !defaultModel || fastSaving;
   fastWrap.classList.toggle("off", !defaultModel);

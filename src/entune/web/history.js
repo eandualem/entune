@@ -107,5 +107,11 @@ export function createHistory({ list, newer, older, renderCard, onChange, onErro
     etag = null;
     await refresh(true);
   }
-  return { refresh, latest };
+  // Every card drawn again, for a change outside the recordings (the models' names).
+  async function redraw() {
+    snapshots = new Map();
+    etag = null;
+    await refresh(true);
+  }
+  return { refresh, latest, redraw };
 }
