@@ -1035,6 +1035,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     }
     jsonBox.value = savedText;
     draftBase = null;
+    el("json-error").hidden = true;
     jsonDirty();
     toast("Saved dictionary.json");
   });

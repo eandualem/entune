@@ -93,6 +93,7 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
           if (key !== drawn || running()) { await render(); drawn = key; }
         }
       } catch (err) {
+        drawn = null; // the error replaces what was drawn: the next answer is drawn in full
         progress.textContent = `Could not read build progress: ${errorText(err)}`;
         progress.classList.add("err");
         progress.hidden = false;
@@ -106,6 +107,7 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
   }
   async function action(name, id = state.id) {
     version++;
+    drawn = null; // a local change: the next answer is drawn in full
     clearFeedback();
     try {
       const body = name === "accept" ? { selected: getSelected() } : name === "retry" ? getRunSettings() : null;
@@ -129,6 +131,7 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
     discard: (id) => action("discard", id),
     async start(source, selection = {}) {
       version++;
+      drawn = null; // a local change (busy now): the next answer is drawn in full
       clearFeedback();
       onBusy(true);
       try {
