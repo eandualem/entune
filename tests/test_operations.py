@@ -90,7 +90,8 @@ def test_cancel_inflight_jev_closes_requests_and_keeps_raw(
     attempt = service.store.list_recordings()[0].transcriptions[0]
     assert attempt.raw_text == "Use Jeff to classify this."
     assert attempt.processing_state == "cancelled"
-    assert attempt.formatting and attempt.formatting.status == "failed"
+    # Formatting finished first (one sentence needs no request) and keeps its result.
+    assert attempt.formatting and attempt.formatting.status == "skipped"
     assert attempt.correction and attempt.correction.status == "failed"
     assert platform.actions.clipboard is None and platform.actions.pasted == 0
     app.close()

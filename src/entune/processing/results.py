@@ -29,6 +29,7 @@ class Stage:
     output: str | None = None  # completed intermediate text; never another history attempt
     selections: tuple[Selection, ...] = ()
     model: str | None = None  # the decision model the step asks: "jev" or "laya"; None: none
+    together: bool = False  # ran at the same time as the dictation's other steps
 
     def recorded_changes(self) -> tuple[Change, ...] | None:
         """The edits this step made (possibly none) when it ran and recorded them; None

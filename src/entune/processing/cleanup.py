@@ -12,8 +12,10 @@ from entune.processing.text_edits import Change, overlaps, protected
 # A small explicit vocabulary, not arbitrary words or spoken edit commands. A run of
 # sounds ("um, uh") is one candidate; like is a filler only when repeated.
 _SOUND = r"(?:um|uh|er|erm|ah|hmm)"
+# Sounds separated only by spaces, commas, stops or dots ("Um. Uh,") are one run.
 _SOUNDS = re.compile(
-    rf"(?<![\w'\u2019\-]){_SOUND}(?:[ \t,]+{_SOUND})*(?![\w'\u2019\-])", re.IGNORECASE
+    rf"(?<![\w'\u2019\-]){_SOUND}(?:[ \t,.\u2026]+{_SOUND})*(?![\w'\u2019\-])",
+    re.IGNORECASE,
 )
 _RUN = re.compile(
     r"(?<![\w'\u2019\-])(?P<word>like)(?:[ \t,]+(?P=word)(?![\w'\u2019\-]))+",

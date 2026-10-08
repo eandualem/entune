@@ -10,7 +10,7 @@ from starlette.testclient import TestClient
 from entune.app.entune import Entune
 from entune.processing import cleanup, formatting, jev, jev_client, text_edits
 from entune.processing.pipeline import _combine, process_text
-from entune.processing.results import Stage, notice
+from entune.processing.results import Processed, Stage, notice
 from entune.processing.text_edits import Change
 from entune.providers.contracts import Transcript
 from entune.server import create_app
@@ -136,6 +136,8 @@ def test_quotes_code_nonfillers_and_out_of_scope_runs_are_not_candidates(raw: st
         ("And then um", "And then"),
         ("First line, uh\nsecond line", "First line\nsecond line"),
         ("Uh... so it works.", "So it works."),
+        ("Done. Um. Um.", "Done."),
+        ("Um... uh, go.", "Go."),
     ],
 )
 def test_a_filler_sound_goes_with_its_own_comma_and_space(raw: str, expected: str) -> None:
@@ -251,6 +253,60 @@ def test_where_two_stages_edit_the_same_text_the_dictionary_wins() -> None:
     assert result.cleanup.changes == () and result.cleanup.removed_words == 0
     assert result.cleanup.output == raw
 
+    raw = "Um, use this. Uh, next."
+    correction = Stage("succeeded", "contextual", changes=(Change(14, 16, "Uh", "UH"),))
+    fillers = Stage(
+        "succeeded",
+        "cleanup",
+        changes=(Change(0, 5, "Um, u", "U"), Change(14, 19, "Uh, n", "N")),
+        removed_words=2,
+    )
+    result = _combine(raw, correction, fillers, Stage("disabled", "formatting"))
+    assert result.text == "Use this. UH, next."
+    assert result.cleanup.removed_words == 1  # the moved capital is not a removed word
+
+
+def test_a_finished_stage_is_saved_before_the_others_end_and_kept_on_cancel() -> None:
+    import asyncio
+    import concurrent.futures
+    import json
+    import threading
+
+    cancel = threading.Event()
+    saved: list[Processed] = []
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        if "fillers" not in json.loads(request.content)["state"]:
+            await asyncio.sleep(0.5)  # formatting is still waiting when the dictation is cancelled
+        return answering(
+            lambda _, question: (
+                {"hesitation": 1.0} if "hesitation" in question["criteria"] else {"continues": 1.0}
+            )
+        )[1](request)
+
+    def checkpoint(result: Processed) -> None:
+        saved.append(result)
+        cancel.set()
+
+    with (
+        closing(jev_client.Client(httpx.MockTransport(respond))) as client,
+        pytest.raises(concurrent.futures.CancelledError),
+    ):
+        process_text(
+            "Um, first. Second.",
+            (),
+            contextual=False,
+            formatting=True,
+            cleanup=True,
+            key="ts-key",
+            client=client,
+            policy=jev_client.Policy(),
+            checkpoint=checkpoint,
+            cancel=cancel,
+        )
+    assert saved[0].text == "First. Second."
+    assert saved[0].cleanup.status == "succeeded" and saved[0].formatting.status == "pending"
+
 
 def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
     tmp_path: Path,
@@ -272,7 +328,7 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
 
     def respond(request: httpx.Request) -> httpx.Response:
         attempt = store.list_recordings()[0].transcriptions[0]
-        assert attempt.status == "ok" and attempt.raw_text == attempt.text == raw
+        assert attempt.status == "ok" and attempt.raw_text == raw
         assert attempt.processing_state == "processing"
         return handler(request)
 

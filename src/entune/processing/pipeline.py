@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import CancelledError, ThreadPoolExecutor
+from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from typing import Literal
 
@@ -66,17 +67,26 @@ def process_text(
         return initial
     if progress:
         progress("formatting")
+    done: dict[str, Stage] = {}
+
+    def combined() -> Processed:
+        return _combine(
+            raw,
+            done.get("correction", initial.correction),
+            done.get("cleanup", initial.cleanup),
+            done.get("formatting", initial.formatting),
+        )
+
     with ThreadPoolExecutor(len(stages), thread_name_prefix="entune-stage") as pool:
-        futures = {name: pool.submit(_timed, stage) for name, stage in stages.items()}
-        done = {name: future.result() for name, future in futures.items()}
+        futures = {pool.submit(_timed, stage): name for name, stage in stages.items()}
+        for future in as_completed(futures):
+            done[futures[future]] = future.result()
+            # Each finished stage is saved, so a cancel or a restart keeps its work.
+            if checkpoint and len(done) < len(futures):
+                checkpoint(combined())
     if check:
         check()
-    result = _combine(
-        raw,
-        done.get("correction", initial.correction),
-        done.get("cleanup", initial.cleanup),
-        done.get("formatting", initial.formatting),
-    )
+    result = combined()
     if checkpoint:
         checkpoint(result)
     return result
@@ -84,7 +94,7 @@ def process_text(
 
 def _timed(stage: Callable[[], Stage]) -> Stage:
     started = time.perf_counter()  # durations: Windows' monotonic clock ticks every ~16 ms
-    return replace(stage(), seconds=time.perf_counter() - started)
+    return replace(stage(), seconds=time.perf_counter() - started, together=True)
 
 
 def _correction(
@@ -186,7 +196,7 @@ def _combine(raw: str, correction: Stage, cleanup: Stage, formatting: Stage) -> 
             stages[name] = replace(
                 stage,
                 changes=fits,
-                removed_words=stage.removed_words and sum(len(c.before.split()) for c in fits),
+                removed_words=stage.removed_words and sum(_words(c) for c in fits),
                 output=text_edits.apply(raw, fits),
             )
     return Processed(
@@ -195,6 +205,11 @@ def _combine(raw: str, correction: Stage, cleanup: Stage, formatting: Stage) -> 
         stages["formatting"],
         stages["cleanup"],
     )
+
+
+def _words(change: Change) -> int:
+    """Words a deletion removes; a capital it moves to the next word is not one."""
+    return len(re.findall(r"\w+", change.before)) - len(re.findall(r"\w+", change.after))
 
 
 def _touch(a: Change, b: Change) -> bool:
