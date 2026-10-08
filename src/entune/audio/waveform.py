@@ -20,21 +20,24 @@ def levels(path: Path, bars: int) -> list[float]:
     any other format is converted first, at a rate that is plenty for a picture."""
     try:
         with path.open("rb") as file:
-            return _levels(file, bars, streamed=False)
+            # A WAV written by a stream (ffmpeg's stdout) claims more frames than the
+            # file holds; such a file is read whole, like converted audio.
+            return _levels(file, bars, streamed=False, size=path.stat().st_size)
     except (wave.Error, EOFError):
         converted = io.BytesIO(to_wav_with_ffmpeg(path.read_bytes(), sample_rate=8000))
     try:
         # A converted stream's header has no length; it is all in memory, so read it whole.
-        return _levels(converted, bars, streamed=True)
+        return _levels(converted, bars, streamed=True, size=0)
     except (wave.Error, EOFError) as exc:
         raise ValueError(f"unreadable audio: {exc}") from exc
 
 
-def _levels(file: BinaryIO, bars: int, *, streamed: bool) -> list[float]:
+def _levels(file: BinaryIO, bars: int, *, streamed: bool, size: int) -> list[float]:
     with wave.open(file) as audio:
         width, channels, frames = audio.getsampwidth(), audio.getnchannels(), audio.getnframes()
         if width not in _SAMPLES:
             raise wave.Error(f"{8 * width}-bit samples")
+        streamed = streamed or frames * width * channels > size
 
         def samples(raw: bytes) -> np.ndarray:
             values = np.frombuffer(raw, dtype=_SAMPLES[width]).astype(np.float64)

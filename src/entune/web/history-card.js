@@ -150,14 +150,16 @@ function marked(t) {
     .flatMap(([name, s]) => (s.changes ?? []).map((c) => ({ ...c, dictionary: name === "Dictionary" })))
     .sort((a, b) => a.start - b.start || a.end - b.end);
   if (t.raw_text == null || !edits.some((e) => e.dictionary)) return null;
+  // The offsets count characters as Python does (code points), not as JavaScript strings do.
+  const raw = Array.from(t.raw_text);
   const parts = [];
   let at = 0;
   for (const e of edits) {
     if (e.start < at) return null;
-    parts.push(t.raw_text.slice(at, e.start), e.dictionary ? { text: e.after, heard: e.before } : e.after);
+    parts.push(raw.slice(at, e.start).join(""), e.dictionary ? { text: e.after, heard: e.before } : e.after);
     at = e.end;
   }
-  parts.push(t.raw_text.slice(at));
+  parts.push(raw.slice(at).join(""));
   return parts.map((p) => (typeof p === "string" ? p : p.text)).join("") === t.text ? parts : null;
 }
 function transcript(t) {
@@ -354,6 +356,16 @@ export function renderCard(r, models, { isLocal = () => false, currentModels = (
         was ? (t.processing_state === "cancelled" ? "Canceled — audio saved. No text delivered." : "Processing…")
           : t.status === "ok" ? t.text || "No speech detected" : t.error ?? "");
       attempt.append(head, text);
+      // Its processing stays inspectable: what each stage changed or why it failed, and the time.
+      const steps = t.status === "ok" && !was ? stagesOf(t) : [];
+      if (t.status === "ok" && !was && t.error) attempt.append(node("p", "card-note err", t.error));
+      if (steps.length) {
+        const failedStep = steps.some(([, stage]) => stage.status === "failed");
+        const count = steps.reduce((sum, [, stage]) => sum + (stage.status === "succeeded" ? stage.changes?.length ?? 0 : 0), 0);
+        const details = node("details", "attempt-details");
+        details.append(node("summary", failedStep ? "summary err" : "summary", failedStep ? "Needs attention" : count ? plural(count, "change") : "No changes"), changesPanel(t));
+        attempt.append(details);
+      }
       box.append(attempt);
     }
     panels.attempts = box;

@@ -59,3 +59,10 @@ def test_waveform_of_converted_audio_uses_its_real_length(
     monkeypatch.setattr(waveform, "to_wav_with_ffmpeg", lambda data, sample_rate: bytes(stream))
     (tmp_path / "a.m4a").write_bytes(b"not a wav")
     assert waveform.levels(tmp_path / "a.m4a", 2) == [0.0, 1.0]
+
+
+def test_waveform_of_a_streamed_wav_file_uses_its_real_length(tmp_path: Path) -> None:
+    stream = bytearray(wav_bytes(b"\x00\x00" * 800 + (b"\x00\x40" + b"\x00\xc0") * 400))
+    stream[40:44] = (0xFFFFFFFF).to_bytes(4, "little")
+    (tmp_path / "a.wav").write_bytes(stream)
+    assert waveform.levels(tmp_path / "a.wav", 2) == [0.0, 1.0]

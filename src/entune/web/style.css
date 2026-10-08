@@ -247,6 +247,9 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .attempt .meta { margin: 0; font-size: var(--fs-11-5); color: var(--text-faint); }
 .attempt .text { margin: 0; font-size: var(--fs-14-5); line-height: 1.6; color: var(--text-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
 .attempt .text.err { font: var(--fs-12-5)/1.55 var(--mono); color: var(--error-body); }
+.attempt-details > summary { width: max-content; font-size: var(--fs-12); color: var(--text-muted); cursor: default; }
+.attempt-details > summary.err { color: var(--error); }
+.attempt-details > .card-panel { margin-top: var(--sp-6); padding: var(--sp-10) 0 0; background: none; border-top: 1px solid var(--line-faint); border-radius: 0; }
 /* A retry in progress: a light runs along the card's top edge until the new attempt arrives. */
 .card.retrying { position: relative; overflow: hidden; }
 .card.retrying::before {
