@@ -15,7 +15,6 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   let run = { phase: "idle" };
   let filter = "all";
   let query = "";
-  let sortDir = 1;
   let openId = null; // the one entry shown expanded, as scope:group (pinning can split a group's ID across both)
   let addPinned = false;
   let draft = null; // the entry open in the editor panel
@@ -115,6 +114,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     return [...new Set(g.recognized_forms.flatMap((f) => f.associations.map((a) => a.meaning_id)))].map((mid) => known.get(mid)?.spelling ?? mid).join(" · ");
   }
   const attention = (g) => g.needs_review || g.meanings.some((m) => !m.meaning.trim());
+  // The letter a title is listed under: its first letter or digit, without accents.
+  const initial = (text) => (text.normalize("NFD").match(/[\p{L}\p{N}]/u)?.[0] ?? "#").toUpperCase();
   // The entries that apply to the selected speech model: pinned, then its learned ones.
   function visible() {
     const model = getModel();
@@ -252,14 +253,12 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     jsonDirty();
     drawAdd();
     editorStatus();
-    el("pin-all").disabled = building || !(dict.learned[getModel()?.id] ?? []).length;
     modelSelect.disabled = building || modelSelect.value === "";
   }
 
   // ---- The table ----
   const selectFilter = segmentedGroup({ all: el("filter-all"), pinned: el("filter-pinned"), learned: el("filter-learned"), attention: el("filter-attention") }, (name) => { filter = name; openId = null; renderRows(); });
   el("dict-search").addEventListener("input", (event) => { query = event.target.value; renderRows(); });
-  el("sort-spelling").addEventListener("click", () => { sortDir = -sortDir; renderRows(); });
 
   function renderDictionary(jsonText) {
     if (jsonText !== undefined) { savedText = jsonText; jsonBox.value = jsonText; el("json-error").hidden = true; }
@@ -275,9 +274,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     if (filter === "attention" && !counts.attention) { filter = "all"; selectFilter("all"); }
     el("filter-learned").title = model ? `Learned only for ${speechName(model)}` : "Choose a speech model in the toolbar first";
     el("filter-learned").disabled = !model;
-    el("legend-model").textContent = shortName(model);
-    el("pin-all-label").textContent = model ? `Pin all learned for ${shortName(model)}` : "Pin all learned";
-    el("pin-all-count").textContent = learned ? plural(learned, "entry", "entries") : "";
+    el("dict-summary").textContent = [plural(groups.length, "entry", "entries"), `${dict.pinned.length} pinned for every speech model`,
+      ...(model ? [`${learned} learned for ${shortName(model)}`] : [])].join(" · ");
+    drawMenu();
     el("learn-source").textContent = !model ? "Choose a speech model first."
       : "Reads your newest transcripts not yet used by suggestions you applied, finds the words your speech model gets wrong, and improves the entries those transcripts show.";
     if (proposalModel) proposalTitle();
@@ -294,11 +293,21 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const shown = groups
       .filter((v) => filter === "all" || (filter === "attention" ? attention(v.g) : v.scope === filter))
       .filter((v) => !q || [title(v.g, known), ...v.g.recognized_forms.map((f) => f.text), ...v.g.meanings.map((m) => m.meaning)].join(" ").toLowerCase().includes(q))
-      .sort((a, b) => title(a.g, known).localeCompare(title(b.g, known)) * sortDir);
-    el("sort-mark").textContent = sortDir > 0 ? "↑" : "↓";
-    el("dict-count").textContent = shown.length === groups.length ? plural(groups.length, "entry", "entries") : `${shown.length} of ${groups.length}`;
+      .map((v) => ({ ...v, name: v.g.meanings[0]?.spelling ?? title(v.g, known) }))
+      .sort((a, b) => initial(a.name).localeCompare(initial(b.name)) || a.name.localeCompare(b.name));
     const pinned = pinnedIds();
-    el("dict-rows").replaceChildren(...shown.map((v) => entryRow(v, known, pinned)));
+    // Entries under the first letter of their title, A to Z.
+    const letters = [];
+    for (const v of shown) {
+      const letter = initial(v.name);
+      if (letters.at(-1)?.letter !== letter) letters.push({ letter, items: node("div", "", "dict-group-items") });
+      letters.at(-1).items.append(entryRow(v, known, pinned));
+    }
+    el("dict-rows").replaceChildren(...letters.map(({ letter, items }) => {
+      const group = node("div", "", "dict-group");
+      group.append(node("span", letter, "dict-letter"), items);
+      return group;
+    }));
     const empty = !shown.length;
     el("dict-empty").hidden = !empty;
     if (empty) {
@@ -316,8 +325,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   }
 
   const PIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 1.5h4l-.6 4.5 2.8 2.5H3.8L6.6 6 6 1.5zM8 8.5V14.5"/></svg>';
+  const CHEVRON = '<svg class="i12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5L8 6l-3.5 3.5"/></svg>';
+  const ARROW = '<svg class="i14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 7h9M8 4l3 3-3 3"/></svg>';
+  const icon = (svg, cls) => { const span = node("span", "", cls); span.innerHTML = svg; return span; };
   // One line per entry; a click shows its heard forms and meanings underneath.
-  function entryRow({ g, scope }, known, pinned) {
+  function entryRow({ g, scope, name: heading }, known, pinned) {
     const model = getModel();
     const item = node("div", "", "dict-entry");
     const line = node("div", "", "dict-row");
@@ -327,19 +339,27 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     line.setAttribute("role", "button");
     line.setAttribute("aria-expanded", String(open));
     const name = node("span", "", "cell-title");
-    name.append(node("span", title(g, known), "title-text"));
+    name.append(node("span", heading, "title-text"));
+    name.title = title(g, known);
     if (attention(g)) {
       const dot = node("span", "", "attention-dot");
       dot.title = g.meanings.some((m) => !m.meaning.trim()) ? "Needs a description before Entune can choose it" : "Imported: check the descriptions and capitals";
       name.append(dot);
     }
+    // The first two heard forms, then how many more.
+    const forms = g.recognized_forms.map((f) => f.text);
+    const heard = node("span", "", "cell-heard");
+    heard.title = forms.join(" · ");
+    heard.append(...forms.slice(0, 2).map((text) => node("code", text, "chip")));
+    if (forms.length > 2) heard.append(node("span", `+${forms.length - 2}`, "more"));
     const description = g.meanings.find((m) => m.meaning.trim())?.meaning;
     const linksPinned = !g.meanings.length && g.recognized_forms.every((f) => f.associations.every((a) => pinned.has(a.meaning_id)));
-    const what = node("span", description ?? (g.meanings.length ? "No description yet" : `Another way ${shortName(model)} hears ${linksPinned ? "a pinned word" : "a word from another entry"}`), description ? "cell-desc" : "cell-desc faint");
+    const what = node("span", description ?? (g.meanings.length ? "No description yet" : `Another way ${shortName(model)} hears ${linksPinned ? "a pinned word" : "a word from another entry"}`),
+      description ? "cell-desc" : g.meanings.length ? "cell-desc missing" : "cell-desc faint");
     const where = node("span", "", "cell-scope");
     if (scope === "pinned") where.innerHTML = PIN;
     where.append(scope === "pinned" ? "Pinned" : shortName(model));
-    line.append(name, node("span", g.recognized_forms.map((f) => f.text).join(" · "), "cell-heard"), what, where);
+    line.append(name, heard, what, where, icon(CHEVRON, "cell-chevron"));
     const toggle = () => { openId = open ? null : rowKey; renderRows(); document.querySelector(`[data-entry="${CSS.escape(rowKey)}"] .dict-row`)?.focus(); };
     line.addEventListener("click", toggle);
     line.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } });
@@ -350,21 +370,25 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     return item;
   }
 
+  // Heard → written on the left, beside the meanings the decision model chooses from.
   function entryDetail(g, scope, known, pinned) {
     const model = getModel();
     const detail = node("div", "", "dict-detail");
     const forms = node("div", "", "detail-forms");
-    forms.append(node("p", "Heard → written", "detail-label"));
+    forms.append(node("p", model ? `When ${shortName(model)} hears` : "When the speech model hears", "detail-label"));
     for (const form of g.recognized_forms) {
       const line = node("div", "", "heard-line");
-      line.append(node("code", form.text, "heard"), node("span", "→", "arrow"));
+      line.append(node("code", form.text, "heard"), icon(ARROW, "arrow"));
       form.associations.forEach((link, i) => {
-        if (i) line.append(node("span", "or", "or"));
+        const target = node("span", "", "target");
+        if (i) target.append(node("span", "or", "or"));
         const meaning = known.get(link.meaning_id);
         const own = g.meanings.some((m) => m.id === link.meaning_id);
-        const note = link.basis === "literal" ? " (as written)" : own ? "" : pinned.has(link.meaning_id) ? " (pinned)" : " (other entry)";
-        const target = node("span", `${meaning?.spelling ?? link.meaning_id}${note}`, link.basis === "literal" ? "target literal" : "target");
-        if (link.basis === "literal") target.title = "Left as written when this meaning fits the sentence";
+        const literal = link.basis === "literal";
+        target.append(node("span", meaning?.spelling ?? link.meaning_id, literal ? "word literal" : "word"));
+        const note = literal ? "as written" : own ? "" : pinned.has(link.meaning_id) ? "pinned" : "other entry";
+        if (note) target.append(node("span", note, "note"));
+        if (literal) target.title = "Left as written when this meaning fits the sentence";
         line.append(target);
       });
       if (form.direct) {
@@ -376,37 +400,40 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     }
     if (!g.recognized_forms.length) forms.append(node("p", "No heard forms yet.", "caption"));
     const list = node("div", "", "detail-meanings");
-    list.append(node("p", "Meanings · the decision model picks from the sentence", "detail-label"));
-    for (const meaning of g.meanings) {
-      const row = node("div", "", "meaning-line");
-      const head = node("span", "", "meaning-name");
+    list.append(node("p", g.meanings.length > 1 ? "Meanings · Entune picks one from the sentence" : "Meaning", "detail-label"));
+    g.meanings.forEach((meaning, i) => {
+      const card = node("div", "", "meaning-card");
+      const body = node("div", "", "meaning-body");
+      const head = node("div", "", "meaning-head");
       head.append(node("b", meaning.spelling), node("span", meaning.casing === "fixed" ? "exact capitals" : "normal word", "casing"));
-      const text = node("span", "", "meaning-text");
-      text.append(node("span", meaning.meaning || "No description: the decision model can't choose it yet.", meaning.meaning ? "definition" : "definition missing"));
-      if (meaning.personal_context) text.append(node("span", meaning.personal_context, "personal"));
       // Pinning one meaning of several leaves its competitors learned for this model.
       if (scope === "learned" && g.meanings.length > 1) {
         const pin = button("Pin", () => pinMeanings(g, [meaning]), "btn link pin-meaning");
         pin.title = `Use ${meaning.spelling} with every speech model`;
-        text.append(pin);
+        head.append(pin);
       }
-      row.append(head, text);
-      list.append(row);
-    }
+      body.append(head, node("p", meaning.meaning || "No description yet. Entune can't choose this meaning until it has one.", meaning.meaning ? "definition" : "definition missing"));
+      if (meaning.personal_context) {
+        const personal = node("p", "", "personal");
+        personal.append(node("span", "Personal · ", "faint"), meaning.personal_context);
+        body.append(personal);
+      }
+      card.append(node("span", String(i + 1), "meaning-n"), body);
+      list.append(card);
+    });
     if (!g.meanings.length) list.append(node("p", `No meanings of its own: teaches ${shortName(model)} another way it hears a word from another entry.`, "caption"));
     if (g.needs_review) list.append(node("p", "Imported: check the descriptions and capitals.", "caption warn"));
     const actions = node("div", "", "detail-actions");
     actions.append(button("Edit", () => openEditor(scope, g), "btn fill sm"));
-    if (scope === "learned") {
-      const pin = button("Pin", () => pinMeanings(g, g.meanings), "btn sm");
+    if (scope === "learned" && g.meanings.length) {
+      const pin = button("Pin for every model", () => pinMeanings(g, g.meanings), "btn sm");
+      pin.insertAdjacentHTML("afterbegin", PIN);
       pin.title = "Use with every speech model and protect from suggestions";
-      pin.hidden = !g.meanings.length;
       actions.append(pin);
     }
     actions.append(button("Remove", () => removeEntry(scope, g), "btn ghost sm remove"), node("span", "", "spacer"),
-      node("span", scope === "pinned" ? "Pinned · every speech model" : `Learned · ${speechName(model)}`, "caption"));
-    list.append(actions);
-    detail.append(forms, list);
+      node("span", scope === "pinned" ? "Pinned · used with every speech model" : `Learned · ${speechName(model)} only`, "caption"));
+    detail.append(forms, list, actions);
     return detail;
   }
 
@@ -426,11 +453,6 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     for (const meaning of list) if (!await pin({ group: g.id, meaning: meaning.id }, model)) return;
     toast(`Pinned ${list.map((m) => m.spelling).join(" · ")} for every speech model`);
   }
-  el("pin-all").addEventListener("click", async () => {
-    const count = (dict.learned[getModel()?.id] ?? []).length;
-    closeMenu();
-    if (await pin({})) toast(`Pinned ${plural(count, "entry", "entries")}`);
-  });
 
   // Removing an entry removes the links other entries made to its meanings, where no other
   // entry still defines them: pinned ones for every section, learned ones for their model.
@@ -490,15 +512,15 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const model = getModel();
     if (!model) addPinned = true;
     const scope = el("add-scope");
-    scope.textContent = addPinned ? "Pinned" : `${shortName(model)} only`;
+    scope.innerHTML = PIN;
+    scope.append(addPinned ? "Pinned · every model" : `Learned · ${shortName(model)}`);
     scope.title = addPinned ? (model ? "Used with every speech model. Click to use it only with this one." : "Used with every speech model") : `Only ${speechName(model)}. Click to pin it for every speech model.`;
     scope.setAttribute("aria-pressed", String(addPinned));
     scope.disabled = building || !model;
     el("add-save").disabled = building || !words(addFields.spelling.value) || !heardList().length;
     const hint = el("add-hint");
     hint.classList.toggle("err", Boolean(addProblem));
-    hint.textContent = addProblem || (heardList().length > 1 ? `${heardList().length} heard forms, separated by commas.`
-      : words(addFields.desc.value) ? "Enter to add." : "A description is optional to save, but the decision model can't choose the word without it.");
+    hint.textContent = addProblem || "Separate heard forms with commas.";
   }
   function showAdd(open) {
     addRow.hidden = !open;
@@ -981,32 +1003,44 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     toast("Saved dictionary.json");
   });
 
-  // ---- The ⋯ menu ----
+  // ---- Learn from audio: the ⋯ popover ----
   const menu = el("dict-menu");
   const menuButton = el("dict-menu-btn");
   function closeMenu() { menu.hidden = true; menuButton.setAttribute("aria-expanded", "false"); }
+  // What learning from audio costs depends on the speech model it is for.
+  function drawMenu() {
+    const model = getModel();
+    const name = model ? shortName(model) : "your speech model";
+    const local = Boolean(model && getSettings()?.providers.find((p) => p.id === model.id.split("/")[0])?.local);
+    el("learn-pop-lead").textContent = `New speech model, or coming from another dictation app? Let ${name} listen to recordings you already have. It learns your names, your terms and the way you say them.`;
+    el("learn-step-1").textContent = `${model ? name : "Your speech model"} transcribes it again`;
+    el("learn-cost").textContent = !model ? "Transcribing takes time, and a cloud speech model charges for it."
+      : local ? `Transcribing takes time, and a cloud speech model charges for it. ${name} runs on ${THIS_DEVICE}, so there's no charge.`
+        : `Transcribing takes time, and ${name} charges for the audio it transcribes.`;
+    el("learn-pop-already").textContent = `Already dictating with ${name}?`;
+  }
   menuButton.addEventListener("click", () => {
     menu.hidden = !menu.hidden;
     menuButton.setAttribute("aria-expanded", String(!menu.hidden));
     if (menu.hidden) return;
-    // In a short window the menu scrolls within the space below its button.
+    drawMenu();
+    // In a short window the popover scrolls within the space below its button.
     menu.style.maxHeight = `${Math.max(120, window.innerHeight - menu.getBoundingClientRect().top - 12)}px`;
-    menu.querySelector("button:not(:disabled)")?.focus();
+    menu.querySelector(".learn-source:not(:disabled)")?.focus();
   });
   document.addEventListener("click", (event) => { if (!menu.hidden && !event.target.closest(".menu-wrap")) closeMenu(); });
   menu.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeMenu(); menuButton.focus(); } });
   for (const item of menu.querySelectorAll("[data-audio]")) {
     item.addEventListener("click", () => openSuggestions(item.dataset.audio));
   }
-  el("menu-agents").addEventListener("click", () => { closeMenu(); openSettings("integrations"); });
-  const reuse = el("learning-reuse");
-  function drawReuse() {
-    el("menu-reuse").setAttribute("aria-checked", String(reuse.checked));
-    el("menu-reuse-state").textContent = reuse.checked ? "On" : "Off";
-    historyReuse.redraw();
-  }
-  reuse.addEventListener("change", drawReuse);
-  el("menu-reuse").addEventListener("click", () => { reuse.checked = !reuse.checked; drawReuse(); });
+  el("learn-why-btn").addEventListener("click", () => {
+    const why = el("learn-why");
+    why.hidden = !why.hidden;
+    el("learn-why-btn").setAttribute("aria-expanded", String(!why.hidden));
+  });
+  el("learn-guide").addEventListener("click", () => showHelp("guide-audio"));
+  el("learn-suggest").addEventListener("click", () => openSuggestions("history"));
+  el("learning-reuse").addEventListener("change", () => historyReuse.redraw());
 
   // The guide is a modal over the page, so drafts and scroll position stay as they are.
   // Help in the toolbar shows all of it; Help in the suggestions panel shows only the

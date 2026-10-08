@@ -128,7 +128,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
   font-variant-numeric: tabular-nums;
 }
 .record:hover { background: var(--control-active); }
-.record .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--accent); }
+.record .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--recording); }
 .record[aria-pressed="true"] { background: var(--recording-wash); }
 .record[aria-pressed="true"] .dot { background: var(--recording); animation: pulse 1.2s ease-in-out infinite; }
 .record .timer { color: var(--text-dim); }
@@ -217,7 +217,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .step { display: flex; align-items: center; gap: var(--sp-12); padding: var(--sp-10) var(--sp-16); font-size: var(--fs-13-5); }
 .step .mark { width: 1.125rem; height: 1.125rem; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; box-shadow: inset 0 0 0 1.5px var(--track); color: transparent; }
 .step .mark svg { width: 0.625rem; height: 0.625rem; }
-.step.done .mark { background: var(--accent); box-shadow: none; color: var(--surface); }
+.step.done .mark { background: var(--accent); box-shadow: none; color: var(--on-accent); }
 .step.done .what { color: var(--text-dim); text-decoration: line-through; }
 .step .what { flex: 1; min-width: 0; }
 .step .how { display: block; font-size: var(--fs-12); color: var(--text-dim); line-height: var(--lh-caption); margin-top: 2px; }
@@ -231,114 +231,155 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 #build-status:not(.show) { display: none; }
 .help-btn { font-size: var(--fs-12-5); color: var(--text-dim); }
 .help-btn[aria-expanded="true"] { color: var(--text); }
-/* One compact table of entries that follows the toolbar's speech model. A row opens in
-   place; the editor and suggestions open in a side panel over the list. */
+/* A ledger of entries that follows the toolbar's speech model, under the first letter of
+   each title. A row opens in place; the editor and suggestions open in a side panel. */
 #view-dictionary[data-active] { display: flex; flex-direction: column; overflow: hidden; }
 .dict { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.dict-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-10); padding: var(--sp-12) var(--sp-20); }
+.dict-top { flex: none; display: flex; flex-direction: column; gap: var(--sp-20); padding: var(--sp-28) 2.5rem 0; }
+.dict-heading { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--sp-16); }
+.dict-name { flex: 1; min-width: 15rem; display: flex; flex-direction: column; gap: var(--sp-6); }
+.dict-title { margin: 0; font-size: 1.625rem; font-weight: 650; letter-spacing: -0.02em; line-height: 1.1; color: var(--text-strong); }
+.dict-summary { margin: 0; font-size: var(--fs-13); color: var(--text-dim); }
+.dict-actions { display: flex; align-items: center; gap: var(--sp-8); }
+.dict-actions .help-btn { padding: 0 var(--sp-8); color: var(--text-dim); }
+.dict-actions .help-btn:hover { color: var(--text); }
+.dict-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-12); padding-bottom: var(--sp-16); border-bottom: 1px solid var(--line-soft); }
 .dict-filters > button { gap: var(--sp-6); padding: 0 var(--sp-10); }
 .dict-filters .count { font-size: var(--fs-11); color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .dict-filters .count:empty { display: none; }
 .dict-filters > button:disabled { opacity: 0.45; }
+.dict-views > button { height: 1.5rem; font-size: var(--fs-12); }
 .attention-dot { flex: none; width: 0.375rem; height: 0.375rem; border-radius: 50%; background: var(--error); }
 .dict-search { position: relative; display: flex; align-items: center; }
-.dict-search svg { position: absolute; left: var(--sp-10); color: var(--text-faint); pointer-events: none; }
-.dict-search .input { width: 13rem; height: var(--h-28); padding-left: 1.75rem; font-size: var(--fs-12-5); }
-.dict-count { white-space: nowrap; }
-.bar-rule { width: 1px; height: 1.25rem; background: var(--line-strong); }
-.suggest-btn { color: var(--text-secondary); }
+.dict-search svg { position: absolute; left: 0.6875rem; color: var(--text-faint); pointer-events: none; }
+.dict-search .input { width: 17.5rem; height: var(--h-30); padding-left: 1.875rem; border-radius: var(--r-8); background: var(--well); border-color: var(--line-soft); font-size: var(--fs-12-5); }
+.suggest-btn { padding: 0 0.6875rem; color: var(--text-secondary); }
 .suggest-btn.waiting { background: var(--accent-wash); color: var(--accent-text); border-color: transparent; }
 .suggest-btn .spinner, .dict-banner .spinner { width: 0.75rem; height: 0.75rem; border-width: 1.5px; }
-.badge { padding: 0 var(--sp-6); border-radius: 999px; background: var(--accent); color: var(--surface); font-size: var(--fs-11); font-weight: 600; font-variant-numeric: tabular-nums; }
+.badge { padding: 0 var(--sp-6); border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: var(--fs-11); font-weight: 600; font-variant-numeric: tabular-nums; }
 .add-btn { font-weight: 600; gap: var(--sp-4); }
 .add-btn .plus { font-size: var(--fs-16); line-height: 1; }
 .btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; padding: 0 var(--sp-14); }
 .btn.primary:hover { color: var(--on-accent); }
 .btn.primary:disabled { opacity: 0.45; }
 
-/* The ⋯ menu: less common ways to build the dictionary, and whole-dictionary actions. */
+/* Learn from audio: the ⋯ popover explains what it does and what it costs, then the sources. */
 .menu-wrap { position: relative; }
 .menu-btn { width: var(--h-28); padding: 0; justify-content: center; }
 .menu-btn[aria-expanded="true"] { background: var(--control-hover); color: var(--text); }
-.menu { position: absolute; right: 0; top: calc(100% + var(--sp-6)); z-index: 30; min-width: 18rem; overflow-y: auto; padding: var(--sp-4); border-radius: var(--r-10); background: var(--control); box-shadow: var(--shadow-popover); }
-.menu hr { margin: var(--sp-4) 0; border: 0; border-top: 1px solid var(--line); }
-.menu-label { margin: 0; padding: var(--sp-6) var(--sp-10) var(--sp-2); font-size: var(--fs-11); letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-faint); }
-.menu button { display: flex; align-items: center; gap: var(--sp-8); width: 100%; padding: var(--sp-6) var(--sp-10); border: 0; border-radius: var(--r-6); background: none; color: var(--text); text-align: left; font-size: var(--fs-13); }
-.menu button:hover:not(:disabled), .menu button:focus-visible { background: var(--hover-wash); box-shadow: none; }
-.menu button:disabled { opacity: 0.45; }
-.menu-text { flex: 1; min-width: 0; }
-.menu-sub { display: block; font-size: var(--fs-11-5); color: var(--text-faint); }
-.menu-note, .menu-go { flex: none; font-size: var(--fs-11-5); color: var(--text-faint); }
+.learn-pop { position: absolute; right: 0; top: calc(100% + var(--sp-6)); z-index: 30; width: 24.75rem; max-width: calc(100vw - 2rem); overflow-y: auto; display: flex; flex-direction: column; padding: var(--sp-6); border-radius: var(--r-12); background: var(--control); box-shadow: var(--shadow-popover); }
+.learn-pop-head { display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-12) var(--sp-12) var(--sp-4); }
+.learn-pop-line { display: flex; align-items: center; gap: var(--sp-8); }
+.learn-pop-head h2 { flex: 1; margin: 0; font-size: var(--fs-14); font-weight: 600; color: var(--text-strong); }
+.learn-pop-head p { margin: 0; font-size: var(--fs-12-5); line-height: 1.5; color: var(--text-secondary); text-wrap: pretty; }
+.why-btn { width: 1.25rem; height: 1.25rem; display: flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%; background: var(--control-active); color: var(--text); font-size: var(--fs-11-5); font-weight: 700; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.why-btn[aria-expanded="true"] { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+.learn-why { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-6); padding: var(--sp-10) var(--sp-12); border-radius: 0.5625rem; background: var(--hover-wash); }
+.learn-pop-head .learn-why p { font-size: var(--fs-12); color: var(--text-muted); }
+.learn-why .btn.link { font-size: var(--fs-12); }
+.learn-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-12); margin: var(--sp-8) var(--sp-6) var(--sp-4); padding: var(--sp-12); border-radius: 0.5625rem; background: var(--hover-wash); list-style: none; }
+.learn-steps li { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-6); min-width: 0; font-size: var(--fs-11-5); line-height: 1.4; color: var(--text-secondary); }
+.step-dot { width: 1.125rem; height: 1.125rem; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--control-active); color: var(--text); font-size: 0.65625rem; font-weight: 600; }
+.step-dot.extra, .extra-tag { background: var(--warning-wash); color: var(--warning); }
+.extra-tag { height: 1rem; display: inline-flex; align-items: center; padding: 0 var(--sp-6); border-radius: 999px; font-size: 0.625rem; font-weight: 600; }
+.learn-cost { display: flex; align-items: flex-start; gap: var(--sp-8); margin: var(--sp-6); padding: 0 var(--sp-6); font-size: var(--fs-11-5); line-height: var(--lh-caption); color: var(--warning); }
+.learn-cost::before { content: ""; flex: none; width: 0.375rem; height: 0.375rem; margin-top: 0.3125rem; border-radius: 50%; background: currentColor; }
+.learn-source { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-2) var(--sp-12); align-items: center; width: 100%; padding: 0.5625rem var(--sp-10); border: 0; border-radius: var(--r-7); background: transparent; color: var(--text-strong); text-align: left; }
+.learn-source:hover:not(:disabled), .learn-source:focus-visible { background: var(--hover-wash); box-shadow: none; }
+.learn-source:disabled { opacity: 0.45; }
+.learn-source-title { font-size: var(--fs-13); font-weight: 500; }
+.learn-source-sub { font-size: var(--fs-11-5); line-height: 1.4; color: var(--text-dim); }
+.learn-go { grid-row: span 2; font-size: var(--fs-15); color: var(--text-faint); }
+.learn-pop hr { width: auto; margin: var(--sp-6) var(--sp-4); border: 0; border-top: 1px solid var(--line-soft); }
+.learn-pop-foot { margin: 0; padding: var(--sp-6) var(--sp-10) var(--sp-8); font-size: var(--fs-12); line-height: 1.5; color: var(--text-dim); text-wrap: pretty; }
+.learn-pop-foot .btn.link { display: inline; font-size: inherit; }
 
 /* While suggestions are open, a line above the list says what runs and what waits. */
-.dict-banner { flex: none; display: flex; align-items: center; gap: var(--sp-10); margin: 0 var(--sp-20) var(--sp-10); padding: var(--sp-6) var(--sp-12); border-radius: var(--r-8); background: var(--accent-wash); color: var(--accent-text); font-size: var(--fs-12-5); }
+.dict-banner { display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-8) var(--sp-14); border-radius: 0.5625rem; background: var(--accent-wash); color: var(--accent-text); font-size: var(--fs-12-5); }
 .dict-banner.err { background: var(--error-wash); color: var(--error); }
-.banner-dot { flex: none; width: 0.4rem; height: 0.4rem; border-radius: 50%; background: currentColor; }
+.banner-dot { flex: none; width: 0.375rem; height: 0.375rem; border-radius: 50%; background: currentColor; }
 .banner-text { flex: 1; min-width: 0; }
 .banner-action { padding: 0; border: 0; background: none; color: inherit; font-size: var(--fs-12-5); font-weight: 600; }
 
-/* The table: one row per entry, the header in view while the list scrolls. */
-.dict-list { flex: 1; min-height: 0; overflow: auto; padding: 0 var(--sp-20) var(--sp-24); }
-.dict-table { border-radius: var(--r-10); background: var(--card); box-shadow: var(--shadow-card); overflow: clip; }
-.dict-row { display: grid; grid-template-columns: minmax(8rem, 1.1fr) minmax(8rem, 1.2fr) minmax(0, 2fr) 6rem; gap: var(--sp-12); align-items: center; min-height: 2.125rem; padding: var(--sp-6) var(--sp-14); }
-.dict-head { position: sticky; top: 0; z-index: 2; min-height: 0; background: var(--card); border-bottom: 1px solid var(--line); font-size: var(--fs-11); letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-faint); }
-.dict-head .sort { padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; }
-.dict-head .sort:hover { color: var(--text); }
-.dict-entry + .dict-entry { border-top: 1px solid var(--line-faint); }
-.dict-entry > .dict-row:hover, .dict-entry.open > .dict-row { background: var(--hover-wash); }
-.dict-entry > .dict-row:focus-visible { box-shadow: none; background: var(--hover-wash); outline: 2px solid var(--accent-wash-hover); outline-offset: -2px; }
-.cell-title { min-width: 0; display: flex; align-items: center; gap: var(--sp-6); }
-.title-text { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cell-heard { min-width: 0; font: var(--fs-12)/1.4 var(--mono); color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cell-desc { min-width: 0; font-size: var(--fs-12-5); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The list: a letter, then the entries under it. */
+.dict-list { flex: 1; min-height: 0; overflow: auto; padding: var(--sp-4) 2.5rem 2.5rem; }
+.dict-group { display: grid; grid-template-columns: 2.5rem minmax(0, 1fr); gap: var(--sp-16); padding: var(--sp-10) 0; border-bottom: 1px solid var(--line-faint); }
+.dict-letter { position: sticky; top: 0; align-self: start; padding-top: 1.0625rem; font-size: var(--fs-13); font-weight: 600; color: var(--text-faint); }
+.dict-group-items { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.dict-entry { border-radius: var(--r-12); }
+.dict-entry.open { background: var(--card); box-shadow: 0 0 0 1px var(--line-soft), 0 10px 30px rgba(0, 0, 0, 0.28); }
+.dict-row { display: grid; grid-template-columns: minmax(0, 11.875rem) minmax(0, 15.625rem) minmax(0, 1fr) 5.75rem var(--i-12); gap: var(--sp-20); align-items: center; min-height: 3.375rem; padding: var(--sp-8) var(--sp-16); border-radius: var(--r-12); }
+.dict-row:hover { background: var(--hover-wash); }
+.dict-row:focus-visible { box-shadow: none; background: var(--hover-wash); outline: 2px solid var(--accent-wash-hover); outline-offset: -2px; }
+.cell-title { min-width: 0; display: flex; align-items: center; gap: var(--sp-8); }
+.title-text { font-size: var(--fs-15); font-weight: 600; letter-spacing: -0.005em; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-heard { min-width: 0; display: flex; align-items: center; gap: var(--sp-6); overflow: hidden; }
+.cell-heard .chip { padding: var(--sp-2) 0.4375rem; border-radius: var(--r-6); background: var(--chip); box-shadow: inset 0 0 0 1px var(--line-soft); font-size: var(--fs-11-5); line-height: var(--lh-caption); color: var(--text-soft); white-space: nowrap; }
+.cell-heard .more { font-size: var(--fs-11-5); color: var(--text-faint); white-space: nowrap; }
+.cell-desc { min-width: 0; font-size: var(--fs-13); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-desc.missing { color: var(--error); }
 .cell-desc.faint { color: var(--text-faint); }
-.cell-scope { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; font-size: var(--fs-11-5); color: var(--text-faint); white-space: nowrap; overflow: hidden; }
-.cell-scope svg { width: 0.5625rem; height: 0.5625rem; }
+.cell-scope { display: flex; align-items: center; gap: 0.3125rem; min-width: 0; font-size: var(--fs-11-5); color: var(--text-dim); white-space: nowrap; overflow: hidden; }
+.cell-scope svg, .detail-actions svg, .scope-toggle svg { width: 0.625rem; height: 0.625rem; }
+.cell-chevron { color: var(--text-faint); transition: transform 0.15s; }
+.dict-entry.open .cell-chevron { transform: rotate(90deg); }
 
-/* An open row: how each heard form is written, beside the meanings the decision model chooses from. */
-.dict-detail { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: var(--sp-12) var(--sp-24); padding: var(--sp-12) var(--sp-14) var(--sp-14); background: var(--well); border-top: 1px solid var(--line-faint); -webkit-user-select: text; user-select: text; }
-.detail-forms, .detail-meanings { display: flex; flex-direction: column; gap: var(--sp-6); min-width: 0; }
-.detail-label { margin: 0; font-size: var(--fs-11); letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-faint); }
-.heard-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-4) var(--sp-8); }
-.heard-line .heard { min-width: 6rem; color: var(--text-soft); }
-.heard-line .arrow, .heard-line .or { color: var(--text-faint); }
+/* An open entry: heard → written, beside the meanings the decision model chooses from. */
+.dict-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: var(--sp-20) 2.25rem; padding: var(--sp-8) var(--sp-16) var(--sp-16); -webkit-user-select: text; user-select: text; }
+.detail-forms { display: flex; flex-direction: column; gap: var(--sp-10); min-width: 0; }
+.detail-meanings { display: flex; flex-direction: column; gap: var(--sp-10); min-width: 0; }
+.detail-label { margin: 0 0 var(--sp-2); font-size: var(--fs-11); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+.heard-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6) 0.5625rem; min-height: var(--h-26); }
+.heard-line .heard { padding: 3px var(--sp-8); border-radius: var(--r-6); background: var(--chip); box-shadow: inset 0 0 0 1px var(--line-soft); font-size: var(--fs-12-5); line-height: 1.4; color: var(--text-secondary); }
+.heard-line .arrow { color: var(--text-faint); }
+.heard-line .target { display: inline-flex; align-items: baseline; gap: var(--sp-6); }
+.heard-line .or, .heard-line .note { color: var(--text-faint); }
 .heard-line .or { font-size: var(--fs-11-5); }
-.heard-line .target { font-weight: 600; }
-.heard-line .target.literal { font-weight: 400; color: var(--text-muted); }
-.always-chip { padding: 0 var(--sp-4); border-radius: 3px; background: var(--accent-wash); color: var(--accent-text); font-size: var(--fs-11); letter-spacing: 0.05em; text-transform: uppercase; }
-.meaning-line { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: var(--sp-8); align-items: baseline; font-size: var(--fs-12-5); }
-.meaning-name b { font-weight: 600; overflow-wrap: anywhere; }
-.meaning-name .casing { display: block; font-size: var(--fs-11); color: var(--text-faint); }
-.meaning-text { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); min-width: 0; overflow-wrap: anywhere; }
-.meaning-text .definition { color: var(--text-secondary); }
-.meaning-text .definition.missing { color: var(--error); }
-.meaning-text .personal { color: var(--text-dim); }
-.meaning-text .personal::before { content: "Personal · "; color: var(--text-faint); }
+.heard-line .note { font-size: var(--fs-11); }
+.heard-line .word { font-size: var(--fs-13-5); font-weight: 600; color: var(--text-strong); }
+.heard-line .word.literal { font-weight: 400; color: var(--text-muted); }
+.always-chip { padding: var(--sp-2) var(--sp-6); border-radius: var(--sp-4); background: var(--accent-wash); color: var(--accent-text); font-size: 0.65625rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.meaning-card { display: grid; grid-template-columns: var(--sp-16) minmax(0, 1fr); gap: var(--sp-10); padding: 0.6875rem var(--sp-14); border-radius: var(--r-10); background: var(--hover-wash); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.meaning-n { font-size: var(--fs-12); line-height: 1.25rem; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.meaning-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.meaning-body p { margin: 0; }
+.meaning-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-8); }
+.meaning-head b { font-size: var(--fs-14); font-weight: 600; color: var(--text-strong); }
+.meaning-head .casing { font-size: var(--fs-11); color: var(--text-faint); }
+.meaning-head .pin-meaning { margin-left: auto; font-size: var(--fs-12); }
+.meaning-body .definition { font-size: var(--fs-13); line-height: 1.5; color: var(--text-secondary); text-wrap: pretty; }
+.meaning-body .definition.missing { color: var(--error); }
+.meaning-body .personal { font-size: var(--fs-12); line-height: var(--lh-caption); color: var(--text-dim); }
+.meaning-body .personal .faint { color: var(--text-faint); }
+.detail-meanings > .caption { margin: 0; }
 .caption.warn { margin: 0; color: var(--error); }
-.detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6); margin-top: var(--sp-6); -webkit-user-select: none; user-select: none; }
+.detail-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); padding-top: var(--sp-14); border-top: 1px solid var(--line-faint); -webkit-user-select: none; user-select: none; }
 .detail-actions .caption { margin: 0; }
+.detail-actions .remove { color: var(--text-dim); }
 .detail-actions .remove:hover:not(:disabled) { color: var(--error); background: var(--error-wash); }
 
-/* Add: one line under the header for the simple case. */
-.add-row { background: var(--accent-wash); border-bottom: 1px solid var(--line); }
-.add-fields { grid-template-columns: minmax(8rem, 1.1fr) minmax(8rem, 1.2fr) minmax(0, 2fr) auto; }
-.add-fields .input { height: var(--h-28); min-width: 0; font-size: var(--fs-12-5); }
-.add-fields .input.mono { font-family: var(--mono); font-size: var(--fs-12); }
-#add-spelling { font-weight: 600; }
-.add-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-4); }
+/* Add: a small form above the list for the simple case. */
+.add-row { display: flex; flex-direction: column; gap: var(--sp-14); margin: var(--sp-16) 0 var(--sp-8) 3.5rem; padding: 1.125rem; border-radius: var(--r-12); background: var(--card); box-shadow: 0 0 0 1px var(--accent-ring), 0 10px 30px rgba(0, 0, 0, 0.28); }
+.add-fields { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr) minmax(0, 1.6fr); gap: var(--sp-12); }
+.add-fields label { display: flex; flex-direction: column; gap: var(--sp-6); font-size: var(--fs-11); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+.add-fields .input { height: var(--h-32); min-width: 0; background: var(--well); border-color: var(--line-soft); color: var(--text); font-size: var(--fs-13); letter-spacing: 0; text-transform: none; }
+#add-spelling { color: var(--text-strong); font-size: var(--fs-14); font-weight: 600; }
+.add-fields .input.mono { font-family: var(--mono); font-size: var(--fs-12-5); color: var(--text-secondary); }
 .scope-toggle[aria-pressed="true"] { background: var(--accent-wash); color: var(--accent-text); border-color: transparent; }
-.add-hint { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4) var(--sp-16); padding: 0 var(--sp-14) var(--sp-8); font-size: var(--fs-11-5); color: var(--text-dim); }
+.add-hint { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); font-size: var(--fs-12); color: var(--text-dim); }
 .add-hint .err { color: var(--error); overflow-wrap: anywhere; }
-.add-hint .btn.link, .dict-legend .btn.link { font-size: inherit; }
-.dict-empty { display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); padding: var(--sp-32) var(--sp-16); text-align: center; }
-.dict-empty p { margin: 0; max-width: 24rem; }
-.empty-title { font-weight: 600; }
-.dict-legend { display: flex; flex-wrap: wrap; gap: var(--sp-4) var(--sp-16); padding: var(--sp-10) var(--sp-4); font-size: var(--fs-11-5); color: var(--text-faint); }
-.dict-legend b { font-weight: 500; color: var(--text-dim); }
+.add-hint .btn.link { font-size: inherit; }
+.add-buttons { display: flex; align-items: center; gap: var(--sp-8); margin-left: auto; }
+.add-hint .btn.sm { font-size: var(--fs-12); }
+.add-hint .btn.primary { padding: 0 var(--sp-14); }
+.dict-empty { display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); padding: 4.5rem var(--sp-16); text-align: center; }
+.dict-empty p { margin: 0; max-width: 22.5rem; }
+.dict-empty .caption { font-size: var(--fs-12-5); }
+.empty-title { font-size: var(--fs-15); font-weight: 600; }
 
 /* JSON: the same dictionary.json, edited as text. */
-.json-view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-8); padding: 0 var(--sp-20) var(--sp-16); }
-.json-view .input.code { flex: 1; min-height: 12rem; resize: none; }
+.json-view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-16) 2.5rem; }
+.json-view .input.code { flex: 1; min-height: 12rem; resize: none; padding: var(--sp-20) var(--sp-24); border: 0; border-radius: var(--r-12); box-shadow: inset 0 0 0 1px var(--chip); font: var(--fs-12)/1.6 var(--mono); }
 .json-error { margin: 0; padding: var(--sp-6) var(--sp-10); border-radius: var(--r-8); background: var(--error-wash); color: var(--error-body); font-size: var(--fs-12); overflow-wrap: anywhere; }
 .json-error b { color: var(--error); }
 .json-error span { font-family: var(--mono); }
@@ -466,14 +507,18 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 @media (prefers-reduced-motion: reduce) { .drawer[open], .toast { animation: none; } }
 
 @media (max-width: 42rem) {
-  .dict-bar, .dict-list, .json-view { padding-left: var(--sp-12); padding-right: var(--sp-12); }
-  .dict-banner { margin-left: var(--sp-12); margin-right: var(--sp-12); }
-  .dict-search .input { width: 9rem; }
-  .dict-row { grid-template-columns: minmax(5rem, 1fr) minmax(5rem, 1fr) minmax(0, 1.4fr); }
-  .dict-row > .cell-scope, .dict-head > span:last-child { display: none; }
-  .add-fields { grid-template-columns: 1fr 1fr; }
-  .add-fields #add-desc, .add-actions { grid-column: 1 / -1; }
-  .dict-detail { grid-template-columns: 1fr; }
+  .dict-top, .dict-list, .json-view { padding-left: var(--sp-16); padding-right: var(--sp-16); }
+  .dict-search .input { width: 11rem; }
+  /* The actions wrap under the title: the popover opens from their left edge instead. */
+  .dict-actions { position: relative; }
+  .menu-wrap { position: static; }
+  .learn-pop { left: 0; right: auto; }
+  .dict-group { grid-template-columns: 1.25rem minmax(0, 1fr); gap: var(--sp-8); }
+  .dict-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--i-12); gap: var(--sp-12); padding: var(--sp-8) var(--sp-10); }
+  .dict-row > .cell-desc, .dict-row > .cell-scope { display: none; }
+  .add-row { margin-left: 0; }
+  .add-fields { grid-template-columns: minmax(0, 1fr); }
+  .dict-detail { grid-template-columns: minmax(0, 1fr); padding: var(--sp-8) var(--sp-10) var(--sp-12); }
 }
 
 /* Settings */
