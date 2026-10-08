@@ -5,7 +5,7 @@ would have made 121 changes, 72 of them wrong. Choosing with **Jev** made 39 cha
 **1** of them wrong. Perplexity's decision model made 47 changes with 3 wrong and caught
 the most correct ones; OpenAI's Decisions API made 50 with 8 wrong, and Laya, running
 locally, made 36 with 8 wrong. Jev placed the most correct paragraph breaks, and
-Perplexity made the fewest unwanted ones among the models that format. These are
+Perplexity left the most dictations formatted exactly as judged. These are
 decisions at dictionary matches and sentence boundaries, not an overall
 speech-recognition accuracy score.
 

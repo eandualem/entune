@@ -137,7 +137,7 @@ Entune separates three jobs, so you can choose each independently:
 |---|---|---|
 | Turn audio into text | **Parakeet** on Apple Silicon, or **AssemblyAI** in the cloud | After each recording |
 | Build your dictionary | **GPT-6 Astra**, high effort, on a ChatGPT plan or an API key | When you request suggestions |
-| Choose dictionary replacements and formatting | **Jev** for the fewest wrong changes; **Perplexity** for the most correct ones and the fewest unwanted breaks; **OpenAI's Decisions API**; **Laya** for local processing | After transcription, when enabled |
+| Choose dictionary replacements and formatting | **Jev** for the fewest wrong changes; **Perplexity** for the most correct ones; **OpenAI's Decisions API**; **Laya** for local processing | After transcription, when enabled |
 
 Speech options also include Groq, Soniox, ElevenLabs, xAI and local Whisper.cpp.
 Cloud services use your own provider accounts and keys; Entune does not sell

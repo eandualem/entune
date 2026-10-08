@@ -565,7 +565,7 @@
               <h2 class="sec-label">What leaves this Mac</h2>
               <div class="scard">
                 <div class="srow summary"><div><div class="name">Speech recognition</div><div class="caption">Audio goes to the cloud service you pick. Models on this Mac keep it here.</div></div></div>
-                <div class="srow summary"><div><div class="name">Corrections &amp; formatting</div><div class="caption">When on, transcript text, the words in question and relevant dictionary meanings go to TypeSafe if Jev is your decision model. With Laya they stay on this Mac.</div></div></div>
+                <div class="srow summary"><div><div class="name">Corrections &amp; formatting</div><div class="caption">When on, transcript text, the words in question and relevant dictionary meanings go to TypeSafe if Jev is your decision model, and to OpenAI or Perplexity if you chose theirs. With Laya they stay on this Mac.</div></div></div>
                 <div class="srow summary"><div><div class="name">Dictionary suggestions</div><div class="caption">When you ask, transcripts and your dictionary go to your suggestion model. Transcripts made only for a suggestion run are not saved by Entune.</div></div></div>
                 <div class="srow summary"><div><div class="name">Tracing</div><div class="caption">Off unless you save Langfuse keys under Integrations. Then each suggestion request and reply, transcript text included, also goes to the Langfuse host you set.</div></div></div>
                 <div class="srow foot"><span class="caption">Each service's own retention rules apply.</span></div>
@@ -612,7 +612,7 @@
                   <p>The steps share one time limit, including retries; you can change it under Advanced. If the dictionary step fails, you get the original transcript. If fillers or formatting fail, that step is skipped and the text before it is kept.</p>
                   <h3>The decision model</h3>
                   <p>A decision model answers questions about the text and never writes any. For fillers and formatting it receives the whole transcript; for your dictionary, the passage around each word in question with the meanings that could apply, including your personal usage notes. It never receives audio.</p>
-                  <p>Two are available. Jev, from TypeSafe, runs in the cloud on your own TypeSafe key, so the text goes to TypeSafe even when speech recognition runs on this Mac. Laya, an open-weight model from Convai Innovations, runs on this Mac for English, so the text stays here. Its engine is installed once in Terminal, and Entune runs it only while Laya is chosen and a step is on. Laya reads a limited amount of text per question, so in a long dictation its filler and paragraph decisions see only part of it.</p>
+                  <p>Four are available. Jev, from TypeSafe, runs in the cloud on your own TypeSafe key, so the text goes to TypeSafe even when speech recognition runs on this Mac. OpenAI's and Perplexity's run in the cloud on your own API key with them, so the text goes to them in the same way. Laya, an open-weight model from Convai Innovations, runs on this Mac for English, so the text stays here. Its engine is installed once in Terminal, and Entune runs it only while Laya is chosen and a step is on. Laya reads a limited amount of text per question, so in a long dictation its filler and paragraph decisions see only part of it.</p>
                 </article>
               </form>
             </dialog>
@@ -632,7 +632,7 @@
                   <p>With a model on this Mac, such as Whisper or Parakeet, audio stays here. Downloading one fetches the model from Hugging Face.</p>
                   <h3>Corrections and formatting</h3>
                   <p>When Apply your dictionary, Reduce repeated fillers, or Paragraphs and bullets is on, transcript text goes to your decision model: the whole transcript for fillers and formatting, and for your dictionary the passage around each word in question with the meanings that could apply. Audio is never sent.</p>
-                  <p>With Jev, the text goes to TypeSafe, even when speech recognition runs on this Mac. With Laya, it stays on this Mac; its first start fetches the model from Hugging Face.</p>
+                  <p>With Jev, the text goes to TypeSafe, and with OpenAI or Perplexity to them, even when speech recognition runs on this Mac. With Laya, it stays on this Mac; its first start fetches the model from Hugging Face.</p>
                   <h3>Dictionary suggestions</h3>
                   <p>Only when you choose Get suggestions, the transcripts it reads and your dictionary are sent to your suggestion model (Anthropic, OpenAI through an API key or a ChatGPT subscription, Google Gemini, Groq or Mistral). With Learn from audio, the chosen audio is first transcribed by your speech model as above. Transcripts made only for a suggestion run are not saved.</p>
                   <h3>Tracing</h3>

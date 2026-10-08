@@ -50,6 +50,7 @@ PERPLEXITY = Endpoint(
     "https://api.perplexity.ai/v1/decisions",
     "pplx-decider-v1.1-27b",
     "Perplexity API key",
+    max_questions=128,  # the most it takes in one request
 )
 
 
