@@ -42,13 +42,14 @@ a { color: var(--accent-text); text-decoration: none; }
 .native-mac .toolbar { padding-left: 84px; }
 .native-mac .toolbar .select { min-width: 0; }
 /* The Mac window has the system's sidebar material behind the page, as in Finder and System
-   Settings: side rails show it as it is, the toolbar through a light veil, and content
-   through a nearly solid ground. Cards, menus, drawers and dialogs keep their solid colours. */
+   Settings: side rails show it as it is. The toolbar and content are solid paper, since the
+   grey material would show through a veil and wash out the warm ground. Cards, menus,
+   drawers and dialogs keep their solid colours. */
 :root.native-mac, :root.native-mac body { background: transparent; }
-.native-mac .toolbar { background: var(--glass-bar); }
+.native-mac .toolbar { background: var(--surface-raised); }
 .native-mac .rail { background: transparent; }
-.native-mac .view:not(:has(> .settings)) { background: var(--glass-ground); }
-.native-mac .view > .settings { background: linear-gradient(to right, transparent var(--rail), var(--glass-ground) var(--rail)); }
+.native-mac .view:not(:has(> .settings)) { background: var(--surface); }
+.native-mac .view > .settings { background: linear-gradient(to right, transparent var(--rail), var(--surface) var(--rail)); }
 
 /* Segmented control: a well with one raised segment */
 .segmented { display: inline-flex; gap: var(--sp-2); padding: 3px; border-radius: var(--r-8); background: var(--well); width: max-content; }
