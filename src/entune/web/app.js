@@ -149,7 +149,13 @@ for (const button of document.querySelectorAll("[data-help]")) {
   });
 }
 
-function openSettings(section) { show("settings"); selectSection(section); showSection(section); }
+// Opens a settings section, at one of its parts when named (an element ID).
+function openSettings(section, part = null) {
+  show("settings");
+  selectSection(section);
+  showSection(section);
+  if (part) el(part)?.scrollIntoView({ block: "start" });
+}
 
 // ---- Models: one default, picked in the toolbar; it applies at once ----
 async function loadModels() {
@@ -280,7 +286,13 @@ function renderStart() {
       : system === "linux"
         ? step(allowed, "Allow keyboard access", ["So your shortcut works in any app and the text is typed there. Run this once in a terminal, then log out and back in:"], null)
         : step(allowed, "Allow the microphone", ["Windows lets desktop apps use the microphone unless it is turned off in Privacy settings."], null);
-    if (!allowed) li.querySelector(".what").append(permissionRows());
+    if (!allowed) {
+      li.querySelector(".what").append(permissionRows());
+      // The same permissions in Settings, where they stay after this list is gone.
+      const go = Object.assign(document.createElement("button"), { type: "button", className: "btn ghost sm", textContent: "Permissions" });
+      go.addEventListener("click", () => openSettings("general", "permissions"));
+      li.append(go);
+    }
     steps.push(li);
   }
   const dictate = [];
@@ -296,7 +308,7 @@ function renderStart() {
     dictate.push("Press Record above and speak.");
   }
   const needsShortcut = desktop && !haveShortcut;
-  steps.push(step(recordingsCount > 0, needsShortcut ? "Set a shortcut and dictate" : "Dictate", dictate, needsShortcut ? { label: "Set a shortcut", go: () => openSettings("general") } : null));
+  steps.push(step(recordingsCount > 0, needsShortcut ? "Set a shortcut and dictate" : "Dictate", dictate, needsShortcut ? { label: "Set a shortcut", go: () => openSettings("general", "shortcuts-title") } : null));
   stepsList.replaceChildren(...steps);
 }
 

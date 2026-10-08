@@ -110,12 +110,14 @@ a { color: var(--accent-text); text-decoration: none; }
   white-space: pre; overflow-wrap: normal; overflow-x: auto; tab-size: 2;
 }
 .toolbar .select { max-width: 17.5rem; }
-.fast { display: inline-flex; align-items: center; gap: var(--sp-6); height: var(--h-28); padding: 0 var(--sp-8); border-radius: var(--r-7); background: var(--control); border: 1px solid var(--line); color: var(--text-faint); }
-.fast:has(input:checked) { color: var(--accent-text); }
-#anonymous-wrap:has(input:checked) { background: var(--accent-wash); border-color: transparent; }
+/* Anonymous and fast mode: the icon is the switch, washed in the accent while on. The
+   checkbox keeps its state and keyboard focus but is not drawn. */
+.fast { position: relative; display: inline-flex; align-items: center; justify-content: center; width: var(--h-28); height: var(--h-28); border-radius: var(--r-7); color: var(--text-dim); }
+.fast:hover { background: var(--control-hover); color: var(--text); }
+.fast:has(input:checked) { background: var(--accent-wash); color: var(--accent-text); }
+.fast:has(input:focus-visible) { box-shadow: var(--focus); }
 .fast.off { opacity: 0.45; }
-.fast:hover { color: var(--text); }
-.fast input { accent-color: var(--accent); margin: 0; width: var(--i-13); height: var(--i-13); }
+.fast input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; }
 kbd {
   height: var(--h-30); min-width: 3.75rem; padding: 0 var(--sp-12); border-radius: var(--r-7);
   display: inline-flex; align-items: center; justify-content: center;
@@ -269,7 +271,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .start { max-width: 32rem; margin: var(--sp-32) auto; padding: 0 var(--sp-24); }
 .start h2 { margin: 0 0 var(--sp-4); font-size: var(--fs-15); font-weight: 600; }
 .start > .caption { margin: 0 0 var(--sp-16); }
-.steps { list-style: none; margin: 0; padding: var(--sp-6) 0; border-radius: var(--r-10); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--line-soft); }
+.steps { list-style: none; margin: 0; padding: var(--sp-6) 0; border-radius: var(--r-12); background: var(--card); box-shadow: var(--shadow-card); }
 .step { display: flex; align-items: center; gap: var(--sp-12); padding: var(--sp-10) var(--sp-16); font-size: var(--fs-13-5); }
 .step .mark { width: 1.125rem; height: 1.125rem; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; box-shadow: inset 0 0 0 1.5px var(--track); color: transparent; }
 .step .mark svg { width: 0.625rem; height: 0.625rem; }
@@ -294,7 +296,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .dict-top { flex: none; display: flex; flex-direction: column; gap: var(--sp-20); padding: var(--sp-28) 2.5rem 0; }
 .dict-heading { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--sp-16); }
 .dict-name { flex: 1; min-width: 15rem; display: flex; flex-direction: column; gap: var(--sp-6); }
-.dict-title { margin: 0; font-size: 1.625rem; font-weight: 650; letter-spacing: -0.02em; line-height: 1.1; color: var(--text-strong); }
+.dict-title, .page-title { margin: 0; font-size: 1.625rem; font-weight: 650; letter-spacing: -0.02em; line-height: 1.1; color: var(--text-strong); }
 .dict-summary { margin: 0; font-size: var(--fs-13); color: var(--text-dim); }
 .dict-actions { display: flex; align-items: center; gap: var(--sp-8); }
 .dict-actions .help-btn { padding: 0 var(--sp-8); color: var(--text-dim); }
@@ -529,13 +531,8 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 #other-models input { margin: 0; accent-color: var(--accent); }
 .app-pick { display: flex; flex-direction: column; gap: var(--sp-4); }
 .app-pick .sheet-label { padding: 0 var(--sp-12) var(--sp-4); }
-.sheet .app-list { gap: var(--sp-4); padding: 0; background: none; }
-.sheet .app-option { display: grid; grid-template-columns: 0.875rem minmax(0, 1fr) auto; gap: var(--sp-12); align-items: start; padding: 0.5625rem var(--sp-12); border-radius: var(--r-10); }
-.sheet .app-option:has(input:checked) { background: var(--accent-wash); box-shadow: inset 0 0 0 1px var(--accent-ring); }
-.sheet .app-option input { appearance: none; -webkit-appearance: none; width: 0.875rem; height: 0.875rem; margin: 2px 0 0; border-radius: 50%; border: 1.5px solid var(--line-strong); }
-.sheet .app-option input:checked { border: 4.5px solid var(--accent); }
 .app-text { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
-.app-text .app-name { font-size: var(--fs-13-5); font-weight: 600; color: var(--text-strong); }
+.app-text .app-name { font-size: var(--fs-13-5); }
 .app-note { font-size: var(--fs-12); line-height: 1.4; color: var(--text-dim); }
 .app-fact { padding-top: 2px; font-size: var(--fs-12); color: var(--text-muted); white-space: nowrap; }
 .sheet .source-note { margin: 0; }
@@ -599,19 +596,21 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 .adv .btn.link { justify-self: start; }
 .adv .segmented.small { justify-self: start; }
 .adv .segmented.small > button { height: 1.5rem; padding: 0 var(--sp-8); font-size: var(--fs-12); }
-.app-list { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-4); border-radius: var(--r-8); background: var(--well); }
-.app-option { display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-6) var(--sp-10); border-radius: var(--r-6); }
-.app-option:has(input:checked) { background: var(--card); box-shadow: var(--shadow-card); }
-.app-option input { margin: 0; accent-color: var(--accent); }
+/* A choice of one, as rows: the chosen row washed in the accent with its ring. */
+.app-list { display: flex; flex-direction: column; gap: var(--sp-4); }
+.app-option { display: grid; grid-template-columns: 0.875rem minmax(0, 1fr) auto; gap: var(--sp-12); align-items: start; padding: 0.5625rem var(--sp-12); border-radius: var(--r-10); }
+.app-option:has(input:checked) { background: var(--accent-wash); box-shadow: inset 0 0 0 1px var(--accent-ring); }
+.app-option input { appearance: none; -webkit-appearance: none; width: 0.875rem; height: 0.875rem; margin: 2px 0 0; border-radius: 50%; border: 1.5px solid var(--line-strong); }
+.app-option input:checked { border: 4.5px solid var(--accent); }
+.app-option input:focus-visible { box-shadow: var(--focus); }
 .app-option .caption { display: block; }
+.app-option .app-name { font-weight: 600; color: var(--text-strong); }
 .srow.wide { grid-template-columns: minmax(0, 1fr); }
 /* A status line with its action at the end, the way macOS settings place a button. */
 .srow.status { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); }
 .srow.status .caption { margin-top: 0; }
 /* The two decision models side by side across the card, each its own option. */
 .decision-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); }
-.decision-list .app-option { align-items: flex-start; padding: var(--sp-10) var(--sp-12); }
-.decision-list .app-option input { margin-top: 3px; }
 #decision-status-row:has(#decision-note:empty):not(:has(.show)) { display: none; }
 #laya-status.err { color: var(--error); overflow-wrap: anywhere; }
 #dm-signin-state strong { -webkit-user-select: all; user-select: all; }
@@ -676,7 +675,10 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 .rail button:hover { color: var(--text); }
 .rail button[aria-selected="true"] { color: var(--text); background: var(--line); }
 .rail-note { font-size: var(--fs-11-5); color: var(--text-faint); line-height: 1.5; padding: 0 var(--sp-10); margin: 0; }
-.settings-content { padding: var(--sp-24) var(--sp-32) var(--sp-32); max-width: var(--content-max); min-width: 0; }
+.settings-content { padding: var(--sp-28) 2.5rem 2.5rem; max-width: var(--content-max); min-width: 0; }
+.settings-content .page-title { margin-bottom: var(--sp-20); }
+.settings-content .page-title:has(+ .section-intro, + .section-head) { margin-bottom: var(--sp-8); }
+.section-intro { margin: 0 0 var(--sp-20); max-width: 46rem; font-size: var(--fs-13); color: var(--text-dim); }
 .section { display: none; }
 .section[data-active] { display: block; }
 .sec-label { font-size: var(--fs-11); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); margin: 0 0 var(--sp-12); font-weight: 500; }
@@ -701,7 +703,11 @@ details.advanced[open] > summary { border-bottom: 1px solid var(--line-faint); }
 details.how { margin: calc(-1 * var(--sp-12)) 0 var(--sp-28); font-size: var(--fs-13); color: var(--text-secondary); line-height: 1.55; }
 details.how > summary { color: var(--accent-text); font-size: var(--fs-12-5); cursor: default; }
 details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
-.scard { border-radius: var(--r-10); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--line-soft); margin-bottom: var(--sp-28); }
+/* Settings cards are paper, as History's: white on the page, with fields set in the well. */
+.scard { border-radius: var(--r-12); background: var(--card); box-shadow: var(--shadow-card); margin-bottom: var(--sp-28); }
+.scard :is(.input, .code-line, .code-block) { background: var(--well); border-color: var(--line-soft); }
+.scard .select { background-color: var(--well); border-color: var(--line-soft); }
+.scard kbd { background: var(--well); }
 .scard-head { padding: var(--sp-14) var(--sp-16) var(--sp-12); border-bottom: 1px solid var(--line-faint); }
 .scard-head .caption { margin-top: var(--sp-4); line-height: 1.5; font-size: var(--fs-12-5); }
 .name { font-size: var(--fs-13-5); }
