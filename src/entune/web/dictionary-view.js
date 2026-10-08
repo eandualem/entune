@@ -401,15 +401,13 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     if (!g.recognized_forms.length) forms.append(node("p", "No heard forms yet.", "caption"));
     const list = node("div", "", "detail-meanings");
     list.append(node("p", g.meanings.length > 1 ? "Meanings · Entune picks one from the sentence" : "Meaning", "detail-label"));
-    // A meaning kept as written is the ordinary word; only the others are worth pinning alone.
-    const literal = new Set(g.recognized_forms.flatMap((f) => f.associations.filter((a) => a.basis === "literal").map((a) => a.meaning_id)));
     g.meanings.forEach((meaning, i) => {
       const card = node("div", "", "meaning-card");
       const body = node("div", "", "meaning-body");
       const head = node("div", "", "meaning-head");
       head.append(node("b", meaning.spelling), node("span", meaning.casing === "fixed" ? "exact capitals" : "normal word", "casing"));
       // Pinning one meaning of several leaves its competitors learned for this model.
-      if (scope === "learned" && g.meanings.length > 1 && !literal.has(meaning.id)) {
+      if (scope === "learned" && g.meanings.length > 1) {
         const pin = button("Pin", () => pinMeanings(g, [meaning]), "btn link pin-meaning");
         pin.title = `Use ${meaning.spelling} with every speech model`;
         head.append(pin);
