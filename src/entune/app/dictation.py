@@ -23,6 +23,7 @@ from entune.app.settings import JevStatus, Settings
 from entune.audio.formats import sniff_mime
 from entune.dictionary.entries import Active
 from entune.processing import results
+from entune.processing.jev_client import SECTION_CONNECTIONS
 from entune.processing.jev_client import Client as JevClient
 from entune.processing.pipeline import process_text
 from entune.processing.results import Processed
@@ -89,8 +90,7 @@ class Dictation:
             if stages:
                 endpoint, key = self._decisions.chosen()
                 if key:  # Jev, OpenAI or Perplexity with its key; Laya is on this Mac
-                    # A long dictation asks formatting in up to three sections at once.
-                    extra = 2 if status.formatting else 0
+                    extra = SECTION_CONNECTIONS if status.formatting else 0
                     self._jev.preconnect(endpoint.url, stages + extra)
             ref = self._models.choose_model(None)
             if isinstance(ref.provider, Preconnects) and self._settings.key(ref.provider.id):

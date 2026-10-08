@@ -21,6 +21,9 @@ from typing import Any
 import httpx
 
 MODEL = "jev-1.13.0"
+# Connections opened ahead for formatting's further sections: a long dictation asks up to
+# three at once (jev.SECTION_SENTENCES).
+SECTION_CONNECTIONS = 2
 URL = "https://api.typesafe.ai/v1/systemone"
 
 
@@ -169,8 +172,11 @@ class Client:
     def _pool(self) -> httpx.AsyncClient:
         """The HTTP pool, made on the client's loop the first time it is needed."""
         if self._http is None:
-            # One idle connection for each processing stage, since they ask at once.
-            limits = httpx.Limits(max_keepalive_connections=3, keepalive_expiry=60.0)
+            # One idle connection for each processing stage, since they ask at once, and
+            # the extra ones a long dictation's formatting sections use.
+            limits = httpx.Limits(
+                max_keepalive_connections=3 + SECTION_CONNECTIONS, keepalive_expiry=60.0
+            )
             self._http = httpx.AsyncClient(
                 transport=self._transport,
                 limits=limits,
