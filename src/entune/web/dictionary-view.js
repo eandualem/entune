@@ -1,5 +1,5 @@
 import { THIS_DEVICE, api, el, errorText, flash, modelName, segmentedGroup } from "./ui.js";
-import { createAudioOnboarding } from "./audio-onboarding.js";
+import { createAudioOnboarding, duration } from "./audio-onboarding.js";
 import { createHistoryReuse } from "./history-reuse.js";
 import { createDictionaryBuild } from "./dictionary-build.js";
 
@@ -31,20 +31,20 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const jsonBox = el("dictionary");
   // The suggestion model's reasoning effort, by the provider's level names, remembered in
   // this browser. High is the default; see drawEffect.
-  const effortSelect = el("suggest-effort");
-  effortSelect.value = "high";
+  const effortButtons = Object.fromEntries([...el("suggest-effort").children].map((b) => [b.dataset.effort, b]));
+  let effort = "high";
   try {
     const saved = localStorage.getItem("entune.suggest.effort");
-    if ([...effortSelect.options].some((o) => o.value === saved)) effortSelect.value = saved;
+    if (saved in effortButtons) effort = saved;
   } catch { /* storage unavailable: the default stands */ }
-  const runSettings = () => ({ effort: effortSelect.value || "high" });
+  const runSettings = () => ({ effort });
   const onboarding = createAudioOnboarding({
     getModel, getSettings, getRunSettings: runSettings,
-    getDictionaryModelName: () => missingKey ? null : languageName(getSettings()?.dictionaryModel),
     onBuild(selection) { return builds.start("audio", { ...selection, ...runSettings() }); },
     onBusy(value) { importing = value; gate(); },
+    onChange: () => drawSheet(),
   });
-  const historyReuse = createHistoryReuse({ getSettings, getRunSettings: runSettings });
+  const historyReuse = createHistoryReuse({ getSettings, getRunSettings: runSettings, onChange: () => drawSheet() });
 
   const builds = createDictionaryBuild({
     onBusy(value) { building = value; gate(); onboarding.setBuildBusy(value); lockEditors(); },
@@ -54,12 +54,19 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     getSelected: () => proposalChanges.filter(c => c.included).map(c => ({id: c.id, after: c.after})),
     getRunSettings: runSettings,
   });
-  effortSelect.addEventListener("change", () => {
-    try { localStorage.setItem("entune.suggest.effort", effortSelect.value); } catch { /* not remembered */ }
+  // A radio group drawn as a segmented control: the selected segment is also the checked radio.
+  const checked = (buttons) => { for (const b of Object.values(buttons)) b.setAttribute("aria-checked", b.getAttribute("aria-selected")); };
+  const selectEffort = segmentedGroup(effortButtons, (name) => {
+    effort = name;
+    checked(effortButtons);
+    try { localStorage.setItem("entune.suggest.effort", effort); } catch { /* not remembered */ }
     drawEffect();
     onboarding.redraw();
     historyReuse.redraw();
+    drawAdvanced(stage(run) === "setup" && setupSource === "history");
   });
+  selectEffort(effort);
+  checked(effortButtons);
   // What the choice does, in one line; on a ChatGPT plan, also its limit per reply.
   function drawEffect() {
     const model = getSettings()?.dictionaryModel ?? "";
@@ -74,7 +81,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   function fillSpeech() {
     const toolbar = el("model");
     // "Pick a model" stays while no default is set, so the picker never shows one as chosen.
-    speechSelect.replaceChildren(...[...toolbar.options].filter((o) => o.value || !toolbar.value).map((o) => new Option(o.textContent, o.value, false, o.value === toolbar.value)));
+    const where = (id) => isLocal(id) ? `on ${THIS_DEVICE}` : "cloud";
+    speechSelect.replaceChildren(...[...toolbar.options].filter((o) => o.value || !toolbar.value)
+      .map((o) => new Option(o.value ? `${o.textContent} · ${where(o.value)}` : o.textContent, o.value, false, o.value === toolbar.value)));
     speechSelect.disabled = building || !speechSelect.options.length;
   }
   speechSelect.addEventListener("change", () => {
@@ -95,6 +104,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const shortName = (model) => model ? model.label.split(" / ")[0].replace(/\s*\(.*\)$/, "") : "Learned";
   const speechName = (model) => model ? modelName(model.id, [model]) : "the selected speech model";
   const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  // A speech model that runs on this computer: transcribing costs time, never money.
+  const isLocal = (id) => Boolean(id && getSettings()?.providers.find((p) => p.id === id.split("/")[0])?.local);
 
   // A heard form is kept as written only when it is the meaning's own spelling: exactly
   // for fixed capitals, ignoring case for a normal word. "anthropic" → "Anthropic" is a fix.
@@ -1011,7 +1022,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   function drawMenu() {
     const model = getModel();
     const name = model ? shortName(model) : "your speech model";
-    const local = Boolean(model && getSettings()?.providers.find((p) => p.id === model.id.split("/")[0])?.local);
+    const local = isLocal(model?.id);
     el("learn-pop-lead").textContent = `New speech model, or coming from another dictation app? Let ${name} listen to recordings you already have. It learns your names, your terms and the way you say them.`;
     el("learn-step-1").textContent = `${model ? name : "Your speech model"} transcribes it again`;
     el("learn-cost").textContent = !model ? "Transcribing takes time, and a cloud speech model charges for it."
@@ -1040,7 +1051,6 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   });
   el("learn-guide").addEventListener("click", () => showHelp("guide-audio"));
   el("learn-suggest").addEventListener("click", () => openSuggestions("history"));
-  el("learning-reuse").addEventListener("change", () => historyReuse.redraw());
 
   // The guide is a modal over the page, so drafts and scroll position stay as they are.
   // Help in the toolbar shows all of it; Help in the suggestions panel shows only the
@@ -1070,7 +1080,6 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const source = stage(run) === "setup" ? setupSource : run.source;
     showHelp(null, source === "history" ? "history" : "audio");
   });
-  el("reuse-help").addEventListener("click", () => showHelp("guide-reuse", "history"));
 
   // ---- Suggestions: a side panel, and a banner above the list while a run is open ----
   const RUNNING = ["queued", "transcribing", "building", "cancelling", "cleaning"];
@@ -1079,21 +1088,48 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   // Before a run the panel starts one from a source: recent transcripts ("history"), or the
   // audio of Entune recordings, another dictation app or a folder, each chosen in the menu.
   let setupSource = "history";
+  let reviewing = false; // a finished run shows its steps until Review suggestions opens the proposal
   const SETUP_TITLES = { history: "Get suggestions", entune: "Learn from your other models' recordings",
     provider: "Learn from another dictation app", folder: "Learn from an audio folder" };
-  // What the source is; how it becomes suggestions is the same for all three.
-  function audioIntro(source) {
-    return {
-      entune: "Your Entune recordings made with other speech models. Entune transcribes them again with this one, then suggests entries.",
-      provider: `Recordings another dictation app keeps on ${THIS_DEVICE}. Entune transcribes them, then suggests entries.`,
-      folder: "Audio of you talking, such as meetings or voice notes. Entune transcribes it, then suggests entries.",
-    }[source];
-  }
+  // What the source is, and how it becomes suggestions, in the speech model's name.
+  const LEAD = {
+    history: (m) => `Reads what ${m} already wrote and suggests entries for the words it got wrong.`,
+    entune: (m) => `Recordings you made in Entune with other speech models. ${m} transcribes them again, then Entune suggests entries for the words it gets wrong.`,
+    provider: (m) => `Recordings another dictation app keeps on ${THIS_DEVICE}. ${m} transcribes them, then Entune suggests entries for the words it gets wrong.`,
+    folder: (m) => `Audio of you talking, such as meetings or voice notes. ${m} transcribes it, then Entune suggests entries for the words it gets wrong.`,
+  };
+  const HOW = {
+    history: (m) => [`Get suggestions reads up to 300 of ${m}'s newest transcripts that suggestions you applied haven't used yet. A run you discard or stop uses none.`,
+      "Each transcript is read once, so you don't pay twice for the same text. To read earlier ones again, open Advanced and choose a span."],
+    entune: (m) => [`Each speech model mishears different words, so what your other models learned doesn't carry over to ${m}. These recordings let ${m} catch up.`,
+      `The hours shown are recorded audio, not how long the run takes. ${m} transcribes first; then the suggestion model reads the new transcripts.`],
+    provider: (m) => [`Import copies the audio that app keeps on ${THIS_DEVICE} into Entune's data folder. Its transcripts are never copied, and its own files stay as they are. Importing again adds only what's new.`,
+      `Then ${m} transcribes the audio and the suggestion model reads the new transcripts, so moving from that app doesn't mean starting from scratch.`],
+    folder: (m) => ["Choose a folder of recordings of you talking: WAV, MP3, M4A, FLAC, OGG or WebM. Each file is copied once into Entune's data folder; other files are skipped.",
+      `Then ${m} transcribes the audio and the suggestion model reads the new transcripts. An hour or two of recent audio gives quick results.`],
+  };
+  // How this works starts open; the panel remembers it closed.
+  let howOpen = true;
+  try { howOpen = localStorage.getItem("entune.suggest.how") !== "closed"; } catch { /* open */ }
+  el("how-toggle").addEventListener("click", () => {
+    howOpen = !howOpen;
+    try { localStorage.setItem("entune.suggest.how", howOpen ? "open" : "closed"); } catch { /* not remembered */ }
+    drawSheet();
+  });
+  el("adv-toggle").addEventListener("click", () => {
+    const open = el("adv-toggle").getAttribute("aria-expanded") !== "true";
+    el("adv-toggle").setAttribute("aria-expanded", String(open));
+    el("adv-body").hidden = !open;
+  });
+  el("suggest-cancel").addEventListener("click", () => suggestDrawer.close());
+  el("review-proposal").addEventListener("click", () => { reviewing = true; showRun(run); el("proposal-body").scrollTop = 0; });
+
   function openSuggestions(source) {
     closeMenu();
     if (source) setupSource = source;
     if (source && source !== "history") onboarding.show(source).catch((err) => toast(errorText(err), "err"));
     if (setupSource === "history") historyReuse.load().catch((err) => toast(errorText(err), "err"));
+    if (stage(run) === "review") reviewing = true; // opened to review: the proposal, not the steps
     showRun(run);
     if (!suggestDrawer.open) suggestDrawer.showModal();
   }
@@ -1107,10 +1143,137 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   el("discard-proposal").addEventListener("click", discardRun);
   el("abandon-dictionary-build").addEventListener("click", discardRun);
 
+  const speechShort = (id) => id && getModel()?.id === id ? shortName(getModel()) : modelName(id ?? "", []).split(" · ")[0];
+  const suggestionName = () => missingKey ? null : languageName(getSettings()?.dictionaryModel);
+  // "about 3 parts, about 4 min each, about 12 min in all"; untimed settings say so.
+  function partsText(parts, perPart, once = false) {
+    return `about ${plural(parts, "part")}${perPart ? `, about ${duration(perPart)} each${once ? " (measured once)" : ""}, about ${duration(parts * perPart)} in all` : ""}`;
+  }
+  // Numbered steps: a dot, a title (with an Extra step tag), and a line beneath.
+  function steps(list, items) {
+    list.replaceChildren(...items.map((item, i) => {
+      const li = node("li", "", item.cls ?? "");
+      const dot = node("span", item.mark ?? String(i + 1), "step-dot");
+      const text = node("div", "", "step-text");
+      const head = node("p", item.title, "step-title");
+      if (item.extra) head.append(node("span", "Extra step", "extra-tag"));
+      text.append(head);
+      if (item.body) text.append(node("p", item.body, "step-body"));
+      if (item.status) text.append(node("p", item.status, "step-status"));
+      if (item.bar != null) {
+        const bar = node("div", "", "step-bar");
+        bar.append(node("span"));
+        bar.firstChild.style.width = `${Math.round(item.bar * 100)}%`;
+        text.append(bar);
+      }
+      li.append(dot, text);
+      return li;
+    }));
+  }
+
+  // Advanced: the Read choice is about transcripts before a run; the summary says what is set.
+  function drawAdvanced(reads) {
+    for (const id of ["read-label", "read-mode", "read-note"]) el(id).hidden = !reads;
+    el("adv-summary").textContent = `${suggestionName() ?? "No suggestion model"} · ${effort} effort${!reads ? "" : historyReuse.span ? " · a chosen span" : " · new transcripts"}`;
+  }
+
+  // The panel before a run: what the source is, what it costs, and what happens.
+  function drawSheet() {
+    if (stage(run) !== "setup") return;
+    const audio = setupSource !== "history";
+    const model = getModel();
+    const m = model ? shortName(model) : "your speech model";
+    const local = isLocal(model?.id);
+    const sm = suggestionName();
+    el("learn-source").textContent = model ? LEAD[setupSource](m) : "Choose a speech model first.";
+    const tag = el("cost-tag");
+    tag.textContent = audio ? "Transcribes again" : "Nothing to transcribe";
+    tag.classList.toggle("warn", audio);
+    el("cost-note").textContent = !audio ? "Uses the transcripts you already have."
+      : local ? `${m} runs on ${THIS_DEVICE}: no charge, but it takes a while.` : `${m} charges for transcribing the audio you select.`;
+    el("speech-field").hidden = !audio;
+    el("how-toggle").setAttribute("aria-expanded", String(howOpen));
+    el("how-body").hidden = !howOpen;
+    el("how-body").replaceChildren(...HOW[setupSource](m).map((text) => node("p", text)));
+    el("other-models-label").textContent = `Only recordings ${m} hasn't transcribed`;
+    el("suggest-setup").hidden = audio;
+    el("suggest-audio").hidden = !audio;
+    drawAdvanced(!audio);
+    // What happens, from what is chosen and what Entune has measured.
+    const review = { title: "You review", body: "Edit any suggestion or leave it out, then apply. Nothing in your dictionary changes until you do." };
+    const reader = sm ?? "The suggestion model";
+    let what = [];
+    let note = "Dictation keeps working.";
+    if (audio) {
+      const plan = onboarding.plan();
+      if (plan.count) {
+        const took = plan.transcribe != null ? `about ${duration(plan.transcribe)}` : "not timed yet for this speech model";
+        const transcribe = plan.unknown ? "Some recordings have no known length, so there is no time estimate."
+          : local ? `${duration(plan.seconds)} of audio on ${THIS_DEVICE}, one recording at a time: ${took}. No charge.`
+            : `${m} bills you for ${duration(plan.seconds)} of audio. ${took[0].toUpperCase()}${took.slice(1)}${plan.workers > 1 ? `, ${plan.workers} recordings at a time` : ""}.`;
+        const read = plan.unknown ? `${reader} reads the new transcripts in parts, starting while transcription runs.`
+          : `${reader} reads the new transcripts in ${partsText(plan.parts, plan.perPart, plan.measuredOnce)}, starting while transcription runs.${plan.perPart ? "" : " Not timed yet with these settings."}`;
+        what = [{ title: `${m} transcribes again`, body: transcribe, extra: true, cls: "extra" }, { title: "Find suggestions", body: read }, review];
+      }
+      note = !model ? "Choose a speech model first." : !sm ? "Choose a suggestion model with a key first."
+        : plan.available ? note : setupSource === "provider" ? "Import its recordings first." : setupSource === "folder" ? "Choose a folder first." : "";
+      el("build-audio-dictionary").disabled = plan.busy || !plan.count || !model || !sm;
+    } else {
+      const plan = historyReuse.plan();
+      if (plan?.count) {
+        const read = `${reader} reads ${plural(plan.count, plan.fresh ? "new transcript" : "transcript")} in ${partsText(plan.parts, plan.perPart)}.${plan.perPart ? "" : " Not timed yet with these settings."}`;
+        what = [{ title: "Find suggestions", body: read }, review];
+      }
+      if (!model) note = "Choose a speech model first.";
+      else if (!sm) note = "Choose a suggestion model with a key first.";
+    }
+    el("what-happens").hidden = !what.length;
+    steps(el("what-steps"), what);
+    el("suggest-note").textContent = note;
+  }
+
+  // A run under way, stopped or finished: the same steps, each with its progress.
+  function drawRun(state, now) {
+    const audio = state.source === "audio";
+    const total = state.total ?? 0, completed = state.completed ?? 0, done = state.completedBatches ?? 0, parts = state.steps ?? 0;
+    const running = now === "running";
+    const halted = now === "halted" || (now === "review" && ["failed", "stopped"].includes(state.outcome));
+    const transcribed = !audio || !["queued", "transcribing"].includes(state.phase);
+    const clock = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+    const elapsed = running && state.stepStartedAt ? ` · ${clock(Math.max(0, Date.now() / 1000 - state.stepStartedAt))}` : "";
+    const look = (doneNow, active) => doneNow ? "done" : active ? (running ? "active" : "paused") : "pending";
+    const items = [];
+    if (audio) {
+      const cls = look(transcribed, true);
+      items.push({ title: `${speechShort(state.model)} transcribes again`, cls, mark: cls === "done" ? "✓" : undefined,
+        body: `${plural(total, "recording")}${isLocal(state.model) ? `, one at a time on ${THIS_DEVICE}` : ""}.`,
+        status: transcribed ? `Transcribed ${plural(completed, "recording")}` : `Transcribed ${completed} of ${total} recordings`,
+        bar: transcribed ? null : total ? completed / total : 0 });
+    }
+    const read = now === "review" && !halted;
+    const started = !audio || transcribed || state.stepStartedAt || done;
+    const findCls = look(read, started);
+    items.push({ title: "Find suggestions", cls: findCls, mark: findCls === "done" ? "✓" : undefined,
+      body: `${languageName(state.dictionaryModel) ?? "The suggestion model"} at ${state.effort ?? "high"} effort${audio ? ", starting while transcription runs" : ""}.`,
+      status: read ? `Read ${plural(done || parts, "part")}`
+        : halted ? `Stopped after ${plural(done, "part")}. Finished parts are kept.`
+          : !started ? "Starts once enough audio is transcribed"
+            : state.phase === "cancelling" ? "Stopping…"
+              : state.step ? `Part ${state.step}${parts ? ` of ${parts}` : ""} · ${done} done${elapsed}` : "Getting ready…" });
+    const kinds = (kind) => proposalChanges.filter((c) => c.kind === kind).length;
+    items.push({ title: "You review", cls: now === "review" ? "active" : "pending",
+      body: "Edit any suggestion or leave it out, then apply. Nothing in your dictionary changes until you do.",
+      status: now !== "review" ? "" : !proposalChanges.length ? "No changes suggested."
+        : `${plural(proposalChanges.length, "suggestion")} ready: ${[plural(kinds("add"), "new entry", "new entries"), plural(kinds("update"), "change"), ...(kinds("remove") ? [plural(kinds("remove"), "removal")] : [])].join(", ")}` });
+    steps(el("run-steps"), items);
+  }
+
   function showRun(state) {
     const before = stage(run);
     run = state;
     const now = stage(state);
+    if (before === "running" && now === "review") reviewing = false; // finished while watching: show the steps first
+    const showProposal = now === "review" && reviewing;
     const included = proposalChanges.filter((c) => c.included).length;
     // The toolbar button: start, progress, or the proposal waiting for review.
     el("suggest-spinner").hidden = now !== "running";
@@ -1127,23 +1290,23 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("suggest-sub").textContent = now === "setup" ? ""
       : `${plural(state.total ?? 0, state.source === "audio" ? "recording" : "transcript")} · ${modelName(state.model ?? "", model ? [model] : [])} → ${languageName(state.dictionaryModel) ?? "suggestion model"}`;
     const audio = setupSource !== "history";
-    el("suggest-setup").hidden = now !== "setup" || audio;
-    el("suggest-audio").hidden = now !== "setup" || !audio;
-    if (audio) el("audio-intro").textContent = audioIntro(setupSource);
+    el("sheet-setup").hidden = now !== "setup";
     // The settings stay open after a stop or failure: Continue can use another reasoning
     // effort. The speech model is only chosen before a run.
     const resumable = now === "halted" || (now === "review" && ["failed", "stopped"].includes(state.outcome));
     el("suggest-shared").hidden = now !== "setup" && !resumable;
-    el("speech-field").hidden = now !== "setup";
-    el("audio-generation-estimate").hidden = now !== "setup" || !audio;
-    if (now === "setup") fillSpeech();
-    if (now === "setup") el("learn-status").hidden = true;
+    if (resumable) drawAdvanced(false);
+    if (now === "setup") { fillSpeech(); drawSheet(); }
+    el("learn-status").hidden = now === "setup" || showProposal;
+    if (now !== "setup") drawRun(state, now);
     el("run-note").hidden = now !== "running";
-    el("proposal").hidden = now !== "review";
+    el("proposal").hidden = !showProposal;
     el("build-dictionary").hidden = now !== "setup" || audio;
     el("build-audio-dictionary").hidden = now !== "setup" || !audio;
-    el("audio-models").hidden = now !== "setup" || !audio;
-    el("accept-proposal").hidden = now !== "review";
+    el("suggest-cancel").hidden = now !== "setup";
+    el("suggest-note").hidden = now !== "setup";
+    el("review-proposal").hidden = now !== "review" || showProposal;
+    el("accept-proposal").hidden = !showProposal;
     el("discard-proposal").hidden = now !== "review";
     // The banner: what the run is doing, and whether editing waits for it.
     const banner = el("dict-banner");

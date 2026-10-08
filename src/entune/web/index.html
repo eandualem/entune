@@ -245,12 +245,12 @@
                 <p><b>Get suggestions</b> is the simple path: it reads up to 300 of your speech model's newest transcripts not yet used by suggestions you applied; a run you discard or stop uses none.</p>
                 <h3 id="guide-reuse">Reusing earlier transcripts</h3>
                 <p id="guide-reuse-state"></p>
-                <p>Each transcript is read once: after you apply a run's suggestions, the next <b>Get suggestions</b> reads only what you dictated since, so you don't pay twice for the same text. <b>Reuse earlier transcripts</b> reads them again. It shows every transcript of this speech model on a timeline, oldest on the left, with the ones used before marked under the line; drag the handles to choose how much to read.</p>
+                <p>Each transcript is read once: after you apply a run's suggestions, the next <b>Get suggestions</b> reads only what you dictated since, so you don't pay twice for the same text. Under <b>Advanced</b>, <b>Choose a span</b> reads them again. The timeline shows every transcript of this speech model, oldest on the left, with the ones used before marked under the line; drag the handles to choose how much to read.</p>
                 <p>Reuse them when the earlier suggestions no longer stand for what those transcripts can teach: you cleared or rebuilt your dictionary, you chose a stronger suggestion model or a higher reasoning effort, an update improved how Entune suggests, or an earlier run's suggestions were poor. Reading again costs tokens again. Entries already in your dictionary are shown to the suggestion model beside the transcripts they occur in, so it improves them instead of adding them twice.</p>
                 <h3 id="guide-audio">Learning from audio</h3>
                 <p>The <b>⋯</b> menu learns from audio instead of transcripts, from one of three sources:</p>
                 <p><b>Your other models' recordings</b> are recordings already in Entune that this speech model hasn't transcribed. <b>Another dictation app</b>: Import copies the audio that app keeps on this Mac into Entune's data folder; its transcripts are never copied and its files stay as they are. Importing again adds only what is new. <b>An audio folder</b>: choose a folder of recordings of you talking, such as meetings or voice notes, in WAV, MP3, M4A, FLAC, OGG or WebM; each file is copied once.</p>
-                <p>The hours and minutes are recorded audio: the length of the recordings you choose, not how long the run takes. Entune first <b>transcribes</b> that audio with your speech model, which a cloud provider charges for, then the suggestion model reads the new transcripts. The estimate under the timeline shows both steps. The timeline runs oldest on the left; drag the handles to choose how much to use, and each edge snaps to whole recordings. An hour or two of recent audio gives quick results.</p>
+                <p>The hours and minutes are recorded audio: the length of the recordings you choose, not how long the run takes. Entune first <b>transcribes</b> that audio with your speech model, which a cloud provider charges for, then the suggestion model reads the new transcripts. <b>What happens</b>, under the timeline, shows both steps and their estimates. The timeline runs oldest on the left; drag the handles to choose how much to use, and each edge snaps to whole recordings. An hour or two of recent audio gives quick results.</p>
                 <h3 id="guide-time">Time and settings</h3>
                 <p>Text goes to the suggestion model in parts, one after another, because each part builds on the entries found so far. With audio, parts start as soon as enough is transcribed, while the rest is still transcribing. Cloud speech models transcribe several recordings at a time; a local model takes one at a time.</p>
                 <p><b>Reasoning effort</b> is the level the suggestion model's provider names, from minimal to xhigh. Higher effort reasons longer and usually finds more; high is the default. A provider without a level maps it to one it has.</p>
@@ -283,71 +283,94 @@
             </div>
           </dialog>
 
-          <dialog class="drawer" id="suggest-drawer" aria-labelledby="suggest-title">
+          <dialog class="drawer sheet" id="suggest-drawer" aria-labelledby="suggest-title">
             <div class="drawer-inner">
               <header class="drawer-head">
                 <div><h2 id="suggest-title">Get suggestions</h2><p class="caption" id="suggest-sub"></p></div>
                 <button type="button" class="btn ghost sm help-btn" id="suggest-help" aria-haspopup="dialog" aria-controls="help-dialog">Help</button>
-                <button type="button" class="btn-icon" id="suggest-close" aria-label="Close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+                <button type="button" class="btn-icon" id="suggest-close" aria-label="Close"><svg class="i12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
               </header>
               <div class="drawer-body">
-                <div class="suggest-setup" id="suggest-setup">
-                  <p id="learn-source">Reads your recent transcripts and suggests entries for the words your speech model gets wrong.</p>
-                  <div class="reuse-line">
-                    <label class="check"><input type="checkbox" id="learning-reuse" /> Reuse earlier transcripts</label>
-                    <button type="button" class="btn ghost sm help-btn" id="reuse-help" aria-haspopup="dialog" aria-controls="help-dialog">Help</button>
+                <div class="sheet-setup" id="sheet-setup">
+                  <div class="sheet-lead">
+                    <p id="learn-source"></p>
+                    <div class="cost"><span class="cost-tag" id="cost-tag"></span><span class="cost-note" id="cost-note"></span></div>
                   </div>
-                  <p class="caption" id="history-state" role="status"></p>
-                  <div class="audio-pick" id="history-pick" hidden>
-                    <div class="audio-total"><span class="audio-hours" id="history-selected"></span><span class="caption" id="history-available"></span></div>
-                    <div class="range" id="history-range">
-                      <div class="range-track"><div class="range-fill" id="history-range-fill"></div></div>
-                      <div class="range-used" id="history-used-marks" aria-hidden="true"></div>
-                      <input type="range" id="history-range-start" min="0" max="1000" value="0" step="1" aria-label="Oldest included transcript" />
-                      <input type="range" id="history-range-end" min="0" max="1000" value="1000" step="1" aria-label="Newest included transcript" />
+                  <div class="learning-for" id="speech-field">
+                    <label for="suggest-speech">Learning for</label>
+                    <select class="select" id="suggest-speech"></select>
+                    <span class="caption">What it learns is kept for this speech model.</span>
+                  </div>
+                  <div class="disclosure">
+                    <button type="button" class="disclosure-toggle" id="how-toggle" aria-expanded="true" aria-controls="how-body"><svg class="disclosure-mark" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5L7 5 3.5 8.5"/></svg>How this works</button>
+                    <div class="sheet-card how" id="how-body"></div>
+                  </div>
+                  <div class="suggest-audio" id="suggest-audio" hidden>
+                    <label class="check" id="other-models"><input type="checkbox" id="audio-other-models" checked /> <span id="other-models-label">Only recordings this speech model hasn't transcribed</span></label>
+                    <div class="app-pick" id="app-pick" hidden>
+                      <p class="sheet-label">Dictation app</p>
+                      <div class="app-list" id="audio-provider-pick" role="radiogroup" aria-label="Dictation app"></div>
                     </div>
-                    <div class="range-labels"><span id="history-start-label"></span><span id="history-end-label"></span></div>
-                    <p class="caption">The line under the range marks transcripts used before.</p>
-                    <p class="estimate" id="history-estimate" role="status"></p>
-                  </div>
-                </div>
-                <div class="suggest-audio" id="suggest-audio" hidden>
-                  <p id="audio-intro"></p>
-                  <div class="app-list" id="audio-provider-pick" role="radiogroup" aria-label="Dictation app" hidden></div>
-                  <div class="source-note">
-                    <button type="button" class="btn sm" id="import-app" hidden>Import</button>
-                    <button type="button" class="btn sm" id="choose-audio-folder" hidden>Choose folder…</button>
-                    <input type="file" id="audio-folder" webkitdirectory multiple hidden />
-                  </div>
-                  <p class="caption" id="audio-import-status" role="status"></p>
-                  <label class="caption check"><input type="checkbox" id="audio-other-models" checked /> Only recordings this speech model hasn't transcribed</label>
-                  <p class="audio-empty" id="audio-empty" hidden></p>
-                  <div class="audio-pick" id="audio-pick">
-                    <div class="audio-total"><span class="audio-hours" id="audio-selected"></span><span class="caption" id="audio-available"></span></div>
-                    <div class="range" id="audio-range">
-                      <div class="range-track"><div class="range-fill" id="audio-range-fill"></div></div>
-                      <input type="range" id="audio-range-start" min="0" max="1000" value="0" step="1" aria-label="Oldest included audio" />
-                      <input type="range" id="audio-range-end" min="0" max="1000" value="1000" step="1" aria-label="Newest included audio" />
+                    <div class="source-note">
+                      <button type="button" class="btn fill" id="import-app" hidden>Import</button>
+                      <button type="button" class="btn fill" id="choose-audio-folder" hidden>Choose folder…</button>
+                      <input type="file" id="audio-folder" webkitdirectory multiple hidden />
+                      <p class="caption" id="audio-import-status" role="status"></p>
                     </div>
-                    <div class="range-labels"><span id="audio-start-label"></span><span id="audio-end-label"></span></div>
-                    <details class="audio-detail" id="audio-detail"><summary id="audio-detail-summary">Show included recordings</summary><div class="audio-list" id="learning-audio-list"></div><button type="button" class="btn ghost sm" id="audio-more" hidden>Show more</button></details>
+                    <p class="audio-empty" id="audio-empty" hidden></p>
+                    <div class="timeline" id="audio-pick">
+                      <div class="tl-total"><span class="tl-big" id="audio-selected"></span><span class="caption" id="audio-available"></span></div>
+                      <div class="tl-track" id="audio-range"></div>
+                      <div class="range-labels"><span id="audio-start-label"></span><span id="audio-end-label"></span></div>
+                      <p class="caption">Drag either handle; each edge snaps to whole recordings. Oldest on the left.</p>
+                      <details class="audio-detail" id="audio-detail"><summary id="audio-detail-summary">Show the included recordings</summary><div class="audio-list" id="learning-audio-list"></div><button type="button" class="btn ghost sm" id="audio-more" hidden>Show more</button></details>
+                    </div>
+                  </div>
+                  <div class="suggest-setup" id="suggest-setup">
+                    <p class="caption" id="history-state" role="status"></p>
+                    <div class="timeline" id="history-pick" hidden>
+                      <div class="tl-total"><span class="tl-big" id="history-selected"></span><span class="caption" id="history-available"></span></div>
+                      <div class="tl-track" id="history-range"></div>
+                      <div class="tl-used" id="history-used-marks" aria-hidden="true"></div>
+                      <div class="range-labels"><span id="history-start-label"></span><span id="history-end-label"></span></div>
+                      <div class="tl-legend"><span><i class="tl-key used" id="history-key-used"></i>Read by suggestions you applied</span><span><i class="tl-key chosen"></i><span id="history-key-chosen">Selected</span></span></div>
+                    </div>
+                  </div>
+                  <div class="sheet-card what" id="what-happens" hidden>
+                    <p class="sheet-label">What happens</p>
+                    <ol class="what-steps" id="what-steps"></ol>
                   </div>
                 </div>
                 <div class="learn-status" id="learn-status" hidden>
-                  <div class="learn-line"><span class="spinner" id="build-spinner" aria-hidden="true" hidden></span><p class="learn-progress" id="dictionary-build-status" role="status"></p></div>
+                  <ol class="run-steps" id="run-steps"></ol>
+                  <p class="learn-progress" id="dictionary-build-status" role="status"></p>
                   <details class="build-error-detail" id="build-error-detail" hidden><summary>Technical details</summary><pre id="build-error-text"></pre></details>
                   <p class="caption" id="run-note" hidden>You can close this panel; progress stays above the list. Finished parts are kept if you stop.</p>
                 </div>
-                <div class="suggest-shared" id="suggest-shared">
-                  <div class="run-settings">
-                    <label class="run-field" id="speech-field">Speech model <select class="select" id="suggest-speech"></select></label>
-                    <label class="run-field">Suggestion model <select class="select" id="dictionary-model" aria-describedby="dictionary-model-note"></select></label>
-                    <label class="run-field">Reasoning effort <select class="select" id="suggest-effort"><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option></select></label>
-                  </div>
-                  <p class="caption" id="run-effect"></p>
-                  <p class="estimate" id="audio-generation-estimate" role="status"></p>
+                <div class="disclosure" id="suggest-shared">
                   <p class="caption learn-note" id="dictionary-model-note" hidden></p>
-                  <p class="caption"><button type="button" class="btn link" id="suggest-settings">Keys in Settings</button></p>
+                  <button type="button" class="disclosure-toggle" id="adv-toggle" aria-expanded="false" aria-controls="adv-body"><svg class="disclosure-mark" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5L7 5 3.5 8.5"/></svg>Advanced<span class="adv-summary" id="adv-summary"></span></button>
+                  <div class="sheet-card adv" id="adv-body" hidden>
+                    <span class="adv-label" id="read-label">Read</span>
+                    <div class="segmented small" id="read-mode" role="radiogroup" aria-labelledby="read-label">
+                      <button type="button" role="radio" id="read-new" aria-checked="true" aria-selected="true">New since last time</button>
+                      <button type="button" role="radio" id="read-span" aria-checked="false" aria-selected="false">Choose a span</button>
+                    </div>
+                    <span class="caption adv-note" id="read-note">A span can include transcripts read before. Reading them again costs tokens again; worth it after a stronger model or a cleared dictionary.</span>
+                    <label class="adv-label" for="dictionary-model">Suggestion model</label>
+                    <select class="select" id="dictionary-model" aria-describedby="dictionary-model-note"></select>
+                    <span class="caption adv-note" id="run-effect" hidden></span>
+                    <span class="adv-label" id="effort-label">Reasoning effort</span>
+                    <div class="segmented small" id="suggest-effort" role="radiogroup" aria-labelledby="effort-label">
+                      <button type="button" role="radio" data-effort="minimal">minimal</button>
+                      <button type="button" role="radio" data-effort="low">low</button>
+                      <button type="button" role="radio" data-effort="medium">medium</button>
+                      <button type="button" role="radio" data-effort="high">high</button>
+                      <button type="button" role="radio" data-effort="xhigh">xhigh</button>
+                    </div>
+                    <span class="caption adv-note">Higher effort reasons longer and usually finds more. High is the default.</span>
+                    <button type="button" class="btn link adv-note" id="suggest-settings">Keys in Settings</button>
+                  </div>
                 </div>
                 <div class="proposal" id="proposal" hidden>
                   <p class="caption" id="proposal-title">Edit any suggestion, or leave it out with ×. Pinned entries are never changed by suggestions.</p>
@@ -357,12 +380,14 @@
               <footer class="drawer-foot">
                 <button type="button" class="btn primary" id="build-dictionary">Get suggestions</button>
                 <button type="button" class="btn primary" id="build-audio-dictionary" hidden disabled>Transcribe and suggest</button>
-                <span class="caption audio-models" id="audio-models" hidden></span>
+                <button type="button" class="btn primary" id="review-proposal" hidden>Review suggestions</button>
                 <button type="button" class="btn primary" id="accept-proposal" hidden>Apply</button>
-                <button type="button" class="btn" id="retry-dictionary-build" hidden>Continue</button>
-                <button type="button" class="btn ghost" id="cancel-dictionary-build" hidden>Stop</button>
+                <button type="button" class="btn primary" id="retry-dictionary-build" hidden>Continue</button>
+                <button type="button" class="btn" id="cancel-dictionary-build" hidden>Stop</button>
                 <button type="button" class="btn ghost" id="discard-proposal" hidden>Discard all</button>
                 <button type="button" class="btn ghost" id="abandon-dictionary-build" hidden>Discard</button>
+                <button type="button" class="btn ghost" id="suggest-cancel">Cancel</button>
+                <span class="caption suggest-note" id="suggest-note"></span>
                 <p class="caption save-status" id="build-status" role="status"></p>
               </footer>
             </div>
