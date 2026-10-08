@@ -149,7 +149,7 @@ class Indicator:
         self._sweep: Any = None
         self._glyph: Any = None
         self._badge: Any = None
-        self._buttons: list[Any] = []
+        self._buttons: list[tuple[Any, str, bool]] = []  # each with its label and whether primary
         self._targets: list[Any] = []  # kept alive while their buttons are
         self._timer: Any = None
         self._mode = "status"  # "status" (the tape), "glyph" or "card"
@@ -287,6 +287,8 @@ class Indicator:
         if self._mode == "card":
             self._label.setTextColor_(TEXT[dark])
             self._body.setTextColor_(MUTED[dark])
+            for button, label, primary in self._buttons:
+                self._paint_button(button, label, primary, dark)
         self._paint_bars(dark)
 
     def _place(self, width: float, height: float, radius: float) -> None:
@@ -313,6 +315,20 @@ class Indicator:
         target = EntunePillTarget.alloc().initWithCall_(call)
         button = AppKit.NSButton.buttonWithTitle_target_action_(label, target, b"fire:")
         button.setBordered_(False)
+        button.setWantsLayer_(True)
+        button.layer().setCornerRadius_(6.0)
+        self._paint_button(button, label, primary, dark)
+        text_width = button.attributedTitle().size().width
+        width = text_width + (24 if primary else 20)
+        button.setFrame_(((x, CARD_PAD_BOTTOM), (width, BUTTON_HEIGHT)))
+        self._panel.contentView().addSubview_(button)
+        self._buttons.append((button, label, primary))
+        self._targets.append(target)
+        return float(width)
+
+    @staticmethod
+    def _paint_button(button: Any, label: str, primary: bool, dark: bool) -> None:
+        """Its text colour and ground, for the appearance; again when the appearance changes."""
         weight = AppKit.NSFontWeightSemibold if primary else AppKit.NSFontWeightRegular
         attributes = {
             AppKit.NSFontAttributeName: AppKit.NSFont.systemFontOfSize_weight_(12, weight),
@@ -320,20 +336,11 @@ class Indicator:
         }
         title = AppKit.NSAttributedString.alloc().initWithString_attributes_(label, attributes)
         button.setAttributedTitle_(title)
-        button.setWantsLayer_(True)
-        button.layer().setCornerRadius_(6.0)
-        if primary:
-            button.layer().setBackgroundColor_(WASH[dark].CGColor())
-        text_width = button.attributedTitle().size().width
-        width = text_width + (24 if primary else 20)
-        button.setFrame_(((x, CARD_PAD_BOTTOM), (width, BUTTON_HEIGHT)))
-        self._panel.contentView().addSubview_(button)
-        self._buttons.append(button)
-        self._targets.append(target)
-        return float(width)
+        ground = WASH[dark] if primary else AppKit.NSColor.clearColor()
+        button.layer().setBackgroundColor_(ground.CGColor())
 
     def _clear_card(self) -> None:
-        for button in self._buttons:
+        for button, _label, _primary in self._buttons:
             button.removeFromSuperview()
         self._buttons, self._targets = [], []
         self._label.setHidden_(True)
