@@ -196,8 +196,9 @@ guarantee a better dictionary.
 - **Optional processing:** dictionary correction, repeated-filler reduction,
   and paragraph/bullet formatting have separate controls, each run by the decision
   model you choose: Jev, OpenAI's Decisions API, Perplexity's, or Laya on your computer.
-- **Fast mode:** uploads the audio while you speak, so a cloud transcript arrives
-  sooner; the **Performance** chart shows each model's measured wait.
+- **Fast mode:** while you speak, each part of a dictation is transcribed at a
+  natural pause, so only the last part is left when you stop, with any speech
+  model; the **Performance** chart shows each model's measured wait.
 - **Drop audio to transcribe it:** drop files anywhere on the window, such as a
   recording another app could not transcribe.
 - **Anonymous mode:** the eye switch blurs transcripts for screen recordings.

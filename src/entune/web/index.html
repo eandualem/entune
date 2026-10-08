@@ -39,7 +39,7 @@
         <svg class="i13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/><path d="M2.5 13.5l11-11"/></svg>
         <input type="checkbox" id="anonymous" aria-label="Anonymous mode" />
       </label>
-      <label class="fast" id="fast-mode-wrap" title="Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop (AssemblyAI only)">
+      <label class="fast" id="fast-mode-wrap" title="Fast mode: transcribe at each pause while you speak, so a long dictation is ready soon after you stop">
         <svg class="i13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"/></svg>
         <input type="checkbox" id="fast-mode" aria-label="Fast mode" />
       </label>
@@ -628,7 +628,7 @@
                   <p>Entune keeps its data in one folder on this Mac: your recordings, every transcript (the speech model's original and each processed version), your dictionary, settings, and the API keys you enter. Keys are stored in Entune's database, not in the macOS keychain. Entune has no accounts and sends no usage data.</p>
                   <p>Audio you import from another dictation app or a folder is copied into that folder; your original files are not changed or moved.</p>
                   <h3>Speech recognition</h3>
-                  <p>With a cloud speech model, such as AssemblyAI, Groq or Soniox, each recording's audio is sent to that service to be transcribed. With fast mode, audio goes to AssemblyAI while you are still speaking. Transcribing again with another model sends the audio to that model's service.</p>
+                  <p>With a cloud speech model, such as AssemblyAI, Groq or Soniox, each recording's audio is sent to that service to be transcribed. With fast mode, parts of it go to that service while you are still speaking. Transcribing again with another model sends the audio to that model's service.</p>
                   <p>With a model on this Mac, such as Whisper or Parakeet, audio stays here. Downloading one fetches the model from Hugging Face.</p>
                   <h3>Corrections and formatting</h3>
                   <p>When Apply your dictionary, Reduce repeated fillers, or Paragraphs and bullets is on, transcript text goes to your decision model: the whole transcript for fillers and formatting, and for your dictionary the passage around each word in question with the meanings that could apply. Audio is never sent.</p>

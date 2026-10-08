@@ -163,13 +163,11 @@ async function loadModels() {
   }
   fillModels(models, modelSelect, defaultModel?.id ?? null, "No models: add a key or download one");
   if (!defaultModel && models.length > 0) modelSelect.prepend(new Option("Pick a model", "", true, true));
-  const provider = defaultModel?.id.split("/")[0];
-  const streams = (settings?.providers ?? []).some((p) => p.id === provider && p.streams);
-  fastInput.disabled = !streams || fastSaving;
-  fastWrap.classList.toggle("off", !streams);
-  fastWrap.title = streams
-    ? "Fast mode: upload while recording, so a long dictation is transcribed as soon as you stop"
-    : "Fast mode: only AssemblyAI takes the audio while you record; pick it to use fast mode";
+  fastInput.disabled = !defaultModel || fastSaving;
+  fastWrap.classList.toggle("off", !defaultModel);
+  fastWrap.title = defaultModel
+    ? "Fast mode: transcribe at each pause while you speak, so a long dictation is ready soon after you stop"
+    : "Fast mode: choose a speech model first";
   if (!status.textContent || status.textContent === "Ready") status.textContent = defaultModel ? "Ready" : "";
   await dictionary.load();
   renderStart();

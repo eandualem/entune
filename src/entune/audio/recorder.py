@@ -92,7 +92,7 @@ class Recorder:
 
     def start(self, sink_for_rate: SinkFactory | None = None) -> None:
         """Begin capturing; `sink_for_rate` may return a sink that gets every chunk as it
-        is recorded (fast mode streams it to the provider)."""
+        is recorded (fast mode cuts it into pieces at pauses)."""
         import sounddevice  # imported here: needs PortAudio, which tests and Linux may lack
 
         with self._lock:
@@ -148,7 +148,7 @@ class Recorder:
         1,200 rounds. The close still gets a few seconds on its own thread, so neither
         what was said nor the shortcuts waiting on this call go down if it hangs anyway.
         The buffers are taken after the close, so the last chunk reaches both the clip
-        and fast mode's upload; after a hung close, they are taken anyway."""
+        and fast mode's pieces; after a hung close, they are taken anyway."""
         with self._lock:
             stream, self._stream = self._stream, None
             if stream is None:

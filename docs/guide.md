@@ -200,15 +200,19 @@ ends that recording.
 The speech model is sampled when transcription starts, so changing it while speaking
 changes the engine for that recording. Changes after transcription starts apply to
 later attempts. Enhancement switches are sampled after speech succeeds. In fast mode,
-audio already uploaded while recording went to the provider selected at recording
-start. Switching providers does not retract that upload; when transcription starts,
-the old upload is aborted and the saved clip goes to the then-selected provider.
+the parts transcribed while recording used the model selected at recording start;
+if another model is selected when transcription starts, those parts are dropped and
+the saved clip goes to that model whole.
 
-**Fast mode** (Settings, off by default) uploads the audio while you record,
-so a dictation over two minutes is transcribed as soon as you stop instead of
-after the whole file has gone up. AssemblyAI only, since only its long-form
-endpoint takes an upload; shorter clips use the sync endpoint as before and
-are unchanged.
+**Fast mode** (the lightning switch at the top of the window, off by default) cuts
+a dictation at natural pauses while you speak, and your speech model, cloud or local,
+transcribes each finished part in the background, the same way it transcribes a whole
+clip. When you stop, only the last part is left; the parts' text is joined and
+processed once. A part ends in the middle of a pause of at least 0.4 s, and only once
+it is long enough for the model: 30 s for Parakeet, 25 s for Whisper.cpp, 20 s for a
+cloud model. A shorter dictation is transcribed whole, as without fast mode, and so is
+any dictation in which a part fails. Fast mode applies to dictations made with the
+shortcut.
 
 **Performance.** Every transcription records how long the clip was, how long
 the provider took, and whether fast mode was used. The chart button next
@@ -217,9 +221,14 @@ wait for one minute of audio, from successful runs whose length and wait were bo
 measured (it covers the speech step, not later processing). **Corrections** counts
 dictionary replacements per 100 words in dictations where the dictionary step ran; it
 reflects the confusions the dictionary knows, not overall accuracy. **Used** combines the
-number of runs, failures and total audio. Measured on 2026-09-18 with a 172-second dictation over
-AssemblyAI Universal-3.5 Pro: 7.0 s with fast mode, 14.8 s without, of which
-the upload alone was 6 to 7 s. Your own table is the one to trust.
+number of runs, failures and total audio. Simulated on dictations from October 2026,
+cut where fast mode would cut them: the median wait after stopping fell from 3.7 s to
+1.1 s with AssemblyAI Universal-3.5 Pro (59 dictations of 30 s to 4 min) and from
+1.0 s to 0.4 s with Parakeet (146 dictations of 30 s to 23 min). The text is not
+identical: with AssemblyAI about 1.3 % of words differed from its whole-clip
+transcript, some better and some worse; with Parakeet, the joined text was closer to a
+reference transcript than the whole-clip one (4.2 % against 6.8 % of words
+differing). Your own table is the one to trust.
 
 When `fn` is one of your shortcuts, Entune owns that key while it runs: a
 tap no longer opens Emoji & Symbols or Apple's dictation, and fn does not
@@ -529,8 +538,8 @@ files. `--data` overrides `ENTUNE_DATA`; otherwise the directory is
 
 Enabled features determine what is sent out:
 
-- **Cloud speech:** the selected provider receives the audio clip; AssemblyAI fast
-  mode starts uploading during recording. Local Whisper.cpp and Parakeet transcribe
+- **Cloud speech:** the selected provider receives the audio clip; in fast mode,
+  parts of it go while you are still speaking. Local Whisper.cpp and Parakeet transcribe
   on this machine, without sending audio to a speech service.
 - **Dictionary builds:** the chosen dictionary model's provider receives raw source
   transcripts, beside the dictionary step's recorded result, and the pinned and working
