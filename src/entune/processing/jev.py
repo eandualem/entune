@@ -38,6 +38,9 @@ class Decision:
     edit: Edit | None
     method: str  # contextual, direct, unchanged, uncertain
     meaning_ids: tuple[str, ...] = ()
+    # When the chosen option stood for several readings that write the same text: each
+    # reading's meaning IDs, any one of which was meant.
+    readings: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -61,7 +64,8 @@ class MeaningRequest:
     state: dict[str, Any]
     questions: dict[str, Any]
     outputs: dict[int, dict[str, str]]  # occurrence -> option -> replacement text
-    support: dict[int, dict[str, tuple[str, ...]]]  # occurrence -> option -> meaning IDs
+    # occurrence -> option -> the meaning IDs of each reading the option stands for
+    support: dict[int, dict[str, tuple[tuple[str, ...], ...]]]
 
 
 def _option(text: str, component: Component, interpretation: Interpretation) -> str:
@@ -143,7 +147,7 @@ def meaning_request(
     occurrences: dict[str, object] = {}
     questions: dict[str, Any] = {}
     outputs: dict[int, dict[str, str]] = {}
-    support: dict[int, dict[str, tuple[str, ...]]] = {}
+    support: dict[int, dict[str, tuple[tuple[str, ...], ...]]] = {}
     asked: dict[int, list[Interpretation]] = {}
     for i, component in enumerate(components):
         if (settled := settle(text, component)) is not None:
@@ -176,7 +180,7 @@ def meaning_request(
             question["criteria"][option] = " Or: ".join(described)
             outputs[i][option] = output
             support[i][option] = tuple(
-                dict.fromkeys(c.meaning.id for plan in plans for c in plan.choices)
+                dict.fromkeys(tuple(c.meaning.id for c in plan.choices) for plan in plans)
             )
         left, right = _context(text, component.start, component.end, spans)
         others = [components[j] for j in asked if j != i]
@@ -206,11 +210,13 @@ def decide(
             probabilities = answers[f"o{i}"]
             option = max(probabilities, key=lambda name: probabilities[name])
             component = components[i]
+            readings = request.support[i][option]
             decisions[i] = Decision(
                 component,
                 Edit(component.start, component.end, values[option]),
                 "contextual",
-                request.support[i][option],
+                tuple(dict.fromkeys(m for reading in readings for m in reading)),
+                readings if len(readings) > 1 else (),
             )
     return [decisions[i] for i in range(len(components))]
 

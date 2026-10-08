@@ -632,6 +632,7 @@ def test_meanings_that_write_the_same_text_are_one_option() -> None:
     }
     assert decisions[0].edit is not None and decisions[0].edit.text == "cloud"
     assert decisions[0].meaning_ids == ("b_cloud", "c_cloud")
+    assert decisions[0].readings == (("b_cloud",), ("c_cloud",))
 
 
 @pytest.mark.parametrize(

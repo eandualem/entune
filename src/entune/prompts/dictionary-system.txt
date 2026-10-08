@@ -23,7 +23,8 @@ each candidate's meaning, picks one, and the app writes that meaning's spelling.
 
 When a dictation shows what the dictionary did ("after_dictionary", "decisions"), judge
 those choices against what the person meant: a wrong choice calls for a clearer meaning,
-a literal competitor or a narrower link.
+a literal competitor or a narrower link. A decision lists the "meanings" it chose, or,
+under "one_of", readings that all write the same text, any one of which was meant.
 
 ## Rules
 

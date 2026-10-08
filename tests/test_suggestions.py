@@ -285,6 +285,20 @@ def test_an_entry_others_link_to_and_a_decided_entry_are_shown() -> None:
     assert entry["decisions"][0]["meanings"] == ["e1a"]
 
 
+def test_a_choice_of_readings_writing_the_same_text_is_shown_as_one_of() -> None:
+    from entune.learning.inputs import DictionaryResult
+    from entune.processing.results import Selection
+    from tests.dictionary_samples import CLOUD
+
+    readings = (("b_cloud",), ("c_cloud",))
+    chosen = Selection(4, 9, ("b_cloud", "c_cloud"), "contextual", readings)
+    decided = batches.Snippet("s_1", "raw_speech", "the cloud", DictionaryResult((), (chosen,)))
+    (entry,) = json.loads(view.build((CLOUD,), (), [decided]).dictations)
+    assert entry["decisions"] == [
+        {"heard": "cloud", "wrote": "cloud", "method": "contextual", "one_of": [["e1b"], ["e1c"]]}
+    ]
+
+
 def test_an_identical_ordinary_meaning_not_shown_is_reused() -> None:
     cache = Meaning("m_cache", "cache", "stored copy of data", casing="ordinary")
     stored = Group("g_cache", (cache,), (Form("cash", (Association("m_cache"),)),))

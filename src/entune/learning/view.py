@@ -163,14 +163,18 @@ def _dictation(label: str, snippet: Any, labels: dict[str, str]) -> dict[str, ob
                 for c in result.changes
                 if c.start >= selection.start and c.end <= selection.end
             )
-            decisions.append(
-                {
-                    "heard": heard,
-                    "wrote": text_edits.apply(heard, inside),
-                    "method": selection.method,
-                    "meanings": [labels.get(m, "removed") for m in selection.meaning_ids],
-                }
-            )
+            decision: dict[str, object] = {
+                "heard": heard,
+                "wrote": text_edits.apply(heard, inside),
+                "method": selection.method,
+            }
+            if selection.readings:
+                decision["one_of"] = [
+                    [labels.get(m, "removed") for m in reading] for reading in selection.readings
+                ]
+            else:
+                decision["meanings"] = [labels.get(m, "removed") for m in selection.meaning_ids]
+            decisions.append(decision)
     entry["decisions"] = decisions
     return entry
 
