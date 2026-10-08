@@ -160,8 +160,8 @@ def test_interrupted_processing_reopens_as_raw_success_with_a_failure(tmp_path: 
         assert attempt.status == "ok" and attempt.text == attempt.raw_text == raw
         assert attempt.correction is not None and attempt.correction.status == "failed"
         assert attempt.correction.replacements == 0 and attempt.correction.attempts == 0
-        assert attempt.formatting is not None and attempt.formatting.status == "skipped"
-        assert attempt.cleanup is not None and attempt.cleanup.status == "skipped"
+        assert attempt.formatting is not None and attempt.formatting.status == "failed"
+        assert attempt.cleanup is not None and attempt.cleanup.status == "failed"
         assert not attempt.cleanup.changes and attempt.cleanup.removed_words == 0
 
 
@@ -186,7 +186,7 @@ def test_older_formatting_does_not_gain_invented_edit_counts(tmp_path: Path) -> 
         assert attempt.raw_text == "First. Next." and attempt.text == "- First.\n- Next."
 
 
-def test_restart_retains_completed_enhancement_and_fails_only_unfinished_stage(
+def test_restart_retains_completed_enhancement_and_fails_unfinished_stages(
     tmp_path: Path,
 ) -> None:
     from contextlib import closing
@@ -221,7 +221,7 @@ def test_restart_retains_completed_enhancement_and_fails_only_unfinished_stage(
         assert attempt.correction is not None and attempt.correction.status == "succeeded"
         assert attempt.correction.output == attempt.text
         assert attempt.cleanup is not None and attempt.cleanup.status == "failed"
-        assert attempt.formatting is not None and attempt.formatting.status == "skipped"
+        assert attempt.formatting is not None and attempt.formatting.status == "failed"
 
 
 def test_restart_leaves_a_cancelled_attempt_whose_text_says_pending(tmp_path: Path) -> None:

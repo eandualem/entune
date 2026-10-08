@@ -18,6 +18,7 @@ from entune.app.decision_models import DecisionModels
 from entune.app.dictionary_file import DictionaryFile
 from entune.app.models import NoDefaultModel, SpeechModels, UnknownModel
 from entune.app.operations import Operation, Operations
+from entune.app.pieces import Pieces
 from entune.app.settings import JevStatus, Settings
 from entune.audio.formats import sniff_mime
 from entune.dictionary.entries import Groups
@@ -25,7 +26,7 @@ from entune.processing import results
 from entune.processing.jev_client import Client as JevClient
 from entune.processing.pipeline import process_text
 from entune.processing.results import Processed
-from entune.providers.cloud.contracts import Preconnects, Streams, Upload
+from entune.providers.cloud.contracts import Preconnects
 from entune.providers.contracts import Clip, Failure, Transcript
 from entune.providers.local.contracts import Downloadable
 from entune.providers.registry import ModelRef
@@ -52,26 +53,26 @@ class Dictation:
         dictionary: DictionaryFile,
         jev: JevClient,
         decisions: DecisionModels,
-        report_error: Callable[[str], None],
     ) -> None:
         self._store, self._speech, self._operations = store, speech, operations
         self._settings, self._models, self._dictionary = settings, models, dictionary
-        self._jev, self._decisions, self._report_error = jev, decisions, report_error
+        self._jev, self._decisions = jev, decisions
 
-    def begin_upload(self, sample_rate: int) -> Upload | None:
-        """Fast mode's upload for a recording that starts now, when everything for it is
-        set: the option, a default model whose provider streams, and its key."""
+    def begin_pieces(self, sample_rate: int, cancel: threading.Event) -> Pieces | None:
+        """Fast mode's pieces for a recording that starts now, when everything for it is
+        set: the option, a default model, and its key unless the model is local."""
         if not self._settings.fast_mode():
             return None
         try:
             ref = self._models.choose_model(None)
         except (NoDefaultModel, UnknownModel):
             return None
-        api_key = self._settings.key(ref.provider.id)
-        if api_key is None or not isinstance(ref.provider, Streams):
+        api_key = (
+            "" if isinstance(ref.provider, Downloadable) else self._settings.key(ref.provider.id)
+        )
+        if api_key is None:
             return None
-        with self._speech.use(ref):
-            return ref.provider.begin_upload(api_key, sample_rate)
+        return Pieces(ref, api_key, sample_rate, self._speech, cancel)
 
     def prepare(self) -> None:
         """While the user speaks, open the connections this dictation will use: the default
@@ -84,10 +85,11 @@ class Dictation:
     def _preconnect(self) -> None:
         try:
             status = self._settings.jev_status()
-            if status.dictionary or status.formatting or status.cleanup:
+            stages = sum((status.dictionary, status.formatting, status.cleanup))
+            if stages:
                 endpoint, key = self._decisions.chosen()
                 if key:  # Jev, OpenAI or Perplexity with its key; Laya is on this Mac
-                    self._jev.preconnect(endpoint.url)
+                    self._jev.preconnect(endpoint.url, stages)
             ref = self._models.choose_model(None)
             if isinstance(ref.provider, Preconnects) and self._settings.key(ref.provider.id):
                 with self._speech.use(ref):
@@ -106,7 +108,7 @@ class Dictation:
         data: bytes,
         label: str | None,
         ref: str | None,
-        upload: Upload | None = None,
+        pieces: Pieces | None = None,
         *,
         operation_id: str | None = None,
     ) -> Recording:
@@ -119,7 +121,7 @@ class Dictation:
             recording = self.store_recording(data, label)
             try:
                 operation.check()
-                return self.transcribe_recording(recording, ref, upload, operation=operation)
+                return self.transcribe_recording(recording, ref, pieces, operation=operation)
             except CancelledError:
                 self._store.cancel_recording(recording.id)
                 updated = self._store.get_recording(recording.id)
@@ -132,14 +134,14 @@ class Dictation:
         self,
         recording: Recording,
         ref: str | None,
-        upload: Upload | None = None,
+        pieces: Pieces | None = None,
         *,
         operation: Operation | None = None,
     ) -> Recording:
         owned = operation is None
         operation = operation or self._operations.begin("dictation", "transcribing")
         try:
-            return self._transcribe_owned(recording, ref, upload, operation)
+            return self._transcribe_owned(recording, ref, pieces, operation)
         except CancelledError:
             if not owned:
                 raise
@@ -151,14 +153,14 @@ class Dictation:
                 self._operations.finish(operation)
 
     def _transcribe_owned(
-        self, recording: Recording, ref: str | None, upload: Upload | None, operation: Operation
+        self, recording: Recording, ref: str | None, pieces: Pieces | None, operation: Operation
     ) -> Recording:
         try:
             model = self._models.choose_model(ref)
         except (NoDefaultModel, UnknownModel) as exc:
             # The clip is kept with the error, so it can be retried once a model is set.
-            if upload is not None:
-                upload.abort()
+            if pieces is not None:
+                pieces.abort()
             self._store.add_transcription(
                 recording.id,
                 provider="none",
@@ -171,7 +173,7 @@ class Dictation:
         try:
             self._operations.stage(operation, "transcribing")
             self._store.recording_notice(recording.id, None)
-            result = self.transcribe(recording, model, upload, operation=operation)
+            result = self.transcribe(recording, model, pieces, operation=operation)
             operation.check()
             return result
         except CancelledError:
@@ -181,15 +183,15 @@ class Dictation:
             self._store.cancel_recording(
                 recording.id, latest.id if latest and latest.id not in prior else None
             )
-            if upload is not None:
-                upload.abort()
+            if pieces is not None:
+                pieces.abort()
             raise
 
     def transcribe(
         self,
         recording: Recording,
         ref: ModelRef,
-        upload: Upload | None = None,
+        pieces: Pieces | None = None,
         *,
         operation: Operation | None = None,
     ) -> Recording:
@@ -206,10 +208,17 @@ class Dictation:
                 else:
                     started = time.monotonic()
                     clip: Clip | None = None
+                    joined: str | None = None
                     try:
-                        resources.enter_context(
-                            self._speech.use(ref, cancel=operation.cancel if operation else None)
-                        )
+                        # Before this dictation's own lease: the pieces hold theirs while
+                        # they finish, and a local model has one slot.
+                        joined, pieces = _joined(pieces, ref), None
+                        if joined is None:
+                            resources.enter_context(
+                                self._speech.use(
+                                    ref, cancel=operation.cancel if operation else None
+                                )
+                            )
                         if operation:
                             operation.check()
                         data = self._store.audio_path(recording).read_bytes()
@@ -217,9 +226,11 @@ class Dictation:
                         if not mime.startswith("audio/"):
                             mime = sniff_mime(data) or mime
                         clip = Clip(data, mime)
-                        clip = replace(clip, upload_url=_finish(upload, ref, clip))
-                        upload = None
-                        result = ref.provider.transcribe(clip, ref.model, api_key)
+                        result = (
+                            Transcript(joined)
+                            if joined is not None
+                            else ref.provider.transcribe(clip, ref.model, api_key)
+                        )
                     except CancelledError:
                         raise
                     except Exception as exc:
@@ -227,7 +238,7 @@ class Dictation:
                     timing = Timing(
                         clip.seconds if clip else None,
                         time.monotonic() - started,
-                        clip.upload_url is not None if clip else False,
+                        joined is not None,
                     )
                 raw = result.text if isinstance(result, Transcript) else None
                 status = self._settings.jev_status()
@@ -324,11 +335,8 @@ class Dictation:
             assert updated is not None
             return updated
         finally:
-            try:
-                if upload is not None:
-                    upload.abort()
-            except Exception as exc:
-                self._report_error(f"Upload cleanup: {type(exc).__name__}: {exc}")
+            if pieces is not None:
+                pieces.abort()
 
     def correct(
         self,
@@ -388,15 +396,12 @@ class Dictation:
         }
 
 
-def _finish(upload: Upload | None, ref: ModelRef, clip: Clip) -> str | None:
-    """The fast-mode upload's handle when it belongs to this provider and this clip is
-    long enough for it to matter; otherwise the stream is dropped."""
-    if upload is None:
+def _joined(pieces: Pieces | None, ref: ModelRef) -> str | None:
+    """Fast mode's text when its pieces were transcribed by this model; otherwise they
+    are dropped and the whole clip is transcribed."""
+    if pieces is None:
         return None
-    if upload.provider_id != ref.provider.id:
-        upload.abort()
+    if pieces.ref != ref:
+        pieces.abort()
         return None
-    url = upload.finish(clip.seconds or 0.0)
-    if url is None and upload.error:
-        logging.getLogger(__name__).warning("Fast mode upload not used: %s", upload.error)
-    return url
+    return pieces.finish()

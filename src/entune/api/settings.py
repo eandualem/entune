@@ -33,7 +33,6 @@ def routes(app: Entune) -> list[Route]:
                         "id": s.id,
                         "name": s.name,
                         "keyHint": s.key_hint,
-                        "streams": s.streams,
                         "local": s.local,
                     }
                     for s in app.models.provider_statuses()

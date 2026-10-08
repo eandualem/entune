@@ -13,7 +13,7 @@ export function initRecording({ getModelLabel, onStatus, onUploaded }) {
   let active = null;
   let dropping = false; // dropped audio files are being transcribed, one after another
   let shortcut = false; // a recording the shortcut started: this button stops it too
-  const labels = {recording: "Recording…", saving: "Saving audio…", transcribing: "Transcribing…", correction: "Checking the dictionary…", cleanup: "Reducing fillers…", formatting: "Formatting…", delivering: "Delivering…", cancelling: "Canceling — keeping audio…", learning: "Preparing dictionary suggestions…", review: "Review the dictionary suggestions to dictate again."};
+  const labels = {recording: "Recording…", saving: "Saving audio…", transcribing: "Transcribing…", formatting: "Formatting…", delivering: "Delivering…", cancelling: "Canceling — keeping audio…", learning: "Preparing dictionary suggestions…", review: "Review the dictionary suggestions to dictate again."};
   let previous = null;
   async function poll() {
     try {

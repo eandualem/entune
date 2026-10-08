@@ -295,89 +295,6 @@ def test_no_vocabulary_hint_goes_to_any_provider(clip: Clip) -> None:
     assert "context" not in json.loads(create.content)
 
 
-def test_assemblyai_streaming_upload_is_used_only_past_the_sync_limit() -> None:
-    from entune.providers.cloud.assemblyai import StreamingUpload
-
-    uploads: list[bytes] = []
-    seen: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request.url.path)
-        if request.url.path == "/v2/upload":
-            uploads.append(request.read())
-            return httpx.Response(200, json={"upload_url": "https://cdn.assemblyai.com/upload/s"})
-        if request.url.path == "/v2/transcript":
-            assert json.loads(request.content)["audio_url"] == "https://cdn.assemblyai.com/upload/s"
-            return httpx.Response(200, json={"id": "t2", "status": "queued"})
-        if request.url.path == "/v2/transcript/t2":
-            return httpx.Response(200, json={"id": "t2", "status": "completed", "text": "streamed"})
-        return httpx.Response(200)
-
-    client = mock_client(handler)
-    provider = AssemblyAI(client, sleep=lambda _: None)
-
-    upload = StreamingUpload(client, "k", 16_000)
-    upload.feed(b"\x01\x02")
-    upload.feed(b"\x03")
-    assert upload.finish(150.0) == "https://cdn.assemblyai.com/upload/s"
-    assert uploads[0][:4] == b"RIFF" and uploads[0][40:44] == b"\xff\xff\xff\xff"
-    assert uploads[0].endswith(b"\x01\x02\x03")
-
-    # A clip with the upload already there skips the upload and goes straight to the job.
-    long_clip = Clip(wav_bytes(b"\x00\x00" * 16_000 * 150), "audio/wav", upload_url=upload.url)
-    seen.clear()
-    assert provider.transcribe(long_clip, "universal-3-5-pro", "k") == Transcript("streamed")
-    assert "/v2/upload" not in seen
-
-    # Short clips gain nothing from it: the stream is dropped, the sync endpoint is used.
-    short = StreamingUpload(client, "k", 16_000)
-    short.feed(b"\x00")
-    assert short.finish(5.0) is None
-    short._thread.join(2.0)
-    assert len(uploads) == 1
-
-
-def test_failed_streaming_upload_stops_collecting_recorded_audio() -> None:
-    from entune.providers.cloud.assemblyai import StreamingUpload
-
-    class Offline(httpx.BaseTransport):
-        def handle_request(self, request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError("offline", request=request)
-
-    with httpx.Client(transport=Offline()) as client:
-        upload = StreamingUpload(client, "k", 16_000)
-        upload._thread.join(2)
-        assert upload.error and "offline" in upload.error
-        upload.feed(b"still recording")
-        assert upload._queue.empty()
-
-
-def test_aborting_an_upload_discards_audio_waiting_for_a_slow_connection() -> None:
-    import threading
-
-    from entune.providers.cloud.assemblyai import StreamingUpload
-
-    proceed = threading.Event()
-    sent: list[bytes] = []
-
-    class SlowConnection(httpx.BaseTransport):
-        def handle_request(self, request: httpx.Request) -> httpx.Response:
-            assert proceed.wait(2)
-            assert isinstance(request.stream, httpx.SyncByteStream)
-            sent.extend(request.stream)
-            return httpx.Response(200, json={"upload_url": "https://example.com/audio"})
-
-    with httpx.Client(transport=SlowConnection()) as client:
-        upload = StreamingUpload(client, "k", 16_000)
-        upload.feed(b"queued audio")
-        upload.abort()
-        assert upload._queue.qsize() == 1  # only the wake-up marker, before the network resumes
-        proceed.set()
-        upload._thread.join(2)
-        assert not upload._thread.is_alive()
-        assert sent == [] and upload._queue.empty()
-
-
 def test_adapters_close_owned_clients_but_leave_injected_clients_to_the_caller(
     tmp_path: Path,
 ) -> None:
@@ -415,15 +332,3 @@ def test_adapters_close_owned_clients_but_leave_injected_clients_to_the_caller(
         for provider in injected:
             provider.close()
             assert not client.is_closed
-
-
-def test_provider_close_aborts_owned_streaming_upload() -> None:
-    from entune.providers.cloud.assemblyai import AssemblyAI, StreamingUpload
-
-    with mock_client(lambda req: httpx.Response(200, json={"upload_url": "test"})) as client:
-        provider = AssemblyAI(client)
-        upload = provider.begin_upload("key", 16000)
-        provider.close()
-        assert isinstance(upload, StreamingUpload)
-        assert upload._aborted.is_set() and not upload._thread.is_alive()
-        assert not client.is_closed

@@ -17,19 +17,19 @@ class Provider(Protocol):
     def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult: ...
 ```
 
-`Clip` carries the audio bytes, its MIME type and a filename, and
-`upload_url` when fast mode already streamed the same audio to this
-provider. The result is either `Transcript(text)` or `Failure(error)`.
+`Clip` carries the audio bytes, its MIME type and a filename. The result
+is either `Transcript(text)` or `Failure(error)`.
 Nothing from the dictionary goes to the provider: it transcribes the raw
 speech, and the dictionary is applied to what comes back (see
 [the dictionary file](dictionary.md)).
 
+Fast mode needs nothing from an adapter: it cuts a dictation at pauses
+and sends each piece through `transcribe` as a WAV clip of its own.
+
 Two optional capabilities, without an adapter inheritance hierarchy:
 
-- cloud/contracts.py defines Streams: begin_upload(api_key, sample_rate) returns an Upload that
-  is fed the audio as it is recorded (fast mode). AssemblyAI implements it;
-  the sync endpoint takes no URL, so only clips past the two-minute limit
-  use the stream.
+- cloud/contracts.py defines Preconnects: `preconnect()` opens the
+  connection while the clip is still being recorded.
 - local/contracts.py defines Downloadable: catalogue(), download(name), remove(name),
   `warm(name)`, `unload(keep)`. A provider whose models are files on this
   machine, fetched with a button, no key. local/whisper.py (WhisperCpp,

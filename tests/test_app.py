@@ -13,17 +13,17 @@ from pathlib import Path
 import httpx
 import pytest
 
-from entune.app.dictation import _finish
 from entune.app.entune import Entune
 from entune.app.operations import Operation
+from entune.app.pieces import Pieces
 from entune.audio.recorder import Capture, SinkFactory
 from entune.desktop.app import EntuneApp
 from entune.desktop.engine import ShortcutEngine
 from entune.desktop.platform import Delivery, State
 from entune.processing.jev_client import Client as JevClient
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
-from entune.providers.registry import ModelRef
 from entune.storage.store import Store
+from tests.test_pieces import silence, speech
 
 
 class FakeTray:
@@ -203,26 +203,6 @@ class FakeRecorder:
         return Capture(b"", self.capture.sample_rate) if discard else self.capture
 
 
-class FakeUpload:
-    provider_id = "stub"
-    error: str | None = None
-
-    def __init__(self) -> None:
-        self.fed: list[bytes] = []
-        self.finished: float | None = None
-        self.aborted = False
-
-    def feed(self, chunk: bytes) -> None:
-        self.fed.append(chunk)
-
-    def finish(self, seconds: float) -> str | None:
-        self.finished = seconds
-        return "stub://uploaded"
-
-    def abort(self) -> None:
-        self.aborted = True
-
-
 class StubProvider:
     id: str = "stub"
     name: str = "Stub"
@@ -230,15 +210,10 @@ class StubProvider:
 
     def __init__(self) -> None:
         self.clips: list[Clip] = []
-        self.uploads: list[FakeUpload] = []
 
     def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         self.clips.append(clip)
         return Failure("HTTP 401\n{}") if model == "bad" else Transcript("hello from the fake")
-
-    def begin_upload(self, api_key: str, sample_rate: int) -> FakeUpload:
-        self.uploads.append(FakeUpload())
-        return self.uploads[-1]
 
 
 def make(tmp_path: Path, **kwargs: bool) -> tuple[EntuneApp, FakePlatform, Entune]:
@@ -324,16 +299,6 @@ def test_a_dictation_is_transcribed_copied_and_pasted(tmp_path: Path) -> None:
     assert platform.actions.clipboard == "hello from the fake"
     wait_for(lambda: platform.tray.states[-1] == "idle")
     assert entune.store.list_recordings()[0].transcriptions[0].text == "hello from the fake"
-
-
-def test_an_unusable_fast_mode_upload_is_logged(caplog: pytest.LogCaptureFixture) -> None:
-    upload = FakeUpload()
-    upload.error = "HTTP 503 Service Unavailable"
-    upload.finish = lambda seconds: None  # type: ignore[method-assign]
-    clip = Clip(Capture(b"\x00\x00" * 16_000, 16_000).wav(), "audio/wav")
-    with caplog.at_level("WARNING"):
-        assert _finish(upload, ModelRef(StubProvider(), "good"), clip) is None
-    assert "HTTP 503 Service Unavailable" in caplog.text
 
 
 class PreconnectingStub(StubProvider):
@@ -422,29 +387,53 @@ def test_silence_shows_on_the_pill_and_only_a_long_pause_notifies(tmp_path: Path
     app.cancel_recording()
 
 
-def test_fast_mode_streams_the_recording_and_hands_the_upload_to_the_provider(
-    tmp_path: Path,
-) -> None:
-    app, platform, entune = make(tmp_path)
-    stub = entune.providers[0]
-    assert isinstance(stub, StubProvider)
+def test_fast_mode_transcribes_the_pieces_and_delivers_their_joined_text(tmp_path: Path) -> None:
+    stub = StubProvider()
+    entune = Entune(Store(tmp_path), [stub])
+    platform = FakePlatform()
+    capture = Capture(speech(21) + silence(0.6) + speech(2), 16_000)
+    app = EntuneApp(entune, platform, "http://localhost:0/", recorder=FakeRecorder(capture))
     entune.settings.set_key("stub", "k")
     entune.models.set_default_model("stub/good")
-    entune.settings.set_shortcuts("alt_r", None)
     app.start_recording()
-    assert stub.uploads == []  # off by default: nothing streamed
-    app.stop_recording()
-    wait_for(lambda: platform.tray.states[-1] == "idle")
-    assert stub.clips[-1].upload_url is None
+    app.stop_recording()  # off by default: the whole clip, once
+    wait_for(lambda: platform.actions.pasted == 1)
+    assert [round(c.seconds or 0) for c in stub.clips] == [24]
 
     entune.settings.set_fast_mode(True)
     app.start_recording()
-    (upload,) = stub.uploads
-    assert upload.fed == [app.recorder.capture.pcm]  # type: ignore[attr-defined]
     app.stop_recording()
-    wait_for(lambda: platform.tray.states[-1] == "idle")
-    assert upload.finished == 1.0 and not upload.aborted
-    assert stub.clips[-1].upload_url == "stub://uploaded"
+    wait_for(lambda: platform.actions.pasted == 2)
+    assert [round(c.seconds or 0) for c in stub.clips[1:]] == [21, 2]
+    assert platform.actions.clipboard == "hello from the fake hello from the fake"
+    attempt = entune.store.list_recordings()[0].transcriptions[0]
+    assert attempt.fast and attempt.audio_seconds == pytest.approx(23.6, abs=0.1)
+
+
+def test_fast_mode_pieces_of_another_model_are_dropped(tmp_path: Path) -> None:
+    class TwoModels(StubProvider):
+        models = ("good", "other")
+
+        def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
+            self.clips.append(clip)
+            return Transcript(model)
+
+    stub = TwoModels()
+    entune = Entune(Store(tmp_path), [stub])
+    platform = FakePlatform()
+    capture = Capture(speech(21) + silence(0.6) + speech(2), 16_000)
+    app = EntuneApp(entune, platform, "http://localhost:0/", recorder=FakeRecorder(capture))
+    entune.settings.set_key("stub", "k")
+    entune.models.set_default_model("stub/good")
+    entune.settings.set_fast_mode(True)
+    app.start_recording()
+    wait_for(lambda: len(stub.clips) == 1)  # the first piece, by the model chosen at the start
+    entune.models.set_default_model("stub/other")
+    app.stop_recording()
+    wait_for(lambda: platform.actions.pasted == 1)
+    assert platform.actions.clipboard == "other"
+    assert round(stub.clips[-1].seconds or 0) == 24  # the whole clip, by the model now chosen
+    assert not entune.store.list_recordings()[0].transcriptions[0].fast
 
 
 def test_without_accessibility_the_transcript_is_copied_and_explained(tmp_path: Path) -> None:
@@ -767,7 +756,7 @@ def test_quitting_right_after_a_recording_still_saves_it(tmp_path: Path) -> None
     assert len(entune.store.list_recordings()) == 1
 
 
-def test_cancelling_retains_capture_aborts_upload_and_prevents_transcription_or_paste(
+def test_cancelling_retains_capture_aborts_pieces_and_prevents_transcription_or_paste(
     tmp_path: Path,
 ) -> None:
     app, platform, entune = make(tmp_path)
@@ -781,13 +770,13 @@ def test_cancelling_retains_capture_aborts_upload_and_prevents_transcription_or_
     engine.press("fn")
     engine.release("fn")
     engine.release("cmd")
-    upload = app._upload
-    assert isinstance(upload, FakeUpload)
+    pieces = app._pieces
+    assert isinstance(pieces, Pieces)
     engine.press("fn")
     engine.press("ctrl")
     engine.release("ctrl")
     engine.release("fn")
-    assert upload.aborted and app._upload is None
+    assert pieces._aborted.is_set() and app._pieces is None
     assert not app._recording and not app.recorder.recording  # type: ignore[attr-defined]
     wait_for(lambda: entune.operations.status() is None)
     assert platform.tray.states[-1] == "idle"
@@ -866,7 +855,7 @@ def test_correction_failure_delivers_raw_with_a_noninterrupting_notice(tmp_path:
     app._transcribe_and_deliver(recording, 1.0, None, operation)
     assert platform.actions.clipboard == "hello from the fake"
     assert platform.actions.pasted == 1 and not platform.window.shown
-    assert any("Last completed text retained" in message for _, message in platform.tray.notices)
+    assert any("Dictionary correction unavailable" in m for _, m in platform.tray.notices)
     assert not any("transcription failed" in title.lower() for title, _ in platform.tray.notices)
     assert entune.operations.status() is None
 

@@ -1,0 +1,18 @@
+{
+  "type": "choice",
+  "instructions": {
+    "question": "Is the sound `fillers.$filler` a speech hesitation in this transcript?",
+    "focus": "Judge the whole original context. Code may remove only the recorded deletion span: the sound with its own comma and space. A known filler sound is not sufficient evidence: it can be an answer, a reaction, a quotation, talk about the word itself, a name, or a word in another language. Classify intent, without generating text, offsets or editing commands. These candidates are English."
+  },
+  "criteria": {
+    "hesitation": {
+      "what": "A sound made while thinking or pausing, whose removal leaves the meaning, tone and grammar of the sentence intact.",
+      "not_for": "An answer or reaction that carries meaning, a quotation, talking about the sound itself, a name, or code.",
+      "examples": ["Um, open the settings.", "I think, uh, we should wait.", "So basically, er, the build failed."]
+    },
+    "meaningful": {
+      "what": "The sound carries meaning: an answer, a reaction such as surprise or understanding, a quotation, or talk about the word itself.",
+      "examples": ["Ah, so that is why it failed.", "Hmm is what I write when I disagree.", "The example contains the word um."]
+    }
+  }
+}

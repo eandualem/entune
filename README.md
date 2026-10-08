@@ -96,6 +96,13 @@ and edit.
 
 ### 72 wrong replacements become 1 with Jev, in our test
 
+<a href="https://github.com/eandualem/entune/blob/develop/docs/decision-model-results.md">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/eandualem/entune/main/docs/images/decision-models-dark.svg" />
+    <img src="https://raw.githubusercontent.com/eandualem/entune/main/docs/images/decision-models-light.svg" width="880" alt="Chart: of 72 dictionary matches that should stay and 47 that should change, Perplexity made 3 wrong swaps and caught 43 fixes, Jev 1 and 38, OpenAI 8 and 42, Laya 8 and 28. The baseline of replacing every match makes all 72 wrong swaps and catches all 47." />
+  </picture>
+</a>
+
 We let Entune learn a dictionary from **7.5 hours** of the maintainer's own dictation
 (406 recordings), then tested it on the next **2.1 hours** (160 recordings) that it
 never saw. Parakeet transcribed everything on the Mac; GPT-6 Astra learned the
@@ -193,11 +200,12 @@ guarantee a better dictionary.
   notifications for results.
 - **Local data:** audio, transcripts, settings and keys stay in Entune's data
   folder. Export or delete them in **Settings → Data & Privacy**.
-- **Optional processing:** dictionary correction, repeated-filler reduction,
-  and paragraph/bullet formatting have separate controls, each run by the decision
+- **Optional processing:** dictionary correction, filler removal and paragraph/bullet
+  formatting have separate controls and run at the same time, each by the decision
   model you choose: Jev, OpenAI's Decisions API, Perplexity's, or Laya on your computer.
-- **Fast mode:** uploads the audio while you speak, so a cloud transcript arrives
-  sooner; the **Performance** chart shows each model's measured wait.
+- **Fast mode:** while you speak, each part of a dictation is transcribed at a
+  natural pause, so only the last part is left when you stop, with any speech
+  model; the **Performance** chart shows each model's measured wait.
 - **Drop audio to transcribe it:** drop files anywhere on the window, such as a
   recording another app could not transcribe.
 - **Anonymous mode:** the eye switch blurs transcripts for screen recordings.

@@ -16,18 +16,20 @@ src/entune/
                   settings.py (keys, fast mode, the decision model and its steps, suggestion
                   model, shortcuts), decision_models.py (which one the steps ask, Laya's lifetime),
                   models.py (providers, local models, the default model), metrics.py,
-                  dictation.py (record, transcribe, process), dictionary_file.py (read,
-                  versioned save, pin, agent corrections), learning.py and
-                  suggestion_runs.py (suggestion runs: input, job, apply), audio_import.py,
+                  dictation.py (record, transcribe, process), pieces.py (fast mode),
+                  dictionary_file.py (read, versioned save, pin, agent corrections),
+                  learning.py and suggestion_runs.py (suggestion runs: input, job, apply),
+                  audio_import.py,
                   capture.py, desktop_bridge.py, local_data.py (inventory, delete all),
                   operations.py (one user operation at a time), shortcuts.py
   audio/          formats.py: container sniffing, durations, WAV; recorder.py: microphone ->
-                  WAV at the device's rate, each chunk to a sink (fast mode streams it);
-                  convert.py: FFmpeg conversion for local engines
+                  WAV at the device's rate, each chunk to a sink (fast mode's pieces);
+                  pauses.py: natural pauses from loudness; convert.py: FFmpeg
+                  conversion for local engines
   providers/      contracts.py: audio/result types and the Provider protocol
                   registry.py: adapters and stable provider/model identifiers
                   resources.py: speech leases, local foreground priority, warming, cleanup
-                  cloud/: adapters, HTTP response helpers and upload capability
+                  cloud/: adapters, HTTP response helpers and early connections
                   local/: Whisper.cpp and Parakeet, lifecycle capability, shared
                   downloads; Parakeet's helper runs in its external engine
   processing/     after speech: pipeline.py runs the stages, results.py records them;
@@ -75,15 +77,15 @@ Data flow for a dictation: the hotkey listener's thread feeds the engine;
 the engine starts and stops the recorder; on stop, a persist worker writes
 the clip to disk and history at once, and one transcription worker takes
 it (a new recording is refused until the previous one is delivered): provider call, raw success persisted,
-eligible meanings/spans retrieved and decided in original context when enabled, opt-in filler reduction then formatting, independent stage
-outcomes and exact changes stored. The transcript is copied and
+the enabled stages (eligible meanings decided in original context, opt-in filler removal,
+formatting) run at once on the raw text, and their exact changes are applied together and
+stored with each stage's outcome. The transcript is copied and
 pasted on the main thread, because HIToolbox insists on it. With fast mode
-on, the recorder's chunks are streamed to AssemblyAI while recording and a
-clip over two minutes is transcribed from that upload. A local model is
+on, the recorder's chunks are cut at natural pauses and each finished piece is
+transcribed while recording; after the stop only the last one is (app/pieces.py). A local model is
 loaded while it is the selected default and freed when it is not; Parakeet
-lives in a helper process that exits on unload. Failed contextual correction
-keeps the exact raw text and skips cleanup/formatting; a failure in either later stage
-keeps its input and skips remaining enhancements. No model generates text or deletion offsets. Code validates its own
+lives in a helper process that exits on unload. A failed stage
+contributes no changes; the others still apply theirs. No model generates text or deletion offsets. Code validates its own
 proposed spans before applying edits; original speech and operation counts remain separate.
 History polling invalidates on processing updates as well as
 new recordings. Entune owns a lazy decision-model event loop and HTTP pool: cancellable
