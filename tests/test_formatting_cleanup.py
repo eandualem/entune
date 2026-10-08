@@ -149,6 +149,15 @@ def test_a_filler_sound_goes_with_its_own_comma_and_space(raw: str, expected: st
     assert text_edits.apply(raw, tuple(f.deletion for f in found)) == expected
 
 
+@pytest.mark.parametrize(
+    "raw,expected", [("It is like,like slow.", "It is like slow."), ("like,like like", "like")]
+)
+def test_a_repeat_of_like_keeps_only_its_first(raw: str, expected: str) -> None:
+    found = cleanup.candidates(raw)
+    assert [f.kind for f in found] == ["repeat"]
+    assert text_edits.apply(raw, tuple(f.deletion for f in found)) == expected
+
+
 def test_meaningful_and_uncertain_repetition_survives() -> None:
     raw = "I mean like, like, not love. Um um is uncertain here."
     _, handler = answering(

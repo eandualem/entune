@@ -57,7 +57,7 @@ def candidates(text: str) -> list[Filler]:
         if line.startswith(("    ", "\t")):
             continue
         if kind == "repeat":
-            first = start + len(run.split()[0].rstrip(","))  # after the first like
+            first = start + len("like")  # the repeats after the first like go
             deletion = Change(first, end, text[first:end], "")
             removed = count - 1
         else:
