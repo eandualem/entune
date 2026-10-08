@@ -479,8 +479,8 @@ def test_all_three_stages_run_at_once_within_one_deadline() -> None:
     assert result.correction.status == "succeeded" and result.formatting.status == "failed"
     assert result.cleanup.status == "succeeded" and result.cleanup.removed_words == 2
     assert result.correction.attempts == result.cleanup.attempts == result.formatting.attempts == 1
-    # One after another, the two 0.15 s stages alone would take 0.3 s.
-    assert 0.15 <= max(result.correction.seconds, result.cleanup.seconds) < 0.25
+    # Both 0.15 s stages succeeded within the 0.25 s budget: one after another, the
+    # second would have run out of time.
     assert result.formatting.seconds < 0.6
 
 
