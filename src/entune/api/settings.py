@@ -18,7 +18,7 @@ from entune.app.entune import Entune
 from entune.app.metrics import processing_summary
 from entune.app.models import UnknownModel
 from entune.app.operations import Busy
-from entune.app.settings import DECISION_MODELS, JEV_PROVIDER
+from entune.app.settings import DECISION_MODELS, JEV_PROVIDER, mask_key
 from entune.learning import suggestion_model
 from entune.learning.suggestion_model import chatgpt
 from entune.processing import jev_client, laya
@@ -59,6 +59,9 @@ def routes(app: Entune) -> list[Route]:
                 },
                 "decisionModel": {
                     "selected": app.settings.decision_model(),
+                    "perplexityKey": None
+                    if (key := app.settings.key("perplexity")) is None
+                    else mask_key(key),
                     "laya": dict(
                         zip(("state", "error"), app.decisions.laya.status(), strict=True),
                         install=laya.INSTALL_COMMAND,
@@ -84,7 +87,7 @@ def routes(app: Entune) -> list[Route]:
             known = (
                 {p.id for p in app.providers}
                 | (suggestion_model.LLM_PROVIDERS.keys() - {suggestion_model.CHATGPT})
-                | {JEV_PROVIDER}
+                | {JEV_PROVIDER, "perplexity"}
             )
             for provider_id, key in keys.items():
                 if provider_id not in known:
@@ -109,7 +112,7 @@ def routes(app: Entune) -> list[Route]:
             if "fastMode" in body and not isinstance(body["fastMode"], bool):
                 raise ValueError("fastMode must be a boolean")
             if "decisionModel" in body and body["decisionModel"] not in DECISION_MODELS:
-                raise ValueError("decisionModel must be jev, laya or openai")
+                raise ValueError("decisionModel must be jev, laya, openai or perplexity")
             jev_settings = body.get("jev", {})
             if not isinstance(jev_settings, dict) or set(jev_settings) - {
                 "dictionary",

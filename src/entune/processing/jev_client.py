@@ -43,6 +43,15 @@ JEV = Endpoint("jev", URL, MODEL, "TypeSafe API key")
 # Reached with an OpenAI API key, the one the suggestion model uses; a ChatGPT sign-in is
 # refused there.
 OPENAI = Endpoint("openai", "https://api.openai.com/v1/decisions", "gpt-6-luna", "OpenAI API key")
+# Perplexity's Decisions API speaks TypeSafe's shape, with instructions and option
+# descriptions as text.
+PERPLEXITY = Endpoint(
+    "perplexity",
+    "https://api.perplexity.ai/v1/decisions",
+    "pplx-decider-v1.1-27b",
+    "Perplexity API key",
+    max_questions=128,  # the most it takes in one request
+)
 
 
 class JevError(Exception):
@@ -337,7 +346,21 @@ def _retry_after(value: str | None) -> float:
 def _request(endpoint: Endpoint, state: object, questions: dict[str, Any]) -> dict[str, Any]:
     """The request body. OpenAI's Decisions API takes the same questions in its own shape:
     the shared state as the input, and instructions and option descriptions as text, so
-    structured ones are sent as their JSON."""
+    structured ones are sent as their JSON. Perplexity's takes TypeSafe's shape with those
+    two as text."""
+    if endpoint.id == PERPLEXITY.id:
+        return {
+            "model": endpoint.model,
+            "state": state,
+            "questions": {
+                name: {
+                    **question,
+                    "instructions": _text(question["instructions"]),
+                    "criteria": {k: _text(v) for k, v in question["criteria"].items()},
+                }
+                for name, question in questions.items()
+            },
+        }
     if endpoint.id != OPENAI.id:
         return {"model": endpoint.model, "state": state, "questions": questions}
     return {

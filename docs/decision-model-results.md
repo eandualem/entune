@@ -2,15 +2,19 @@
 
 **Yes, in our test.** On 2.1 hours of new dictation, replacing every dictionary match
 would have made 121 changes, 72 of them wrong. Choosing with **Jev** made 39 changes,
-**1** of them wrong. OpenAI's Decisions API made 50 changes with 8 wrong, and Laya,
-running locally, made 36 with 8 wrong. Jev also placed the most correct paragraph
-breaks. These are decisions at dictionary matches and sentence boundaries, not an
-overall speech-recognition accuracy score.
+**1** of them wrong. Perplexity's decision model made 47 changes with 3 wrong and caught
+the most correct ones; OpenAI's Decisions API made 50 with 8 wrong, and Laya, running
+locally, made 36 with 8 wrong. Jev placed the most correct paragraph breaks, and
+Perplexity left the most dictations formatted exactly as judged. These are
+decisions at dictionary matches and sentence boundaries, not an overall
+speech-recognition accuracy score.
 
 ## The data
 
 Measured October 7, 2026, with Entune 0.4.0, on one person's own dictation: the
-maintainer's everyday use of Entune over six days.
+maintainer's everyday use of Entune over six days. Perplexity's decision model was
+added on October 8, with Entune 0.4.3's code, on the same transcripts and dictionary
+and against the same expected answers, written down the day before.
 
 | | Recordings | Audio | Transcript text |
 |---|---:|---:|---:|
@@ -30,9 +34,10 @@ dictation, as it is in daily use.
    the right reading and the right formatting. AssemblyAI's transcripts of the same
    recordings were used only as a reading aid. The answers were not revised after the
    models' outputs were seen.
-4. **Decision models:** Jev (`jev-1.13.0`), OpenAI's Decisions API (`gpt-6-luna`) and
-   Laya (package 0.4.0, on the Mac), each through Entune's own processing code with its
-   default five-second limit.
+4. **Decision models:** Jev (`jev-1.13.0`), Perplexity's Decisions API
+   (`pplx-decider-v1.1-27b`), OpenAI's Decisions API (`gpt-6-luna`) and Laya (package
+   0.4.0, on the Mac), each through Entune's own processing code with its default
+   five-second limit.
 
 ## Corrections
 
@@ -44,15 +49,19 @@ not be judged.
 |---|---:|---:|---:|---:|
 | Replace every dictionary match | 121 | 47 | 72 | 47 |
 | Choose with **Jev** | 39 | 38 | **1** | 38 |
+| Choose with **Perplexity** | 47 | 43 | **3** | 43 |
 | Choose with **OpenAI** | 50 | 42 | **8** | 42 |
 | Choose with **Laya**, locally | 36 | 28 | **8** | 28 |
 
 - **Jev** avoided 71 of the 72 wrong replacements (99%) and kept 38 of the 47 correct
   ones (81%). 38 of its 39 changes were right (97%).
-- **OpenAI** avoided 64 (89%) and kept 42 (89%): the most correct changes, with
-  eight wrong ones, such as “on the top” → “tab” and “more or less” → “let's”.
+- **Perplexity** avoided 69 (96%) and kept 43 (91%): the most correct changes, with
+  three wrong ones, “code” → quote twice and “team” → theme.
+- **OpenAI** avoided 64 (89%) and kept 42 (89%), with eight wrong ones, such as
+  “on the top” → “tab” and “more or less” → “let's”.
 - **Laya** avoided 64 (89%) and kept 28 (60%).
-- None of the three changed the 2 places that could not be judged.
+- Of the 2 places that could not be judged, Perplexity changed one; the others changed
+  neither.
 
 Most of the dictionary's risky entries pair a name with an everyday word: “from” and
 Chrome, “start” and star, “code” and quote, “top” and tab, “posters” and posts. In
@@ -85,11 +94,14 @@ should break, judged before formatting ran.
 | Model | Breaks made | At a right place | Right kind | Unwanted |
 |---|---:|---:|---:|---:|
 | **Jev** | 47 | 35 | 34 | 12 |
+| **Perplexity** | 37 | 32 | 32 | 5 |
 | **OpenAI** | 9 | 8 | 7 | 1 |
 | **Laya**, locally | 42 | 5 | 0 | 37 |
 
-- **Jev** formatted most usefully: three in four of its breaks were right, and it
-  found 35 of the 92.
+- **Jev** found the most, 35 of the 92, and three in four of its breaks were right.
+- **Perplexity** found 32 with only 5 unwanted: 86% of its breaks were right, each of
+  the right kind, and it left the most dictations exactly as judged, 72 of 108 (Jev
+  and OpenAI 67).
 - **OpenAI** almost never breaks. With its probabilities recorded, its first choice was
   a break at only 10 of the 89 labelled sentences, so this is its own answer, not
   Entune's 0.6 confidence threshold.
@@ -101,19 +113,24 @@ judgment of one careful reader, not ground truth.
 
 ## Speed and reliability
 
-Median time of the decision step for a dictation that needed one, measured under normal
-machine load, not a controlled benchmark:
+Median time of the decision step for one dictation that needed one, measured under
+normal machine load, not a controlled benchmark. Jev, Perplexity and OpenAI answer all
+of a dictation's questions in one request, so for them this is the time of one request.
+Laya asks about each dictionary match on its own, a median of two requests of 0.08 s
+each per dictation.
 
 | | Corrections | Formatting |
 |---|---:|---:|
 | Laya, on the Mac | 0.15 s | 0.45 s |
 | OpenAI | 0.34 s | 0.58 s |
+| Perplexity | 0.37 s | 0.43 s |
 | Jev | 0.54 s | 0.73 s |
 
 None of the correction requests failed. In formatting, OpenAI's first four requests
 of the run timed out at the five-second limit and all succeeded when repeated; Jev had
 two timeouts that succeeded when repeated, and one dictation for which it returned an
-answer Entune could not use, every time. Laya had no failures; its first start took
+answer Entune could not use, every time. Perplexity had no failures and needed no
+repeated request. Laya had no failures; its first start took
 about ten minutes, mostly downloading its model, and seven seconds after that.
 
 ## What limits the conclusion?
@@ -122,8 +139,8 @@ about ten minutes, mostly downloading its model, and seven seconds after that.
 reviewer's judgments; they do not promise the same result for other voices, speech
 models or kinds of text. The reviewing assistant read the text, not the audio, so its
 answers are judgments of context, not audio-verified truth. Small samples have wide
-uncertainty: one wrong replacement against eight is a clear difference here, but it is
-not a statistically established ranking.
+uncertainty: one wrong replacement against eight is a clear difference here, one against
+three is not, and neither is a statistically established ranking.
 
 **One dictionary.** A different suggestion model, more training dictation or pinned
 entries would change what the dictionary offers, and so every row above.
