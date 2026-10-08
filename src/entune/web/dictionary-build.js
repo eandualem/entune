@@ -85,7 +85,12 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
       const started = version;
       try {
         const result = await api("/api/dictionary/build");
-        if (version === started) { state = result; await render(); }
+        if (version === started) {
+          // The same answer again needs no redraw, except while running: its clock moves.
+          const same = JSON.stringify(result) === JSON.stringify(state);
+          state = result;
+          if (!same || running()) await render();
+        }
       } catch (err) {
         progress.textContent = `Could not read build progress: ${errorText(err)}`;
         progress.classList.add("err");

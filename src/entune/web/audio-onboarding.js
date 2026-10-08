@@ -25,7 +25,7 @@ export function duration(seconds) {
 const CHARS_PER_HOUR = 37_000;
 const SOL_SECONDS_PER_PART = 405;
 export const PART_CHARS = 24_000;
-export function workPlan({ durations, speech, local, timing, dictionaryModel, effort }) {
+function workPlan({ durations, speech, local, timing, dictionaryModel, effort }) {
   const seconds = durations.reduce((sum, d) => sum + d, 0);
   const rate = timing?.speech?.[speech];
   // Whole recordings go to the workers: never more at once than recordings, and never

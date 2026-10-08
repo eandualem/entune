@@ -10,13 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
-from entune.dictionary import changes as dictionary_changes
 from entune.dictionary.entries import Dictionary, Groups
 from entune.learning import view
-from entune.learning.batches import Batch, learning_batches, system_prompt, user_prompt
-from entune.learning.inputs import LearningText
+from entune.learning.batches import Batch, system_prompt, user_prompt
 from entune.learning.replies import Reply, parse_reply
 from entune.learning.suggestion_model import (
     MAX_FIXES,
@@ -174,60 +172,3 @@ async def propose_part(
             " so nothing from it was kept.",
             f"{type(exc).__name__}: {exc}",
         ) from exc
-
-
-async def propose_learned(
-    provider: str,
-    api_key: str,
-    model: str,
-    current: Dictionary,
-    transcripts: Sequence[str],
-    speech_model: str,
-    call: Caller = call_model,
-    *,
-    effort: str = "high",
-    progress: Callable[[int, int, int], None] | None = None,
-    retrying: Callable[[int, str], None] | None = None,
-    retrying_part: Callable[[int, int, str, float], None] | None = None,
-    inputs: Sequence[LearningText] | None = None,
-    checkpoint: Callable[[Groups, int, int, tuple[str, ...]], None] | None = None,
-) -> Groups:
-    """Propose `speech_model`'s dictionary, one part after another.
-
-    Each part sees the working dictionary after the earlier parts' changes; see
-    `propose_part`. The checkpoint hears every validated part."""
-    current = dictionary_changes.share(current, set())
-    proposed = current.effective(speech_model)
-    steps = learning_batches(
-        inputs
-        if inputs is not None
-        else [LearningText(str(i), text) for i, text in enumerate(transcripts)],
-    )
-    for number, step in enumerate(steps, 1):
-
-        def started(size: int, number: int = number) -> None:
-            if progress:
-                progress(number, len(steps), size)
-
-        def again(attempt: int, why: str, seconds: float, number: int = number) -> None:
-            if retrying_part:
-                retrying_part(number, attempt, why, seconds)
-
-        proposed = await propose_part(
-            provider,
-            api_key,
-            model,
-            current,
-            proposed,
-            step,
-            speech_model,
-            f"Part {number} of {len(steps)}",
-            call,
-            effort=effort,
-            started=started,
-            retrying=retrying,
-            retrying_part=again,
-        )
-        if checkpoint:
-            checkpoint(proposed, number, len(steps), step.completed)
-    return proposed

@@ -10,6 +10,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   let dict = { version: 2, pinned: [], learned: {} };
   let dictVersion = null; // the server's ETag for the document we edit; null after a failed load
   let savedText = ""; // the JSON view's last loaded or saved text
+  let draftBase = null; // the revision the JSON view's unsaved text was started from
   let importing = false;
   let building = false;
   let run = { phase: "idle" };
@@ -272,7 +273,13 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   el("dict-search").addEventListener("input", (event) => { query = event.target.value; renderRows(); });
 
   function renderDictionary(jsonText) {
-    if (jsonText !== undefined) { savedText = jsonText; jsonBox.value = jsonText; el("json-error").hidden = true; }
+    // Unsaved text in the JSON view survives a reload (a model change, a pin); only Save
+    // and Revert replace it.
+    if (jsonText !== undefined) {
+      const draft = jsonBox.value !== savedText;
+      savedText = jsonText;
+      if (!draft) { jsonBox.value = jsonText; draftBase = null; el("json-error").hidden = true; }
+    }
     const model = getModel();
     const groups = visible();
     const learned = groups.filter((v) => v.scope === "learned").length;
@@ -293,6 +300,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     if (proposalModel) proposalTitle();
     renderRows();
     fillModels();
+    if (stage(run) === "setup") fillSpeech();
     lockEditors();
   }
 
@@ -453,8 +461,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       method: "POST", headers: { "content-type": "application/json", "if-match": dictVersion },
       body: JSON.stringify({ model, ...body }),
     });
-    if (!res.ok) { toast(await res.text(), "err"); await loadDictionary(); return false; }
-    await loadDictionary();
+    const text = await res.text();
+    if (!res.ok) { toast(text, "err"); await loadDictionary(); return false; }
+    dict = JSON.parse(text);
+    dictVersion = res.headers.get("etag");
+    renderDictionary(text);
     return true;
   }
   // The server pins one meaning at a time; the learned group keeps its ID for the rest, under
@@ -1004,13 +1015,25 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
         : "dictionary.json in Entune's data folder, the same content as the list. Forms match whole words regardless of case.";
     return dirty;
   }
-  jsonBox.addEventListener("input", () => { el("json-error").hidden = true; jsonDirty(); });
-  el("revert-dictionary").addEventListener("click", () => { jsonBox.value = savedText; el("json-error").hidden = true; jsonDirty(); });
+  jsonBox.addEventListener("input", () => { draftBase ??= dictVersion; el("json-error").hidden = true; jsonDirty(); });
+  el("revert-dictionary").addEventListener("click", () => { jsonBox.value = savedText; draftBase = null; el("json-error").hidden = true; jsonDirty(); });
   el("save-dictionary").addEventListener("click", async () => {
     let parsed;
     try { parsed = JSON.parse(jsonBox.value); } catch (err) { showJsonError("Not saved.", err.message); return; }
-    const problem = await saveDictionary(parsed, true);
-    if (problem) { showJsonError("Not saved.", problem); return; }
+    const base = draftBase ?? dictVersion;
+    const problem = await saveDictionary(parsed, true, base);
+    if (problem) {
+      // Changed elsewhere since this text was started: it stays, and saving again replaces.
+      if (dictVersion && dictVersion !== base) {
+        draftBase = dictVersion;
+        showJsonError("Not saved.", "The dictionary changed elsewhere since you started editing. Your text is kept: Revert to see the current version, or Save again to replace it.");
+      } else showJsonError("Not saved.", problem);
+      jsonDirty();
+      return;
+    }
+    jsonBox.value = savedText;
+    draftBase = null;
+    jsonDirty();
     toast("Saved dictionary.json");
   });
 
@@ -1483,5 +1506,5 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     builds.start("history", {...selection, ...runSettings()});
   });
 
-  return { load: loadDictionary, refreshAudio: () => onboarding.load(), refreshModels: fillModels };
+  return { load: loadDictionary, refreshAudio: () => onboarding.load() };
 }

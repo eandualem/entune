@@ -21,11 +21,63 @@ from pydantic_ai.models import StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
-from entune.dictionary.entries import Association, Dictionary, Form, Group, Meaning
+from entune.dictionary import changes as dictionary_changes
+from entune.dictionary.entries import Association, Dictionary, Form, Group, Groups, Meaning
 from entune.learning import batches, generate, replies, suggestion_model, view
 from entune.learning import inputs as learning_inputs
 from entune.learning.suggestion_model import Request, call, chatgpt, providers
 from tests.dictionary_samples import CLOUD, JEV, group, proposed
+
+
+async def propose_learned(
+    provider: str,
+    api_key: str,
+    model: str,
+    current: Dictionary,
+    transcripts: list[str],
+    speech_model: str,
+    call: Any = suggestion_model.call_model,
+    *,
+    effort: str = "high",
+    progress: Any = None,
+    retrying_part: Any = None,
+    checkpoint: Any = None,
+) -> Groups:
+    """Every part of `transcripts`, one after another, as a suggestion run does: each part
+    sees the working dictionary the earlier ones left (`generate.propose_part`)."""
+    current = dictionary_changes.share(current, set())
+    proposed_groups = current.effective(speech_model)
+    steps = batches.learning_batches(
+        [learning_inputs.LearningText(str(i), t) for i, t in enumerate(transcripts)]
+    )
+    for number, step in enumerate(steps, 1):
+
+        def started(size: int, number: int = number) -> None:
+            if progress:
+                progress(number, len(steps), size)
+
+        def again(attempt: int, why: str, seconds: float, number: int = number) -> None:
+            if retrying_part:
+                retrying_part(number, attempt, why, seconds)
+
+        proposed_groups = await generate.propose_part(
+            provider,
+            api_key,
+            model,
+            current,
+            proposed_groups,
+            step,
+            speech_model,
+            f"Part {number} of {len(steps)}",
+            call,
+            effort=effort,
+            started=started,
+            retrying_part=again,
+        )
+        if checkpoint:
+            checkpoint(proposed_groups, number, len(steps), step.completed)
+    return proposed_groups
+
 
 TEXT = "I use cloud code."
 REPLY = json.dumps(proposed(TEXT))
@@ -192,7 +244,7 @@ def test_propose_uses_chosen_model_and_does_not_change_the_live_dictionary() -> 
 
     current = Dictionary()
     learned = asyncio.run(
-        generate.propose_learned(
+        propose_learned(
             "anthropic",
             "k",
             "anthropic:claude-sonnet-5",
@@ -500,7 +552,7 @@ def test_steps_preserve_ids_previous_evidence_and_unmentioned_groups(
         },
     )
     learned = asyncio.run(
-        generate.propose_learned(
+        propose_learned(
             "openai",
             "k",
             "openai:gpt-6-astra",
@@ -536,7 +588,7 @@ def test_a_later_step_failure_returns_no_partial_dictionary(
 
     with pytest.raises(generate.StepFailed, match="Part 2 of 2: the suggestion model") as failed:
         asyncio.run(
-            generate.propose_learned(
+            propose_learned(
                 "openai",
                 "k",
                 "openai:gpt-6-astra",
@@ -555,7 +607,7 @@ def test_provider_failures_surface_verbatim() -> None:
 
     with pytest.raises(generate.StepFailed, match="refused the key") as failed:
         asyncio.run(
-            generate.propose_learned(
+            propose_learned(
                 "openai",
                 "k",
                 "openai:gpt-5.6-terra",
@@ -941,7 +993,7 @@ def test_a_step_whose_fixes_all_break_rules_fails_plainly() -> None:
         generate.StepFailed, match="still broke the dictionary's rules after 2"
     ) as failed:
         asyncio.run(
-            generate.propose_learned(
+            propose_learned(
                 "openai",
                 "k",
                 "openai:gpt-6-luna",
@@ -966,7 +1018,7 @@ def test_a_part_whose_reply_still_broke_the_rules_gets_one_fresh_attempt() -> No
         return REPLY
 
     learned = asyncio.run(
-        generate.propose_learned(
+        propose_learned(
             "openai",
             "k",
             "openai:gpt-6-luna",
@@ -1002,7 +1054,7 @@ def test_a_reply_that_runs_into_empty_output_is_stopped_and_its_part_retried() -
 
     heard: list[tuple[int, int, str]] = []
     learned = asyncio.run(
-        generate.propose_learned(
+        propose_learned(
             "openai",
             "k",
             "openai:gpt-6-luna",
@@ -1052,7 +1104,7 @@ def test_a_part_that_failed_in_a_way_that_may_pass_is_tried_twice_more_and_annou
 
     with pytest.raises(generate.StepFailed, match=r"^Part 1 of 1, attempt 3 of 3: "):
         asyncio.run(
-            generate.propose_learned(
+            propose_learned(
                 "openai",
                 "k",
                 "openai:gpt-6-luna",
@@ -1091,7 +1143,7 @@ def test_a_refused_key_or_a_limit_is_never_retried(status: int, problem: str) ->
 
     with pytest.raises(generate.StepFailed, match=rf"^Part 1 of 1: .*{problem}"):
         asyncio.run(
-            generate.propose_learned(
+            propose_learned(
                 "openai",
                 "k",
                 "openai:gpt-6-luna",
@@ -1116,7 +1168,7 @@ def test_a_busy_service_whose_words_mention_a_timeout_is_reported_as_busy() -> N
 
     with pytest.raises(generate.StepFailed, match="busy or down") as failed:
         asyncio.run(
-            generate.propose_learned(
+            propose_learned(
                 "chatgpt",
                 "k",
                 "chatgpt:gpt-6-sol",
@@ -1145,7 +1197,7 @@ def test_a_retried_part_starts_from_the_working_dictionary_and_repeats_no_finish
         return '{"additions": [], "revisions": [], "removals": []}'
 
     learned = asyncio.run(
-        generate.propose_learned(
+        propose_learned(
             "openai",
             "k",
             "openai:gpt-6-luna",
@@ -1443,7 +1495,7 @@ def test_a_reply_past_its_time_limit_is_not_tried_again_and_says_what_to_change(
 
     with pytest.raises(generate.StepFailed, match="lower reasoning effort") as failed:
         asyncio.run(
-            generate.propose_learned(
+            propose_learned(
                 "openai",
                 "k",
                 "openai:gpt-6-astra",
@@ -1463,7 +1515,7 @@ def test_a_reply_cut_at_the_output_limit_asks_for_a_lower_effort() -> None:
 
     with pytest.raises(generate.StepFailed, match=r"output limit.*lower reasoning effort"):
         asyncio.run(
-            generate.propose_learned(
+            propose_learned(
                 "openai",
                 "k",
                 "openai:gpt-6-astra",
