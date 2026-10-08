@@ -36,6 +36,11 @@ CARD_PAD = 14.0
 BUTTON_HEIGHT = 24.0
 FRAME_SECONDS = 1 / 30
 ORIGIN_KEY = "indicatorOrigin"  # NSUserDefaults: [x, y] of the bottom-left corner
+EVERY_SPACE = (
+    AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
+    | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
+    | AppKit.NSWindowCollectionBehaviorStationary
+)
 
 
 def _rgb(red: float, green: float, blue: float, alpha: float = 1.0) -> Any:
@@ -210,6 +215,14 @@ class Indicator:
         self._panel.setFrame_display_(((origin[0], origin[1]), (width, height)), True)
         self._placed = origin
         self._panel.orderFrontRegardless()
+        if not self._panel.isOnActiveSpace():
+            # macOS can stop keeping the pill on every Space while Entune runs (seen on
+            # macOS 27), and a restart fixed it. The same behavior set again is ignored,
+            # so it is cleared first.
+            self._panel.setCollectionBehavior_(AppKit.NSWindowCollectionBehaviorDefault)
+            self._panel.setCollectionBehavior_(EVERY_SPACE)
+            self._panel.orderFrontRegardless()
+            print("pill: was missing from this Space; on every Space again", flush=True)
 
     def _dot_at(self, x: float, y: float, size: float) -> None:
         self._dot.setFrame_(((x, y), (size, size)))
@@ -303,11 +316,7 @@ class Indicator:
         panel.setMovableByWindowBackground_(True)  # drag it anywhere; the drop point is kept
         panel.setHidesOnDeactivate_(False)
         panel.setBecomesKeyOnlyIfNeeded_(True)
-        panel.setCollectionBehavior_(
-            AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
-            | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
-            | AppKit.NSWindowCollectionBehaviorStationary
-        )
+        panel.setCollectionBehavior_(EVERY_SPACE)
         content = EntunePillView.alloc().initWithCall_(self._recolor)
         panel.setContentView_(content)
         content.setWantsLayer_(True)
