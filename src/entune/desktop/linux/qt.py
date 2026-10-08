@@ -205,8 +205,10 @@ class Indicator(QWidget):
     dot; the tape held still with a light passing over it while working; a check or a
     clipboard when the text is pasted or copied; and a card for anything else, with Retry
     and Dismiss for an error. Routine states have no words on screen; they are the pill's
-    accessible name and tooltip. Bottom-left, always on top; it never takes the keyboard
-    focus, so pressing its buttons leaves the app the transcript goes to in front."""
+    accessible name, and the tray icon's tooltip (the shell sets it) shows them: the pill
+    itself lets clicks and hovers through unless it has buttons. Bottom-left, always on
+    top; it never takes the keyboard focus, so pressing its buttons leaves the app the
+    transcript goes to in front."""
 
     HEIGHT, MARGIN, CARD_WIDTH, BUTTON_HEIGHT = 32, 20, 300, 24
     PAD_LEFT, PAD_RIGHT, GAP, DOT, TAPE_W, TAPE_H = 12, 14, 10, 7, 66, 18
@@ -275,7 +277,6 @@ class Indicator(QWidget):
 
     def _describe(self, text: str) -> None:
         self.setAccessibleName(text)
-        self.setToolTip(text)
 
     def _show_status(self, text: str, state: str) -> None:
         if state in LIVE and self._state not in LIVE | QUIET_STATES:
