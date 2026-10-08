@@ -85,10 +85,11 @@ class Dictation:
     def _preconnect(self) -> None:
         try:
             status = self._settings.jev_status()
-            if status.dictionary or status.formatting or status.cleanup:
+            stages = sum((status.dictionary, status.formatting, status.cleanup))
+            if stages:
                 endpoint, key = self._decisions.chosen()
                 if key:  # Jev, OpenAI or Perplexity with its key; Laya is on this Mac
-                    self._jev.preconnect(endpoint.url)
+                    self._jev.preconnect(endpoint.url, stages)
             ref = self._models.choose_model(None)
             if isinstance(ref.provider, Preconnects) and self._settings.key(ref.provider.id):
                 with self._speech.use(ref):

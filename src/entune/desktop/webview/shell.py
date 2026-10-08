@@ -30,8 +30,6 @@ INDICATOR: dict[State, str] = {
     "silent": "Recording · nothing heard for a while",
     "saving": "Saving audio…",
     "transcribing": "Transcribing…",
-    "correction": "Contextual correction…",
-    "cleanup": "Reducing fillers…",
     "formatting": "Formatting…",
     "delivering": "Delivering…",
     "cancelling": "Canceling — keeping audio…",

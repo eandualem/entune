@@ -855,7 +855,7 @@ def test_correction_failure_delivers_raw_with_a_noninterrupting_notice(tmp_path:
     app._transcribe_and_deliver(recording, 1.0, None, operation)
     assert platform.actions.clipboard == "hello from the fake"
     assert platform.actions.pasted == 1 and not platform.window.shown
-    assert any("Last completed text retained" in message for _, message in platform.tray.notices)
+    assert any("Dictionary correction unavailable" in m for _, m in platform.tray.notices)
     assert not any("transcription failed" in title.lower() for title, _ in platform.tray.notices)
     assert entune.operations.status() is None
 

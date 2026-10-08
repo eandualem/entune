@@ -62,7 +62,7 @@ function describe(name, stage) {
     if (stage.abstained) parts.push(`${plural(stage.abstained, "word")} left as heard (unclear meaning)`);
     return parts.join(" · ");
   }
-  if (name === "Filler reduction") return stage.removed_words ? `Removed ${plural(stage.removed_words, "filler word")}` : "No filler words removed";
+  if (name === "Filler removal") return stage.removed_words ? `Removed ${plural(stage.removed_words, "filler word")}` : "No filler words removed";
   return changes === null ? "Formatting applied (changes not recorded)" : changes ? `Formatting: ${plural(changes, "change")}` : "Formatting: no changes";
 }
 // Processing details open in one popover beside their button, so the list never reflows.
@@ -119,7 +119,7 @@ document.addEventListener("scroll", placeDetails, true); // the views scroll ins
 // Line breaks and edge spaces are drawn, so paragraph and list edits can be seen.
 const visible = (text) => text === "" ? "(nothing)" : text.replace(/\n/g, "↵").replace(/^ +| +$/g, (spaces) => "␣".repeat(spaces.length));
 function processing(t) {
-  const stages = [["Dictionary", t.correction], ["Filler reduction", t.cleanup], ["Formatting", t.formatting]].filter(([, stage]) => stage && stage.status !== "disabled");
+  const stages = [["Dictionary", t.correction], ["Filler removal", t.cleanup], ["Formatting", t.formatting]].filter(([, stage]) => stage && stage.status !== "disabled");
   const failed = stages.filter(([, stage]) => stage.status === "failed");
   const changed = stages.reduce((sum, [, stage]) => sum + (stage.status === "succeeded" ? stage.changes?.length ?? 0 : 0), 0);
   const panel = document.createElement("div");
@@ -155,7 +155,7 @@ function processing(t) {
   const summary = failed.length ? "Needs attention" : changed ? plural(changed, "change") : "";
   toggle.innerHTML = ICON.details;
   if (summary) toggle.append(summary);
-  toggle.title = `Processing details${summary ? "" : ": no changes"} (dictionary, filler reduction, formatting)`;
+  toggle.title = `Processing details${summary ? "" : ": no changes"} (dictionary, filler removal, formatting)`;
   toggle.setAttribute("aria-label", toggle.title);
   toggle.setAttribute("aria-haspopup", "dialog");
   toggle.setAttribute("aria-expanded", "false");

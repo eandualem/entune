@@ -77,15 +77,15 @@ Data flow for a dictation: the hotkey listener's thread feeds the engine;
 the engine starts and stops the recorder; on stop, a persist worker writes
 the clip to disk and history at once, and one transcription worker takes
 it (a new recording is refused until the previous one is delivered): provider call, raw success persisted,
-eligible meanings/spans retrieved and decided in original context when enabled, opt-in filler reduction then formatting, independent stage
-outcomes and exact changes stored. The transcript is copied and
+the enabled stages (eligible meanings decided in original context, opt-in filler removal,
+formatting) run at once on the raw text, and their exact changes are applied together and
+stored with each stage's outcome. The transcript is copied and
 pasted on the main thread, because HIToolbox insists on it. With fast mode
 on, the recorder's chunks are cut at natural pauses and each finished piece is
 transcribed while recording; after the stop only the last one is (app/pieces.py). A local model is
 loaded while it is the selected default and freed when it is not; Parakeet
-lives in a helper process that exits on unload. Failed contextual correction
-keeps the exact raw text and skips cleanup/formatting; a failure in either later stage
-keeps its input and skips remaining enhancements. No model generates text or deletion offsets. Code validates its own
+lives in a helper process that exits on unload. A failed stage
+contributes no changes; the others still apply theirs. No model generates text or deletion offsets. Code validates its own
 proposed spans before applying edits; original speech and operation counts remain separate.
 History polling invalidates on processing updates as well as
 new recordings. Entune owns a lazy decision-model event loop and HTTP pool: cancellable

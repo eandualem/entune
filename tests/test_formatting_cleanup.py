@@ -9,8 +9,8 @@ from starlette.testclient import TestClient
 
 from entune.app.entune import Entune
 from entune.processing import cleanup, formatting, jev, jev_client, text_edits
-from entune.processing.pipeline import process_text
-from entune.processing.results import notice
+from entune.processing.pipeline import _combine, process_text
+from entune.processing.results import Stage, notice
 from entune.processing.text_edits import Change
 from entune.providers.contracts import Transcript
 from entune.server import create_app
@@ -75,7 +75,7 @@ def test_existing_paragraph_gaps_and_line_endings_are_preserved() -> None:
         assert text_edits.apply(raw, jev.format_edits(raw, call(client)).changes) == raw
 
 
-def test_cleanup_changes_only_duplicate_spans_and_keeps_first_occurrence() -> None:
+def test_fillers_are_removed_and_repeats_keep_their_first_occurrence() -> None:
     raw = "😀 Um, um, um, open this. It is like like slow."
     requests, handler = answering(lambda *_: {"hesitation": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
@@ -89,10 +89,10 @@ def test_cleanup_changes_only_duplicate_spans_and_keeps_first_occurrence() -> No
             client=client,
             policy=jev_client.Policy(),
         )
-    assert result.text == "😀 Um, open this. It is like slow."
+    assert result.text == "😀 open this. It is like slow."
     assert len(requests) == 1 and requests[0]["state"]["transcript"] == raw
     assert result.cleanup.changes is not None
-    assert result.cleanup.removed_words == 3 and len(result.cleanup.changes) == 2
+    assert result.cleanup.removed_words == 4 and len(result.cleanup.changes) == 2
     assert result.correction.replacements == result.cleanup.replacements == 0
     assert result.cleanup.decisions == 2 and result.cleanup.seconds > 0
     assert all(
@@ -114,14 +114,34 @@ def test_cleanup_changes_only_duplicate_spans_and_keeps_first_occurrence() -> No
         "    um um\n\tlike like",
         "> um um",
         'An unclosed "um um',
-        "I really really like this. Um, we are done.",
-        "hum um umbrella like-minded like-minded",
-        "um. Um.\nlike\nlike",
+        "I really really like this.",
+        "hum umbrella like-minded like-minded uh-huh",
+        "like\nlike",
         "um um um um um um um",  # longer than the explicit bound: no partial deletion
     ],
 )
 def test_quotes_code_nonfillers_and_out_of_scope_runs_are_not_candidates(raw: str) -> None:
     assert cleanup.candidates(raw) == []
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("Um, so we should go.", "So we should go."),
+        ("I think, uh, we should go.", "I think, we should go."),
+        ("Um basically uh what I want is this.", "Basically what I want is this."),
+        ("We should, um. Next.", "We should. Next."),
+        ("Done. Um. Next one.", "Done. Next one."),
+        ("Done. Um.", "Done."),
+        ("And then um", "And then"),
+        ("First line, uh\nsecond line", "First line\nsecond line"),
+        ("Uh... so it works.", "So it works."),
+    ],
+)
+def test_a_filler_sound_goes_with_its_own_comma_and_space(raw: str, expected: str) -> None:
+    found = cleanup.candidates(raw)
+    assert {f.kind for f in found} == {"sound"}
+    assert text_edits.apply(raw, tuple(f.deletion for f in found)) == expected
 
 
 def test_meaningful_and_uncertain_repetition_survives() -> None:
@@ -188,7 +208,7 @@ def test_text_changes_validate_source_and_disjoint_offsets() -> None:
 
 
 @pytest.mark.parametrize("failure", ["fillers", "sentences"])
-def test_final_failure_stops_remaining_stages(failure: str) -> None:
+def test_a_failed_stage_keeps_its_edits_out_and_the_other_applies(failure: str) -> None:
     import json
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -212,14 +232,24 @@ def test_final_failure_stops_remaining_stages(failure: str) -> None:
             policy=jev_client.Policy(),
         )
     if failure == "fillers":
-        assert result.text == "Um um first item. Second item."
-        assert result.cleanup.status == "failed" and result.formatting.status == "skipped"
+        assert result.text == "- Um um first item.\n- Second item."
+        assert result.cleanup.status == "failed" and result.formatting.status == "succeeded"
         assert result.cleanup.removed_words == 0 and not result.cleanup.changes
     else:
-        assert result.text == "Um first item. Second item."
+        assert result.text == "First item. Second item."
         assert result.cleanup.status == "succeeded" and result.formatting.status == "failed"
-        assert not result.formatting.changes and result.cleanup.removed_words == 1
+        assert not result.formatting.changes and result.cleanup.removed_words == 2
     assert notice(result.correction, result.formatting, result.cleanup) is not None
+
+
+def test_where_two_stages_edit_the_same_text_the_dictionary_wins() -> None:
+    raw = "Use um now."
+    correction = Stage("succeeded", "contextual", changes=(Change(4, 6, "um", "UM"),))
+    fillers = Stage("succeeded", "cleanup", changes=(Change(4, 7, "um ", ""),), removed_words=1)
+    result = _combine(raw, correction, fillers, Stage("disabled", "formatting"))
+    assert result.text == "Use UM now."
+    assert result.cleanup.changes == () and result.cleanup.removed_words == 0
+    assert result.cleanup.output == raw
 
 
 def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
@@ -242,18 +272,8 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
 
     def respond(request: httpx.Request) -> httpx.Response:
         attempt = store.list_recordings()[0].transcriptions[0]
-        assert attempt.status == "ok" and attempt.raw_text == raw
+        assert attempt.status == "ok" and attempt.raw_text == attempt.text == raw
         assert attempt.processing_state == "processing"
-        assert attempt.correction is not None and attempt.cleanup is not None
-        if len(requests) == 0:
-            assert attempt.text == raw and attempt.correction.status == "pending"
-        elif len(requests) == 1:
-            assert attempt.text == attempt.correction.output == "Um um use Jev. Next item."
-            assert attempt.correction.selections[0].meaning_ids == ("a_jev",)
-            assert attempt.cleanup.status == "pending"
-        else:
-            assert attempt.text == attempt.cleanup.output == "Um use Jev. Next item."
-            assert attempt.cleanup.status == "succeeded"
         return handler(request)
 
     with closing(jev_client.Client(httpx.MockTransport(respond))) as network:
@@ -289,14 +309,14 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
                 "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}
             ).json()
             attempt = result["transcriptions"][0]
-            assert attempt["text"] == "- Um use Jev.\n- Next item." and attempt["raw_text"] == raw
+            assert attempt["text"] == "- Use Jev.\n- Next item." and attempt["raw_text"] == raw
             assert len(requests) == 3
-            assert requests[1]["state"]["transcript"] == "Um um use Jev. Next item."
-            assert requests[2]["state"]["transcript"] == "Um use Jev. Next item."
+            whole = [r["state"]["transcript"] for r in requests if "transcript" in r["state"]]
+            assert whole == [raw, raw]  # fillers and formatting both read the raw text
             stages = client.get("/api/settings").json()["jev"]["summary"]["stages"]
             assert stages["contextual"]["replacements"] == 1
             assert stages["cleanup"]["replacements"] == stages["formatting"]["replacements"] == 0
-            assert stages["cleanup"]["changes"] == stages["cleanup"]["removed_words"] == 1
+            assert stages["cleanup"]["changes"] == 1 and stages["cleanup"]["removed_words"] == 2
             assert stages["formatting"]["changes"] == 2
     store.close()
     with closing(Store(tmp_path)) as reopened:
@@ -304,12 +324,8 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
         assert saved.raw_text == raw and saved.text == attempt["text"]
         assert saved.cleanup is not None and saved.formatting is not None
         assert saved.formatting.changes is not None
-        assert saved.cleanup.changes == (Change(2, 5, " um", ""),)
-        assert (
-            text_edits.apply(
-                text_edits.apply("Um um use Jev. Next item.", saved.cleanup.changes),
-                saved.formatting.changes,
-            )
-            == saved.text
-        )
+        assert saved.cleanup.changes == (Change(0, 7, "Um um u", "U"),)
+        assert saved.correction is not None and saved.correction.changes is not None
+        everything = saved.correction.changes + saved.cleanup.changes + saved.formatting.changes
+        assert text_edits.apply(raw, everything) == saved.text
         assert reopened.get_setting("jev_cleanup") == "1"

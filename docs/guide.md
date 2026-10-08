@@ -172,8 +172,8 @@ Escape can cancel foreground work. Custom shortcuts remain configurable; a modif
 combination is not universally conflict-free across all applications.
 
 The pill in the bottom-left corner shows what is happening: level bars that move with
-your voice while recording, then the actual stage (saving, transcribing, contextual
-correction, filler reduction, formatting, delivery). Disabled stages are skipped. One
+your voice while recording, then the actual stage (saving, transcribing,
+formatting while the processing steps run, delivery). One
 dictation owns the app until delivery completes; a new one must wait. Learning owns the
 same guard through proposal review. The final text is pasted into the **current
 editable input**, including in a different app from where recording began. The paste
@@ -402,7 +402,7 @@ Default history learning uses up to 300 recent, unprocessed attempts for the sel
 speech model; “All history” deliberately includes older/previously examined data.
 Each raw transcript is paired with the dictionary step's recorded result and
 decisions, which show what the system did, not confirmed intended wording. Filler
-reduction, formatting and the delivered text are never sent. Older attempts without a
+removal, formatting and the delivered text are never sent. Older attempts without a
 recorded result, and freshly transcribed audio, are sent as raw text only. Applying at least one actual change marks only fully
 covered input IDs learned for that model. Applying none leaves them eligible. A
 partially processed transcript remains eligible. New dictations after selection and
@@ -445,19 +445,19 @@ rather than an accuracy score. Optional formatting inserts paragraph breaks and 
 including the first list item, while retaining existing structure and words. Lines without
 sentence punctuation stay whole; a single unpunctuated note needs no formatting request.
 
-**Reduce repeated fillers** is a separate opt-in. Code proposes adjacent repeats of
-English `um`, `uh`, `erm` or `like`; the decision model classifies hesitation versus
-meaningful speech.
-Only confidently classified hesitation runs are reduced to one occurrence. Quoted/code
+**Remove fillers** is a separate opt-in. Code proposes English hesitation sounds (`um`,
+`uh`, `er`, `erm`, `ah`, `hmm`) and adjacent repeats of `like`; the decision model
+classifies hesitation versus meaningful speech. Only confidently classified hesitation is
+removed, and a repeat of `like` keeps one occurrence. Quoted/code
 spans are excluded, and uncertain answers preserve the words. History shows the exact
-deletions and timing separately from dictionary replacements. This initial policy has
-offline/mocked coverage; its live classification quality has not been evaluated.
+deletions and timing separately from dictionary replacements. On 162 October transcripts,
+Jev removed 468 of 470 proposed sounds and left 2 undecided; recognising a meaningful use
+is not yet measured (see [Formatting and fillers](dictionary.md#formatting-and-fillers)).
 
-Successful speech and its original text are saved before correction. If
-contextual correction fails, Entune delivers the untouched original and
-shows a noninterrupting notice, skipping cleanup and formatting. Those later stages run
-in that order; final failure stops all remaining stages, retains the last completed
-text and explains which stage failed and which later stages were skipped. Every completed
+Successful speech and its original text are saved before processing. The enabled
+stages run at the same time on the original text, and their edits are applied together.
+A stage that fails contributes no edits; the others still apply theirs, and a
+noninterrupting notice names the stage that failed. Every completed
 stage output and occurrence-selection provenance is saved internally. History shows
 only the final result for each attempt; canceled attempts show an audio-saved notice.
 Settings › Corrections & formatting › Advanced controls the processing wait: initially five seconds
@@ -550,9 +550,9 @@ Enabled features determine what is sent out:
   transcripts and dictionary, also goes to the Langfuse host you set.
 - **Decision model:** for contextual correction it receives up to 160 characters of the
   original transcript either side of each matched occurrence, and each eligible
-  meaning's spelling, definition and personal context. Filler reduction sends its input
-  text and code-proposed deletion spans; formatting sends the text being formatted and
-  its sentence spans. With Jev, all of this goes to TypeSafe, even when speech
+  meaning's spelling, definition and personal context. Filler removal sends the transcript
+  and code-proposed deletion spans; formatting sends the transcript and its sentence
+  spans. With Jev, all of this goes to TypeSafe, even when speech
   recognition is local. With OpenAI, it goes to OpenAI, and with Perplexity, to Perplexity. With Laya, it stays on your
   computer.
 - **Optional model downloads:** Hugging Face serves local model weights, Laya's

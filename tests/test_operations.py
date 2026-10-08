@@ -55,7 +55,7 @@ def test_cancel_pending_ui_delivery_keeps_audio_and_never_touches_clipboard(
     app.close()
 
 
-def test_cancel_inflight_jev_closes_request_keeps_raw_and_prevents_later_stages(
+def test_cancel_inflight_jev_closes_requests_and_keeps_raw(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app, platform, service = configured(tmp_path)
@@ -83,14 +83,15 @@ def test_cancel_inflight_jev_closes_request_keeps_raw_and_prevents_later_stages(
     app.start_recording()
     app.stop_recording()
     assert entered.wait(2)
-    assert platform.tray.states[-1] == "correction"
+    assert platform.tray.states[-1] == "formatting"
     app.cancel_recording()
     assert cancelled.wait(1)
     wait_for(lambda: service.operations.status() is None)
     attempt = service.store.list_recordings()[0].transcriptions[0]
     assert attempt.raw_text == "Use Jeff to classify this."
     assert attempt.processing_state == "cancelled"
-    assert attempt.formatting and attempt.formatting.status == "skipped"
+    assert attempt.formatting and attempt.formatting.status == "failed"
+    assert attempt.correction and attempt.correction.status == "failed"
     assert platform.actions.clipboard is None and platform.actions.pasted == 0
     app.close()
 

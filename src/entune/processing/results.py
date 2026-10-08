@@ -80,14 +80,12 @@ def pending(
 
 
 def interrupted(result: Processed, error: str) -> Processed:
-    """Keep completed work and fail only the first unfinished enabled stage."""
-    updates = {}
-    first = True
-    for name in ("correction", "cleanup", "formatting"):
-        stage = getattr(result, name)
-        if stage.status == "pending":
-            updates[name] = replace(stage, status="failed" if first else "skipped", error=error)
-            first = False
+    """Keep completed work and fail every unfinished enabled stage."""
+    updates = {
+        name: replace(stage, status="failed", error=error)
+        for name in ("correction", "cleanup", "formatting")
+        if (stage := getattr(result, name)).status == "pending"
+    }
     return replace(result, **updates)
 
 
@@ -105,16 +103,15 @@ def notice(
 ) -> str | None:
     stages = [
         ("Dictionary correction", correction),
-        ("Filler reduction", cleanup),
-        ("Formatting", formatting),
+        ("filler removal", cleanup),
+        ("formatting", formatting),
     ]
-    for name, stage in stages:
-        if stage is not None and stage.status == "failed":
-            skipped = [
-                label.lower()
-                for label, item in stages
-                if item is not None and item.status == "skipped" and item.error
-            ]
-            suffix = f" Skipped {', '.join(skipped)}." if skipped else ""
-            return f"{name} unavailable. Last completed text retained.{suffix} Details in history."
-    return None
+    failed = [name for name, stage in stages if stage is not None and stage.status == "failed"]
+    if not failed:
+        return None
+    names = " and ".join([", ".join(failed[:-1]), failed[-1]] if len(failed) > 1 else failed)
+    others = any(
+        stage is not None and stage.status in ("succeeded", "skipped") for _, stage in stages
+    )
+    applied = " The other steps were applied." if others else ""
+    return f"{names[0].upper()}{names[1:]} unavailable.{applied} Details in history."

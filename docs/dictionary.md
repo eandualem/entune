@@ -205,13 +205,13 @@ Personal audio, labels and reproducible evaluation outputs remain local.
 
 The **previous formatter** changed 61 of 162 clips in that cached corpus at the 0.6 bar,
 with mixed results. Those cached observations do not evaluate the revised formatter or
-filler reduction below.
+filler removal below.
 
-## Formatting and repeated fillers
+## Formatting and fillers
 
-Both are independently opt-in and keep the input words unless the user enables bounded
-filler reduction. Each applicable stage makes one request with all its questions;
-there is no chunking or parallel request policy.
+Both are independently opt-in and keep the input words unless the user enables filler
+removal. Each applicable stage makes one request with all its questions. The dictionary,
+filler and formatting stages run at the same time, each on the original transcript.
 
 Formatting classifies all eligible spans, including the first, as running prose,
 new paragraph or list item. The winning probability must reach 0.6. A middle item can
@@ -226,17 +226,37 @@ Ethiopic `።` and CJK stops can delimit sentences without spaces. These are exp
 heuristics, not universal language segmentation: abbreviation-final sentences can remain
 joined, and punctuation-free prose does not gain inferred sentence boundaries.
 
-Filler candidates are runs of **2–6 adjacent repetitions of the same English token**:
-`um`, `uh`, `erm` or `like`, separated by horizontal whitespace/commas and spanning no
-more than 80 characters. Code excludes quoted/code spans, sentence/line crossings and
-larger runs. A hesitation probability of at least **0.9** permits deletion of only the
-duplicate suffix; the first token, its case and final punctuation stay. Intentional
-emphasis and meaningful `like` uses should be classified as meaningful; uncertain or
-malformed answers preserve text. This threshold is an initial, uncalibrated policy.
-It does not remove lone fillers, arbitrary repeats, mixed filler runs or spoken repairs.
+Filler candidates are English hesitation sounds, `um`, `uh`, `er`, `erm`, `ah` and
+`hmm`, alone or in a run of up to 6 separated by horizontal whitespace/commas, and runs of
+**2–6 adjacent repetitions** of `like`; a candidate spans no more than 80 characters. Code
+excludes quoted/code spans, indented code and line crossings. A hesitation probability of
+at least **0.9** permits deletion. A sound goes with its own comma and the space after it;
+at the end of a sentence, with the comma and space before it; as a whole sentence, with
+its stop. When it started the sentence, the next word takes the capital. A repeat of
+`like` keeps its first occurrence. Answers, reactions, quotations, talk about the word
+itself and meaningful `like` uses should be classified as meaningful; uncertain or
+malformed answers preserve text. This threshold is an initial, uncalibrated policy. It
+does not remove other words, arbitrary repeats or spoken repairs.
 
-Every edit records exact before/after text and Python character offsets against its
-stage input; disjoint source validation precedes application. History and export retain
+Measured on 162 October transcripts from AssemblyAI Universal-3.5 Pro, which keeps filler
+sounds: code proposed 470 candidates, almost all `um` and `uh`. Jev removed 468 and left
+2 undecided; Perplexity removed 467 and left 3; neither judged any to be meaningful. The
+two left by Jev were "Ah, but…" and "Uh, we'll, we'll…". These transcripts hold almost no
+meaningful uses of the sounds, so this shows the removal working, not how well a
+meaningful use is recognised. Where the speech model wrote commas on both sides of a sound
+("is, uh, genuinely"), the comma before it stays ("is, genuinely").
+
+Running the stages at once, measured on 158 October test transcripts from Parakeet with
+the dictionary, fillers and formatting all on: where two or more stages had work, the
+median time from transcript to final text fell from 0.77 to 0.40 s with Jev, from 1.17
+to 0.49 s with Perplexity and from 0.65 to 0.37 s with OpenAI. One OpenAI run met a slow
+period in which 13 stages ran out of time with the stages at once and 1 one after
+another; a repeat soon after had none either way.
+
+Every edit records exact before/after text and Python character offsets against the
+original transcript, and disjoint source validation precedes application. Where two
+stages would edit the same characters, the dictionary's edit is kept over a filler's, and
+a filler's over formatting's. History and export retain
 these edits and the original transcription. Cleanup's removed-word count and formatting's
 changed-span count are operations, not accuracy scores. Older formatting outcomes have
 `changes: null` (not recorded), not an invented zero; aggregate span counts cover recorded

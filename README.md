@@ -193,8 +193,8 @@ guarantee a better dictionary.
   notifications for results.
 - **Local data:** audio, transcripts, settings and keys stay in Entune's data
   folder. Export or delete them in **Settings → Data & Privacy**.
-- **Optional processing:** dictionary correction, repeated-filler reduction,
-  and paragraph/bullet formatting have separate controls, each run by the decision
+- **Optional processing:** dictionary correction, filler removal and paragraph/bullet
+  formatting have separate controls and run at the same time, each by the decision
   model you choose: Jev, OpenAI's Decisions API, Perplexity's, or Laya on your computer.
 - **Fast mode:** while you speak, each part of a dictation is transcribed at a
   natural pause, so only the last part is left when you stop, with any speech
