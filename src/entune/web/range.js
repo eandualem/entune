@@ -24,9 +24,12 @@ export function createRange({ track, onChange, label = "items" }) {
   const start = handle("Oldest"), end = handle("Newest");
   track.replaceChildren(base, chosen, start, end);
 
-  const nearest = (x) => {
+  const fraction = (x) => {
     const box = track.getBoundingClientRect();
-    const f = Math.min(1, Math.max(0, (x - box.left) / (box.width || 1)));
+    return Math.min(1, Math.max(0, (x - box.left) / (box.width || 1)));
+  };
+  const nearest = (x) => {
+    const f = fraction(x);
     return edges.reduce((best, edge, i) => Math.abs(edge - f) < Math.abs(edges[best] - f) ? i : best, 0);
   };
   function move(which, i) {
@@ -37,9 +40,11 @@ export function createRange({ track, onChange, label = "items" }) {
   track.addEventListener("pointerdown", (event) => {
     if (!handles || !count || event.button !== 0) return;
     event.preventDefault();
+    // The handle nearer on screen moves, then snaps to the nearest whole item.
+    const f = fraction(event.clientX);
+    const toFrom = Math.abs(f - edges[from]), toTo = Math.abs(f - edges[to]);
+    dragging = event.target.dataset?.handle ?? (toFrom < toTo || (toFrom === toTo && f < edges[from]) ? "from" : "to");
     const i = nearest(event.clientX);
-    dragging = event.target.dataset?.handle
-      ?? (Math.abs(i - from) < Math.abs(i - to) ? "from" : Math.abs(i - from) > Math.abs(i - to) ? "to" : i < from ? "from" : "to");
     (dragging === "from" ? start : end).focus({ focusVisible: false }); // arrow keys fine-tune the drag
     track.setPointerCapture(event.pointerId);
     move(dragging, i);

@@ -1238,7 +1238,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const total = state.total ?? 0, completed = state.completed ?? 0, done = state.completedBatches ?? 0, parts = state.steps ?? 0;
     const running = now === "running";
     const halted = now === "halted" || (now === "review" && ["failed", "stopped"].includes(state.outcome));
-    const transcribed = !audio || !["queued", "transcribing"].includes(state.phase);
+    // Every recording processed (skipped ones count); a stop part-way leaves the rest to Continue.
+    const transcribed = !audio || completed >= total;
     const clock = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
     const elapsed = running && state.stepStartedAt ? ` · ${clock(Math.max(0, Date.now() / 1000 - state.stepStartedAt))}` : "";
     const look = (doneNow, active) => doneNow ? "done" : active ? (running ? "active" : "paused") : "pending";
@@ -1256,8 +1257,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     items.push({ title: "Find suggestions", cls: findCls, mark: findCls === "done" ? "✓" : undefined,
       body: `${languageName(state.dictionaryModel) ?? "The suggestion model"} at ${state.effort ?? "high"} effort${audio ? ", starting while transcription runs" : ""}.`,
       status: read ? `Read ${plural(done || parts, "part")}`
-        : halted ? `Stopped after ${plural(done, "part")}. Finished parts are kept.`
-          : !started ? "Starts once enough audio is transcribed"
+        : !started ? "Starts once enough audio is transcribed"
+          : halted ? `Stopped after ${plural(done, "part")}. Finished parts are kept.`
             : state.phase === "cancelling" ? "Stopping…"
               : state.step ? `Part ${state.step}${parts ? ` of ${parts}` : ""} · ${done} done${elapsed}` : "Getting ready…" });
     const kinds = (kind) => proposalChanges.filter((c) => c.kind === kind).length;
@@ -1297,7 +1298,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("suggest-shared").hidden = now !== "setup" && !resumable;
     if (resumable) drawAdvanced(false);
     if (now === "setup") { fillSpeech(); drawSheet(); }
-    el("learn-status").hidden = now === "setup" || showProposal;
+    // Reviewing hides the steps, never the run's errors, skipped recordings or coverage.
+    el("run-steps").hidden = showProposal;
+    el("learn-status").hidden = now === "setup" || (showProposal && el("dictionary-build-status").hidden && el("build-error-detail").hidden);
     if (now !== "setup") drawRun(state, now);
     el("run-note").hidden = now !== "running";
     el("proposal").hidden = !showProposal;
