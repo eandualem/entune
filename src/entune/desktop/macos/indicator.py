@@ -2,9 +2,12 @@
 Entune window is normally closed and the menu bar may be hidden, so this is the one place
 that says a recording is running, and the place results and errors are told.
 
-Recording shows five level bars, Entune's own, moving with the microphone. A stage such as
-transcribing shows a pulsing dot. A message makes the pill a card: a title and, below it,
-the detail wrapped to a comfortable width; an error stays, with Retry and Dismiss.
+The pill is a tape of the voice: fifteen bars, each one moment's microphone level, a new
+one entering at the right every 90 ms, beside a red recording dot. Working, the tape stands
+still and a light sweeps across it; done, a check (pasted) or a clipboard (copied) takes
+its place. Routine states have no words on screen; the words are the pill's accessibility
+label and tooltip. A message makes the pill a card: a title, the detail wrapped beneath,
+and for an error a red mark, Retry and Dismiss; an error stays until dismissed.
 
 It starts in the bottom-left corner of the screen the pointer is on, and can be dragged
 anywhere; the place it is dropped is kept in the app's defaults and used from then on,
@@ -17,22 +20,28 @@ from __future__ import annotations
 
 import math
 import time
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
 import AppKit
 import objc
-import Quartz  # noqa: F401  the bridge for the layers' CGColor values
+import Quartz
 from Foundation import NSObject
 
-HEIGHT = 30.0
+HEIGHT = 32.0
 MARGIN = 16.0
-PAD = 14.0
-GAP = 8.0
-MARK = 22.0  # the bars' or dot's box
-CARD_WIDTH = 340.0  # a message's widest; its height follows the text
-CARD_MIN = 220.0
-CARD_PAD = 14.0
+PAD_LEFT, PAD_RIGHT, GAP = 12.0, 14.0, 10.0
+DOT = 7.0
+TAPE_W, TAPE_H = 66.0, 18.0
+BARS_N, BAR_GAP = 15, 2.0
+SAMPLE_SECONDS = 0.09  # a new level enters the tape this often
+SWEEP_W = 22.0
+GLYPH = 16.0
+WIDTH = PAD_LEFT + DOT + GAP + TAPE_W + PAD_RIGHT
+CARD_WIDTH = 300.0
+CARD_PAD, CARD_PAD_BOTTOM = 14.0, 12.0
+BADGE = 22.0
 BUTTON_HEIGHT = 24.0
 FRAME_SECONDS = 1 / 30
 ORIGIN_KEY = "indicatorOrigin"  # NSUserDefaults: [x, y] of the bottom-left corner
@@ -47,15 +56,24 @@ def _rgb(red: float, green: float, blue: float, alpha: float = 1.0) -> Any:
     return AppKit.NSColor.colorWithSRGBRed_green_blue_alpha_(red, green, blue, alpha)
 
 
-# The window's tokens (tokens.css): the control ground and the quiet grey for each
-# appearance, recording red, the accent, and the success and error colours. The pill
-# follows the app's appearance (Entune's theme); its text uses the system label colours.
-GROUND = {True: _rgb(0.196, 0.196, 0.196, 0.96), False: _rgb(0.969, 0.969, 0.969, 0.96)}
-QUIET = {True: _rgb(0.604, 0.604, 0.604), False: _rgb(0.557, 0.557, 0.576)}
-CORAL = _rgb(1.0, 0.259, 0.271)
-ACCENT = _rgb(0.0, 0.478, 1.0)
-OK = _rgb(0.188, 0.82, 0.345)
-ERROR = _rgb(1.0, 0.259, 0.271)
+# The pill's tokens (tokens.css, --pill-*), by appearance: True is dark. The pill follows
+# the app's appearance (Entune's theme).
+GROUND = {True: _rgb(0.149, 0.141, 0.133, 0.94), False: _rgb(1.000, 0.992, 0.980, 0.95)}
+EDGE = {True: _rgb(1.000, 0.973, 0.922, 0.14), False: _rgb(0.235, 0.176, 0.078, 0.14)}
+BARS = {True: _rgb(0.663, 0.612, 0.949), False: _rgb(0.490, 0.427, 0.878)}
+SWEEP = {True: _rgb(0.769, 0.725, 1.000, 0.90), False: _rgb(0.435, 0.373, 0.847, 0.55)}
+QUIET = {True: _rgb(0.451, 0.431, 0.400), False: _rgb(0.647, 0.620, 0.576)}
+TEXT = {True: _rgb(0.945, 0.929, 0.902), False: _rgb(0.122, 0.110, 0.098)}
+MUTED = {True: _rgb(0.631, 0.608, 0.569), False: _rgb(0.451, 0.427, 0.392)}
+WASH = {True: _rgb(0.663, 0.612, 0.949, 0.18), False: _rgb(0.435, 0.373, 0.847, 0.12)}
+LINK = {True: _rgb(0.741, 0.698, 1.000), False: _rgb(0.345, 0.278, 0.761)}
+DOT_RED = _rgb(1.0, 0.259, 0.271)  # recording, and an error's mark
+WHITE = _rgb(1.0, 1.0, 1.0)
+
+# Which look each state of the shell's (shell.INDICATOR) takes.
+LIVE = {"recording"}
+QUIET_STATES = {"quiet", "silent", "cancelling"}
+SETTLING = {"formatting", "delivering"}  # after transcription: a calmer tape, a slower light
 
 
 class EntunePillTarget(NSObject):  # type: ignore[misc]
@@ -86,43 +104,82 @@ class EntunePillView(AppKit.NSView):  # type: ignore[misc]
         self.call()
 
 
+def _path(points: list[tuple[str, tuple[float, ...]]]) -> Any:
+    """A CGPath from moves, lines and rounded rectangles, in a 16-unit box with y down
+    (the design's SVG coordinates); the layer flips it."""
+    path = Quartz.CGPathCreateMutable()
+    for kind, values in points:
+        if kind == "move":
+            Quartz.CGPathMoveToPoint(path, None, *values)
+        elif kind == "line":
+            Quartz.CGPathAddLineToPoint(path, None, *values)
+        else:  # "rect": x, y, width, height, radius
+            x, y, w, h, r = values
+            Quartz.CGPathAddRoundedRect(path, None, ((x, y), (w, h)), r, r)
+    return path
+
+
+CHECK = _path([("move", (3.0, 8.5)), ("line", (6.2, 11.7)), ("line", (13.0, 4.8))])
+CLIPBOARD = _path(
+    [
+        ("rect", (5.5, 5.5, 8.0, 8.0, 1.5)),
+        ("move", (10.5, 5.5)),
+        ("line", (10.5, 4.0)),
+        ("line", (9.0, 2.5)),
+        ("line", (4.0, 2.5)),
+        ("line", (2.5, 4.0)),
+        ("line", (2.5, 9.0)),
+        ("line", (4.0, 10.5)),
+        ("line", (5.5, 10.5)),
+    ]
+)
+BANG = _path(
+    [("move", (8.0, 3.5)), ("line", (8.0, 9.0)), ("move", (8.0, 12.4)), ("line", (8.0, 12.5))]
+)
+
+
 class Indicator:
     def __init__(self) -> None:
         self._panel: Any = None
         self._label: Any = None
         self._body: Any = None
-        self._bars: list[Any] = []
         self._dot: Any = None
+        self._tape: Any = None
+        self._bars: list[Any] = []
+        self._sweep: Any = None
+        self._glyph: Any = None
+        self._badge: Any = None
         self._buttons: list[Any] = []
         self._targets: list[Any] = []  # kept alive while their buttons are
         self._timer: Any = None
-        self._mode = "status"
+        self._mode = "status"  # "status" (the tape), "glyph" or "card"
+        self._state = "recording"
         self._placed: tuple[float, float] | None = None  # where show() put it last
         self.level: Callable[[], float] = lambda: 0.0
-        self._smoothed = [0.0] * 5
-        self._quiet = False  # the bars show silence, in the quiet grey
+        self._smoothed = 0.0  # the microphone level, eased
+        self._samples: deque[float] = deque([0.0] * BARS_N, maxlen=BARS_N)
+        self._sampled = 0.0  # when the last sample entered the tape
+        self._started = time.monotonic()
 
     # The three things the tray asks for
 
-    def show(self, text: str, recording: bool = False) -> None:
+    def show(self, text: str, recording: bool = False, state: str | None = None) -> None:
         self._prepare()
-        self._mode = "recording" if recording else "status"
+        state = state or ("recording" if recording else "transcribing")
+        if state in LIVE and self._state not in LIVE | QUIET_STATES:
+            self._samples.extend([0.0] * BARS_N)  # a new recording starts with an empty tape
+        self._state, self._mode = state, "status"
         self._clear_card()
-        quiet = recording and text.startswith("No sound")
-        self._quiet = quiet
-        self._label.setStringValue_(text)
-        self._label.setFont_(AppKit.NSFont.systemFontOfSize_weight_(13, AppKit.NSFontWeightMedium))
-        self._label.setTextColor_(AppKit.NSColor.labelColor())
-        self._label.sizeToFit()
-        size = self._label.frame().size
-        width = PAD + MARK + GAP + size.width + PAD
-        self._label.setFrameOrigin_((PAD + MARK + GAP, (HEIGHT - size.height) / 2))
-        for bar in self._bars:
-            bar.setHidden_(not recording)
-            bar.setBackgroundColor_((QUIET[self._dark()] if quiet else CORAL).CGColor())
-        self._dot.setHidden_(recording)
-        self._dot.setBackgroundColor_(ACCENT.CGColor())
-        self._place(width, HEIGHT, HEIGHT / 2)
+        self._describe(text)
+        self._tape.setHidden_(False)
+        self._glyph.setHidden_(True)
+        dark = self._dark()
+        self._dot.setHidden_(state not in LIVE | QUIET_STATES)
+        self._dot.setBackgroundColor_((DOT_RED if state in LIVE else QUIET[dark]).CGColor())
+        self._dot.setOpacity_(1.0)
+        self._sweep.setHidden_(state in LIVE | QUIET_STATES)
+        self._place(WIDTH, HEIGHT, HEIGHT / 2)
+        self._frame()
         self._animate(True)
 
     def message(
@@ -133,49 +190,61 @@ class Indicator:
         error: bool,
         retry: Callable[[], None] | None,
         dismiss: Callable[[], None],
+        glyph: str | None = None,
     ) -> None:
+        """A result: a glyph in the tape's place for a routine one ("check" for pasted,
+        "clipboard" for copied), otherwise a card with the title and detail."""
         self._prepare()
-        self._mode = "message"
-        self._quiet = False
         self._animate(False)
         self._clear_card()
-        for bar in self._bars:
-            bar.setHidden_(True)
-        self._dot.setHidden_(False)
-        self._dot.setOpacity_(1.0)
-        self._dot.setBackgroundColor_((ERROR if error else OK).CGColor())
-        text_x = CARD_PAD + 10 + GAP
+        self._describe(f"{title}. {body}" if body else title)
+        self._tape.setHidden_(True)
+        self._dot.setHidden_(True)
+        if glyph in ("check", "clipboard") and not error:
+            self._mode = "glyph"
+            self._glyph.setPath_(CHECK if glyph == "check" else CLIPBOARD)
+            self._glyph.setLineWidth_(2.0 if glyph == "check" else 1.6)
+            self._glyph.setHidden_(False)
+            self._place(WIDTH, HEIGHT, HEIGHT / 2)
+            return
+        self._mode = "card"
+        self._glyph.setHidden_(True)
+        dark = self._dark()
+        left = CARD_PAD + (BADGE + 12 if error else 0)
         self._label.setStringValue_(title)
-        bold = AppKit.NSFont.systemFontOfSize_weight_(13, AppKit.NSFontWeightSemibold)
-        self._label.setFont_(bold)
-        self._label.setTextColor_(AppKit.NSColor.labelColor())
         self._body.setStringValue_(body)
-        self._body.setHidden_(not body)
-        # As wide as the text needs, up to a comfortable reading width; then it wraps.
+        # An error takes the full width for its buttons; a notice only what its words need.
         natural = max(
             self._label.sizeThatFits_((10000, 100)).width,
             self._body.sizeThatFits_((10000, 100)).width if body else 0.0,
         )
-        width = min(CARD_WIDTH, max(CARD_MIN, text_x + natural + CARD_PAD + 2))
-        text_width = width - text_x - CARD_PAD
+        width = CARD_WIDTH if error else min(CARD_WIDTH, left + natural + 2 + CARD_PAD)
+        text_width = width - left - CARD_PAD
+        self._label.setTextColor_(TEXT[dark])
+        self._body.setTextColor_(MUTED[dark])
+        self._label.setHidden_(False)
+        self._body.setHidden_(not body)
         title_height = self._label.sizeThatFits_((text_width, 1000)).height
         body_height = self._body.sizeThatFits_((text_width, 1000)).height if body else 0.0
-        buttons = []
+        buttons: list[tuple[str, Callable[[], None], bool]] = []
         if error:
             if retry is not None:
                 buttons.append(("Retry", retry, True))
             buttons.append(("Dismiss", dismiss, False))
-        button_row = BUTTON_HEIGHT + 10 if buttons else 0.0
-        height = CARD_PAD + title_height + (4 + body_height if body else 0) + button_row + CARD_PAD
+        button_row = 8 + BUTTON_HEIGHT if buttons else 0.0
+        text_height = title_height + (3 + body_height if body else 0)
+        height = CARD_PAD + text_height + button_row + CARD_PAD_BOTTOM
         top = height - CARD_PAD
-        self._label.setFrame_(((text_x, top - title_height), (text_width, title_height)))
-        self._dot_at(CARD_PAD, top - title_height / 2 - 5, 10)
+        self._label.setFrame_(((left, top - title_height), (text_width, title_height)))
         if body:
-            body_top = top - title_height - 4
-            self._body.setFrame_(((text_x, body_top - body_height), (text_width, body_height)))
-        x = text_x
+            body_top = top - title_height - 3
+            self._body.setFrame_(((left, body_top - body_height), (text_width, body_height)))
+        self._badge.setHidden_(not error)
+        if error:
+            self._badge.setFrame_(((CARD_PAD, top - BADGE + 1), (BADGE, BADGE)))
+        x = left
         for label, call, primary in buttons:
-            x += self._button(label, call, primary, x) + 8
+            x += self._button(label, call, primary, x, dark) + 8
         self._place(width, height, 14.0)
 
     def hide(self) -> None:
@@ -193,26 +262,39 @@ class Indicator:
         else:
             self._save_dragged_origin()
 
+    def _describe(self, text: str) -> None:
+        """What the pill says without words on it: VoiceOver's label, and the tooltip."""
+        content = self._panel.contentView()
+        content.setAccessibilityLabel_(text)
+        content.setToolTip_(text)
+
     def _dark(self) -> bool:
         appearance = self._panel.effectiveAppearance()
         names = [AppKit.NSAppearanceNameDarkAqua, AppKit.NSAppearanceNameAqua]
         return bool(appearance.bestMatchFromAppearancesWithNames_(names) == names[0])
 
     def _recolor(self) -> None:
-        """The ground, and quiet bars, for the current appearance."""
+        """The ground, edge, tape and glyph for the current appearance."""
         if self._panel is None:
             return
         dark = self._dark()
-        self._panel.contentView().layer().setBackgroundColor_(GROUND[dark].CGColor())
-        if self._quiet:
-            for bar in self._bars:
-                bar.setBackgroundColor_(QUIET[dark].CGColor())
+        layer = self._panel.contentView().layer()
+        layer.setBackgroundColor_(GROUND[dark].CGColor())
+        layer.setBorderColor_(EDGE[dark].CGColor())
+        clear = AppKit.NSColor.clearColor().CGColor()
+        self._sweep.setColors_([clear, SWEEP[dark].CGColor(), clear])
+        self._glyph.setStrokeColor_(BARS[dark].CGColor())
+        if self._mode == "card":
+            self._label.setTextColor_(TEXT[dark])
+            self._body.setTextColor_(MUTED[dark])
+        self._paint_bars(dark)
 
     def _place(self, width: float, height: float, radius: float) -> None:
         self._recolor()  # each time it shows, too: the theme may have changed meanwhile
         self._panel.contentView().layer().setCornerRadius_(radius)
         origin = self._saved_origin() or self._corner()
         self._panel.setFrame_display_(((origin[0], origin[1]), (width, height)), True)
+        self._panel.invalidateShadow()
         self._placed = origin
         self._panel.orderFrontRegardless()
         if not self._panel.isOnActiveSpace():
@@ -224,34 +306,41 @@ class Indicator:
             self._panel.orderFrontRegardless()
             print("pill: was missing from this Space; on every Space again", flush=True)
 
-    def _dot_at(self, x: float, y: float, size: float) -> None:
-        self._dot.setFrame_(((x, y), (size, size)))
-        self._dot.setCornerRadius_(size / 2)
-
-    def _button(self, label: str, call: Callable[[], None], primary: bool, x: float) -> float:
+    def _button(
+        self, label: str, call: Callable[[], None], primary: bool, x: float, dark: bool
+    ) -> float:
+        """A flat button in the pill's colours: Retry on the accent wash, Dismiss plain."""
         target = EntunePillTarget.alloc().initWithCall_(call)
         button = AppKit.NSButton.buttonWithTitle_target_action_(label, target, b"fire:")
-        button.setBezelStyle_(AppKit.NSBezelStyleRounded)
-        button.setControlSize_(AppKit.NSControlSizeSmall)
+        button.setBordered_(False)
+        weight = AppKit.NSFontWeightSemibold if primary else AppKit.NSFontWeightRegular
+        attributes = {
+            AppKit.NSFontAttributeName: AppKit.NSFont.systemFontOfSize_weight_(12, weight),
+            AppKit.NSForegroundColorAttributeName: LINK[dark] if primary else MUTED[dark],
+        }
+        title = AppKit.NSAttributedString.alloc().initWithString_attributes_(label, attributes)
+        button.setAttributedTitle_(title)
+        button.setWantsLayer_(True)
+        button.layer().setCornerRadius_(6.0)
         if primary:
-            button.setKeyEquivalent_("")
-            button.setBezelColor_(ACCENT)
-        button.sizeToFit()
-        size = button.frame().size
-        button.setFrame_(((x - 6, CARD_PAD - 4), (size.width, BUTTON_HEIGHT)))
+            button.layer().setBackgroundColor_(WASH[dark].CGColor())
+        text_width = button.attributedTitle().size().width
+        width = text_width + (24 if primary else 20)
+        button.setFrame_(((x, CARD_PAD_BOTTOM), (width, BUTTON_HEIGHT)))
         self._panel.contentView().addSubview_(button)
         self._buttons.append(button)
         self._targets.append(target)
-        return float(size.width)
+        return float(width)
 
     def _clear_card(self) -> None:
         for button in self._buttons:
             button.removeFromSuperview()
         self._buttons, self._targets = [], []
+        self._label.setHidden_(True)
         self._body.setHidden_(True)
-        self._dot_at(PAD + (MARK - 9) / 2, (HEIGHT - 9) / 2, 9)
+        self._badge.setHidden_(True)
 
-    # The bars and the dot move while recording or working
+    # The tape moves while recording or working
 
     def _animate(self, on: bool) -> None:
         if on and self._timer is None:
@@ -266,19 +355,46 @@ class Indicator:
             self._timer = None
 
     def _frame(self) -> None:
+        if self._mode != "status":
+            return
         now = time.monotonic()
-        if self._mode == "recording":
-            level = max(0.0, min(1.0, self.level()))
-            for index, bar in enumerate(self._bars):
-                # Each bar has its own sway, scaled by the voice; the middle one leads.
-                sway = 0.55 + 0.45 * math.sin(now * (6.0 + index * 1.7) + index * 1.3)
-                target = level * (1.0 - abs(index - 2) * 0.18) * sway
-                self._smoothed[index] += (target - self._smoothed[index]) * 0.35
-                height = 4.0 + 14.0 * self._smoothed[index]
-                frame = bar.frame()
-                bar.setFrame_(((frame.origin.x, (HEIGHT - height) / 2), (frame.size.width, height)))
-        elif self._mode == "status":
-            self._dot.setOpacity_(0.45 + 0.55 * (0.5 + 0.5 * math.sin(now * 4.0)))
+        if self._state in LIVE | QUIET_STATES:
+            # The level is eased every frame and enters the tape every 90 ms.
+            raw = max(0.0, min(1.0, self.level())) if self._state in LIVE else 0.0
+            self._smoothed += (raw - self._smoothed) * 0.4
+            if now - self._sampled >= SAMPLE_SECONDS:
+                self._samples.append(self._smoothed)
+                self._sampled = now
+        Quartz.CATransaction.begin()
+        Quartz.CATransaction.setDisableActions_(True)
+        if self._state in LIVE:
+            # About a 1.3-second breath between 0.6 and 1.
+            self._dot.setOpacity_(0.8 + 0.2 * math.sin(2 * math.pi * now / 1.3))
+        elif self._state not in QUIET_STATES:
+            period = 1.8 if self._state in SETTLING else 1.1
+            phase = ((now - self._started) % period) / period
+            self._sweep.setFrame_(((-SWEEP_W + phase * (TAPE_W + SWEEP_W), 0), (SWEEP_W, TAPE_H)))
+        self._paint_bars(self._dark())
+        Quartz.CATransaction.commit()
+
+    def _paint_bars(self, dark: bool) -> None:
+        """Each bar's height and colour for the state: the live tape, a flat quiet one, the
+        last samples held still, or a calm pattern while the text is finished."""
+        state = self._state
+        quiet = state in QUIET_STATES
+        color = (QUIET if quiet else BARS)[dark].CGColor()
+        for index, bar in enumerate(self._bars):
+            if quiet:
+                level = 0.0
+            elif state in SETTLING:
+                level = (0.30 + 0.12 * math.sin(index * 0.8) - 0.12) / 0.88
+            else:
+                level = self._samples[index]
+            height = TAPE_H * (0.12 + 0.88 * max(0.0, min(1.0, level)))
+            frame = bar.frame()
+            bar.setFrame_(((frame.origin.x, (TAPE_H - height) / 2), (frame.size.width, height)))
+            bar.setBackgroundColor_(color)
+            bar.setOpacity_(1.0 if state in LIVE | QUIET_STATES else 0.55)
 
     # The panel
 
@@ -305,13 +421,14 @@ class Indicator:
     def _build(self) -> None:
         mask = AppKit.NSWindowStyleMaskBorderless | AppKit.NSWindowStyleMaskNonactivatingPanel
         panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-            ((0, 0), (120, HEIGHT)), mask, AppKit.NSBackingStoreBuffered, False
+            ((0, 0), (WIDTH, HEIGHT)), mask, AppKit.NSBackingStoreBuffered, False
         )
         # Above everything a full-screen app can put up: video players, presentations and
         # non-native full screen cover the screen above the status level, which hid the
         # pill entirely; at the screen-saver level it shows over them (checked on macOS 26).
         panel.setLevel_(AppKit.NSScreenSaverWindowLevel)
         panel.setOpaque_(False)
+        panel.setHasShadow_(True)
         panel.setBackgroundColor_(AppKit.NSColor.clearColor())
         panel.setMovableByWindowBackground_(True)  # drag it anywhere; the drop point is kept
         panel.setHidesOnDeactivate_(False)
@@ -321,33 +438,69 @@ class Indicator:
         panel.setContentView_(content)
         content.setWantsLayer_(True)
         content.layer().setCornerRadius_(HEIGHT / 2)
+        content.layer().setBorderWidth_(0.5)
         content.setAutoresizesSubviews_(False)
+        content.setAccessibilityElement_(True)
+        content.setAccessibilityRole_(AppKit.NSAccessibilityStaticTextRole)
 
-        # Five bars, as in Entune's mark: thin, rounded, centred on the pill's middle.
-        width, spacing = 3.0, 2.0
-        left = PAD + (MARK - (5 * width + 4 * spacing)) / 2
-        for index in range(5):
-            bar = AppKit.CALayer.layer()
-            bar.setFrame_(((left + index * (width + spacing), (HEIGHT - 4) / 2), (width, 4)))
-            bar.setCornerRadius_(width / 2)
-            bar.setActions_({"bounds": AppKit.NSNull.null(), "position": AppKit.NSNull.null()})
-            content.layer().addSublayer_(bar)
+        def layer(parent: Any, frame: tuple[tuple[float, float], tuple[float, float]]) -> Any:
+            sub = AppKit.CALayer.layer()
+            sub.setFrame_(frame)
+            parent.addSublayer_(sub)
+            return sub
+
+        root = content.layer()
+        self._dot = layer(root, ((PAD_LEFT, (HEIGHT - DOT) / 2), (DOT, DOT)))
+        self._dot.setCornerRadius_(DOT / 2)
+        tape_x = PAD_LEFT + DOT + GAP
+        self._tape = layer(root, ((tape_x, (HEIGHT - TAPE_H) / 2), (TAPE_W, TAPE_H)))
+        self._tape.setMasksToBounds_(True)
+        bar_width = (TAPE_W - BAR_GAP * (BARS_N - 1)) / BARS_N
+        for index in range(BARS_N):
+            bar = layer(self._tape, ((index * (bar_width + BAR_GAP), 0), (bar_width, TAPE_H)))
+            bar.setCornerRadius_(1.0)
             self._bars.append(bar)
-        dot = AppKit.CALayer.layer()
-        dot.setActions_({"opacity": AppKit.NSNull.null()})
-        content.layer().addSublayer_(dot)
+        self._sweep = Quartz.CAGradientLayer.layer()
+        self._sweep.setStartPoint_((0.0, 0.5))
+        self._sweep.setEndPoint_((1.0, 0.5))
+        self._sweep.setFrame_(((-SWEEP_W, 0), (SWEEP_W, TAPE_H)))
+        self._tape.addSublayer_(self._sweep)
+        # The glyph sits where the tape was; its path is drawn with y down, so it is flipped.
+        self._glyph = Quartz.CAShapeLayer.layer()
+        center = tape_x + (TAPE_W - GLYPH) / 2
+        self._glyph.setFrame_(((center, (HEIGHT - GLYPH) / 2), (GLYPH, GLYPH)))
+        self._glyph.setGeometryFlipped_(True)
+        self._glyph.setFillColor_(None)
+        self._glyph.setLineCap_(Quartz.kCALineCapRound)
+        self._glyph.setLineJoin_(Quartz.kCALineJoinRound)
+        self._glyph.setHidden_(True)
+        root.addSublayer_(self._glyph)
+        # An error's mark: a red disc with a white "!".
+        self._badge = layer(root, ((0, 0), (BADGE, BADGE)))
+        self._badge.setCornerRadius_(BADGE / 2)
+        self._badge.setBackgroundColor_(DOT_RED.CGColor())
+        bang = Quartz.CAShapeLayer.layer()
+        bang.setFrame_(((3.0, 3.0), (GLYPH, GLYPH)))
+        bang.setGeometryFlipped_(True)
+        bang.setPath_(BANG)
+        bang.setStrokeColor_(WHITE.CGColor())
+        bang.setLineWidth_(2.4)
+        bang.setLineCap_(Quartz.kCALineCapRound)
+        self._badge.addSublayer_(bang)
+        self._badge.setHidden_(True)
 
         label = AppKit.NSTextField.wrappingLabelWithString_("")
-        label.setTextColor_(AppKit.NSColor.labelColor())
+        label.setFont_(AppKit.NSFont.systemFontOfSize_weight_(13, AppKit.NSFontWeightSemibold))
         label.setSelectable_(False)  # selectable, a click would make the panel take focus
+        label.setHidden_(True)
         content.addSubview_(label)
         body = AppKit.NSTextField.wrappingLabelWithString_("")
-        body.setTextColor_(AppKit.NSColor.secondaryLabelColor())
         body.setFont_(AppKit.NSFont.systemFontOfSize_(12))
         body.setSelectable_(False)  # selecting would make the panel key; History has the text
+        body.setHidden_(True)
         content.addSubview_(body)
 
-        self._panel, self._label, self._body, self._dot = panel, label, body, dot
+        self._panel, self._label, self._body = panel, label, body
 
     @staticmethod
     def _corner() -> tuple[float, float]:

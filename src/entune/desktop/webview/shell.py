@@ -35,6 +35,8 @@ INDICATOR: dict[State, str] = {
     "cancelling": "Canceling — keeping audio…",
 }
 ALERT_CHARS = 300  # an error's detail on the pill; History keeps all of it
+# Routine results the pill shows as a glyph instead of words.
+GLYPHS = {"Pasted": "check", "Copied to clipboard": "clipboard"}
 # Room for the Dictionary page and its audio dialog; smaller screens get most of their
 # visible area instead.
 WIDTH, HEIGHT = 1120, 800
@@ -208,15 +210,19 @@ class _Tray:
         else:
             self._kept, self._completion_until = False, 0.0  # a new dictation replaces it
             recording = state in ("recording", "quiet", "silent")
-            indicator.show(INDICATOR.get(state, state), recording=recording)
+            indicator.show(INDICATOR.get(state, state), recording=recording, state=state)
 
     def complete(self, title: str, body: str = "") -> None:
-        """Shown for a few seconds, longer when there is more to read."""
-        seconds = 6.0 if body else 3.5
+        """Shown for a few seconds, longer when there is more to read; a routine result is
+        a glyph on the pill (a check, a clipboard) for a moment."""
+        glyph = GLYPHS.get(title) if not body else None
+        seconds = 1.4 if glyph else 6.0 if body else 3.5
         self._kept, self._completion_until = False, time.monotonic() + seconds
         indicator = self._indicator()
         if indicator is not None:
-            indicator.message(title, body, error=False, retry=None, dismiss=self._dismiss)
+            indicator.message(
+                title, body, error=False, retry=None, dismiss=self._dismiss, glyph=glyph
+            )
         self.set_status(title)
 
         def hide() -> None:
