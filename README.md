@@ -107,17 +107,23 @@ not be judged and are left out):
 |---|---:|---:|---:|
 | Replace every dictionary match | 121 | 47 | 72 |
 | Choose with **Jev** | 39 | 38 | **1** |
+| Choose with **Perplexity's** decision model | 47 | 43 | **3** |
 | Choose with **OpenAI's Decisions API** | 50 | 42 | **8** |
 | Choose with **Laya**, locally | 36 | 28 | **8** |
 
 - **Jev** avoided 71 of the 72 wrong replacements and kept 38 of the 47 correct ones.
-- **OpenAI** caught the most correct ones, 42, with 8 wrong.
+- **Perplexity** caught the most correct ones, 43, with 3 wrong (its other change was at a
+  place that could not be judged).
+- **OpenAI** caught 42 correct ones, with 8 wrong.
 - **Laya** keeps the decisions on your computer and is the fastest, a median 0.15 s
   per dictation; it kept 28 correct ones.
 
 **Formatting** was tested on the same dictation: of 92 places that should start a
-paragraph or bullet, Jev placed 35 with 12 unwanted breaks, OpenAI 8 with 1, and Laya 5
-with 37, turning two whole dictations into bullet lists.
+paragraph or bullet, Jev placed 35 with 12 unwanted breaks, Perplexity 32 with 5,
+OpenAI 8 with 1, and Laya 5 with 37, turning two whole dictations into bullet lists.
+
+**Time:** the cloud models answer each dictation in one request, a median 0.37 s with
+Perplexity, 0.34 s with OpenAI and 0.54 s with Jev for corrections.
 
 This is one person's dictation judged from the text by one reviewer, not an overall
 transcription-accuracy claim. Read the [data, method and limits](https://github.com/eandualem/entune/blob/develop/docs/decision-model-results.md),
@@ -131,7 +137,7 @@ Entune separates three jobs, so you can choose each independently:
 |---|---|---|
 | Turn audio into text | **Parakeet** on Apple Silicon, or **AssemblyAI** in the cloud | After each recording |
 | Build your dictionary | **GPT-6 Astra**, high effort, on a ChatGPT plan or an API key | When you request suggestions |
-| Choose dictionary replacements and formatting | **Jev** for the best result in our test; **OpenAI's Decisions API**; **Laya** for local processing | After transcription, when enabled |
+| Choose dictionary replacements and formatting | **Jev** for the fewest wrong changes; **Perplexity** for the most correct ones; **OpenAI's Decisions API**; **Laya** for local processing | After transcription, when enabled |
 
 Speech options also include Groq, Soniox, ElevenLabs, xAI and local Whisper.cpp.
 Cloud services use your own provider accounts and keys; Entune does not sell
@@ -189,7 +195,7 @@ guarantee a better dictionary.
   folder. Export or delete them in **Settings → Data & Privacy**.
 - **Optional processing:** dictionary correction, repeated-filler reduction,
   and paragraph/bullet formatting have separate controls, each run by the decision
-  model you choose: Jev, OpenAI's Decisions API, or Laya on your computer.
+  model you choose: Jev, OpenAI's Decisions API, Perplexity's, or Laya on your computer.
 - **Fast mode:** uploads the audio while you speak, so a cloud transcript arrives
   sooner; the **Performance** chart shows each model's measured wait.
 - **Drop audio to transcribe it:** drop files anywhere on the window, such as a
@@ -203,8 +209,8 @@ guarantee a better dictionary.
 There is no Entune account, telemetry or hosted history. Cloud speech sends
 audio to your chosen provider; dictionary generation sends its selected
 transcripts and dictionary to the chosen language-model provider. **Jev sends
-matched context to TypeSafe, and OpenAI's Decisions API to OpenAI, even when speech
-recognition is local.** Laya keeps that step local. See [data and privacy](https://github.com/eandualem/entune/blob/develop/docs/guide.md#data-and-privacy).
+matched context to TypeSafe, OpenAI's Decisions API to OpenAI and Perplexity's to
+Perplexity, even when speech recognition is local.** Laya keeps that step local. See [data and privacy](https://github.com/eandualem/entune/blob/develop/docs/guide.md#data-and-privacy).
 
 Entune is for a trusted, single-user machine. Its loopback API has no
 authentication: other local processes can read or change data through it.

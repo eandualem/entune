@@ -1,9 +1,10 @@
-"""The decision model the processing steps ask: Jev at TypeSafe, Laya on this Mac, or OpenAI."""
+"""The decision model the processing steps ask: Jev at TypeSafe, Laya on this Mac, OpenAI or
+Perplexity."""
 
 from __future__ import annotations
 
 from entune.app.settings import Settings
-from entune.processing.jev_client import JEV, OPENAI, Endpoint
+from entune.processing.jev_client import JEV, OPENAI, PERPLEXITY, Endpoint
 from entune.processing.laya import Laya
 
 
@@ -26,6 +27,8 @@ class DecisionModels:
             return self.laya.endpoint()
         if model == "openai":
             return OPENAI
+        if model == "perplexity":
+            return PERPLEXITY
         if model is None:
             return Endpoint("none", "", "", None, "No decision model is chosen in Settings.")
         return JEV

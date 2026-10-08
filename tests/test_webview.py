@@ -33,6 +33,7 @@ def test_dragged_indicator_position_survives_a_status_change(
         frame=lambda: frame,
         setFrame_display_=move,
         orderFrontRegardless=lambda: None,
+        isOnActiveSpace=lambda: True,
         orderOut_=lambda sender: None,
         contentView=lambda: SimpleNamespace(layer=lambda: layer),
     )
