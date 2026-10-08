@@ -338,11 +338,23 @@ def _whole_lists(text: str, spans: list[formatting.Sentence], actions: list[str]
             and not formatting.blank_line(text[spans[end].end : spans[end + 1].start])
         ):
             end += 1
-        if end == i and "list_item" not in actions[max(0, i - 1) : i + 2]:
+        if end == i and not _beside_existing_list(text, spans, actions, i):
             actions[i] = "new_paragraph"
         else:
             actions[i : end + 1] = [actions[i]] * (end + 1 - i)
         i = end + 1
+
+
+def _beside_existing_list(
+    text: str, spans: list[formatting.Sentence], actions: list[str], i: int
+) -> bool:
+    """Whether an existing list line touches span i, with no empty line between them."""
+    return any(
+        0 <= j < len(spans)
+        and actions[j] == "list_item"
+        and not formatting.blank_line(text[spans[min(i, j)].end : spans[max(i, j)].start])
+        for j in (i - 1, i + 1)
+    )
 
 
 def _no_short_paragraphs(text: str, spans: list[formatting.Sentence], actions: list[str]) -> None:
@@ -361,20 +373,18 @@ def _no_short_paragraphs(text: str, spans: list[formatting.Sentence], actions: l
             ),
             len(spans) - 1,
         )
+        line_break = "\n" in text[spans[i - 1].end : spans[i].start]
         if (
             actions[i] == "new_paragraph"
             and not beside_list
+            and not line_break
             and (
                 spans[i].start - spans[start].start < PARAGRAPH_MIN
                 or spans[last].end - spans[i].start < LAST_PARAGRAPH_MIN
             )
         ):
             actions[i] = "continues"
-        elif (
-            actions[i] != "continues"
-            or actions[i - 1] in items
-            or "\n" in text[spans[i - 1].end : spans[i].start]
-        ):
+        elif actions[i] != "continues" or actions[i - 1] in items or line_break:
             start = i
 
 

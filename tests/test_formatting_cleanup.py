@@ -73,6 +73,11 @@ def test_numbering_continues_an_existing_list_and_restarts_after_an_empty_line()
         raw = "1. Open settings.\nSecond, choose the model."
         result = jev.format_edits(raw, call(client))
         assert text_edits.apply(raw, result.changes) == "1. Open settings.\n2. Choose the model."
+        # Across an empty line it is not part of that list, and alone it is no list.
+        assert (
+            jev.format_edits("1. Open settings.\n\nSecond, choose the model.", call(client)).changes
+            == ()
+        )
     plan = {"S00": {"bullet_item": 1.0}, "S01": {"bullet_item": 1.0}}
     _, handler = answering(lambda name, _: plan.get(name, {"numbered_item": 1.0}))
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
@@ -81,6 +86,21 @@ def test_numbering_continues_an_existing_list_and_restarts_after_an_empty_line()
         assert text_edits.apply(raw, result.changes) == (
             "- Alpha is first here.\n- Beta comes next.\n\n1. Gamma.\n2. Delta."
         )
+
+
+def test_paragraph_length_is_measured_from_an_existing_break() -> None:
+    first = ("one two three four five " * 4).strip() + "."
+    rest = [
+        ("six seven eight nine ten " * 5).strip() + ".",
+        ("eleven twelve thirteen " * 5).strip() + ".",
+        ("fourteen fifteen sixteen " * 4).strip() + ".",
+    ]
+    raw = first + "\n\n" + " ".join(rest)
+    plan = {"S01": {"new_paragraph": 1.0}, "S02": {"new_paragraph": 1.0}}
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        # S02 would leave only S01's 125 characters before it in its paragraph.
+        assert jev.format_edits(raw, call(client)).changes == ()
 
 
 def test_a_short_last_paragraph_is_measured_within_its_paragraph() -> None:
