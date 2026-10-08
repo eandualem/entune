@@ -149,9 +149,9 @@ contextual dictionary correction.
 
 | Choose | Setup | Tradeoff |
 |---|---|---|
-| **Jev** | Enter a TypeSafe API key | Fewest wrong replacements (1 in 39) and the most useful formatting in our test; matched context is sent to TypeSafe |
-| **OpenAI** | Enter an OpenAI API key (the same key as OpenAI in Dictionary setup) | OpenAI's Decisions API, a public beta at $0.10 per million input tokens. Caught the most correct replacements but made 8 wrong ones in 50, and rarely formats; matched context is sent to OpenAI. A ChatGPT sign-in cannot be used for it |
-| **Perplexity** | Enter a Perplexity API key ([get one](https://console.perplexity.ai/project/keys)) | Perplexity's Decisions API with `pplx-decider-v1.1-27b`, $0.02 per million input tokens, open weights on Hugging Face; matched context is sent to Perplexity; not yet in our comparison |
+| **Jev** | Enter a TypeSafe API key | Fewest wrong replacements (1 in 39) and the most paragraph breaks found in our test; matched context is sent to TypeSafe |
+| **OpenAI** | Enter an OpenAI API key (the same key as OpenAI in Dictionary setup) | OpenAI's Decisions API, a public beta at $0.10 per million input tokens. Caught 42 correct replacements but made 8 wrong ones in 50, and rarely formats; matched context is sent to OpenAI. A ChatGPT sign-in cannot be used for it |
+| **Perplexity** | Enter a Perplexity API key ([get one](https://console.perplexity.ai/project/keys)) | Perplexity's Decisions API with `pplx-decider-v1.1-27b`, $0.02 per million input tokens, open weights on Hugging Face. Caught the most correct replacements (43) with 3 wrong in 47, and made the fewest unwanted paragraph breaks among the models that format; matched context is sent to Perplexity |
 | **Laya** | Install `uv tool install 'laya[serve]'`, then choose Laya | Runs locally and fastest; 8 wrong replacements in 36, fewer correct ones caught, and poor formatting in our test |
 
 Laya's first start downloads about 850 MB of weights. Its engine includes
@@ -164,8 +164,10 @@ invent a missing correct spelling or choose a literal meaning that the dictionar
 has not supplied. Check the entries if a recurring correct word keeps changing.
 
 In our October test, a recording needing a decision had median dictionary-processing
-times of 0.54 seconds with Jev, 0.34 seconds with OpenAI and 0.15 seconds with Laya,
-excluding local model startup; formatting took 0.73, 0.58 and 0.45 seconds. Those observations came from normal machine load, not a controlled
+times of 0.54 seconds with Jev, 0.37 seconds with Perplexity, 0.34 seconds with OpenAI
+and 0.15 seconds with Laya, excluding local model startup; formatting took 0.73, 0.43,
+0.58 and 0.45 seconds. Each cloud model answers a dictation in one request; Laya asks
+about each match separately. Those observations came from normal machine load, not a controlled
 speed benchmark, and are not end-to-end dictation times. Read the
 [complete comparison](decision-model-results.md) before interpreting the counts
 or using them to choose a model.
