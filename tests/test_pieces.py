@@ -11,6 +11,7 @@ import pytest
 from entune.app.pieces import Pieces
 from entune.audio.pauses import Pauses
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
+from entune.providers.local.contracts import LocalModelStatus
 from entune.providers.registry import ModelRef
 from entune.providers.resources import SpeechResources
 
@@ -42,6 +43,15 @@ def test_no_cut_without_a_pause_or_before_the_minimum() -> None:
     assert Pauses(RATE, 20.0).feed(speech(45)) == []  # dips between syllables are no pause
     assert Pauses(RATE, 20.0).feed(speech(5) + silence(0.6) + speech(5)) == []
     assert Pauses(RATE, 20.0).feed(speech(21) + silence(0.6)) == []  # speech never resumed
+
+
+def test_steady_speech_is_not_taken_for_a_pause() -> None:
+    # Speech that varies little from frame to frame would lift a floor taken from it alone.
+    t = np.arange(45 * RATE) / RATE
+    tone = 3000 * np.sin(2 * np.pi * 220 * t) * (1 + 0.3 * np.sin(2 * np.pi * 3 * t))
+    steady = tone.astype(np.int16).tobytes()
+    cuts = Pauses(RATE, 20.0).feed(steady + silence(2) + steady[: 5 * RATE * 2])
+    assert len(cuts) == 1 and 45 * RATE < cuts[0] < 47 * RATE
 
 
 def test_chunks_of_any_size_find_the_same_cut() -> None:
@@ -117,3 +127,34 @@ def test_cancel_or_abort_stops_the_pieces() -> None:
     aborted.abort()
     aborted.feed(speech(21) + silence(0.6) + speech(2))
     assert aborted.finish() is None and provider.seconds == []
+
+
+class LocalCounting(Counting):
+    id = "local"  # Whisper.cpp's pieces: 25 s at least
+
+    def catalogue(self) -> list[LocalModelStatus]:
+        return []
+
+    def download(self, name: str) -> None:
+        pass
+
+    def remove(self, name: str) -> None:
+        pass
+
+    def warm(self, name: str) -> None:
+        pass
+
+    def unload(self, keep: str | None = None) -> None:
+        pass
+
+
+def test_dropped_pieces_waiting_for_the_local_slot_never_reach_the_model() -> None:
+    provider = LocalCounting()
+    resources = SpeechResources([provider], lambda _: None)
+    recording = Pieces(ModelRef(provider, "good"), "", RATE, resources, threading.Event())
+    with resources.use(None):  # the local slot is taken, as while a model loads
+        recording.feed(speech(26) + silence(0.6) + speech(1))
+        time.sleep(0.3)  # the first piece is cut and waits for the slot
+        recording.abort()
+    assert recording.finish() is None
+    assert provider.seconds == []

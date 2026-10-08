@@ -45,7 +45,7 @@ class Pieces:
         self._start = 0  # where it starts in the recording, in samples
         self._texts: list[str] = []
         self._error: str | None = None
-        self._aborted = threading.Event()
+        self._aborted = _Halt(cancel)
         self._worker = threading.Thread(target=self._run, daemon=True, name="entune-pieces")
         self._worker.start()
 
@@ -92,7 +92,10 @@ class Pieces:
             return
         result: TranscribeResult
         try:
-            with self._speech.use(self.ref, cancel=self._cancel):
+            # Waiting for a local model's slot ends when the pieces are dropped, too.
+            with self._speech.use(self.ref, cancel=self._aborted):
+                if self._stopped():
+                    return
                 clip = Clip(wav_bytes(pcm, self._rate), "audio/wav")
                 result = self.ref.provider.transcribe(clip, self.ref.model, self._api_key)
         except CancelledError:
@@ -103,3 +106,14 @@ class Pieces:
             self._error = result.error
         elif result.text.strip():
             self._texts.append(result.text.strip())
+
+
+class _Halt(threading.Event):
+    """Set when the pieces are dropped, and reads as set once the dictation is cancelled."""
+
+    def __init__(self, cancel: threading.Event) -> None:
+        super().__init__()
+        self._cancel = cancel
+
+    def is_set(self) -> bool:
+        return super().is_set() or self._cancel.is_set()

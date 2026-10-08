@@ -15,6 +15,7 @@ import numpy as np
 FRAME_MS = 20
 FLOOR_MS = 10_000
 FLOOR_PERCENTILE = 10
+LOUD_PERCENTILE = 90
 MARGIN_DB = 10.0
 QUIET_DB = -55.0
 PAUSE_MS = 400
@@ -43,9 +44,10 @@ class Pauses:
         cuts = []
         for level in levels:
             self._levels.append(level)
-            floor = np.percentile(np.array(self._levels), FLOOR_PERCENTILE)
+            floor, loud = np.percentile(np.array(self._levels), (FLOOR_PERCENTILE, LOUD_PERCENTILE))
             frame, self._frames = self._frames, self._frames + 1
-            if level < max(floor + MARGIN_DB, QUIET_DB):
+            # Also 10 dB under the loud end, or steady speech would raise the floor to itself.
+            if level < max(min(floor, loud - 2 * MARGIN_DB) + MARGIN_DB, QUIET_DB):
                 if self._quiet_since is None:
                     self._quiet_since = frame
                 continue
