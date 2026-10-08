@@ -138,6 +138,9 @@ def test_quotes_code_nonfillers_and_out_of_scope_runs_are_not_candidates(raw: st
         ("Uh... so it works.", "So it works."),
         ("Done. Um. Um.", "Done."),
         ("Um... uh, go.", "Go."),
+        ("I agree um. Um let us go.", "I agree. Let us go."),
+        ("Uh,\nNext.", "\nNext."),
+        ("Um...", ""),
     ],
 )
 def test_a_filler_sound_goes_with_its_own_comma_and_space(raw: str, expected: str) -> None:

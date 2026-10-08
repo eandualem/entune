@@ -12,18 +12,16 @@ from entune.processing.text_edits import Change, overlaps, protected
 # A small explicit vocabulary, not arbitrary words or spoken edit commands. A run of
 # sounds ("um, uh") is one candidate; like is a filler only when repeated.
 _SOUND = r"(?:um|uh|er|erm|ah|hmm)"
-# Sounds separated only by spaces, commas, stops or dots ("Um. Uh,") are one run.
 _SOUNDS = re.compile(
-    rf"(?<![\w'\u2019\-]){_SOUND}(?:[ \t,.\u2026]+{_SOUND})*(?![\w'\u2019\-])",
+    rf"(?<![\w'\u2019\-]){_SOUND}(?:(?:[ \t,.!?]|\u2026)+{_SOUND})*(?![\w'\u2019\-])",
     re.IGNORECASE,
 )
+_STOP = re.compile(r"(?<!\.)[.!?](?!\.)")  # a sentence stop; dots ("...") are not one
 _RUN = re.compile(
     r"(?<![\w'\u2019\-])(?P<word>like)(?:[ \t,]+(?P=word)(?![\w'\u2019\-]))+",
     re.IGNORECASE,
 )
-_AFTER = re.compile(
-    r"(?:,|\.\.\.|\u2026)?[ \t]*"
-)  # a sound's own comma or trailing dots, and space
+_AFTER = re.compile(r"(?:,|\.\.\.|\u2026)?[ \t]*")  # a sound's own comma or dots, and space
 _SENTENCE_END = ".!?"  # the candidates are English
 MAX_REPEATS = 6
 MAX_SPAN = 80
@@ -42,31 +40,53 @@ class Filler:
 def candidates(text: str) -> list[Filler]:
     excluded = protected(text)
     found: list[Filler] = []
-    runs: list[tuple[re.Match[str], Literal["sound", "repeat"]]] = [
-        *((m, "sound") for m in _SOUNDS.finditer(text)),
-        *((m, "repeat") for m in _RUN.finditer(text)),
+    runs: list[tuple[int, int, Literal["sound", "repeat"]]] = [
+        *((start, end, "sound") for start, end in _sound_runs(text)),
+        *((m.start(), m.end(), "repeat") for m in _RUN.finditer(text)),
     ]
-    for run, kind in sorted(runs, key=lambda item: item[0].start()):
-        count = len(re.findall(r"\w+", run.group()))
-        # Do not touch a longer run or one that spans sentence/line boundaries.
-        if count > MAX_REPEATS or len(run.group()) > MAX_SPAN:
+    for start, end, kind in sorted(runs):
+        run = text[start:end]
+        count = len(re.findall(r"\w+", run))
+        # Do not touch a longer run.
+        if count > MAX_REPEATS or len(run) > MAX_SPAN:
             continue
-        if overlaps(run.start(), run.end(), excluded):
+        if overlaps(start, end, excluded):
             continue
         # Preserve code indentation even without an explicit fence.
-        line = text[text.rfind("\n", 0, run.start()) + 1 : run.start()]
+        line = text[text.rfind("\n", 0, start) + 1 : start]
         if line.startswith(("    ", "\t")):
             continue
         if kind == "repeat":
-            deletion = Change(run.end("word"), run.end(), text[run.end("word") : run.end()], "")
+            first = start + len(run.split()[0].rstrip(","))  # after the first like
+            deletion = Change(first, end, text[first:end], "")
             removed = count - 1
         else:
-            deletion = _sound_deletion(text, run.start(), run.end())
+            deletion = _sound_deletion(text, start, end)
             removed = count
         if found and deletion.start < found[-1].deletion.end:
             continue
-        found.append(Filler(run.start(), run.end(), run.group(), deletion, removed, kind))
+        found.append(Filler(start, end, run, deletion, removed, kind))
     return found
+
+
+def _sound_runs(text: str) -> list[tuple[int, int]]:
+    """Runs of sounds. One crosses a sentence stop only when it starts a sentence itself
+    ("Done. Um. Um."); otherwise it ends before the stop, keeping the sentences apart."""
+    runs = []
+    position = 0
+    while match := _SOUNDS.search(text, position):
+        start, end = match.span()
+        stop = _STOP.search(text, start, end)
+        if stop and not _starts_sentence(text, start):
+            end = start + len(text[start : stop.start()].rstrip(" \t,"))
+        runs.append((start, end))
+        position = end
+    return runs
+
+
+def _starts_sentence(text: str, start: int) -> bool:
+    before = text[:start].rstrip(" \t")
+    return not before or before[-1] in _SENTENCE_END or before[-1] in "\r\n"
 
 
 def _sound_deletion(text: str, start: int, end: int) -> Change:
@@ -74,7 +94,7 @@ def _sound_deletion(text: str, start: int, end: int) -> Change:
     with the comma and space before it instead; a sound that is the whole sentence goes
     with its stop; starting a sentence, the next word takes the capital."""
     before = text[:start].rstrip(" \t")
-    starts_sentence = not before or before[-1] in _SENTENCE_END or before[-1] in "\r\n"
+    starts_sentence = _starts_sentence(text, start)
     stop = _after(text, end)
     following = text[stop : stop + 1]
     if following and following in _SENTENCE_END:
@@ -87,7 +107,7 @@ def _sound_deletion(text: str, start: int, end: int) -> Change:
         return Change(start, stop, text[start:stop], "")
     if not following or following in "\r\n":  # nothing after it on its line
         left = len(text[:start].rstrip(" \t,"))
-        return Change(left, end, text[left:end], "")
+        return Change(left, stop, text[left:stop], "")
     if starts_sentence and following.islower():
         return Change(start, stop + 1, text[start : stop + 1], following.upper())
     return Change(start, stop, text[start:stop], "")

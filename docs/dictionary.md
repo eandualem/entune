@@ -227,7 +227,8 @@ heuristics, not universal language segmentation: abbreviation-final sentences ca
 joined, and punctuation-free prose does not gain inferred sentence boundaries.
 
 Filler candidates are English hesitation sounds, `um`, `uh`, `er`, `erm`, `ah` and
-`hmm`, alone or in a run of up to 6 separated by horizontal whitespace/commas, and runs of
+`hmm`, alone or in a run of up to 6 separated by spaces, commas or dots (across a
+sentence stop only when the run starts the sentence), and runs of
 **2–6 adjacent repetitions** of `like`; a candidate spans no more than 80 characters. Code
 excludes quoted/code spans, indented code and line crossings. A hesitation probability of
 at least **0.9** permits deletion. A sound goes with its own comma and the space after it;
