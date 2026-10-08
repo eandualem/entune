@@ -375,6 +375,8 @@ function revealNewest() {
   const newest = newestCard();
   for (const card of historyList.querySelectorAll(".card")) {
     card.toggleAttribute("data-reveal", on && card === newest && card.dataset.id !== remembered("entune.anonymous.copied"));
+    // A tooltip already up would outlast the blur: clear what was heard as a card hides.
+    if (on && !card.hasAttribute("data-reveal")) for (const word of card.querySelectorAll(".transcript .fixed")) word.title = "";
   }
 }
 // The newest dictation blurs once it has been copied, by any copy action, also one made

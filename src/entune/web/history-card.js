@@ -80,6 +80,7 @@ function player(id, seconds, label) {
         if (audio.readyState < 1) {
           audio.preload = "metadata";
           await new Promise((resolve) => { audio.addEventListener("loadedmetadata", resolve, { once: true }); audio.load(); });
+          if (audio.dataset.gone) return; // the card left the page meanwhile
         }
         audio.currentTime = fraction * audio.duration;
         await audio.play();
@@ -376,7 +377,8 @@ export function renderCard(r, models, { isLocal = () => false, currentModels = (
 
 // A card leaving the page stops playing and stops waiting to draw its waveform.
 export function dispose(card) {
-  card.querySelector("audio")?.pause();
+  const audio = card.querySelector("audio");
+  if (audio) { audio.dataset.gone = "true"; audio.pause(); }
   const wave = card.querySelector(".wave");
   if (wave) seen.unobserve(wave);
 }
