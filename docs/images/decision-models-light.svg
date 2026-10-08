@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 462" width="880" height="462" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
 <title id="t">Which decision model knows when to fix a misheard word?</title>
-<desc id="d">Of 72 dictionary matches that should stay and 47 that should change: Perplexity: 3 wrong swaps, 43 fixes caught; Jev: 1 wrong swaps, 38 fixes caught; OpenAI: 8 wrong swaps, 42 fixes caught; Laya: 8 wrong swaps, 28 fixes caught; No decision model: 72 wrong swaps, 47 fixes caught.</desc>
+<desc id="d">Of 72 dictionary matches that should stay and 47 that should change: Perplexity: 3 wrong swaps, 43 fixes caught; Jev: 1 wrong swaps, 38 fixes caught; OpenAI: 8 wrong swaps, 42 fixes caught; Laya: 8 wrong swaps, 28 fixes caught; Replace every match: 72 wrong swaps, 47 fixes caught.</desc>
 <line x1="600.2" x2="600.2" y1="140" y2="386" stroke="#0b0b0b" stroke-width="1.5"/>
 <text x="0" y="34" font-size="24" font-weight="700" fill="#0b0b0b">Which decision model knows when to fix a misheard word?</text>
 <text x="0" y="62" font-size="15" fill="#52514e">The dictionary offered another word at 121 places: 47 should change, 72 should stay as spoken.</text>
@@ -33,8 +33,8 @@
 <text x="552.4" y="308.0" font-size="15" font-weight="700" text-anchor="end" fill="#0b0b0b">8</text>
 <text x="747.5" y="308.0" font-size="15" font-weight="700" fill="#0b0b0b">28</text>
 <line x1="0" x2="880" y1="338" y2="338" stroke="#d9d8d3" stroke-width="1.5" stroke-dasharray="5 5"/>
-<text x="0" y="366" font-size="16" font-weight="700" fill="#52514e">No decision model</text>
-<text x="0" y="383" font-size="12.5" fill="#6f6e69">replace every match</text>
+<text x="0" y="366" font-size="16" font-weight="700" fill="#52514e">Replace every match</text>
+<text x="0" y="383" font-size="12.5" fill="#6f6e69">baseline for comparison</text>
 <rect x="242.0" y="353.0" width="357.2" height="22" rx="3" fill="#eb6834"/>
 <rect x="601.2" y="353.0" width="232.8" height="22" rx="3" fill="#2a78d6"/>
 <text x="234.0" y="370.0" font-size="15" font-weight="700" text-anchor="end" fill="#0b0b0b">72</text>
