@@ -153,13 +153,20 @@ def processing_summary(store: Store, model: str | None = None) -> ProcessingSumm
             removed_words=sum(s.removed_words for s in group),
         )
     totals = [
-        sum(s.seconds for s in (a.correction, a.cleanup, a.formatting) if s is not None)
+        _added([s for s in (a.correction, a.cleanup, a.formatting) if s is not None])
         for a in attempts
         if a.correction is not None and a.correction.status != "pending"
     ]
     return ProcessingSummary(
         len(attempts), summaries, statistics.median(totals) if totals else None
     )
+
+
+def _added(stages: list[Stage]) -> float:
+    """The time the steps added: the longest when they ran at once; the sum for older
+    dictations, whose steps ran one after another."""
+    seconds = [s.seconds for s in stages]
+    return max(seconds, default=0.0) if any(s.together for s in stages) else sum(seconds)
 
 
 def _dictionary_ran(attempt: Transcription) -> bool:

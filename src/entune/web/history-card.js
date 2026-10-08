@@ -52,7 +52,7 @@ const DECISION_MODELS = { jev: "Jev", laya: "Laya", openai: "OpenAI", perplexity
 const took = (stage) => [DECISION_MODELS[stage.model] ?? "", stage.attempts > 1 ? `after ${plural(stage.attempts - 1, "retry", "retries")}` : "", stage.seconds ? `${stage.seconds.toFixed(1)} s` : ""].filter(Boolean).join(" · ");
 function describe(name, stage) {
   if (stage.status === "failed") {
-    return `${name} failed${name === "Dictionary" ? "; the original transcription was kept" : "; the text before this step was kept"}: ${stage.error}`;
+    return `${name} failed; its changes are not in the text: ${stage.error}`;
   }
   if (stage.status === "skipped") return stage.error ? `${name} skipped: ${stage.error}` : name === "Dictionary" ? "Dictionary: no known confusions in this dictation" : `${name}: nothing to change`;
   if (stage.status === "pending") return `${name}: not finished`;
@@ -62,7 +62,7 @@ function describe(name, stage) {
     if (stage.abstained) parts.push(`${plural(stage.abstained, "word")} left as heard (unclear meaning)`);
     return parts.join(" · ");
   }
-  if (name === "Filler reduction") return stage.removed_words ? `Removed ${plural(stage.removed_words, "filler word")}` : "No filler words removed";
+  if (name === "Filler removal") return stage.removed_words ? `Removed ${plural(stage.removed_words, "filler word")}` : "No filler words removed";
   return changes === null ? "Formatting applied (changes not recorded)" : changes ? `Formatting: ${plural(changes, "change")}` : "Formatting: no changes";
 }
 // Processing details open in one popover beside their button, so the list never reflows.
@@ -119,7 +119,7 @@ document.addEventListener("scroll", placeDetails, true); // the views scroll ins
 // Line breaks and edge spaces are drawn, so paragraph and list edits can be seen.
 const visible = (text) => text === "" ? "(nothing)" : text.replace(/\n/g, "↵").replace(/^ +| +$/g, (spaces) => "␣".repeat(spaces.length));
 function processing(t) {
-  const stages = [["Dictionary", t.correction], ["Filler reduction", t.cleanup], ["Formatting", t.formatting]].filter(([, stage]) => stage && stage.status !== "disabled");
+  const stages = [["Dictionary", t.correction], ["Filler removal", t.cleanup], ["Formatting", t.formatting]].filter(([, stage]) => stage && stage.status !== "disabled");
   const failed = stages.filter(([, stage]) => stage.status === "failed");
   const changed = stages.reduce((sum, [, stage]) => sum + (stage.status === "succeeded" ? stage.changes?.length ?? 0 : 0), 0);
   const panel = document.createElement("div");
@@ -144,7 +144,7 @@ function processing(t) {
   }
   const alerts = [];
   if (t.status === "ok" && t.error) alerts.push(t.error);
-  for (const [name] of failed) alerts.push(`${name} failed. ${name === "Dictionary" ? "The original transcription was kept." : "The text before this step was kept."}`);
+  for (const [name] of failed) alerts.push(`${name} failed, so its changes are not in the text.`);
   const alert = alerts.length ? Object.assign(document.createElement("div"), { className: "processing-alert", textContent: alerts.join(" ") }) : null;
   alert?.setAttribute("role", "status");
   if (!stages.length) return { alert, toggle: null };
@@ -155,7 +155,7 @@ function processing(t) {
   const summary = failed.length ? "Needs attention" : changed ? plural(changed, "change") : "";
   toggle.innerHTML = ICON.details;
   if (summary) toggle.append(summary);
-  toggle.title = `Processing details${summary ? "" : ": no changes"} (dictionary, filler reduction, formatting)`;
+  toggle.title = `Processing details${summary ? "" : ": no changes"} (dictionary, filler removal, formatting)`;
   toggle.setAttribute("aria-label", toggle.title);
   toggle.setAttribute("aria-haspopup", "dialog");
   toggle.setAttribute("aria-expanded", "false");

@@ -79,7 +79,6 @@ class Entune:
             self.dictionary,
             self.jev,
             self.decisions,
-            lambda message: self.desktop.report_status(lastError=message),
         )
         self.capture = ShortcutCapture()
         self.data = LocalData(

@@ -222,16 +222,17 @@ def test_preconnect_opens_the_connection_without_the_key() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         sent.append(request)
-        done.set()
+        if len(sent) == 3:
+            done.set()
         return httpx.Response(405)
 
     client = jev_client.Client(httpx.MockTransport(handler))
-    client.preconnect()
+    client.preconnect(jev_client.URL, 3)  # one for each stage that asks at once
     assert done.wait(2)
-    assert sent[0].method == "HEAD" and "authorization" not in sent[0].headers
+    assert all(r.method == "HEAD" and "authorization" not in r.headers for r in sent)
     client.close()
-    client.preconnect()  # after shutdown: nothing starts
-    assert len(sent) == 1
+    client.preconnect(jev_client.URL)  # after shutdown: nothing starts
+    assert len(sent) == 3
 
 
 def test_shutdown_cancels_inflight_work_and_rejects_new_requests() -> None:
@@ -289,15 +290,20 @@ def test_formatting_inserts_breaks_and_bullets_and_keeps_every_word() -> None:
         assert context.attempts == 0
 
 
-def test_correction_failure_returns_exact_raw_and_skips_later_stages() -> None:
+def test_correction_failure_keeps_its_words_and_the_other_stages_still_apply() -> None:
     raw = "  Um um Jeff is fast.\nAnother sentence.  "
     seen = []
 
-    def malformed(request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx.Request) -> httpx.Response:
+        state = json.loads(request.content)["state"]
+        if "fillers" in state:
+            return answering(lambda *_: {"hesitation": 1.0})[1](request)
+        if "sentences" in state:
+            return answering(lambda *_: {"continues": 1.0})[1](request)
         seen.append(request)
         return httpx.Response(200, json={"answers": {"o0": {}}})
 
-    with closing(jev_client.Client(httpx.MockTransport(malformed))) as client:
+    with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
             raw,
             GROUPS,
@@ -308,9 +314,9 @@ def test_correction_failure_returns_exact_raw_and_skips_later_stages() -> None:
             client=client,
             policy=jev_client.Policy(),
         )
-        assert result.text == raw
-        assert result.correction.status == "failed" and result.formatting.status == "skipped"
-        assert result.cleanup.status == "skipped" and not result.cleanup.changes
+        assert result.text == "  Jeff is fast.\nAnother sentence.  "
+        assert result.correction.status == "failed" and result.cleanup.status == "succeeded"
+        assert result.formatting.status == "succeeded" and not result.formatting.changes
         assert result.correction.attempts == 1 and result.correction.decisions == 0
         assert result.correction.replacements == 0 and len(seen) == 1
         missing = process_text(
@@ -324,6 +330,7 @@ def test_correction_failure_returns_exact_raw_and_skips_later_stages() -> None:
         )
         assert missing.text == raw and missing.correction.attempts == 0
         assert missing.correction.error == "no TypeSafe API key" and len(seen) == 1
+        assert missing.formatting.error == "no TypeSafe API key"
 
 
 def test_formatter_failure_preserves_successful_correction() -> None:
@@ -442,7 +449,7 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
         assert attempt.correction.status == "failed" and attempt.raw_text == attempt.text
 
 
-def test_all_three_stages_share_one_deadline() -> None:
+def test_all_three_stages_run_at_once_within_one_deadline() -> None:
     async def respond(request: httpx.Request) -> httpx.Response:
         state = json.loads(request.content)["state"]
         if "sentences" in state:
@@ -450,10 +457,9 @@ def test_all_three_stages_share_one_deadline() -> None:
             return answering(lambda *_: {"continues": 0.0, "new_paragraph": 1.0, "list_item": 0.0})[
                 1
             ](request)
+        await asyncio.sleep(0.15)
         if "fillers" in state:
-            await asyncio.sleep(0.04)
             return answering(lambda *_: {"hesitation": 1.0})[1](request)
-        await asyncio.sleep(0.08)
         return answering(lambda *_: {"i0": 1.0})[1](request)
 
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
@@ -466,16 +472,16 @@ def test_all_three_stages_share_one_deadline() -> None:
             cleanup=True,
             key="ts-key",
             client=client,
-            policy=jev_client.Policy(total_seconds=0.2, attempt_seconds=1.0),
+            policy=jev_client.Policy(total_seconds=0.25, attempt_seconds=1.0),
         )
         assert time.monotonic() - started < 0.6
-    assert result.text == "Um Jev is fast. Next topic."
+    assert result.text == "Jev is fast. Next topic."
     assert result.correction.status == "succeeded" and result.formatting.status == "failed"
-    assert result.cleanup.status == "succeeded" and result.cleanup.removed_words == 1
+    assert result.cleanup.status == "succeeded" and result.cleanup.removed_words == 2
     assert result.correction.attempts == result.cleanup.attempts == result.formatting.attempts == 1
-    assert (
-        0.15 <= sum(s.seconds for s in (result.correction, result.cleanup, result.formatting)) < 0.6
-    )
+    # Both 0.15 s stages succeeded within the 0.25 s budget: one after another, the
+    # second would have run out of time.
+    assert result.formatting.seconds < 0.6
 
 
 def test_network_timeout_retries_but_honors_retry_after_dates() -> None:

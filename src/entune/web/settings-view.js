@@ -311,7 +311,7 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     const seconds = (value) => (value === null || value === undefined ? "–" : `+${value.toFixed(1)} s`);
     el("activity-total").textContent = s.transcriptions
       ? `${s.transcriptions} processed dictation${s.transcriptions === 1 ? "" : "s"} · median ${seconds(s.median_seconds)} added per dictation.` : "";
-    const steps = [["contextual", "Dictionary, read in context"], ["deterministic", "Dictionary, always-apply entries"], ["cleanup", "Repeated fillers"], ["formatting", "Paragraphs and bullets"]];
+    const steps = [["contextual", "Dictionary, read in context"], ["deterministic", "Dictionary, always-apply entries"], ["cleanup", "Fillers"], ["formatting", "Paragraphs and bullets"]];
     const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
     const rows = [];
     const details = [];

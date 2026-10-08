@@ -222,6 +222,24 @@ def test_the_summary_counts_only_the_chosen_decision_models_work(tmp_path: Path)
     assert processing_summary(store).stages["cleanup"].removed_words == 3
 
 
+@pytest.mark.parametrize(("together", "added"), [(False, 1.0), (True, 0.6)])
+def test_steps_that_ran_at_once_add_only_the_longest(
+    tmp_path: Path, together: bool, added: float
+) -> None:
+    from entune.app.metrics import processing_summary
+    from entune.processing.results import Processed, Stage
+
+    store = Store(tmp_path)
+    recording = store.create_recording(WEBM_HEADER, None)
+    processed = Processed(
+        "text",
+        Stage("succeeded", "contextual", seconds=0.4, together=together),
+        Stage("succeeded", "formatting", seconds=0.6, together=together),
+    )
+    store.add_transcription(recording.id, "stub", "good", "ok", "text", None, processing=processed)
+    assert processing_summary(store).median_seconds == pytest.approx(added)
+
+
 def test_meaning_questions_go_to_the_chosen_endpoint(
     tmp_path: Path, fake_engine: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

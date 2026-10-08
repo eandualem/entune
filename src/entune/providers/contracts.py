@@ -27,9 +27,6 @@ TranscribeResult = Transcript | Failure
 class Clip:
     data: bytes
     mime: str
-    upload_url: str | None = None
-    """Where this same audio already is at the provider, when fast mode streamed it
-    during the recording (an `Upload.finish` result); only that provider can use it."""
 
     @property
     def filename(self) -> str:

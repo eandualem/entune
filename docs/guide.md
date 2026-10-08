@@ -172,8 +172,8 @@ Escape can cancel foreground work. Custom shortcuts remain configurable; a modif
 combination is not universally conflict-free across all applications.
 
 The pill in the bottom-left corner shows what is happening: level bars that move with
-your voice while recording, then the actual stage (saving, transcribing, contextual
-correction, filler reduction, formatting, delivery). Disabled stages are skipped. One
+your voice while recording, then the actual stage (saving, transcribing,
+formatting while the processing steps run, delivery). One
 dictation owns the app until delivery completes; a new one must wait. Learning owns the
 same guard through proposal review. The final text is pasted into the **current
 editable input**, including in a different app from where recording began. The paste
@@ -200,15 +200,19 @@ ends that recording.
 The speech model is sampled when transcription starts, so changing it while speaking
 changes the engine for that recording. Changes after transcription starts apply to
 later attempts. Enhancement switches are sampled after speech succeeds. In fast mode,
-audio already uploaded while recording went to the provider selected at recording
-start. Switching providers does not retract that upload; when transcription starts,
-the old upload is aborted and the saved clip goes to the then-selected provider.
+the parts transcribed while recording used the model selected at recording start;
+if another model is selected when transcription starts, those parts are dropped and
+the saved clip goes to that model whole.
 
-**Fast mode** (Settings, off by default) uploads the audio while you record,
-so a dictation over two minutes is transcribed as soon as you stop instead of
-after the whole file has gone up. AssemblyAI only, since only its long-form
-endpoint takes an upload; shorter clips use the sync endpoint as before and
-are unchanged.
+**Fast mode** (the lightning switch at the top of the window, off by default) cuts
+a dictation at natural pauses while you speak, and your speech model, cloud or local,
+transcribes each finished part in the background, the same way it transcribes a whole
+clip. When you stop, only the last part is left; the parts' text is joined and
+processed once. A part ends in the middle of a pause of at least 0.4 s, and only once
+it is long enough for the model: 30 s for Parakeet, 25 s for Whisper.cpp, 20 s for a
+cloud model. A shorter dictation is transcribed whole, as without fast mode, and so is
+any dictation in which a part fails. Fast mode applies to dictations made with the
+shortcut.
 
 **Performance.** Every transcription records how long the clip was, how long
 the provider took, and whether fast mode was used. The chart button next
@@ -217,9 +221,14 @@ wait for one minute of audio, from successful runs whose length and wait were bo
 measured (it covers the speech step, not later processing). **Corrections** counts
 dictionary replacements per 100 words in dictations where the dictionary step ran; it
 reflects the confusions the dictionary knows, not overall accuracy. **Used** combines the
-number of runs, failures and total audio. Measured on 2026-09-18 with a 172-second dictation over
-AssemblyAI Universal-3.5 Pro: 7.0 s with fast mode, 14.8 s without, of which
-the upload alone was 6 to 7 s. Your own table is the one to trust.
+number of runs, failures and total audio. Simulated on dictations from October 2026,
+cut where fast mode would cut them: the median wait after stopping fell from 3.7 s to
+1.1 s with AssemblyAI Universal-3.5 Pro (59 dictations of 30 s to 4 min) and from
+1.0 s to 0.4 s with Parakeet (146 dictations of 30 s to 23 min). The text is not
+identical: with AssemblyAI about 1.3 % of words differed from its whole-clip
+transcript, some better and some worse; with Parakeet, the joined text was closer to a
+reference transcript than the whole-clip one (4.2 % against 6.8 % of words
+differing). Your own table is the one to trust.
 
 When `fn` is one of your shortcuts, Entune owns that key while it runs: a
 tap no longer opens Emoji & Symbols or Apple's dictation, and fn does not
@@ -393,7 +402,7 @@ Default history learning uses up to 300 recent, unprocessed attempts for the sel
 speech model; “All history” deliberately includes older/previously examined data.
 Each raw transcript is paired with the dictionary step's recorded result and
 decisions, which show what the system did, not confirmed intended wording. Filler
-reduction, formatting and the delivered text are never sent. Older attempts without a
+removal, formatting and the delivered text are never sent. Older attempts without a
 recorded result, and freshly transcribed audio, are sent as raw text only. Applying at least one actual change marks only fully
 covered input IDs learned for that model. Applying none leaves them eligible. A
 partially processed transcript remains eligible. New dictations after selection and
@@ -428,27 +437,28 @@ model's declared choice. Invalid responses fail the stage; scores are never inve
 pooled by output spelling.
 
 Only explicitly approved, unambiguous direct mappings bypass classification. Pinning or
-having a single recorded candidate is not enough. Turning contextual correction off
-leaves only explicitly approved direct mappings; other matches are left unchanged. The previous binary classifier's cached accuracy and timings
+having a single recorded candidate is not enough. With **Apply your dictionary** off,
+the dictionary step does not run at all: nothing is replaced, direct mappings included,
+and it adds no time. The previous binary classifier's cached accuracy and timings
 are documented separately; they do not establish the new classifier's quality or latency.
 History and Settings report work performed, including direct changes and abstentions,
 rather than an accuracy score. Optional formatting inserts paragraph breaks and bullets,
 including the first list item, while retaining existing structure and words. Lines without
 sentence punctuation stay whole; a single unpunctuated note needs no formatting request.
 
-**Reduce repeated fillers** is a separate opt-in. Code proposes adjacent repeats of
-English `um`, `uh`, `erm` or `like`; the decision model classifies hesitation versus
-meaningful speech.
-Only confidently classified hesitation runs are reduced to one occurrence. Quoted/code
+**Remove fillers** is a separate opt-in. Code proposes English hesitation sounds (`um`,
+`uh`, `er`, `erm`, `ah`, `hmm`) and adjacent repeats of `like`; the decision model
+classifies hesitation versus meaningful speech. Only confidently classified hesitation is
+removed, and a repeat of `like` keeps one occurrence. Quoted/code
 spans are excluded, and uncertain answers preserve the words. History shows the exact
-deletions and timing separately from dictionary replacements. This initial policy has
-offline/mocked coverage; its live classification quality has not been evaluated.
+deletions and timing separately from dictionary replacements. On 162 October transcripts,
+Jev removed 468 of 470 proposed sounds and left 2 undecided; recognising a meaningful use
+is not yet measured (see [Formatting and fillers](dictionary.md#formatting-and-fillers)).
 
-Successful speech and its original text are saved before correction. If
-contextual correction fails, Entune delivers the untouched original and
-shows a noninterrupting notice, skipping cleanup and formatting. Those later stages run
-in that order; final failure stops all remaining stages, retains the last completed
-text and explains which stage failed and which later stages were skipped. Every completed
+Successful speech and its original text are saved before processing. The enabled
+stages run at the same time on the original text, and their edits are applied together.
+A stage that fails contributes no edits; the others still apply theirs, and a
+noninterrupting notice names the stage that failed. Every completed
 stage output and occurrence-selection provenance is saved internally. History shows
 only the final result for each attempt; canceled attempts show an audio-saved notice.
 Settings › Corrections & formatting › Advanced controls the processing wait: initially five seconds
@@ -529,8 +539,8 @@ files. `--data` overrides `ENTUNE_DATA`; otherwise the directory is
 
 Enabled features determine what is sent out:
 
-- **Cloud speech:** the selected provider receives the audio clip; AssemblyAI fast
-  mode starts uploading during recording. Local Whisper.cpp and Parakeet transcribe
+- **Cloud speech:** the selected provider receives the audio clip; in fast mode,
+  parts of it go while you are still speaking. Local Whisper.cpp and Parakeet transcribe
   on this machine, without sending audio to a speech service.
 - **Dictionary builds:** the chosen dictionary model's provider receives raw source
   transcripts, beside the dictionary step's recorded result, and the pinned and working
@@ -541,9 +551,9 @@ Enabled features determine what is sent out:
   transcripts and dictionary, also goes to the Langfuse host you set.
 - **Decision model:** for contextual correction it receives up to 160 characters of the
   original transcript either side of each matched occurrence, and each eligible
-  meaning's spelling, definition and personal context. Filler reduction sends its input
-  text and code-proposed deletion spans; formatting sends the text being formatted and
-  its sentence spans. With Jev, all of this goes to TypeSafe, even when speech
+  meaning's spelling, definition and personal context. Filler removal sends the transcript
+  and code-proposed deletion spans; formatting sends the transcript and its sentence
+  spans. With Jev, all of this goes to TypeSafe, even when speech
   recognition is local. With OpenAI, it goes to OpenAI, and with Perplexity, to Perplexity. With Laya, it stays on your
   computer.
 - **Optional model downloads:** Hugging Face serves local model weights, Laya's

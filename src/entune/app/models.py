@@ -6,7 +6,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from entune.app.settings import DEFAULT_MODEL_KEY, Settings, mask_key
-from entune.providers.cloud.contracts import Streams
 from entune.providers.contracts import Provider
 from entune.providers.local.contracts import Downloadable, LocalModelStatus
 from entune.providers.registry import ModelRef, resolve_model
@@ -26,7 +25,6 @@ class ProviderStatus:
     id: str
     name: str
     key_hint: str | None
-    streams: bool = False  # can take the audio while it is recorded (fast mode)
     local: bool = False  # models are downloaded here instead of a key entered
 
 
@@ -56,7 +54,6 @@ class SpeechModels:
                 provider.id,
                 provider.name,
                 None if (key := self._settings.key(provider.id)) is None else mask_key(key),
-                streams=isinstance(provider, Streams),
                 local=isinstance(provider, Downloadable),
             )
             for provider in self._providers

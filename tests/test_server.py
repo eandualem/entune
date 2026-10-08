@@ -58,7 +58,7 @@ def client(tmp_path: Path, stub: StubProvider) -> TestClient:
 def test_settings_expose_only_a_masked_hint(client: TestClient) -> None:
     settings = client.get("/api/settings").json()
     assert settings["providers"] == [
-        {"id": "stub", "name": "Stub", "keyHint": None, "streams": False, "local": False}
+        {"id": "stub", "name": "Stub", "keyHint": None, "local": False}
     ]
     assert settings["defaultModel"] is None
     assert settings["shortcuts"] == {"hold": None, "toggle": None, "cancel": DEFAULT_CANCEL}
@@ -905,8 +905,6 @@ def test_metrics_are_computed_from_timed_attempts(client: TestClient) -> None:
     )
     assert row["audio_seconds"] == 8.0 and row["provider_name"] == "Stub"
     assert "median_wait" not in row and "speed" not in row
-    providers = client.get("/api/settings").json()["providers"]
-    assert [p["streams"] for p in providers] == [False]
 
 
 def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: StubProvider) -> None:

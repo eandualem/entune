@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import contextlib
 import json
 import math
 import threading
@@ -145,14 +144,17 @@ class Client:
                 raise
             raise JevError("correction is shutting down") from exc
 
-    def preconnect(self) -> None:
-        """Open the connection the next question will use while the user is still
-        speaking. A HEAD request without the key; its answer is ignored, and so is a
-        failure, which the question will meet within its own deadline and retries."""
+    def preconnect(self, url: str, connections: int = 1) -> None:
+        """Open the connections the next questions to `url` will use while the user is
+        still speaking, one for each stage that will ask at once. HEAD requests without the
+        key; their answers are ignored, and so is a failure, which a question will meet
+        within its own deadline and retries."""
         with self._lock:
             if self._closed:
                 return
-            asyncio.run_coroutine_threadsafe(self._preconnect(), self._running_loop())
+            asyncio.run_coroutine_threadsafe(
+                self._preconnect(url, connections), self._running_loop()
+            )
 
     def _running_loop(self) -> asyncio.AbstractEventLoop:
         """The client's event loop, started on first use; the caller holds the lock."""
@@ -167,7 +169,8 @@ class Client:
     def _pool(self) -> httpx.AsyncClient:
         """The HTTP pool, made on the client's loop the first time it is needed."""
         if self._http is None:
-            limits = httpx.Limits(max_keepalive_connections=1, keepalive_expiry=60.0)
+            # One idle connection for each processing stage, since they ask at once.
+            limits = httpx.Limits(max_keepalive_connections=3, keepalive_expiry=60.0)
             self._http = httpx.AsyncClient(
                 transport=self._transport,
                 limits=limits,
@@ -179,9 +182,11 @@ class Client:
             )
         return self._http
 
-    async def _preconnect(self) -> None:
-        with contextlib.suppress(httpx.HTTPError):
-            await self._pool().head(URL, timeout=5.0)
+    async def _preconnect(self, url: str, connections: int) -> None:
+        pool = self._pool()
+        await asyncio.gather(
+            *(pool.head(url, timeout=5.0) for _ in range(connections)), return_exceptions=True
+        )
 
     async def _ask(
         self, call: Call, state: object, questions: dict[str, Any]

@@ -21,11 +21,11 @@ from functools import partial
 from entune.app.entune import Entune
 from entune.app.models import NoDefaultModel, UnknownModel
 from entune.app.operations import Busy, Operation
+from entune.app.pieces import Pieces
 from entune.audio.recorder import Capture, Recorder, Sink
 from entune.desktop.engine import ShortcutEngine
 from entune.desktop.platform import Microphone, Platform
 from entune.processing.results import notice
-from entune.providers.cloud.contracts import Upload
 from entune.storage.records import Recording
 
 MIN_CLIP_SECONDS = 0.25  # a tap on the hold key is not a dictation
@@ -56,7 +56,7 @@ class EntuneApp:
         self.engine: ShortcutEngine | None = None
         self._listening = False
         self._requested_permissions: set[str] = set()
-        self._upload: Upload | None = None  # fast mode's stream for the current recording
+        self._pieces: Pieces | None = None  # fast mode's pieces of the current recording
         self._recording = False
         self._quiet_notified = False
         self._restart_pending = False  # a hung microphone: relaunch once idle
@@ -68,8 +68,8 @@ class EntuneApp:
         self._operation: Operation | None = None
         self._deliveries = 0  # numbers each delivery; only the latest restores the clipboard
         self._earlier: dict[int, set[int]] = {}  # id(operation): a retry's earlier attempts
-        self._captures: queue.Queue[tuple[Capture, Upload | None, Operation]] = queue.Queue()
-        self._jobs: queue.Queue[tuple[Recording, float, Upload | None, Operation]] = queue.Queue()
+        self._captures: queue.Queue[tuple[Capture, Pieces | None, Operation]] = queue.Queue()
+        self._jobs: queue.Queue[tuple[Recording, float, Pieces | None, Operation]] = queue.Queue()
         threading.Thread(target=self._persist, daemon=True, name="entune-persist").start()
         threading.Thread(target=self._work, daemon=True, name="entune-transcribe").start()
         self._key_actions: queue.Queue[Callable[[], None]] = queue.Queue()
@@ -336,17 +336,17 @@ class EntuneApp:
                 self._tell_later(still, str(exc))
                 return
             self._operation = operation
-            self._upload = None
+            self._pieces = None
             try:
-                self.recorder.start(self._begin_upload)
+                self.recorder.start(lambda rate: self._begin_pieces(rate, operation))
             except Exception as exc:
                 message = f"{type(exc).__name__}: {exc}"
                 self.entune.desktop.report_status(lastError=message)
                 self._tell_later("Microphone unavailable", message, error=True)
                 failed()
-                if self._upload is not None:
-                    self._upload.abort()
-                    self._upload = None
+                if self._pieces is not None:
+                    self._pieces.abort()
+                    self._pieces = None
                 self._finish(operation)
                 return
             self.entune.desktop.report_status(lastRecordingStarted=time.time(), lastError=None)
@@ -358,9 +358,9 @@ class EntuneApp:
             self._later(self._refresh_state)
             self.platform.call_later(WATCH_SECONDS, lambda: self._watch(operation))
 
-    def _begin_upload(self, sample_rate: int) -> Sink | None:
-        self._upload = self.entune.dictation.begin_upload(sample_rate)
-        return self._upload.feed if self._upload is not None else None
+    def _begin_pieces(self, sample_rate: int, operation: Operation) -> Sink | None:
+        self._pieces = self.entune.dictation.begin_pieces(sample_rate, operation.cancel)
+        return self._pieces.feed if self._pieces is not None else None
 
     def stop_recording(self) -> None:
         with self._close_lock:
@@ -368,17 +368,17 @@ class EntuneApp:
             if not self._recording or operation is None:
                 return
             capture = self.recorder.stop()
-            upload, self._upload = self._upload, None
+            pieces, self._pieces = self._pieces, None
             self._recording = False
             if self.recorder.stuck and not self._restart_pending:
                 self._restart_pending = True  # however short the clip, the next one needs it
                 self.platform.call_later(RESTART_CHECK_SECONDS, self._restart_when_idle)
-            if operation.cancel.is_set() and upload is not None:
-                upload.abort()
-                upload = None
+            if operation.cancel.is_set() and pieces is not None:
+                pieces.abort()
+                pieces = None
             if capture.seconds < MIN_CLIP_SECONDS:
-                if upload is not None:
-                    upload.abort()
+                if pieces is not None:
+                    pieces.abort()
                 self._tell_later(
                     "Canceled" if operation.cancel.is_set() else "Nothing recorded",
                     "No usable audio was captured.",
@@ -389,7 +389,7 @@ class EntuneApp:
                 # Cancelled a moment ago: the clip is still saved, then not transcribed.
                 with contextlib.suppress(CancelledError):
                     self.entune.operations.stage(operation, "saving")
-            self._captures.put((capture, upload, operation))
+            self._captures.put((capture, pieces, operation))
 
     def _restart_when_idle(self) -> None:
         """The microphone hung while closing (a Core Audio deadlock inside PortAudio), so
@@ -465,22 +465,22 @@ class EntuneApp:
 
     def _persist(self) -> None:
         while True:
-            capture, upload, operation = self._captures.get()
+            capture, pieces, operation = self._captures.get()
             try:
                 recording = self.entune.dictation.store_recording(capture.wav(), "audio/wav")
             except Exception as exc:
                 self._capture_error = f"{type(exc).__name__}: {exc}"
                 logging.getLogger(__name__).exception("Could not save captured audio")
                 self._tell_later("Could not save the recording", self._capture_error, error=True)
-                if upload is not None:
-                    upload.abort()
+                if pieces is not None:
+                    pieces.abort()
                 self._finish(operation)
                 continue
             finally:
                 self._captures.task_done()
                 seconds = capture.seconds
                 del capture
-            self._jobs.put((recording, seconds, upload, operation))
+            self._jobs.put((recording, seconds, pieces, operation))
 
     def _tell_later(
         self,
@@ -523,11 +523,11 @@ class EntuneApp:
 
     def _work(self) -> None:
         while True:
-            recording, seconds, upload, operation = self._jobs.get()
+            recording, seconds, pieces, operation = self._jobs.get()
             try:
                 if self._quitting:
                     operation.cancel.set()
-                self._transcribe_and_deliver(recording, seconds, upload, operation)
+                self._transcribe_and_deliver(recording, seconds, pieces, operation)
             except Exception as exc:
                 # The only transcription thread outlives one clip's failure (a store error
                 # while cancelling, say), and that clip's operation ends, so the next
@@ -589,14 +589,14 @@ class EntuneApp:
         self,
         recording: Recording,
         seconds: float,
-        upload: Upload | None,
+        pieces: Pieces | None,
         operation: Operation,
     ) -> None:
         try:
             operation.check()
             started = time.monotonic()
             recording = self.entune.dictation.transcribe_recording(
-                recording, None, upload, operation=operation
+                recording, None, pieces, operation=operation
             )
             operation.check()
             attempt = recording.transcriptions[0]
@@ -636,8 +636,8 @@ class EntuneApp:
                 retry=lambda: self.retry(recording, seconds),
             )
         finally:
-            if upload is not None and operation.cancel.is_set():
-                upload.abort()
+            if pieces is not None and operation.cancel.is_set():
+                pieces.abort()
         self._finish(operation)
 
     def _deliver(

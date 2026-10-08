@@ -238,7 +238,12 @@ def cleanup_edits(text: str, call: Call) -> TextResult:
     names = [f"F{i:02d}" for i in range(len(candidates))]
     answers = call.ask(
         {"transcript": text, "fillers": dict(zip(names, map(asdict, candidates), strict=True))},
-        {name: prompts.render_json("jev-cleanup.json", filler=name) for name in names},
+        {
+            name: prompts.render_json(
+                "jev-filler.json" if candidate.kind == "sound" else "jev-cleanup.json", filler=name
+            )
+            for name, candidate in zip(names, candidates, strict=True)
+        },
     )
     changes = []
     preserved = abstained = removed = 0

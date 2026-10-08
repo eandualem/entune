@@ -105,8 +105,10 @@ dictionary uses confusion groups with stable meanings and explicit
 recognized-form associations. The decision model selects eligible meanings in
 context; pinned knowledge is shared and protected without semantic priority. A
 second switch places paragraph breaks and bullets. Since issue #117, another
-opt-in reduces code-proposed repeated English fillers to one occurrence after
-the decision model classifies hesitation, preserving uncertain/meaningful uses.
+opt-in removes code-proposed English fillers after the decision model classifies
+hesitation, preserving uncertain/meaningful uses: repeats at first, and since
+2026-10-08 (issue #231, the owner's decision) every hesitation sound (um, uh, er, erm,
+ah, hmm). The steps run at once on the raw transcript.
 Nothing from the dictionary goes to the speech provider any more: the provider
 transcribes the raw speech and the dictionary is applied afterwards. All
 decision-model uses are settings, each with its measured cost in time shown,

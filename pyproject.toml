@@ -1,6 +1,6 @@
 [project]
 name = "entune"
-version = "0.4.3"
+version = "0.4.4"
 description = "Dictation with your choice of speech model and a personal dictionary that selects corrections in context."
 readme = "README.md"
 license = "MIT"
@@ -35,7 +35,8 @@ dependencies = [
 tracing = ["opentelemetry-sdk>=1.30", "opentelemetry-exporter-otlp-proto-common>=1.30"]
 
 [project.urls]
-Homepage = "https://github.com/eandualem/entune"
+Homepage = "https://entune.app"
+Source = "https://github.com/eandualem/entune"
 Documentation = "https://github.com/eandualem/entune#readme"
 Issues = "https://github.com/eandualem/entune/issues"
 
