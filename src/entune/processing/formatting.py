@@ -15,6 +15,17 @@ _ABBREVIATION = re.compile(
 )
 
 
+LIST_ITEMS = ("list_item", "numbered_item", "bullet_item")
+_NUMBERS = "one|two|three|four|five|six|seven|eight|nine|ten"
+# A spoken ordinal starting a numbered item, with its comma and the space after it.
+_ORDINAL = re.compile(
+    rf"(?:first of all|number (?:\d{{1,2}}|{_NUMBERS})|firstly|secondly|thirdly|fourthly|fifthly"
+    rf"|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|{_NUMBERS}|\d{{1,2}})"
+    r"[,:][ \t]+(?=\S)",
+    re.IGNORECASE,
+)
+
+
 @dataclass(frozen=True)
 class Sentence:
     start: int
@@ -60,24 +71,43 @@ def sentences(text: str) -> list[Sentence]:
 
 
 def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Change, ...]:
-    """Only alter inter-span horizontal whitespace or insert a bullet; never a source word."""
+    """Only alter inter-span horizontal whitespace, insert a list marker, or remove the
+    spoken ordinal a number replaces; never another source word.
+
+    Actions: continues, new_paragraph, numbered_item, bullet_item, or list_item for a line
+    that is already a list entry."""
     result = []
     end = 0
     previous = "continues"
+    number = 0
     for i, (span, action) in enumerate(zip(spans, actions, strict=True)):
         gap = text[end : span.start]
         replacement = gap
+        item = action in LIST_ITEMS
         if not span.protected:
             # Keep original line endings, blank paragraphs and indentation exactly.
             if i and "\n" not in gap and "\r" not in gap:
-                if action == "new_paragraph" or (previous == "list_item" and action != "list_item"):
+                if action == "new_paragraph" or (previous in LIST_ITEMS and not item):
                     replacement = "\n\n"
-                elif action == "list_item":
-                    replacement = "\n" if previous == "list_item" else "\n\n"
-            if action == "list_item" and not span.listed:
+                elif item:
+                    replacement = "\n" if previous in LIST_ITEMS else "\n\n"
+            number = number + 1 if action == previous == "numbered_item" else 1
+            if action == "numbered_item" and not span.listed:
+                replacement += f"{number}. "
+                if spoken := _ORDINAL.match(text, span.start, span.end):
+                    result.append(_unsaid(text, span.start, spoken.end()))
+            elif action == "bullet_item" and not span.listed:
                 replacement += "- "
         if replacement != gap:
             assert not gap.strip()
             result.append(Change(end, span.start, gap, replacement))
         end, previous = span.end, action
-    return tuple(result)
+    return tuple(sorted(result, key=lambda c: (c.start, c.end)))
+
+
+def _unsaid(text: str, start: int, stop: int) -> Change:
+    """The spoken ordinal goes, with its comma and space; the next word takes the capital."""
+    following = text[stop : stop + 1]
+    if following.islower():
+        return Change(start, stop + 1, text[start : stop + 1], following.upper())
+    return Change(start, stop, text[start:stop], "")

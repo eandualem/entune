@@ -17,9 +17,22 @@ from entune.processing.jev_client import Call
 from entune.processing.text_edits import Change
 
 # A sentence starts a paragraph or a list item when that option's probability reaches
-# this; a sentence between two list items joins the list at the lower bar.
+# this (the two list kinds together); a sentence between two list items joins the list
+# at the lower bar.
 FORMAT_PROBABILITY = 0.6
 BRIDGE_PROBABILITY = 0.3
+# A new paragraph needs PARAGRAPH_MIN characters of its paragraph before it and leaves at
+# least LAST_PARAGRAPH_MIN after it, so a short note stays whole. A paragraph still longer
+# than PARAGRAPH_CHARS is split at its sentence most likely to start one, when that is at
+# least BREAK_FLOOR and leaves both parts PARAGRAPH_MIN long.
+PARAGRAPH_MIN = 200
+LAST_PARAGRAPH_MIN = 100
+PARAGRAPH_CHARS = 700
+BREAK_FLOOR = 0.1
+# Formatting asks at most this many sentences per request; a longer dictation is asked in
+# sections at once, each with the whole transcript.
+SECTION_SENTENCES = 24
+LISTS = ("numbered_item", "bullet_item")
 FILLER_PROBABILITY = 0.9  # conservative initial policy; not live calibration
 # Context either side of a match: the sentence boundary nearest WINDOW characters away,
 # no further than WINDOW_MAX; without one, the word boundary nearest WINDOW.
@@ -249,44 +262,152 @@ def format_edits(text: str, call: Call) -> TextResult:
     if len(spans) < 2:
         return TextResult()
     names = [f"S{i:02d}" for i in range(len(spans))]
-    questions = {
-        name: prompts.render_json("jev-formatting.json", sentence=name)
+    asked = [
+        name
         for name, span in zip(names, spans, strict=True)
         if not span.listed and not span.protected
-    }
-    if not questions:
+    ]
+    if not asked:
         return TextResult()
-    answers = call.ask(
-        {
-            "transcript": text,
-            "sentences": {
-                name: text[s.start : s.end] for name, s in zip(names, spans, strict=True)
-            },
-        },
-        questions,
+    state = {
+        "transcript": text,
+        "sentences": {name: text[s.start : s.end] for name, s in zip(names, spans, strict=True)},
+    }
+    sections = -(-len(asked) // SECTION_SENTENCES)
+    size = -(-len(asked) // sections)
+    answers = call.ask_together(
+        [
+            (state, {n: prompts.render_json("jev-formatting.json", sentence=n) for n in part})
+            for part in (asked[i : i + size] for i in range(0, len(asked), size))
+        ]
     )
     actions = ["list_item" if span.listed else "continues" for span in spans]
     for i, name in enumerate(names):
-        if name not in answers:
-            continue
-        probabilities = answers[name]
-        best = max(probabilities, key=lambda k: probabilities[k])
-        if probabilities[best] >= FORMAT_PROBABILITY:
-            actions[i] = best
+        if name in answers:
+            actions[i] = _role(answers[name])
     # Retain the established list bridge only within an unstructured paragraph.
     for i in range(1, len(spans) - 1):
         gap = text[spans[i - 1].end : spans[i + 1].start]
-        between = actions[i - 1] == actions[i + 1] == "list_item"
         if (
             names[i] in answers
             and actions[i] == "continues"
-            and between
+            and actions[i - 1] in LISTS
+            and actions[i + 1] in LISTS
             and "\n" not in gap
             and "\r" not in gap
-            and answers[names[i]]["list_item"] >= BRIDGE_PROBABILITY
+            and _listed(answers[names[i]]) >= BRIDGE_PROBABILITY
         ):
-            actions[i] = "list_item"
+            actions[i] = actions[i - 1]
+    _whole_lists(actions)
+    _no_short_paragraphs(text, spans, actions)
+    _split_long(text, spans, [answers.get(n) for n in names], actions)
     return TextResult(formatting.changes(text, spans, actions))
+
+
+def _listed(probabilities: dict[str, float]) -> float:
+    return sum(probabilities[kind] for kind in LISTS)
+
+
+def _role(probabilities: dict[str, float]) -> str:
+    """continues, new_paragraph or a list kind: the two list kinds count together."""
+    roles = {
+        "continues": probabilities["continues"],
+        "new_paragraph": probabilities["new_paragraph"],
+        "list": _listed(probabilities),
+    }
+    best = max(roles, key=lambda k: roles[k])
+    if roles[best] < FORMAT_PROBABILITY:
+        return "continues"
+    if best == "list":
+        return max(LISTS, key=lambda k: probabilities[k])
+    return best
+
+
+def _whole_lists(actions: list[str]) -> None:
+    """Each run of new list items takes its first item's kind; a run of one item, next to
+    no existing list line, starts a paragraph instead."""
+    i = 0
+    while i < len(actions):
+        if actions[i] not in LISTS:
+            i += 1
+            continue
+        end = i
+        while end + 1 < len(actions) and actions[end + 1] in LISTS:
+            end += 1
+        if end == i and "list_item" not in actions[max(0, i - 1) : i + 2]:
+            actions[i] = "new_paragraph"
+        else:
+            actions[i : end + 1] = [actions[i]] * (end + 1 - i)
+        i = end + 1
+
+
+def _no_short_paragraphs(text: str, spans: list[formatting.Sentence], actions: list[str]) -> None:
+    """A new paragraph next to no list continues the previous one when either part would
+    be short."""
+    items = (*LISTS, "list_item")
+    start = 0
+    for i in range(1, len(spans)):
+        beside_list = actions[i - 1] in items or (i + 1 < len(spans) and actions[i + 1] in LISTS)
+        if (
+            actions[i] == "new_paragraph"
+            and not beside_list
+            and (
+                spans[i].start - spans[start].start < PARAGRAPH_MIN
+                or len(text) - spans[i].start < LAST_PARAGRAPH_MIN
+            )
+        ):
+            actions[i] = "continues"
+        elif (
+            actions[i] != "continues"
+            or actions[i - 1] in items
+            or "\n" in text[spans[i - 1].end : spans[i].start]
+        ):
+            start = i
+
+
+def _split_long(
+    text: str,
+    spans: list[formatting.Sentence],
+    answers: list[dict[str, float] | None],
+    actions: list[str],
+) -> None:
+    """Split each paragraph longer than PARAGRAPH_CHARS at its most likely break."""
+    starts = [
+        i
+        for i in range(len(spans))
+        if i == 0
+        or actions[i] != "continues"
+        or actions[i - 1] not in ("continues", "new_paragraph")
+        or "\n" in text[spans[i - 1].end : spans[i].start]
+    ]
+    for lo, hi in zip(starts, [*starts[1:], len(spans)], strict=True):
+        if actions[lo] in ("continues", "new_paragraph"):
+            _split(spans, answers, actions, lo, hi)
+
+
+def _split(
+    spans: list[formatting.Sentence],
+    answers: list[dict[str, float] | None],
+    actions: list[str],
+    lo: int,
+    hi: int,
+) -> None:
+    if spans[hi - 1].end - spans[lo].start <= PARAGRAPH_CHARS:
+        return
+    choices = [
+        (answer["new_paragraph"], i)
+        for i in range(lo + 1, hi)
+        if (answer := answers[i]) is not None
+        and answer["new_paragraph"] >= BREAK_FLOOR
+        and spans[i - 1].end - spans[lo].start >= PARAGRAPH_MIN
+        and spans[hi - 1].end - spans[i].start >= PARAGRAPH_MIN
+    ]
+    if not choices:
+        return
+    _, i = max(choices)
+    actions[i] = "new_paragraph"
+    _split(spans, answers, actions, lo, i)
+    _split(spans, answers, actions, i, hi)
 
 
 def cleanup_edits(text: str, call: Call) -> TextResult:

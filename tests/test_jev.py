@@ -263,11 +263,11 @@ def test_shutdown_cancels_inflight_work_and_rejects_new_requests() -> None:
 def test_formatting_inserts_breaks_and_bullets_and_keeps_every_word() -> None:
     text = "Two things. First, the key. And the model.  Second, the port. Then unrelated news."
     plan = {
-        "S00": {"continues": 1.0, "new_paragraph": 0.0, "list_item": 0.0},
-        "S01": {"continues": 0.1, "new_paragraph": 0.1, "list_item": 0.8},
-        "S02": {"continues": 0.6, "new_paragraph": 0.05, "list_item": 0.35},
-        "S03": {"continues": 0.2, "new_paragraph": 0.1, "list_item": 0.7},
-        "S04": {"continues": 0.3, "new_paragraph": 0.7, "list_item": 0.0},
+        "S00": {"continues": 1.0, "new_paragraph": 0.0, "bullet_item": 0.0},
+        "S01": {"continues": 0.1, "new_paragraph": 0.1, "bullet_item": 0.8},
+        "S02": {"continues": 0.6, "new_paragraph": 0.05, "bullet_item": 0.35},
+        "S03": {"continues": 0.2, "new_paragraph": 0.1, "bullet_item": 0.7},
+        "S04": {"continues": 0.3, "new_paragraph": 0.7, "bullet_item": 0.0},
     }
     requests, handler = answering(lambda name, _: plan[name])
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
@@ -279,7 +279,7 @@ def test_formatting_inserts_breaks_and_bullets_and_keeps_every_word() -> None:
     assert formatted.replace("\n", " ").replace("- ", "").split() == text.split()
     assert list(requests[0]["state"]["sentences"]) == ["S00", "S01", "S02", "S03", "S04"]
     assert "S00" in requests[0]["questions"]
-    weak = {name: {"continues": 0.5, "new_paragraph": 0.5, "list_item": 0.0} for name in plan}
+    weak = {name: {"continues": 0.5, "new_paragraph": 0.5, "bullet_item": 0.0} for name in plan}
     with closing(
         jev_client.Client(httpx.MockTransport(answering(lambda name, _: weak[name])[1]))
     ) as client:
@@ -453,9 +453,9 @@ def test_all_three_stages_run_at_once_within_one_deadline() -> None:
         state = json.loads(request.content)["state"]
         if "sentences" in state:
             await asyncio.sleep(1)
-            return answering(lambda *_: {"continues": 0.0, "new_paragraph": 1.0, "list_item": 0.0})[
-                1
-            ](request)
+            return answering(
+                lambda *_: {"continues": 0.0, "new_paragraph": 1.0, "bullet_item": 0.0}
+            )[1](request)
         await asyncio.sleep(0.15)
         if "fillers" in state:
             return answering(lambda *_: {"hesitation": 1.0})[1](request)
@@ -591,9 +591,7 @@ def test_final_write_failure_preserves_completed_stage_evidence(
 
 
 def test_formatting_with_dictionary_disabled_does_not_apply_even_direct_mappings() -> None:
-    requests, handler = answering(
-        lambda *_: {"continues": 0.0, "new_paragraph": 1.0, "list_item": 0.0}
-    )
+    requests, handler = answering(lambda *_: {"bullet_item": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             "Jeff is fast. Next topic.",
@@ -604,7 +602,7 @@ def test_formatting_with_dictionary_disabled_does_not_apply_even_direct_mappings
             client=client,
             policy=jev_client.Policy(),
         )
-    assert result.text == "Jeff is fast.\n\nNext topic."
+    assert result.text == "- Jeff is fast.\n- Next topic."
     assert len(requests) == 1 and "sentences" in requests[0]["state"]
     assert result.correction.status == "disabled" and result.correction.replacements == 0
     assert result.correction.decisions == result.correction.attempts == 0
@@ -808,3 +806,17 @@ def test_overlapping_options_say_which_words_they_change() -> None:
     assert {o.split('"')[1] for o in options} == {"GoGo go", "go GoGo"}
     single = jev.meaning_request("Use jif.", matches(JEV, "Use jif."))
     assert all("marked words read" not in o for o in single.questions["o0"]["criteria"].values())
+
+
+@pytest.mark.parametrize("total, usable", [(0.99, True), (0.9, False)])
+def test_probabilities_rounded_to_two_decimals_are_usable(total: float, usable: bool) -> None:
+    answer = {
+        "type": "choice",
+        "choice": "a",
+        "probabilities": {"a": round(total - 0.27, 2), "b": 0.27, "c": 0.0, "d": 0.0},
+    }
+    if usable:
+        assert jev_client._probabilities(answer, {"a", "b", "c", "d"})["a"] == 0.72
+    else:
+        with pytest.raises(jev_client.JevError, match="malformed"):
+            jev_client._probabilities(answer, {"a", "b", "c", "d"})

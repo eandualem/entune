@@ -24,13 +24,66 @@ from tests.test_server import StubProvider
 
 def test_first_list_item_including_unicode_offsets_keeps_all_source_words() -> None:
     raw = "  😀 First, tea. Second, coffee."
-    requests, handler = answering(lambda *_: {"list_item": 1.0})
+    requests, handler = answering(lambda *_: {"bullet_item": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = jev.format_edits(raw, call(client))
     assert text_edits.apply(raw, result.changes) == "  - 😀 First, tea.\n- Second, coffee."
     assert set(requests[0]["questions"]) == {"S00", "S01"}
     assert all(not change.before.strip() for change in result.changes)
     assert raw == requests[0]["state"]["transcript"]
+
+
+def test_a_numbered_list_numbers_its_items_without_the_spoken_ordinals() -> None:
+    raw = "Two things. One, the key. Two, the model. Then other news."
+    plan = {"S01": {"numbered_item": 1.0}, "S02": {"bullet_item": 0.7, "numbered_item": 0.3}}
+    _, handler = answering(lambda name, _: plan.get(name, {"new_paragraph": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = jev.format_edits(raw, call(client))
+    # The list takes its first item's kind.
+    assert text_edits.apply(raw, result.changes) == (
+        "Two things.\n\n1. The key.\n2. The model.\n\nThen other news."
+    )
+
+
+def test_a_single_list_item_starts_a_paragraph_and_a_short_note_stays_whole() -> None:
+    context = "Some context that runs long enough to stand as its own paragraph. " * 4
+    rest = "One, alone. " + ("More text that runs on for a while after it. " * 3).strip()
+    raw = context + rest
+    plan = {"S04": {"numbered_item": 1.0}}
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = jev.format_edits(raw, call(client))
+        assert text_edits.apply(raw, result.changes) == context.strip() + "\n\n" + rest
+        short = "Some context. One, alone. More text."
+        plan["S01"] = plan.pop("S04")
+        assert jev.format_edits(short, call(client)).changes == ()
+
+
+def test_a_long_paragraph_breaks_at_its_most_likely_sentence() -> None:
+    sentence = "This sentence keeps talking about the same subject at some length. "
+    raw = (sentence * 12).strip()  # 815 characters
+    likely = {"S06": 0.4, "S03": 0.2}
+    _, handler = answering(
+        lambda name, _: {
+            "new_paragraph": likely.get(name, 0.0),
+            "continues": 1 - likely.get(name, 0.0),
+        }
+    )
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        formatted = text_edits.apply(raw, jev.format_edits(raw, call(client)).changes)
+    assert formatted == (sentence * 6).strip() + "\n\n" + (sentence * 6).strip()
+
+
+def test_a_long_dictation_is_asked_in_sections_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(jev, "SECTION_SENTENCES", 2)
+    raw = "One. Two. Three. Four. Five."
+    requests, handler = answering(lambda *_: {"continues": 1.0})
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        context = call(client)
+        assert jev.format_edits(raw, context).changes == ()
+    assert sorted(len(r["questions"]) for r in requests) == [1, 2, 2]
+    assert all(len(r["state"]["sentences"]) == 5 for r in requests)
+    assert context.attempts == 1 and context.decisions == 5
 
 
 @pytest.mark.parametrize(
@@ -46,7 +99,7 @@ def test_first_list_item_including_unicode_offsets_keeps_all_source_words() -> N
     ],
 )
 def test_existing_lists_code_and_unpunctuated_text_need_no_request(raw: str) -> None:
-    requests, handler = answering(lambda *_: {"list_item": 1.0})
+    requests, handler = answering(lambda *_: {"bullet_item": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         assert not jev.format_edits(raw, call(client)).changes
     assert not requests
@@ -231,7 +284,9 @@ def test_a_failed_stage_keeps_its_edits_out_and_the_other_applies(failure: str) 
             return httpx.Response(200, json={"answers": {}})
         return answering(
             lambda _, question: (
-                {"hesitation": 1.0} if "hesitation" in question["criteria"] else {"list_item": 1.0}
+                {"hesitation": 1.0}
+                if "hesitation" in question["criteria"]
+                else {"bullet_item": 1.0}
             )
         )[1](request)
 
@@ -333,8 +388,8 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
         lambda _, question: (
             {"hesitation": 1.0}
             if "hesitation" in question["criteria"]
-            else {"list_item": 1.0}
-            if "list_item" in question["criteria"]
+            else {"bullet_item": 1.0}
+            if "bullet_item" in question["criteria"]
             else {"i0": 1.0}
         )
     )
