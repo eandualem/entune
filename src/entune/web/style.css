@@ -112,6 +112,7 @@ a { color: var(--accent-text); text-decoration: none; }
 .toolbar .select { max-width: 17.5rem; }
 .fast { display: inline-flex; align-items: center; gap: var(--sp-6); height: var(--h-28); padding: 0 var(--sp-8); border-radius: var(--r-7); background: var(--control); border: 1px solid var(--line); color: var(--text-faint); }
 .fast:has(input:checked) { color: var(--accent-text); }
+#anonymous-wrap:has(input:checked) { background: var(--accent-wash); border-color: transparent; }
 .fast.off { opacity: 0.45; }
 .fast:hover { color: var(--text); }
 .fast input { accent-color: var(--accent); margin: 0; width: var(--i-13); height: var(--i-13); }
@@ -167,30 +168,85 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .view[data-active] { display: block; }
 .history-pages { display: flex; justify-content: center; gap: var(--sp-12); margin-top: var(--sp-16); }
 
-/* History: a column of cards */
-.history { display: flex; flex-direction: column; gap: var(--sp-16); padding: var(--sp-20) var(--sp-24) var(--sp-24); }
-.card { padding: var(--sp-16) var(--sp-20) var(--sp-12); border-radius: var(--r-14); background: var(--card); box-shadow: var(--shadow-card); }
-.card-head { display: flex; align-items: baseline; gap: var(--sp-10); }
-.card-head .when { font-size: var(--fs-13); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.card-head .model { font-size: var(--fs-12); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.copied-tag { font-size: var(--fs-12); color: var(--accent-text); opacity: 0; transition: opacity 0.2s; pointer-events: none; }
-.card.copied .copied-tag { opacity: 1; }
+/* History: cards under their day, each led by its waveform, which is also the player.
+   The text gets the space; details show on hover, and failures stay in view. */
+.history { display: flex; flex-direction: column; gap: var(--sp-12); padding: var(--sp-4) var(--sp-28) 2.5rem; }
+.day-head { position: sticky; top: 0; z-index: 3; display: flex; align-items: baseline; gap: var(--sp-10); margin-bottom: calc(-1 * var(--sp-2)); padding: var(--sp-16) var(--sp-4) var(--sp-6); background: var(--surface); }
+.day-label { margin: 0; font-size: var(--fs-11-5); font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-dim); }
+.day-summary { font-size: var(--fs-12); color: var(--text-faint); }
+.card { display: flex; flex-direction: column; gap: var(--sp-10); padding: var(--sp-16) var(--sp-20) var(--sp-10); border-radius: var(--r-14); background: var(--card); box-shadow: var(--shadow-card); }
+.card-top { display: flex; align-items: center; gap: var(--sp-14); min-width: 0; }
+.card-top audio { display: none; }
+.play-btn { flex: none; width: var(--h-32); height: var(--h-32); display: flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%; background: var(--control-hover); color: var(--text); }
+.play-btn:hover { background: var(--control-active); }
+.play-btn:not(.on) svg { margin-left: 1px; }
+.play-btn.on { background: var(--accent); color: var(--on-accent); }
+.wave { flex: 0 1 auto; min-width: 0; height: 1.875rem; display: flex; align-items: center; gap: 2px; }
+.wave > span { flex: 1 1 0; min-width: 1px; height: 20%; border-radius: 1px; background: var(--wave); transition: height 0.3s; }
+.wave > span.played { background: var(--wave-played); }
+.clock { flex: none; font-size: var(--fs-12); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.card-top .when { flex: none; font-size: var(--fs-12-5); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.card-note { margin: 0; font-size: var(--fs-12-5); color: var(--text-dim); overflow-wrap: anywhere; }
+.card-note.err { color: var(--error); }
+.transcript-wrap { position: relative; }
 .transcript {
-  margin: var(--sp-10) calc(-1 * var(--sp-14)) 0; padding: var(--sp-10) var(--sp-14); border-radius: var(--r-10);
-  font-size: var(--fs-16); line-height: var(--lh-transcript); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; text-wrap: pretty;
-  -webkit-user-select: text; user-select: text;
+  margin: 0 calc(-1 * var(--sp-10)); padding: var(--sp-4) var(--sp-10); border-radius: var(--r-8);
+  font-size: 0.96875rem; line-height: var(--lh-transcript); color: var(--text-strong); white-space: pre-wrap; overflow-wrap: anywhere; text-wrap: pretty;
+  -webkit-user-select: text; user-select: text; transition: background 0.25s, filter 0.2s;
 }
 .transcript:hover { background: var(--hover-wash); }
-.transcript.empty { color: var(--text-dim); font-style: italic; }
-.card .jev { padding: 0 var(--sp-14) var(--sp-6); font-size: var(--fs-12); color: var(--text-muted); }
-.card .jev.err { color: var(--err-text, var(--text-muted)); }
-.failed { margin-top: var(--sp-10); padding: var(--sp-12) var(--sp-14); border-radius: var(--r-10); background: var(--error-wash); }
-.failed .label { font-size: var(--fs-11); font-weight: 600; letter-spacing: 0.04em; color: var(--error); margin-bottom: var(--sp-6); }
-.failed pre { margin: 0; font: var(--fs-13)/1.55 var(--mono); color: var(--error-body); white-space: pre-wrap; word-break: break-word; -webkit-user-select: text; user-select: text; }
-.card-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); margin: var(--sp-10) 0 0 calc(-1 * var(--sp-6)); padding-top: var(--sp-10); border-top: 1px solid var(--line-soft); }
-.card-row .status { font-size: var(--fs-12); color: var(--text-dim); margin-left: var(--sp-6); }
-.card-row .status.err { color: var(--error); }
-.card-row .status.working { display: inline-flex; align-items: center; gap: var(--sp-6); color: var(--accent-text); font-weight: 500; }
+.card.copied .transcript { background: var(--accent-wash); }
+.transcript.empty { font-style: italic; color: var(--text-dim); }
+.transcript .fixed { text-decoration: underline dotted var(--accent); text-decoration-thickness: 1.5px; text-underline-offset: 5px; }
+.transcript-wrap.folded .transcript { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 9; overflow: hidden; }
+.transcript-wrap.folded::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 4rem; background: linear-gradient(transparent, var(--card)); pointer-events: none; }
+.more-link { align-self: flex-start; margin-top: calc(-1 * var(--sp-6)); padding: 0; border: 0; background: none; color: var(--accent-text); font-size: var(--fs-12-5); }
+.failed { display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-10) var(--sp-12); border-radius: 0.5625rem; background: var(--error-wash); }
+.failed .label { font-size: var(--fs-11); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--error); }
+.failed pre { margin: 0; font: var(--fs-12-5)/1.55 var(--mono); color: var(--error-body); white-space: pre-wrap; word-break: break-word; -webkit-user-select: text; user-select: text; }
+.card-foot { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6); min-height: var(--h-26); }
+.card-foot .status { font-size: var(--fs-12); color: var(--text-dim); }
+.card-foot .status:empty { display: none; }
+.card-foot .status.err { color: var(--error); overflow-wrap: anywhere; }
+.card-foot .status.working { display: inline-flex; align-items: center; gap: var(--sp-6); color: var(--accent-text); font-weight: 500; }
+.copied-tag { display: none; font-size: var(--fs-12); font-weight: 500; color: var(--accent-text); }
+.card.copied .copied-tag { display: inline; }
+/* Details show while the pointer or focus is on the card, and whenever it is in use. */
+.card-meta { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6); opacity: 0; pointer-events: none; transition: opacity 0.15s; }
+.card:is(:hover, :focus-within, .playing, .panel-open, .menu-open, .failed-card) .card-meta { opacity: 1; pointer-events: auto; }
+.meta-pill { height: 1.375rem; display: inline-flex; align-items: center; padding: 0 0.5625rem; border: 0; border-radius: 999px; background: var(--chip); color: var(--text-muted); font-size: var(--fs-11-5); white-space: nowrap; }
+.meta-pill[aria-expanded="true"] { background: var(--accent-wash); color: var(--accent-text); }
+.meta-pill.alert { background: var(--error-wash); color: var(--error); }
+.card-meta .btn.ghost { padding: 0 var(--sp-8); color: var(--text-muted); font-size: var(--fs-12); }
+.card-meta .btn.ghost:hover, .retry-open[aria-expanded="true"] { background: var(--control-hover); color: var(--text); }
+.card-meta .btn-icon { width: var(--h-26); height: var(--h-26); color: var(--text-muted); }
+.retry-menu { position: absolute; right: 0; top: calc(100% + var(--sp-4)); z-index: 10; width: min(18.75rem, 100%); padding: var(--sp-6); border-radius: var(--r-10); background: var(--control); box-shadow: var(--shadow-popover); }
+.retry-menu-head { margin: 0; padding: var(--sp-6) var(--sp-10) var(--sp-4); font-size: var(--fs-11); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); }
+.retry-pick { display: flex; align-items: baseline; gap: var(--sp-8); width: 100%; padding: 0.4375rem var(--sp-10); border: 0; border-radius: var(--r-6); background: transparent; color: var(--text-strong); font-size: var(--fs-13); text-align: left; }
+.retry-pick:hover, .retry-pick:focus-visible { background: var(--line-soft); box-shadow: none; }
+.retry-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.retry-note { font-size: var(--fs-11-5); color: var(--text-dim); white-space: nowrap; }
+.retry-note.now { color: var(--accent-text); }
+.retry-menu-foot { margin: 0; padding: var(--sp-6) var(--sp-10) var(--sp-4); font-size: var(--fs-11-5); line-height: 1.4; color: var(--text-dim); }
+/* Changes and earlier attempts open inside the card. */
+.card-panel { display: flex; flex-direction: column; gap: var(--sp-12); padding: var(--sp-12) var(--sp-14); border-radius: var(--r-10); background: var(--well); -webkit-user-select: text; user-select: text; }
+.card-panel[hidden] { display: none; }
+.stage { display: flex; flex-direction: column; gap: var(--sp-6); }
+.stage-head { display: flex; align-items: baseline; gap: var(--sp-8); font-size: var(--fs-12-5); }
+.stage-head b { font-weight: 600; color: var(--text); white-space: nowrap; }
+.stage-summary { color: var(--text-muted); overflow-wrap: anywhere; }
+.stage-summary.err { color: var(--error); }
+.stage-head .took { font-size: var(--fs-11-5); color: var(--text-faint); white-space: nowrap; }
+.stage-changes { display: flex; flex-wrap: wrap; gap: var(--sp-6); }
+.change { display: inline-flex; align-items: center; gap: var(--sp-6); padding: 2px var(--sp-8); border-radius: var(--r-6); background: var(--line-faint); font: var(--fs-12)/1.5 var(--mono); }
+.change del { color: var(--text-dim); }
+.change .to { color: var(--text-faint); }
+.change ins { text-decoration: none; color: var(--text-strong); }
+.changes-panel .safe-copy { align-self: flex-start; }
+.attempt { display: flex; flex-direction: column; gap: var(--sp-4); }
+.attempt .meta { margin: 0; font-size: var(--fs-11-5); color: var(--text-faint); }
+.attempt .text { margin: 0; font-size: var(--fs-14-5); line-height: 1.6; color: var(--text-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
+.attempt .text.err { font: var(--fs-12-5)/1.55 var(--mono); color: var(--error-body); }
 /* A retry in progress: a light runs along the card's top edge until the new attempt arrives. */
 .card.retrying { position: relative; overflow: hidden; }
 .card.retrying::before {
@@ -200,15 +256,11 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 }
 @keyframes card-working { from { background-position: -40% 0; } to { background-position: 140% 0; } }
 @media (prefers-reduced-motion: reduce) { .card.retrying::before { animation: none; background-size: 100% 100%; opacity: 0.6; } }
-.player { display: inline-flex; align-items: center; gap: var(--sp-8); height: var(--h-28); padding: 0 var(--sp-10) 0 var(--sp-2); color: var(--text-faint); font-size: var(--fs-11-5); font-variant-numeric: tabular-nums; }
-.player .track { width: 6.875rem; height: 2px; border-radius: 1px; background: var(--control-active); position: relative; cursor: default; }
-.player .track > span { position: absolute; left: 0; top: 0; bottom: 0; background: var(--text-muted); border-radius: 1px; width: 0; }
-.player audio { display: none; }
-.attempts-toggle { height: var(--h-28); padding: 0 var(--sp-8); gap: var(--sp-4); font-size: var(--fs-12); font-variant-numeric: tabular-nums; }
-.attempt { margin: var(--sp-6) 0 var(--sp-8); padding: var(--sp-10) var(--sp-14); border-radius: var(--r-10); background: var(--surface); }
-.attempt .meta { font-size: var(--fs-11-5); color: var(--text-faint); margin-bottom: var(--sp-6); }
-.attempt .text { font-size: var(--fs-14-5); line-height: 1.6; color: var(--text-soft); white-space: pre-wrap; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
-.attempt .text.err { font: var(--fs-12-5)/1.55 var(--mono); color: var(--error-body); }
+@media (max-width: 42rem) {
+  .history { padding: var(--sp-4) var(--sp-16) var(--sp-24); }
+  .wave { gap: 1px; }
+  .day-head .spacer, .day-head .spacer + .day-summary { display: none; }
+}
 
 /* Getting started */
 .start { max-width: 32rem; margin: var(--sp-32) auto; padding: 0 var(--sp-24); }
@@ -766,26 +818,6 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 }
 .audio-empty { margin: var(--sp-16) 0 var(--sp-8); padding: var(--sp-16); border-radius: var(--r-10); background: var(--well); color: var(--text-muted); text-align: center; }
 
-/* History: processing details on demand; failures stay visible. */
-.processing-toggle { height: var(--h-26); gap: var(--sp-4); padding: 0 var(--sp-6); font-size: var(--fs-12); }
-.processing-toggle.err { color: var(--error); }
-.processing-toggle[aria-expanded="true"] { background: var(--control-hover); color: var(--text); }
-/* The details popover floats over the list: it never moves the cards around it. */
-.processing.details-popover { position: fixed; z-index: 30; margin: 0; width: min(24rem, calc(100vw - 16px)); max-height: min(22rem, calc(100vh - 16px)); overflow: auto; background: var(--surface-raised); box-shadow: var(--shadow-popover); border-radius: var(--r-10); padding: var(--sp-10) var(--sp-14); overflow-wrap: anywhere; }
-.details-popover:focus { outline: none; }
-.details-popover:focus-visible { box-shadow: var(--shadow-popover), var(--focus); }
-.details-title { margin-bottom: var(--sp-4); font-size: var(--fs-11); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-faint); }
-.processing { margin: var(--sp-8) 0 0; padding: var(--sp-8) var(--sp-12); border-radius: var(--r-8); background: var(--well); font-size: var(--fs-12-5); color: var(--text-muted); }
-.processing .step { display: flex; flex-wrap: wrap; gap: var(--sp-4) var(--sp-10); padding: var(--sp-2) 0; }
-.processing .step.err { color: var(--error); }
-.processing .took { color: var(--text-faint); font-variant-numeric: tabular-nums; }
-.processing .changes { margin: var(--sp-2) 0 var(--sp-4); padding-left: var(--sp-16); color: var(--text-soft); -webkit-user-select: text; user-select: text; }
-.processing del { color: var(--text-faint); }
-.processing ins { text-decoration: none; color: var(--text); }
-.processing-alert { margin-top: var(--sp-8); padding: var(--sp-6) var(--sp-10); border-radius: var(--r-8); background: var(--error-wash); color: var(--error); font-size: var(--fs-12-5); overflow-wrap: anywhere; }
-.retry-label { display: inline-flex; align-items: center; gap: var(--sp-4); font-size: var(--fs-12); color: var(--text-faint); }
-
-
 /* The guide: a readable, scrollable document over the page. */
 .help-dialog { width: min(40rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); padding: 0; border: 0; border-radius: var(--r-14); background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-popover); }
 /* In the Mac window the traffic lights sit over the page's top edge; keep dialogs below them. */
@@ -904,8 +936,7 @@ details.how p { margin: var(--sp-8) 0; max-width: 46rem; }
 
 /* Anonymous mode: transcripts keep their size and place but cannot be read. The newest
    dictation stays readable until it is copied (data-reveal). */
-html[data-anonymous] .card:not([data-reveal]) :is(.transcript, .failed, .attempt),
-html[data-anonymous] .details-popover .changes { filter: blur(6px); user-select: none; }
+html[data-anonymous] .card:not([data-reveal]) :is(.transcript, .failed, .attempt, .stage-changes) { filter: blur(6px); user-select: none; }
 
 /* Dropping audio anywhere in the window transcribes it into History. */
 .drop-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: color-mix(in srgb, var(--surface) 80%, transparent); border: 2px dashed var(--accent); pointer-events: none; }
