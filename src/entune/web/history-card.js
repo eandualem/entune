@@ -79,7 +79,14 @@ function player(id, seconds, label) {
       if (fraction !== null) {
         if (audio.readyState < 1) {
           audio.preload = "metadata";
-          await new Promise((resolve) => { audio.addEventListener("loadedmetadata", resolve, { once: true }); audio.load(); });
+          // Unreadable audio fails here, into the error below, rather than waiting forever.
+          await new Promise((resolve, reject) => {
+            const done = () => { audio.removeEventListener("loadedmetadata", done); audio.removeEventListener("error", fail); resolve(); };
+            const fail = () => { audio.removeEventListener("loadedmetadata", done); audio.removeEventListener("error", fail); reject(audio.error ?? new Error("the audio could not be read")); };
+            audio.addEventListener("loadedmetadata", done);
+            audio.addEventListener("error", fail);
+            audio.load();
+          });
           if (audio.dataset.gone) return; // the card left the page meanwhile
         }
         audio.currentTime = fraction * audio.duration;
