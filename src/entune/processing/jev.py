@@ -298,7 +298,7 @@ def format_edits(text: str, call: Call) -> TextResult:
             and _listed(answers[names[i]]) >= BRIDGE_PROBABILITY
         ):
             actions[i] = actions[i - 1]
-    _whole_lists(actions)
+    _whole_lists(text, spans, actions)
     _no_short_paragraphs(text, spans, actions)
     _split_long(text, spans, [answers.get(n) for n in names], actions)
     return TextResult(formatting.changes(text, spans, actions))
@@ -323,16 +323,20 @@ def _role(probabilities: dict[str, float]) -> str:
     return best
 
 
-def _whole_lists(actions: list[str]) -> None:
-    """Each run of new list items takes its first item's kind; a run of one item, next to
-    no existing list line, starts a paragraph instead."""
+def _whole_lists(text: str, spans: list[formatting.Sentence], actions: list[str]) -> None:
+    """Each run of new list items, up to an empty line, takes its first item's kind; a run
+    of one item, next to no existing list line, starts a paragraph instead."""
     i = 0
     while i < len(actions):
         if actions[i] not in LISTS:
             i += 1
             continue
         end = i
-        while end + 1 < len(actions) and actions[end + 1] in LISTS:
+        while (
+            end + 1 < len(actions)
+            and actions[end + 1] in LISTS
+            and not formatting.blank_line(text[spans[end].end : spans[end + 1].start])
+        ):
             end += 1
         if end == i and "list_item" not in actions[max(0, i - 1) : i + 2]:
             actions[i] = "new_paragraph"
@@ -348,12 +352,21 @@ def _no_short_paragraphs(text: str, spans: list[formatting.Sentence], actions: l
     start = 0
     for i in range(1, len(spans)):
         beside_list = actions[i - 1] in items or (i + 1 < len(spans) and actions[i + 1] in LISTS)
+        # The paragraph ends at the next line break or list item already decided.
+        last = next(
+            (
+                k - 1
+                for k in range(i + 1, len(spans))
+                if actions[k] in items or "\n" in text[spans[k - 1].end : spans[k].start]
+            ),
+            len(spans) - 1,
+        )
         if (
             actions[i] == "new_paragraph"
             and not beside_list
             and (
                 spans[i].start - spans[start].start < PARAGRAPH_MIN
-                or len(text) - spans[i].start < LAST_PARAGRAPH_MIN
+                or spans[last].end - spans[i].start < LAST_PARAGRAPH_MIN
             )
         ):
             actions[i] = "continues"

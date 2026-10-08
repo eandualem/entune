@@ -45,6 +45,56 @@ def test_a_numbered_list_numbers_its_items_without_the_spoken_ordinals() -> None
     )
 
 
+def test_a_spoken_ordinal_goes_even_when_a_filler_follows_it() -> None:
+    raw = "One, um, open the settings. Two, uh, choose a model."
+    _, handler = answering(
+        lambda _, q: (
+            {"hesitation": 1.0} if "hesitation" in q["criteria"] else {"numbered_item": 1.0}
+        )
+    )
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = process_text(
+            raw,
+            (),
+            contextual=False,
+            formatting=True,
+            cleanup=True,
+            key="ts-key",
+            client=client,
+            policy=jev_client.Policy(),
+        )
+    # The capital would overlap the filler's edit, so only it is left out.
+    assert result.text == "1. open the settings.\n2. choose a model."
+
+
+def test_numbering_continues_an_existing_list_and_restarts_after_an_empty_line() -> None:
+    _, handler = answering(lambda *_: {"numbered_item": 1.0})
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        raw = "1. Open settings.\nSecond, choose the model."
+        result = jev.format_edits(raw, call(client))
+        assert text_edits.apply(raw, result.changes) == "1. Open settings.\n2. Choose the model."
+    plan = {"S00": {"bullet_item": 1.0}, "S01": {"bullet_item": 1.0}}
+    _, handler = answering(lambda name, _: plan.get(name, {"numbered_item": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        raw = "Alpha is first here. Beta comes next.\n\nOne, gamma. Two, delta."
+        result = jev.format_edits(raw, call(client))
+        assert text_edits.apply(raw, result.changes) == (
+            "- Alpha is first here.\n- Beta comes next.\n\n1. Gamma.\n2. Delta."
+        )
+
+
+def test_a_short_last_paragraph_is_measured_within_its_paragraph() -> None:
+    raw = (
+        "This opening sentence runs on for quite a while. " * 5
+        + "Short end.\n\n"
+        + ("Another paragraph follows here with more words. " * 4).strip()
+    )
+    plan = {"S05": {"new_paragraph": 1.0}}
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        assert jev.format_edits(raw, call(client)).changes == ()
+
+
 def test_a_single_list_item_starts_a_paragraph_and_a_short_note_stays_whole() -> None:
     context = "Some context that runs long enough to stand as its own paragraph. " * 4
     rest = "One, alone. " + ("More text that runs on for a while after it. " * 3).strip()

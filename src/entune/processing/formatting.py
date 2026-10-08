@@ -24,6 +24,13 @@ _ORDINAL = re.compile(
     r"[,:][ \t]+(?=\S)",
     re.IGNORECASE,
 )
+_NUMBERED = re.compile(r"(\d+)[.)][ \t]")  # an existing numbered list line
+_BLANK_LINE = re.compile(r"\n[ \t]*\n")
+
+
+def blank_line(gap: str) -> bool:
+    """Whether the text between two spans keeps an empty line: a paragraph boundary."""
+    return bool(_BLANK_LINE.search(gap.replace("\r\n", "\n")))
 
 
 @dataclass(frozen=True)
@@ -76,7 +83,7 @@ def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Chang
 
     Actions: continues, new_paragraph, numbered_item, bullet_item, or list_item for a line
     that is already a list entry."""
-    result = []
+    result: list[Change] = []
     end = 0
     previous = "continues"
     number = 0
@@ -91,11 +98,11 @@ def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Chang
                     replacement = "\n\n"
                 elif item:
                     replacement = "\n" if previous in LIST_ITEMS else "\n\n"
-            number = number + 1 if action == previous == "numbered_item" else 1
             if action == "numbered_item" and not span.listed:
+                number = _number(text, spans[i - 1] if i else None, previous, number, gap)
                 replacement += f"{number}. "
                 if spoken := _ORDINAL.match(text, span.start, span.end):
-                    result.append(_unsaid(text, span.start, spoken.end()))
+                    result.extend(_unsaid(text, span.start, spoken.end()))
             elif action == "bullet_item" and not span.listed:
                 replacement += "- "
         if replacement != gap:
@@ -105,9 +112,21 @@ def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Chang
     return tuple(sorted(result, key=lambda c: (c.start, c.end)))
 
 
-def _unsaid(text: str, start: int, stop: int) -> Change:
-    """The spoken ordinal goes, with its comma and space; the next word takes the capital."""
+def _number(text: str, before: Sentence | None, previous: str, number: int, gap: str) -> int:
+    """A numbered item continues the list just before it, unless an empty line ends it."""
+    if before is None or blank_line(gap):
+        return 1
+    if previous == "numbered_item":
+        return number + 1
+    existing = _NUMBERED.match(text, before.start, before.end) if previous == "list_item" else None
+    return int(existing.group(1)) + 1 if existing else 1
+
+
+def _unsaid(text: str, start: int, stop: int) -> tuple[Change, ...]:
+    """The spoken ordinal goes, with its comma and space, and the next word takes the
+    capital: two edits, so a filler removed after the ordinal does not keep it."""
+    deletion = Change(start, stop, text[start:stop], "")
     following = text[stop : stop + 1]
     if following.islower():
-        return Change(start, stop + 1, text[start : stop + 1], following.upper())
-    return Change(start, stop, text[start:stop], "")
+        return deletion, Change(stop, stop + 1, following, following.upper())
+    return (deletion,)

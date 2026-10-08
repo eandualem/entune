@@ -226,10 +226,11 @@ stages run at the same time, each on the original transcript.
 Formatting classifies all eligible spans, including the first, as running prose, a new
 paragraph (a new point, even within one topic), a numbered item or a bullet item. The
 winning probability must reach 0.6, the two list kinds counting together. A middle item
-can join two list items at 0.3 only within an originally flat paragraph. A list takes its
-first item's kind and needs two items; a single one starts a paragraph instead. A new
-paragraph needs 200 characters of its paragraph before it and leaves 100 after it, so a
-short note stays whole. A paragraph still longer than 700 characters is split at its
+can join two list items at 0.3 only within an originally flat paragraph. A list, up to
+an empty line, takes its first item's kind and needs two items; a single one starts a
+paragraph instead, and numbering continues an existing numbered line. A new paragraph
+needs 200 characters of its paragraph before it and leaves 100 in its paragraph after
+it, so a short note stays whole. A paragraph still longer than 700 characters is split at its
 sentence most likely to start one (at least 0.1), leaving both parts at least 200
 characters. Code numbers or bullets
 the items and changes only horizontal whitespace between spans, except that a numbered
