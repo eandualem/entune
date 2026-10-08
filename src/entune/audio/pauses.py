@@ -1,7 +1,8 @@
 """Natural pauses in a recording while it is made, found from its loudness alone.
 
 The audio is read in 20 ms frames. A frame is quiet when it is 10 dB or less above the
-recent noise floor, the 10th percentile of the last 10 s, or below -55 dBFS. A pause of
+recent noise floor, the 10th percentile of the last 10 s, and at least 10 dB under the
+recent loud end, the 90th percentile; or when it is below -55 dBFS. A pause of
 at least 0.4 s becomes a cut, in its middle, once speech resumes after it and the piece
 since the previous cut is long enough for the model. Without a pause there is no cut.
 """
