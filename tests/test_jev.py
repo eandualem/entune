@@ -226,11 +226,11 @@ def test_preconnect_opens_the_connection_without_the_key() -> None:
         return httpx.Response(405)
 
     client = jev_client.Client(httpx.MockTransport(handler))
-    client.preconnect()
+    client.preconnect(jev_client.URL)
     assert done.wait(2)
     assert sent[0].method == "HEAD" and "authorization" not in sent[0].headers
     client.close()
-    client.preconnect()  # after shutdown: nothing starts
+    client.preconnect(jev_client.URL)  # after shutdown: nothing starts
     assert len(sent) == 1
 
 

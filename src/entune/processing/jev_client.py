@@ -145,14 +145,14 @@ class Client:
                 raise
             raise JevError("correction is shutting down") from exc
 
-    def preconnect(self) -> None:
-        """Open the connection the next question will use while the user is still
+    def preconnect(self, url: str) -> None:
+        """Open the connection the next question to `url` will use while the user is still
         speaking. A HEAD request without the key; its answer is ignored, and so is a
         failure, which the question will meet within its own deadline and retries."""
         with self._lock:
             if self._closed:
                 return
-            asyncio.run_coroutine_threadsafe(self._preconnect(), self._running_loop())
+            asyncio.run_coroutine_threadsafe(self._preconnect(url), self._running_loop())
 
     def _running_loop(self) -> asyncio.AbstractEventLoop:
         """The client's event loop, started on first use; the caller holds the lock."""
@@ -179,9 +179,9 @@ class Client:
             )
         return self._http
 
-    async def _preconnect(self) -> None:
+    async def _preconnect(self, url: str) -> None:
         with contextlib.suppress(httpx.HTTPError):
-            await self._pool().head(URL, timeout=5.0)
+            await self._pool().head(url, timeout=5.0)
 
     async def _ask(
         self, call: Call, state: object, questions: dict[str, Any]

@@ -75,20 +75,19 @@ class Dictation:
 
     def prepare(self) -> None:
         """While the user speaks, open the connections this dictation will use: the default
-        model's provider and, when a step asks Jev, TypeSafe. Each gets a HEAD request with
-        no key and no audio, so the handshake (0.5-1 s measured) is not paid after they stop.
+        model's provider and, when a step is on, the chosen decision model in the cloud.
+        Each gets a HEAD request with no key and no audio, so the handshake (0.5-1 s
+        measured) is not paid after they stop.
         """
         threading.Thread(target=self._preconnect, daemon=True, name="entune-preconnect").start()
 
     def _preconnect(self) -> None:
         try:
             status = self._settings.jev_status()
-            if (
-                status.key_hint
-                and (status.dictionary or status.formatting or status.cleanup)
-                and self._settings.decision_model() == "jev"
-            ):
-                self._jev.preconnect()
+            if status.dictionary or status.formatting or status.cleanup:
+                endpoint, key = self._decisions.chosen()
+                if key:  # Jev, OpenAI or Perplexity with its key; Laya is on this Mac
+                    self._jev.preconnect(endpoint.url)
             ref = self._models.choose_model(None)
             if isinstance(ref.provider, Preconnects) and self._settings.key(ref.provider.id):
                 with self._speech.use(ref):

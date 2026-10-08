@@ -345,25 +345,35 @@ class PreconnectingStub(StubProvider):
         self.preconnected.set()
 
 
-def test_starting_a_recording_opens_the_provider_and_jev_connections(tmp_path: Path) -> None:
-    provider, jev_opened = PreconnectingStub(), threading.Event()
+@pytest.mark.parametrize(
+    ("model", "key", "host"),
+    [
+        ("jev", "typesafe", "api.typesafe.ai"),
+        ("openai", "openai", "api.openai.com"),
+        ("perplexity", "perplexity", "api.perplexity.ai"),
+    ],
+)
+def test_starting_a_recording_opens_the_provider_and_decision_model_connections(
+    tmp_path: Path, model: str, key: str, host: str
+) -> None:
+    provider, opened = PreconnectingStub(), threading.Event()
 
-    def typesafe(request: httpx.Request) -> httpx.Response:
-        if request.method == "HEAD":
-            jev_opened.set()
+    def decisions(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD" and request.url.host == host:
+            opened.set()
         return httpx.Response(405)
 
     entune = Entune(
-        Store(tmp_path), [provider], jev_client=JevClient(httpx.MockTransport(typesafe))
+        Store(tmp_path), [provider], jev_client=JevClient(httpx.MockTransport(decisions))
     )
     second = Capture(b"\x00\x00" * 16_000, 16_000)
     app = EntuneApp(entune, FakePlatform(), "http://localhost:0/", recorder=FakeRecorder(second))
     entune.settings.set_key("stub", "k")
     entune.models.set_default_model("stub/good")
-    entune.settings.set_key("typesafe", "ts")
-    entune.settings.set_processing(formatting=True)
+    entune.settings.set_key(key, "dk")
+    entune.settings.set_processing(model=model, formatting=True)
     app.start_recording()
-    assert provider.preconnected.wait(2) and jev_opened.wait(2)
+    assert provider.preconnected.wait(2) and opened.wait(2)
     app.stop_recording()
     wait_for(lambda: entune.operations.status() is None)
     entune.close()
