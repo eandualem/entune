@@ -111,9 +111,9 @@ approved direct mappings. Explicit safe-copy recovery is a separate user action.
 their old method label and are not represented as approved direct work.
 
 Speech success and untouched provider text are saved before dictionary processing.
-Failure of contextual correction delivers the exact original, skips cleanup/formatting
-and shows a noninterrupting notice. Cleanup runs before formatting; failure of either
-preserves that stage's input and skips all later enabled stages. Both report their exact changes, latency and failures
+The enabled stages run at once on the original transcript. A stage that fails keeps its
+own edits out; the others still apply theirs, and a noninterrupting notice names the
+failed stage. Cleanup and formatting report their exact changes, latency and failures
 separately from dictionary replacements. Raw text and completed stage outputs/provenance persist internally. History publishes
 only the final text after processing; pending results cannot be copied as final text.
 History and Settings separate decisions, direct replacements, unresolved occurrences,
