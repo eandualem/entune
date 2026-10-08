@@ -437,8 +437,9 @@ model's declared choice. Invalid responses fail the stage; scores are never inve
 pooled by output spelling.
 
 Only explicitly approved, unambiguous direct mappings bypass classification. Pinning or
-having a single recorded candidate is not enough. Turning contextual correction off
-leaves only explicitly approved direct mappings; other matches are left unchanged. The previous binary classifier's cached accuracy and timings
+having a single recorded candidate is not enough. With **Apply your dictionary** off,
+the dictionary step does not run at all: nothing is replaced, direct mappings included,
+and it adds no time. The previous binary classifier's cached accuracy and timings
 are documented separately; they do not establish the new classifier's quality or latency.
 History and Settings report work performed, including direct changes and abstentions,
 rather than an accuracy score. Optional formatting inserts paragraph breaks and bullets,
