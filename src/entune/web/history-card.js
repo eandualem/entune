@@ -167,7 +167,12 @@ function transcript(t) {
   else for (const part of parts) {
     if (typeof part === "string") { block.append(part); continue; }
     const word = node("span", "fixed", part.text);
-    word.title = `Heard “${part.heard}”`;
+    // What was heard shows on hover, except where anonymous mode hides the text: a
+    // tooltip is never blurred.
+    word.addEventListener("mouseenter", () => {
+      const hidden = document.documentElement.hasAttribute("data-anonymous") && !word.closest(".card")?.hasAttribute("data-reveal");
+      word.title = hidden ? "" : `Heard “${part.heard}”`;
+    });
     block.append(word);
   }
   block.title = "Click to copy";
@@ -305,7 +310,8 @@ export function renderCard(r, models, { isLocal = () => false, currentModels = (
     model.title = `${attemptLabel(latest, models)}${latest.fast ? " · Fast mode" : ""} · ${isLocal(`${latest.provider}/${latest.model}`) ? `on ${THIS_DEVICE}` : "cloud"}`;
     meta.append(model);
   }
-  if (changed && !stageFailed) meta.append(pill(plural(changed, "change"), "", "changes"));
+  // The stages' details, timings included, open from here even when nothing changed.
+  if (stages.length && !stageFailed) meta.append(pill(changed ? plural(changed, "change") : "No changes", "", "changes"));
   if (earlier.length) meta.append(pill(plural(earlier.length, "earlier attempt"), "", "attempts"));
   meta.append(node("span", "spacer"));
   if (!pending && latest?.raw_text != null) {
@@ -354,6 +360,13 @@ export function renderCard(r, models, { isLocal = () => false, currentModels = (
     card.append(box);
   }
   return card;
+}
+
+// A card leaving the page stops playing and stops waiting to draw its waveform.
+export function dispose(card) {
+  card.querySelector("audio")?.pause();
+  const wave = card.querySelector(".wave");
+  if (wave) seen.unobserve(wave);
 }
 
 // A day's header: its name, how many dictations and how long, and on the first, the drop hint.

@@ -1,4 +1,15 @@
-from entune.audio.formats import extension_for, identify, sniff_mime, webm_duration_seconds
+from pathlib import Path
+
+import pytest
+
+from entune.audio import waveform
+from entune.audio.formats import (
+    extension_for,
+    identify,
+    sniff_mime,
+    wav_bytes,
+    webm_duration_seconds,
+)
 from tests.conftest import WEBM_HEADER
 
 
@@ -37,3 +48,14 @@ def test_webm_duration_comes_from_the_last_block() -> None:
     assert webm_duration_seconds(data) == 120_500 * 15 / 1_000_000_000
     assert webm_duration_seconds(WEBM_HEADER) is None
     assert webm_duration_seconds(b"RIFF....WAVE") is None
+
+
+def test_waveform_of_converted_audio_uses_its_real_length(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pcm = b"\x00\x00" * 800 + (b"\x00\x40" + b"\x00\xc0") * 400
+    stream = bytearray(wav_bytes(pcm))
+    stream[40:44] = (0xFFFFFFFF).to_bytes(4, "little")  # piped from ffmpeg: length unknown
+    monkeypatch.setattr(waveform, "to_wav_with_ffmpeg", lambda data, sample_rate: bytes(stream))
+    (tmp_path / "a.m4a").write_bytes(b"not a wav")
+    assert waveform.levels(tmp_path / "a.m4a", 2) == [0.0, 1.0]

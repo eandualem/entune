@@ -1,6 +1,6 @@
 // A bounded history page. Refreshes are conditional and never overlap; unchanged
 // cards retain their player, retry selection and expanded attempts.
-import { dayHeader } from "./history-card.js";
+import { dayHeader, dispose } from "./history-card.js";
 import { whenLabel } from "./ui.js";
 
 export function createHistory({ list, newer, older, renderCard, onChange, onError }) {
@@ -53,7 +53,7 @@ export function createHistory({ list, newer, older, renderCard, onChange, onErro
       if (!card || snapshots.get(recording.id) !== snapshot) {
         const replacement = renderCard(recording);
         if (card) {
-          card.querySelector("audio")?.pause();
+          dispose(card);
           if (position === card) position = replacement;
           card.replaceWith(replacement);
         }
@@ -64,7 +64,7 @@ export function createHistory({ list, newer, older, renderCard, onChange, onErro
       next.set(recording.id, snapshot);
     }
     for (const [id, card] of existing) {
-      if (!next.has(id)) { card.querySelector("audio")?.pause(); card.remove(); }
+      if (!next.has(id)) { dispose(card); card.remove(); }
     }
     snapshots = next;
     group();

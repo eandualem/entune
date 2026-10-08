@@ -128,8 +128,9 @@ def routes(app: Entune) -> list[Route]:
         )
 
     # The waveform History draws: computed once per recording and bar count, kept while
-    # Entune runs. Recordings never change, so nothing invalidates an entry.
-    waveforms: dict[tuple[int, int], list[float]] = {}
+    # Entune runs. Recordings never change; the time and file in the key keep a recording
+    # made after deleting all data, which may reuse an ID, from another's waveform.
+    waveforms: dict[tuple[int, str, str, int], list[float]] = {}
 
     async def waveform(request: Request) -> Response:
         try:
@@ -138,11 +139,11 @@ def routes(app: Entune) -> list[Route]:
                 raise ValueError
         except ValueError:
             return bad("bars must be 1-200")
-        key = (int(request.path_params["id"]), bars)
+        recording = await run_in_threadpool(app.store.get_recording, int(request.path_params["id"]))
+        if recording is None:
+            return bad("No such recording", 404)
+        key = (recording.id, recording.created_at, recording.file, bars)
         if key not in waveforms:
-            recording = await run_in_threadpool(app.store.get_recording, key[0])
-            if recording is None:
-                return bad("No such recording", 404)
             try:
                 found = await run_in_threadpool(levels, app.store.audio_path(recording), bars)
             except (OSError, RuntimeError, ValueError) as exc:
