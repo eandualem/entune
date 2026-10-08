@@ -1020,9 +1020,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   el("save-dictionary").addEventListener("click", async () => {
     let parsed;
     try { parsed = JSON.parse(jsonBox.value); } catch (err) { showJsonError("Not saved.", err.message); return; }
-    const base = draftBase ?? dictVersion;
+    // Without a readable dictionary there is no revision to name: saving asks to replace it.
+    const base = dictVersion ? draftBase ?? dictVersion : null;
     const problem = await saveDictionary(parsed, true, base);
     if (problem) {
+      if (!dictVersion) draftBase = null;
       // Changed elsewhere since this text was started: it stays, and saving again replaces.
       if (dictVersion && dictVersion !== base) {
         draftBase = dictVersion;

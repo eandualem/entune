@@ -10,6 +10,7 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
   let acceptedId = null;
   let version = 0;
   let timer, reading;
+  let drawn = null; // the last answer drawn in full; a failed draw leaves it, so the next poll draws again
   const running = () => ["queued", "transcribing", "building", "cancelling", "cleaning"].includes(state.phase);
   function clearFeedback() {
     clearTimeout(el("build-status")._timer);
@@ -87,9 +88,9 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
         const result = await api("/api/dictionary/build");
         if (version === started) {
           // The same answer again needs no redraw, except while running: its clock moves.
-          const same = JSON.stringify(result) === JSON.stringify(state);
+          const key = JSON.stringify(result);
           state = result;
-          if (!same || running()) await render();
+          if (key !== drawn || running()) { await render(); drawn = key; }
         }
       } catch (err) {
         progress.textContent = `Could not read build progress: ${errorText(err)}`;
