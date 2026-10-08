@@ -109,13 +109,14 @@ def settle(text: str, component: Component) -> Decision | None:
 
 
 def _context(text: str, start: int, end: int, spans: list[formatting.Sentence]) -> tuple[int, int]:
-    """Where the context of a match starts and ends: never inside a word."""
+    """Where the context of a match starts and ends: never inside a word, in a script
+    that separates words with spaces."""
     starts = [s.start for s in spans if s.start <= start and start - s.start <= WINDOW_MAX]
     if starts:
         left = min(starts, key=lambda s: abs(start - s - WINDOW))
     else:
         word = _WORD_START.search(text, max(0, start - WINDOW), start)
-        left = word.start() if word else start
+        left = word.start() if word else max(0, start - WINDOW)  # no spaces, as in Chinese
     ends = [s.end for s in spans if s.end >= end and s.end - end <= WINDOW_MAX]
     if ends:
         right = min(ends, key=lambda e: abs(e - end - WINDOW))
@@ -123,7 +124,7 @@ def _context(text: str, start: int, end: int, spans: list[formatting.Sentence]) 
         right = len(text.rstrip())
     else:
         words = list(_WORD_END.finditer(text, end, end + WINDOW + 1))
-        right = words[-1].end() if words else end
+        right = words[-1].end() if words else end + WINDOW
     return left, max(right, end)
 
 

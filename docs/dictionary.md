@@ -101,7 +101,7 @@ Mixed dictation still makes one request, with one focused Choice per occurrence;
 with Laya, which reads a short input, each occurrence is its own request. The
 state holds only an excerpt, about 160 characters either side of the span: it ends at the
 sentence boundary nearest that distance, at most 240 characters away, or else between
-words. The span is marked ⟦ ⟧ and the other occurrences asked about in the same
+words (at 160 characters in text without spaces). The span is marked ⟦ ⟧ and the other occurrences asked about in the same
 request ⟨ ⟩. Each option states its span, output spelling, definition and personal
 usage directly; for overlapping spans it also states how the marked words read with
 that choice.

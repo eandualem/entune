@@ -802,6 +802,9 @@ def test_context_ends_at_the_sentence_boundary_nearest_the_window_else_a_word() 
     context = jev.meaning_request(text, matches((JEV,), text)).state["occurrences"]["o0"]
     assert context.startswith("word ") and context.endswith(" word")
     assert len(context) <= 2 * jev.WINDOW + len("\u27e6jif\u27e7")
+    text = "\u5b57" * 300 + "\uff0cjif\uff0c" + "\u5b57" * 300  # no spaces to cut at
+    context = jev.meaning_request(text, matches((JEV,), text)).state["occurrences"]["o0"]
+    assert len(context) == 2 * jev.WINDOW + len("\u27e6jif\u27e7")
 
 
 def test_overlapping_options_say_which_words_they_change() -> None:
