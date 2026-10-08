@@ -96,6 +96,13 @@ and edit.
 
 ### 72 wrong replacements become 1 with Jev, in our test
 
+<a href="https://github.com/eandualem/entune/blob/develop/docs/decision-model-results.md">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/eandualem/entune/main/docs/images/decision-models-dark.svg" />
+    <img src="https://raw.githubusercontent.com/eandualem/entune/main/docs/images/decision-models-light.svg" width="880" alt="Chart: of 72 dictionary matches that should stay and 47 that should change, Perplexity made 3 wrong swaps and caught 43 fixes, Jev 1 and 38, OpenAI 8 and 42, Laya 8 and 28. Replacing every match makes all 72 wrong swaps and catches all 47." />
+  </picture>
+</a>
+
 We let Entune learn a dictionary from **7.5 hours** of the maintainer's own dictation
 (406 recordings), then tested it on the next **2.1 hours** (160 recordings) that it
 never saw. Parakeet transcribed everything on the Mac; GPT-6 Astra learned the

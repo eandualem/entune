@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 462" width="880" height="462" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Which decision model knows when to fix a misheard word?</title>
+<desc id="d">Of 72 dictionary matches that should stay and 47 that should change: Perplexity: 3 wrong swaps, 43 fixes caught; Jev: 1 wrong swaps, 38 fixes caught; OpenAI: 8 wrong swaps, 42 fixes caught; Laya: 8 wrong swaps, 28 fixes caught; No decision model: 72 wrong swaps, 47 fixes caught.</desc>
+<line x1="600.2" x2="600.2" y1="140" y2="386" stroke="#f0f6fc" stroke-width="1.5"/>
+<text x="0" y="34" font-size="24" font-weight="700" fill="#f0f6fc">Which decision model knows when to fix a misheard word?</text>
+<text x="0" y="62" font-size="15" fill="#c3c2b7">The dictionary offered another word at 121 places: 47 should change, 72 should stay as spoken.</text>
+<text x="590.2" y="106" font-size="15" font-weight="700" text-anchor="end" fill="#f0f6fc">Wrong swaps <tspan fill="#d95926">■</tspan></text>
+<text x="610.2" y="106" font-size="15" font-weight="700" fill="#f0f6fc"><tspan fill="#3987e5">■</tspan> Fixes caught</text>
+<text x="590.2" y="124" font-size="13" text-anchor="end" fill="#c3c2b7">of 72 that should stay</text>
+<text x="610.2" y="124" font-size="13" fill="#c3c2b7">of 47 that should change</text>
+<text x="0" y="160" font-size="16" font-weight="700" fill="#f0f6fc">Perplexity</text>
+<text x="0" y="177" font-size="12.5" fill="#9a998f">pplx-decider, open weights</text>
+<rect x="585.3" y="147.0" width="13.9" height="22" rx="3" fill="#d95926"/>
+<rect x="601.2" y="147.0" width="212.9" height="22" rx="3" fill="#3987e5"/>
+<text x="577.3" y="164.0" font-size="15" font-weight="700" text-anchor="end" fill="#f0f6fc">3</text>
+<text x="822.1" y="164.0" font-size="15" font-weight="700" fill="#f0f6fc">43</text>
+<text x="0" y="208" font-size="16" font-weight="700" fill="#f0f6fc">Jev</text>
+<text x="0" y="225" font-size="12.5" fill="#9a998f">TypeSafe</text>
+<rect x="595.2" y="195.0" width="4.0" height="22" rx="3" fill="#d95926"/>
+<rect x="601.2" y="195.0" width="188.0" height="22" rx="3" fill="#3987e5"/>
+<text x="587.2" y="212.0" font-size="15" font-weight="700" text-anchor="end" fill="#f0f6fc">1</text>
+<text x="797.2" y="212.0" font-size="15" font-weight="700" fill="#f0f6fc">38</text>
+<text x="0" y="256" font-size="16" font-weight="700" fill="#f0f6fc">OpenAI</text>
+<text x="0" y="273" font-size="12.5" fill="#9a998f">Decisions API</text>
+<rect x="560.4" y="243.0" width="38.8" height="22" rx="3" fill="#d95926"/>
+<rect x="601.2" y="243.0" width="207.9" height="22" rx="3" fill="#3987e5"/>
+<text x="552.4" y="260.0" font-size="15" font-weight="700" text-anchor="end" fill="#f0f6fc">8</text>
+<text x="817.1" y="260.0" font-size="15" font-weight="700" fill="#f0f6fc">42</text>
+<text x="0" y="304" font-size="16" font-weight="700" fill="#f0f6fc">Laya</text>
+<text x="0" y="321" font-size="12.5" fill="#9a998f">on your computer</text>
+<rect x="560.4" y="291.0" width="38.8" height="22" rx="3" fill="#d95926"/>
+<rect x="601.2" y="291.0" width="138.3" height="22" rx="3" fill="#3987e5"/>
+<text x="552.4" y="308.0" font-size="15" font-weight="700" text-anchor="end" fill="#f0f6fc">8</text>
+<text x="747.5" y="308.0" font-size="15" font-weight="700" fill="#f0f6fc">28</text>
+<line x1="0" x2="880" y1="338" y2="338" stroke="#3d444d" stroke-width="1.5" stroke-dasharray="5 5"/>
+<text x="0" y="366" font-size="16" font-weight="700" fill="#c3c2b7">No decision model</text>
+<text x="0" y="383" font-size="12.5" fill="#9a998f">replace every match</text>
+<rect x="242.0" y="353.0" width="357.2" height="22" rx="3" fill="#d95926"/>
+<rect x="601.2" y="353.0" width="232.8" height="22" rx="3" fill="#3987e5"/>
+<text x="234.0" y="370.0" font-size="15" font-weight="700" text-anchor="end" fill="#f0f6fc">72</text>
+<text x="842.0" y="370.0" font-size="15" font-weight="700" fill="#f0f6fc">47</text>
+<text x="0" y="420" font-size="13" fill="#c3c2b7">One speaker's dictation, October 2026: the dictionary learned from 7.5 hours and was tested on the</text>
+<text x="0" y="439" font-size="13" fill="#c3c2b7">next 2.1 hours (160 recordings). Answers written before any model ran; one reviewer, one run.</text>
+</svg>
