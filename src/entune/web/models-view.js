@@ -251,7 +251,7 @@ export function createModels({ getDefault, reloadSettings, onModelsChanged, onEr
       const plotted = used.filter((u) => u.kept !== null && u.m.seconds_per_minute !== null);
       // The design's scales, widened when this history goes past them; the slowest model
       // keeps clear of the axis labels on the left.
-      const slowest = Math.max(6, ...plotted.map((u) => u.m.seconds_per_minute * 1.25));
+      const slowest = Math.max(6, ...plotted.map((u) => u.m.seconds_per_minute * 1.6));
       const lowest = Math.min(99.5, ...plotted.map((u) => Math.floor(u.kept * 2) / 2));
       const x = (wait) => Math.log(slowest / wait) / Math.log(slowest / 0.08);
       const y = (kept) => (kept - lowest) / ((100 - lowest) * 1.1);
