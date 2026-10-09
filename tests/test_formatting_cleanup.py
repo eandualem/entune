@@ -53,7 +53,7 @@ def test_a_spoken_ordinal_goes_even_when_a_filler_follows_it() -> None:
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             raw,
-            (),
+            Active(),
             contextual=False,
             formatting=True,
             cleanup=True,
@@ -81,7 +81,7 @@ def test_a_number_another_stage_keeps_out_leaves_its_ordinal_as_said() -> None:
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             raw,
-            (),
+            Active(),
             contextual=False,
             formatting=True,
             cleanup=True,
