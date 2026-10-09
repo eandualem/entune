@@ -83,7 +83,7 @@ The full setup and dictation have been tested on macOS and Windows; see
 [Windows](https://github.com/eandualem/entune/blob/develop/docs/guide.md#windows)
 for what differs there. Linux is new: see
 [Linux](https://github.com/eandualem/entune/blob/develop/docs/guide.md#linux) for
-the two system libraries it needs and how shortcuts work on X11 and Wayland.
+the system libraries it needs and how shortcuts work on X11 and Wayland.
 
 ## Your agent builds and refines your dictionary
 
