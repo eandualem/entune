@@ -43,8 +43,11 @@ HELPER_TIMEOUT_SECONDS = 300.0
 
 
 def _installed(engine: Path) -> bool:
+    """Complete, of the pinned version, and with its Python still there: an upgrade or a
+    cleanup can remove the interpreter an environment points to, and Download repairs it."""
     marker = engine / INSTALLED
-    return marker.exists() and marker.read_text().split() == list(ENGINE)
+    python = engine / "bin" / "python"
+    return marker.exists() and marker.read_text().split() == list(ENGINE) and python.exists()
 
 
 def install_engine(engine: Path, cancel: threading.Event) -> None:

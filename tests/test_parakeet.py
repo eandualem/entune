@@ -53,19 +53,28 @@ def test_download_installs_the_engine_first_and_remove_deletes_it(
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"x" * 10)
 
-    installed = threading.Event()
+    entered, installed = threading.Event(), threading.Event()
 
     def install(engine: Path, cancel: threading.Event) -> None:
+        entered.set()
         assert installed.wait(3)  # held, so the status while installing can be read
         (engine / "bin").mkdir(parents=True)
+        (engine / "bin" / "python").write_text("")
         (engine / INSTALLED).write_text(" ".join(ENGINE))
 
     parakeet = Parakeet(tmp_path, client=mock_client(handler), install=install)
     parakeet.download(MODEL)
-    (status,) = parakeet.catalogue()
-    assert status.state == "downloading" and "installing its engine" in status.note
-    installed.set()
+    try:
+        assert entered.wait(3)
+        (status,) = parakeet.catalogue()
+        assert status.state == "downloading" and "installing its engine" in status.note
+    finally:
+        installed.set()
     wait_until(lambda: parakeet.models == (MODEL,))
+    # An engine whose Python is gone is not installed: Download can repair it.
+    (tmp_path / ENGINE_DIR / "bin" / "python").unlink()
+    assert Parakeet(tmp_path).engine() is None
+    (tmp_path / ENGINE_DIR / "bin" / "python").write_text("")
     assert parakeet.engine() == tmp_path / ENGINE_DIR / "bin" / "python"
     parakeet.remove(MODEL)
     assert not (tmp_path / ENGINE_DIR).exists() and parakeet.engine() is None
