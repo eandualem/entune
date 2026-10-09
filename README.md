@@ -98,7 +98,9 @@ claude mcp add --transport http entune http://localhost:4187/mcp
 
 Any agent that speaks MCP over HTTP takes the same endpoint, `http://localhost:4187/mcp`,
 while Entune runs; **Settings › Integrations** shows it. Each speech model has its own
-dictionary, and the agent works on the one you dictate with unless you name another.
+learned entries, and the agent works on the model you dictate with unless you name
+another; words and pinned entries are shared by every model, so a word the agent edits
+changes for all of them.
 Every change it makes is checked against the version it read, so nothing you changed
 meanwhile is lost. What it reads, transcript excerpts included, goes to your agent's
 model provider. [The agents' API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md#your-agent-and-your-dictionary-mcp)

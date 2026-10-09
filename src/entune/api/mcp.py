@@ -25,6 +25,7 @@ from entune.app.entune import Entune
 from entune.dictionary import changes, edits
 from entune.dictionary import document as dictionary_document
 from entune.dictionary.entries import Dictionary, key
+from entune.learning import view
 from entune.learning.replies import occurrences
 
 INSTRUCTIONS = (
@@ -155,8 +156,10 @@ def server(app: Entune) -> MCPServer:
             )
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
-        if len(word.meaning) > 120:
-            raise ToolError("Keep the meaning to a short phrase of at most 120 characters")
+        if len(word.meaning) > view.MEANING_CHARS:
+            raise ToolError(
+                f"Keep the meaning to a short phrase of at most {view.MEANING_CHARS} characters"
+            )
 
         def update(dictionary: Dictionary) -> Dictionary:
             if word_id is not None and not any(w.id == word_id for w in dictionary.words):
