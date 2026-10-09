@@ -237,7 +237,12 @@ class Dictation:
                             mime = sniff_mime(data) or mime
                         clip = Clip(data, mime)
                         seconds = clip.seconds
-                        if self._settings.remove_silence() and mime == "audio/wav":
+                        # Fast mode's pieces were shortened as they were sent.
+                        if (
+                            joined is None
+                            and self._settings.remove_silence()
+                            and mime == "audio/wav"
+                        ):
                             clip = Clip(shorten_wav(data), mime)
                         result = (
                             Transcript(joined)
