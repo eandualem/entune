@@ -8,6 +8,7 @@ heard entries where it competes normally: no implicit priority.
 from __future__ import annotations
 
 import hashlib
+import uuid
 from dataclasses import dataclass, replace
 
 from entune.dictionary.document import validate
@@ -94,8 +95,14 @@ def add_corrections(
         identity = _id("w_", key(correction.spelling) + "\n" + correction.description)
         if len(same) == 1:
             word = same[0]
+        elif words.get(identity) in same:
+            word = words[identity]
         else:
-            word = words.get(identity) or Word(
+            # The word this correction made before was renamed or described otherwise
+            # since: it is another word now, so this one gets an ID of its own.
+            if identity in words:
+                identity = "w_" + uuid.uuid4().hex
+            word = Word(
                 identity,
                 correction.spelling,
                 correction.description,

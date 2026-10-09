@@ -247,6 +247,21 @@ def test_confirmed_agent_boundary_is_idempotent_and_does_not_grant_precedence() 
     # An existing word gains a heard entry; no new word is made for it.
     more, added = add_corrections(doc, (Correction("GIF", heard=("jiff",)),))
     assert added == (Correction("GIF", "", ("jiff",)),) and more.words == doc.words
+    # A word a correction made and the person renamed is not the target of that correction.
+    (made,) = [w for w in doc.words if w.meaning == "A model."]
+    # Renamed as the editor does it: its "as written" candidate becomes the person's own.
+    renamed = Dictionary(
+        tuple(replace(w, spelling="Jev2") if w is made else w for w in doc.words),
+        tuple(
+            replace(h, candidates=tuple(replace(c, basis="user") for c in h.candidates))
+            for h in doc.pinned
+        ),
+        doc.learned,
+    )
+    again, added = add_corrections(renamed, (Correction("Jev", "A model.", ("jeb",)),))
+    (jeb,) = [h for h in again.pinned if h.text == "jeb"]
+    assert added and {w.spelling for w in again.words if w.id == jeb.candidates[0].word} == {"Jev"}
+    assert len(again.words) == len(doc.words) + 1
     # A term only learned so far is pinned with its own spelling, for every speech model.
     pinned, added = add_corrections(doc, (Correction("GIF"),))
     assert added == (Correction("GIF"),) and pinned.pinned[-1].text == "GIF"

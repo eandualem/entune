@@ -342,7 +342,7 @@ def test_a_stored_word_without_a_meaning_takes_the_one_suggested_or_is_refused()
         (grafana,), (Heard("Grafana", (Candidate("w_grafana", basis="literal"),)),)
     )
     text = "open the gray fauna panel for Grafana"
-    heard = {"text": "gray fauna", "candidates": [candidate("w1", "text", (9, 19))]}
+    heard: dict[str, Any] = {"text": "gray fauna", "candidates": [candidate("w1", "text", (9, 19))]}
     with pytest.raises(ValueError, match="no meaning yet"):
         parse(reply(heard=[heard]), (text,), working)
     word = {

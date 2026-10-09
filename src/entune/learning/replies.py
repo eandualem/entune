@@ -160,12 +160,12 @@ def parse_reply(
 
     described: set[str] = set()
     for item in data["meanings"]:
-        identity = shown.word_ids.get(item["word"])
-        if identity is None or identity in described:
+        shown_id = shown.word_ids.get(item["word"])
+        if shown_id is None or shown_id in described:
             raise ValueError(f"Describe each shown word at most once: {item['word']}")
-        described.add(identity)
-        word = words[identity]
-        words[identity] = replace(word, meaning=_meaning(item["meaning"], word.spelling))
+        described.add(shown_id)
+        word = words[shown_id]
+        words[shown_id] = replace(word, meaning=_meaning(item["meaning"], word.spelling))
 
     replied: dict[str, Heard] = {}
     dropped: set[str] = set()  # words named only by additions that add nothing

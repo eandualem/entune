@@ -947,7 +947,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const next = clone();
     // Words: an edited one replaces its stored copy everywhere; a new one is added.
     const changedOutputs = new Set();
-    for (const item of d.items.filter(edited)) {
+    // Saving also confirms a word flagged for review once it has a description.
+    const confirmed = (item) => item.stored && JSON.parse(item.seen).needs_review && Boolean(words(item.word.meaning));
+    for (const item of d.items.filter((item) => edited(item) || confirmed(item))) {
       const meaning = item.word.meaning.trim();
       const word = { id: item.word.id, spelling: words(item.word.spelling), meaning, personal_context: item.word.personal_context.trim() || null,
         casing: item.word.casing, needs_review: !meaning };
