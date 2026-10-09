@@ -255,13 +255,15 @@ export function createModels({ getDefault, reloadSettings, onModelsChanged, onEr
       const x = (wait) => Math.log(slowest / wait) / Math.log(slowest / 0.08);
       const y = (kept) => (kept - lowest) / ((100 - lowest) * 1.1);
       const still = plotted.some((u) => u.id === selected) ? selected : null; // gone after new data
-      const pick = still ?? (used.find((u) => u.id === inUse) ?? used[0])?.id ?? inUse ?? all[0]?.id;
+      // The model in use: its plain runs, or its fast ones when it has only those.
+      const current = used.find((u) => u.base === inUse && !u.fast) ?? used.find((u) => u.base === inUse);
+      const pick = still ?? (current ?? used[0])?.id ?? inUse ?? all[0]?.id;
       const both = (u) => used.some((v) => v.base === u.base && v.fast !== u.fast && plotted.includes(v));
       return {
         pick, used, plotted,
         dots: plotted.map((u) => ({
           id: u.id, name: u.label, x: x(u.m.seconds_per_minute), y: y(u.kept), cloud: !u.local, few: u.m.runs < FEW,
-          inUse: u.id === inUse, place: both(u) ? (u.fast ? "above" : "below") : "",
+          inUse: u === current, place: both(u) ? (u.fast ? "above" : "below") : "",
         })),
         xTicks: [...(slowest > 12 ? [[10, "10 s"]] : []), [5, "5 s"], [1, "1 s"], [0.1, "0.1 s"]].map(([v, label]) => [x(v), label]),
         yTicks: [lowest, (lowest + 100) / 2, 100].map((v) => [y(v), `${+v.toFixed(2)}%`]),
