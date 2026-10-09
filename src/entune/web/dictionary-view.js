@@ -607,7 +607,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const model = getModel();
     const spelling = words(addFields.spelling.value);
     const heard = heardList();
-    const word = (spelling && dict.words.find((w) => w.spelling === spelling)) || { id: id("w"), spelling, meaning: words(addFields.desc.value), personal_context: null, casing: "fixed", needs_review: false };
+    const description = words(addFields.desc.value);
+    // The same rule as the add line: a stored word only when it is not described otherwise.
+    const same = spelling && dict.words.find((w) => w.spelling === spelling && (!description || !w.meaning || w.meaning === description));
+    const word = same ? { ...same, meaning: same.meaning || description }
+      : { id: id("w"), spelling, meaning: description, personal_context: null, casing: "fixed", needs_review: false };
     openEditor(addPinned || !model ? "pinned" : "learned", { text: heard[0] ?? "", candidates: [{ word: word.id, basis: "user", evidence: [] }], direct: null, direct_reason: "" },
       true, model, [word], heard.slice(1));
   });
@@ -630,8 +634,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   }
   function openEditor(scope, entry, created = false, model = getModel(), fresh = [], more = []) {
     editorError = "";
+    // `fresh`: words as the add line filled them in, over their stored copies.
     const known = wordMap();
-    for (const w of fresh) if (!known.has(w.id)) known.set(w.id, w);
+    for (const w of fresh) known.set(w.id, w);
     draft = {
       created, scope, model,
       notices: more.length ? [`Only “${entry.text}” is in this entry; add ${more.map((t) => `“${t}”`).join(", ")} as entries of their own.`] : [],
@@ -640,7 +645,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       text: entry.text, origText: created ? null : entry.text,
       items: entry.candidates.map((c) => {
         const w = known.get(c.word) ?? blankWord();
-        return draftItem(w, dict.words.some((x) => x.id === w.id), c.basis, c.evidence ?? []);
+        const stored = dict.words.find((x) => x.id === w.id);
+        return { ...draftItem(w, Boolean(stored), c.basis, c.evidence ?? []), seen: stored ? JSON.stringify(stored) : null };
       }),
       direct: entry.direct, direct_reason: entry.direct_reason ?? "",
     };
