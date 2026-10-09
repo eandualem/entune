@@ -615,6 +615,11 @@ def test_a_numbered_entry_keeps_its_follow_up_sentences() -> None:
             ("S03", "S04"),
             "```\n9. Example item.\n```\n1. Open settings.\n2. Choose the model.",
         ),
+        (
+            "    9. Example item.\nFirst, open settings. Second, choose the model.",
+            ("S01", "S02"),
+            "    9. Example item.\n1. Open settings.\n2. Choose the model.",
+        ),
         # An existing list line holding a quote is still part of the list.
         (
             'First, select Groq.\n2. Select "Parakeet".\nThird, save.',

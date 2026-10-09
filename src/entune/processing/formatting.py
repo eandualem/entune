@@ -80,11 +80,13 @@ def sentences(text: str) -> list[Sentence]:
             continue
         start = line.start() + len(line.group()) - len(line.group().lstrip())
         end = start + len(content)
-        # A line inside a code block, or other protected text over several lines, is no
-        # list line even when it looks like one; a list line holding a quote still is.
+        # Indented code, or a line inside a code block or other protected text over
+        # several lines, is no list line even when it looks like one; a list line holding
+        # a quote still is.
+        indented = line.group().startswith(("    ", "\t"))
         enclosed = any(a <= start and end <= b and "\n" in text[a:b] for a, b in excluded)
-        listed = bool(_LIST.match(content)) and not enclosed
-        locked = line.group().startswith(("    ", "\t")) or overlaps(start, end, excluded)
+        listed = bool(_LIST.match(content)) and not indented and not enclosed
+        locked = indented or overlaps(start, end, excluded)
         if listed or locked:
             spans.append(Sentence(start, end, listed, locked))
             continue
