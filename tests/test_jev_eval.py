@@ -85,28 +85,27 @@ def test_labels_resolve_overlapping_interpretations_by_span() -> None:
 
 
 def test_options_are_read_as_the_request_numbers_them() -> None:
-    from entune.dictionary.entries import Association, Form, Group, Meaning
+    from entune.dictionary.entries import Active, Candidate, Heard, Word
 
     harness = _harness()
-    cloud = Group(
-        "g_cloud",
+    cloud = Active(
         (
-            Meaning("a_cloud", "cloud", "Remote computing.", casing="ordinary"),
-            Meaning("b_cloud", "cloud", "Weather.", casing="ordinary"),
-            Meaning("c_claude", "Claude", "An AI assistant."),
+            Word("a_cloud", "cloud", "Remote computing.", casing="ordinary"),
+            Word("b_cloud", "cloud", "Weather.", casing="ordinary"),
+            Word("c_claude", "Claude", "An AI assistant."),
         ),
         (
-            Form(
+            Heard(
                 "cloud",
                 (
-                    Association("a_cloud", basis="literal"),
-                    Association("b_cloud", basis="literal"),
-                    Association("c_claude"),
+                    Candidate("a_cloud", basis="literal"),
+                    Candidate("b_cloud", basis="literal"),
+                    Candidate("c_claude"),
                 ),
             ),
         ),
     )
     case = harness.Case("claude", "Ask cloud here.", 4, 9, ("c_claude",))
-    prepared = harness.prepare(case, (cloud,), jev.Variant())
+    prepared = harness.prepare(case, cloud, jev.Variant())
     assert prepared.outputs == {"i0": "cloud", "i1": "Claude"}
     assert harness.outcome(prepared, "i1") == "correct"
