@@ -966,9 +966,11 @@ def test_usage_counts_each_dictation_once_by_its_newest_transcript(
     assert (summary["dictations"], summary["transcribed"], summary["words"]) == (4, 3, 18)
     assert summary["audio_seconds"] == 6.0 and summary["timed_words"] == 12
     assert [w["words"] for w in summary["weeks"]] == [0] * 7 + [18]
+    assert summary["previous_best_week"] == 0
     assert [summary[s]["count"] for s in ("dictionary", "fillers", "layout")] == [0, 0, 0]
     later = usage(store, today=date.today() + timedelta(weeks=8))
     assert later.words == 18 and all(w.words == 0 for w in later.weeks)
+    assert later.previous_best_week == 18  # a week before the eight shown still counts
 
 
 def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: StubProvider) -> None:

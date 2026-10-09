@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import re
 import statistics
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -95,7 +94,8 @@ class Usage:
     words: int  # in their transcripts
     timed_words: int  # in the transcripts whose audio length is known
     weeks: list[WeekWords]  # the last eight, oldest first, this week last
-    dictionary: StepUsage
+    previous_best_week: int  # the most words in any week before this one
+    dictionary: StepUsage  # its count: the raw words corrected
     fillers: StepUsage
     layout: StepUsage
 
@@ -199,7 +199,7 @@ def usage(store: Store, today: date | None = None) -> Usage:
     """Each dictation counts once, by its newest transcript; the steps count all their work."""
     this_week = today or datetime.now().astimezone().date()
     this_week -= timedelta(days=this_week.weekday())
-    weeks = {this_week - timedelta(weeks=n): 0 for n in range(7, -1, -1)}
+    every_week: dict[date, int] = {}
     dictations = transcribed = words = timed_words = 0
     audio = 0.0
     for recording in store.list_recordings():
@@ -217,19 +217,21 @@ def usage(store: Store, today: date | None = None) -> Usage:
         timed_words += count if seconds else 0
         day = datetime.fromisoformat(recording.created_at.replace("Z", "+00:00")).astimezone()
         week = day.date() - timedelta(days=day.weekday())
-        if week in weeks:
-            weeks[week] += count
+        every_week[week] = every_week.get(week, 0) + count
+    weeks = [this_week - timedelta(weeks=n) for n in range(7, -1, -1)]
+    processed = store.processed_transcriptions()
     stages = [
         stage
-        for a in store.processed_transcriptions()
+        for a in processed
         for stage in (a.correction, a.cleanup, a.formatting)
         if stage is not None
     ]
 
-    def step(methods: tuple[str, ...], count: Callable[[Stage], int]) -> StepUsage:
-        group = [s for s in stages if s.method in methods]
-        waits = [s.seconds for s in group if s.status in ("succeeded", "failed")]
-        return StepUsage(sum(count(s) for s in group), statistics.median(waits) if waits else None)
+    def step(count: int, *methods: str) -> StepUsage:
+        waits = [
+            s.seconds for s in stages if s.method in methods and s.status in ("succeeded", "failed")
+        ]
+        return StepUsage(count, statistics.median(waits) if waits else None)
 
     return Usage(
         dictations=dictations,
@@ -237,10 +239,17 @@ def usage(store: Store, today: date | None = None) -> Usage:
         audio_seconds=audio,
         words=words,
         timed_words=timed_words,
-        weeks=[WeekWords(start.isoformat(), n) for start, n in weeks.items()],
-        dictionary=step(("contextual", "deterministic"), lambda s: s.replacements),
-        fillers=step(("cleanup",), lambda s: s.removed_words),
-        layout=step(("formatting",), lambda s: len(s.changes or ())),
+        weeks=[WeekWords(start.isoformat(), every_week.get(start, 0)) for start in weeks],
+        previous_best_week=max((n for w, n in every_week.items() if w < this_week), default=0),
+        dictionary=step(
+            sum(_replaced_words(a) for a in processed if _dictionary_ran(a)),
+            "contextual",
+            "deterministic",
+        ),
+        fillers=step(sum(s.removed_words for s in stages if s.method == "cleanup"), "cleanup"),
+        layout=step(
+            sum(len(s.changes or ()) for s in stages if s.method == "formatting"), "formatting"
+        ),
     )
 
 

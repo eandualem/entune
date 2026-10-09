@@ -440,8 +440,7 @@ export function createModels({ getDefault, reloadSettings, onModelsChanged, onEr
       return week;
     }));
     const now = u.weeks.at(-1).words;
-    const before = u.weeks.slice(0, -1).map((w) => w.words);
-    const best = now > 0 && before.some((n) => n > 0) && before.every((n) => n < now);
+    const best = now > 0 && u.previous_best_week > 0 && now > u.previous_best_week;
     el("usage-week").textContent = `${plural(now, "word")} this week`;
     el("usage-week-pages").textContent = now ? ` · about ${pages(now)}${best ? ", your best week yet" : ""}` : "";
 
