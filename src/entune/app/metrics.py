@@ -31,7 +31,9 @@ class ModelMetrics:
     timed_runs: int
     # Dictionary replacements over the raw words of dictations where the dictionary
     # step ran and recorded its edits (`checked`); other dictations are not evidence.
+    # `replaced_words` counts the raw words they replaced: "in tune" -> "Entune" is two.
     replacements: int
+    replaced_words: int
     words: int
     corrected: int
     checked: int
@@ -90,6 +92,7 @@ class Usage:
     transcribed: int  # of them, with a transcript
     audio_seconds: float  # the transcribed ones' audio, where its length is known
     words: int  # in their transcripts
+    timed_words: int  # in the transcripts whose audio length is known
     weeks: list[WeekWords]  # the last eight, oldest first, this week last
     dictionary: StepUsage
     fillers: StepUsage
@@ -130,6 +133,12 @@ def model_metrics(store: Store, providers: list[Provider]) -> list[ModelMetrics]
                 seconds_per_minute=60 * waited / audio if audio else None,
                 timed_runs=len(timed),
                 replacements=sum(len(a.correction.changes or ()) for a in checked if a.correction),
+                replaced_words=sum(
+                    len(c.before.split())
+                    for a in checked
+                    if a.correction
+                    for c in a.correction.changes or ()
+                ),
                 words=sum(len((a.raw_text or "").split()) for a in checked),
                 corrected=sum(bool(a.correction and a.correction.changes) for a in checked),
                 checked=len(checked),
@@ -195,7 +204,7 @@ def usage(store: Store, today: date | None = None) -> Usage:
     this_week = today or datetime.now().astimezone().date()
     this_week -= timedelta(days=this_week.weekday())
     weeks = {this_week - timedelta(weeks=n): 0 for n in range(7, -1, -1)}
-    dictations = transcribed = words = 0
+    dictations = transcribed = words = timed_words = 0
     audio = 0.0
     for recording in store.list_recordings():
         if not recording.transcriptions:
@@ -205,9 +214,11 @@ def usage(store: Store, today: date | None = None) -> Usage:
         if latest is None:
             continue
         transcribed += 1
-        audio += max((a.audio_seconds or 0.0 for a in recording.transcriptions), default=0.0)
+        seconds = max((a.audio_seconds or 0.0 for a in recording.transcriptions), default=0.0)
         count = len((latest.text or "").split())
+        audio += seconds
         words += count
+        timed_words += count if seconds else 0
         day = datetime.fromisoformat(recording.created_at.replace("Z", "+00:00")).astimezone()
         week = day.date() - timedelta(days=day.weekday())
         if week in weeks:
@@ -229,6 +240,7 @@ def usage(store: Store, today: date | None = None) -> Usage:
         transcribed=transcribed,
         audio_seconds=audio,
         words=words,
+        timed_words=timed_words,
         weeks=[WeekWords(start.isoformat(), n) for start, n in weeks.items()],
         dictionary=step(("contextual", "deterministic"), lambda s: s.replacements),
         fillers=step(("cleanup",), lambda s: s.removed_words),

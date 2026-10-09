@@ -24,8 +24,11 @@ from entune.app.metrics import model_metrics, usage
 from entune.app.shortcuts import DEFAULT_CANCEL
 from entune.audio.formats import wav_bytes
 from entune.learning.suggestion_model import Request, chatgpt
+from entune.processing.results import Stage
+from entune.processing.text_edits import Change
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from entune.server import create_app
+from entune.storage.records import Transcription
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, mock_client, wait_for_build
 from tests.dictionary_samples import JEV, document, group, proposed
@@ -925,6 +928,21 @@ def test_metrics_are_computed_from_timed_attempts(client: TestClient) -> None:
     assert "median_wait" not in row and "speed" not in row
 
 
+def test_words_kept_counts_the_words_a_replacement_took_out() -> None:
+    fixed = Stage("succeeded", "contextual", changes=(Change(0, 7, "in tune", "Entune"),))
+    attempt = Transcription(
+        1, 1, "stub", "good", "ok", "Entune", None, "", raw_text="in tune",
+        audio_seconds=1.0, elapsed_seconds=0.1, correction=fixed,
+    )  # fmt: skip
+
+    class History:
+        def timed_transcriptions(self) -> list[Transcription]:
+            return [attempt]
+
+    (row,) = model_metrics(History(), [])  # type: ignore[arg-type]
+    assert (row.replacements, row.replaced_words, row.words) == (1, 2, 2)
+
+
 def test_usage_counts_each_dictation_once_by_its_newest_transcript(
     tmp_path: Path, stub: StubProvider
 ) -> None:
@@ -938,13 +956,14 @@ def test_usage_counts_each_dictation_once_by_its_newest_transcript(
         ).json()
         client.post(f"/api/recordings/{retried['id']}/transcriptions", json={"model": "stub/good"})
         client.post("/api/recordings", files={"audio": clip})
+        client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})  # no length
         summary = client.get("/api/usage").json()
-    assert (summary["dictations"], summary["transcribed"], summary["words"]) == (3, 2, 12)
-    assert summary["audio_seconds"] == 6.0
-    assert [w["words"] for w in summary["weeks"]] == [0] * 7 + [12]
+    assert (summary["dictations"], summary["transcribed"], summary["words"]) == (4, 3, 18)
+    assert summary["audio_seconds"] == 6.0 and summary["timed_words"] == 12
+    assert [w["words"] for w in summary["weeks"]] == [0] * 7 + [18]
     assert [summary[s]["count"] for s in ("dictionary", "fillers", "layout")] == [0, 0, 0]
     later = usage(store, today=date.today() + timedelta(weeks=8))
-    assert later.words == 12 and all(w.words == 0 for w in later.weeks)
+    assert later.words == 18 and all(w.words == 0 for w in later.weeks)
 
 
 def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: StubProvider) -> None:

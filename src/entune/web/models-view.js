@@ -238,7 +238,7 @@ export function createModels({ getDefault, reloadSettings, onModelsChanged, onEr
       return {
         id: m.fast ? `${base}#fast` : base, base, fast: m.fast, m, local: local.has(m.provider),
         label: `${FACTS[base]?.dot ?? m.model}${m.fast ? " · Fast" : ""}`,
-        kept: m.words ? 100 * (1 - m.replacements / m.words) : null,
+        kept: m.words ? 100 * (1 - m.replaced_words / m.words) : null,
       };
     });
   }
@@ -425,7 +425,8 @@ export function createModels({ getDefault, reloadSettings, onModelsChanged, onEr
     const pages = (words) => plural(Math.max(1, Math.round(words / 250)), "page");
     const novels = Math.round(u.words / 90000); // a novel is about 90,000 words
     el("usage-novel").textContent = u.words >= 90000 ? `About the length of ${novels === 1 ? "a novel" : `${novels} novels`}` : u.words ? `About ${pages(u.words)}` : "";
-    const saved = u.words / 40 - u.audio_seconds / 60; // minutes, typing at 40 words a minute
+    // Minutes, typing at 40 words a minute, from the dictations whose length is known.
+    const saved = u.timed_words / 40 - u.audio_seconds / 60;
     el("usage-saved-block").hidden = saved < 1;
     el("usage-saved").textContent = saved >= 60 ? `${Math.round(saved / 60)} h saved` : `${Math.round(saved)} min saved`;
 
