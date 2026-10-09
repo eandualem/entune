@@ -306,27 +306,28 @@ def _actions(
     list only an ordinal starts the next entry. Every other sentence continues where it
     is, a list entry included, until a new paragraph or an empty line ends the list."""
     actions = []
-    numbered = False  # a numbered list is going on
+    kind: str | None = None  # the kind of the list going on, taken from its first entry
     for i, (span, answer) in enumerate(zip(spans, answers, strict=True)):
         gap = text[spans[i - 1].end : span.start] if i else ""
         if formatting.blank_line(gap):
-            numbered = False
+            kind = None
         if span.listed:
             actions.append("list_item")
-            numbered = False
+            kind = "numbered_item" if formatting.numbered_line(text, span) else "bullet_item"
             continue
         role = "continues" if answer is None else _role(answer)
         ordinal = formatting.ordinal(text, span)
-        if ordinal and answer is not None and answer["list_item"] >= ORDINAL_PROBABILITY:
-            action = "numbered_item"
+        if (ordinal and answer is not None and answer["list_item"] >= ORDINAL_PROBABILITY) or (
+            role == "list" and kind != "numbered_item"
+        ):
+            action = kind or ("numbered_item" if ordinal else "bullet_item")
+            kind = action
         elif role == "list":
-            action = "continues" if numbered else "bullet_item"
+            action = "continues"  # inside a numbered list only an ordinal starts an entry
         else:
             action = role
-        if action == "new_paragraph":
-            numbered = False
-        elif action == "numbered_item":
-            numbered = True
+            if action == "new_paragraph":
+                kind = None
         actions.append(action)
     return actions
 
@@ -364,7 +365,7 @@ def _whole_lists(text: str, spans: list[formatting.Sentence], actions: list[str]
             end += 1
             if actions[end] != "continues":
                 entries.append(end)
-        if len(entries) == 1 and not _beside_existing_list(text, spans, actions, i):
+        if len(entries) == 1 and not _beside_existing_list(text, spans, actions, i, end):
             actions[i] = "new_paragraph"
         else:
             for k in entries:
@@ -373,14 +374,15 @@ def _whole_lists(text: str, spans: list[formatting.Sentence], actions: list[str]
 
 
 def _beside_existing_list(
-    text: str, spans: list[formatting.Sentence], actions: list[str], i: int
+    text: str, spans: list[formatting.Sentence], actions: list[str], first: int, last: int
 ) -> bool:
-    """Whether an existing list line touches span i, with no empty line between them."""
+    """Whether an existing list line touches the entry from span `first` to `last` (its
+    follow-up sentences included), with no empty line between them."""
     return any(
         0 <= j < len(spans)
         and actions[j] == "list_item"
-        and not formatting.blank_line(text[spans[min(i, j)].end : spans[max(i, j)].start])
-        for j in (i - 1, i + 1)
+        and not formatting.blank_line(text[spans[min(k, j)].end : spans[max(k, j)].start])
+        for k, j in ((first, first - 1), (last, last + 1))
     )
 
 

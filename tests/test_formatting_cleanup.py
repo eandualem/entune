@@ -544,3 +544,37 @@ def test_a_numbered_entry_keeps_its_follow_up_sentences() -> None:
         "3. Can it clean fillers? Like for example, yeah.\n\n"
         "So overall, that's my goal."
     )
+
+
+@pytest.mark.parametrize(
+    "raw,items,expected",
+    [
+        # A later spoken ordinal joins the bullet list its first entry started.
+        (
+            "Tea for the morning. Second, coffee for lunch. Water for the evening.",
+            ("S00", "S01", "S02"),
+            "- Tea for the morning.\n- Second, coffee for lunch.\n- Water for the evening.",
+        ),
+        # Numbering goes on from an existing line across a follow-up sentence.
+        (
+            "1. Open settings.\nThis lets you set things up. Second, choose the model. Third, save"
+            " it.",
+            ("S02", "S03"),
+            "1. Open settings.\nThis lets you set things up.\n2. Choose the model.\n3. Save it.",
+        ),
+        # An entry with a follow-up still counts the existing list line after it.
+        (
+            "One, open settings. This is necessary.\n2. Choose the model.",
+            ("S00",),
+            "1. Open settings. This is necessary.\n2. Choose the model.",
+        ),
+    ],
+)
+def test_a_list_keeps_its_kind_and_numbering_across_follow_ups(
+    raw: str, items: tuple[str, ...], expected: str
+) -> None:
+    plan = {name: {"list_item": 0.9, "continues": 0.1} for name in items}
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = jev.format_edits(raw, call(client))
+    assert text_edits.apply(raw, result.changes) == expected

@@ -33,6 +33,11 @@ def ordinal(text: str, span: Sentence) -> bool:
     return _ORDINAL.match(text, span.start, span.end) is not None
 
 
+def numbered_line(text: str, span: Sentence) -> bool:
+    """Whether the sentence is a line of an existing numbered list: "2. ..." or "2) ..."."""
+    return _NUMBERED.match(text, span.start, span.end) is not None
+
+
 def blank_line(gap: str) -> bool:
     """Whether the text between two spans keeps an empty line: a paragraph boundary."""
     return bool(_BLANK_LINE.search(gap.replace("\r\n", "\n")))
@@ -91,13 +96,13 @@ def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Chang
     result: list[Change] = []
     end = 0
     listing: str | None = None  # the kind of the list entry being written, while it lasts
-    number = 0
+    number = 0  # the last number of the numbered list going on
     for i, (span, action) in enumerate(zip(spans, actions, strict=True)):
         gap = text[end : span.start]
         replacement = gap
         item = action in LIST_ITEMS
         if blank_line(gap) or action == "new_paragraph":
-            listing = None
+            listing, number = None, 0
         if not span.protected:
             # Keep original line endings, blank paragraphs and indentation exactly. A
             # sentence that continues stays on its line, a list entry's included.
@@ -107,7 +112,8 @@ def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Chang
                 elif item:
                     replacement = "\n" if listing else "\n\n"
             if action == "numbered_item" and not span.listed:
-                number = _number(text, spans[i - 1] if i else None, listing, number, gap)
+                # Numbering goes on across an entry's follow-up sentences.
+                number = number + 1 if listing else 1
                 replacement += f"{number}. "
                 if spoken := _ORDINAL.match(text, span.start, span.end):
                     result.extend(_unsaid(text, span.start, spoken.end()))
@@ -117,19 +123,11 @@ def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Chang
             assert not gap.strip()
             result.append(Change(end, span.start, gap, replacement))
         end = span.end
+        if span.listed and (existing := _NUMBERED.match(text, span.start, span.end)):
+            number = int(existing.group(1))
         if item:
             listing = action
     return tuple(sorted(result, key=lambda c: (c.start, c.end)))
-
-
-def _number(text: str, before: Sentence | None, previous: str | None, number: int, gap: str) -> int:
-    """A numbered item continues the list just before it, unless an empty line ends it."""
-    if before is None or blank_line(gap):
-        return 1
-    if previous == "numbered_item":
-        return number + 1
-    existing = _NUMBERED.match(text, before.start, before.end) if previous == "list_item" else None
-    return int(existing.group(1)) + 1 if existing else 1
 
 
 def _unsaid(text: str, start: int, stop: int) -> tuple[Change, ...]:
