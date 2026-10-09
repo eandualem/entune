@@ -108,6 +108,10 @@ def test_review_applies_included_changes_and_new_words_come_with_their_entries()
     )
     assert [h.text for h in some.learned_for("m")] == ["cloud", "Claude", "camel"]
     assert some.words[-1].spelling == "YAML 1.2" and some.words[0] == CLOUD.words[0]
+    # A clearer meaning changes the description only.
+    respelled = {**asdict(clearer), "spelling": "Claudia"}
+    with pytest.raises(ValueError, match="description only"):
+        dictionary_changes.review(current, proposal, [{"id": "word:a_claude", "after": respelled}])
     assert dictionary_changes.review(current, proposal, []) is current
     with pytest.raises(ValueError, match="heard text"):
         dictionary_changes.review(
@@ -248,6 +252,11 @@ def test_confirmed_agent_boundary_is_idempotent_and_does_not_grant_precedence() 
         "Jev",
         "Jeff",
     }
+    # A phrase given twice in other capitals is one entry.
+    twice, _ = add_corrections(
+        Dictionary(), (Correction("Groq", "a model host", ("grok", "GROK")),)
+    )
+    assert [h.text for h in twice.pinned] == ["grok", "Groq"]
     # An existing word gains a heard entry; no new word is made for it.
     more, added = add_corrections(doc, (Correction("GIF", heard=("jiff",)),))
     assert added == (Correction("GIF", "", ("jiff",)),) and more.words == doc.words

@@ -123,7 +123,12 @@ def add_corrections(
             entry = pinned.get(key(text))
             return entry is not None and any(c.word == word.id for c in entry.candidates)
 
-        heard = tuple(h for h in correction.heard if not named(h))
+        # Each heard phrase once, whatever its capitals: as first given.
+        phrases: dict[str, str] = {}
+        for phrase in correction.heard:
+            if not named(phrase):
+                phrases.setdefault(key(phrase), phrase)
+        heard = tuple(phrases.values())
         texts = list(heard)
         # A confirmed name also corrects its own capitals in every speech model: its
         # spelling, written as heard, pinned unless a pinned entry already names it so.

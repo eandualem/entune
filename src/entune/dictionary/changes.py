@@ -148,8 +148,14 @@ def review(current: Dictionary, proposal: Proposal, selected: object = None) -> 
             raise ValueError("Select each proposed change at most once by its current ID")
         if isinstance(change.after, Word):
             (word,) = parse_words([item.get("after")], "edited word")
-            if word.id != change.after.id:
+            stored = words.get(word.id)
+            if word.id != change.after.id or stored is None:
                 raise ValueError("Keep the word's ID while editing")
+            if (word.spelling, word.casing) != (stored.spelling, stored.casing):
+                raise ValueError(
+                    "A clearer meaning changes the description only; change a spelling on"
+                    " the Dictionary page"
+                )
             # Applying a description is the person's check of it.
             words[word.id] = replace(word, needs_review=not word.meaning)
         elif change.after is None:
