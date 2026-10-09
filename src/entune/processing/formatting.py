@@ -133,8 +133,9 @@ def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Chang
                 elif item:
                     replacement = "\n" if listing else "\n\n"
             if action == "numbered_item" and not span.listed:
-                # Numbering goes on across an entry's follow-up sentences.
-                number = number + 1 if listing else 1
+                # Numbering goes on across an entry's follow-up sentences; a new list
+                # counts up to an existing numbered line it runs into.
+                number = number + 1 if listing else _first_number(text, spans, actions, i)
                 replacement += f"{number}. "
                 if spoken := _ORDINAL.match(text, span.start, span.end):
                     # The number, the ordinal it replaces and the next word's capital are
@@ -161,3 +162,19 @@ def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Chang
         if item:
             listing = action
     return tuple(sorted(result, key=lambda c: (c.start, c.end)))
+
+
+def _first_number(text: str, spans: list[Sentence], actions: list[str], first: int) -> int:
+    """1, or, for new entries that run into an existing numbered line ("Third, ...\n4.
+    ..."), the number that leads up to it."""
+    count = 0
+    for i in range(first, len(spans)):
+        if i > first and (
+            blank_line(text[spans[i - 1].end : spans[i].start]) or actions[i] == "new_paragraph"
+        ):
+            return 1
+        if spans[i].listed:
+            existing = _NUMBERED.match(text, spans[i].start, spans[i].end)
+            return max(1, int(existing.group(1)) - count) if existing else 1
+        count += actions[i] == "numbered_item"
+    return 1

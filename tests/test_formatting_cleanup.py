@@ -626,6 +626,12 @@ def test_a_numbered_entry_keeps_its_follow_up_sentences() -> None:
             ("S00", "S02"),
             '1. Select Groq.\n2. Select "Parakeet".\n3. Save.',
         ),
+        # Entries that run into an existing numbered line count up to it.
+        (
+            "Third, open settings.\n4. Choose a model.",
+            ("S00",),
+            "3. Open settings.\n4. Choose a model.",
+        ),
         # An entry that runs into an existing list takes its kind.
         (
             "First, open settings.\n- Choose a model.",
