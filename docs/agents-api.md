@@ -31,7 +31,7 @@ dictionary works and these tools:
 | `dictionary_guide` | How the dictionary works, why it is structured so, and what makes an entry right. The server's instructions point the agent to it first. |
 | `read_dictionary` | The dictionary with its `version`: every section (format 3: words, pinned entries, each speech model's learned entries), the speech models and the default one, the entries one speech model applies (`entries_in_use`, the default model's unless `speech_model` names another), and the words no entry uses any more. |
 | `find_in_transcripts` | Excerpts of your transcripts where a heard text occurs, newest first, for one speech model (the default one when omitted). |
-| `set_word` | Add a word, or edit one by `word_id`; the edit reaches every entry naming it. |
+| `set_word` | Add a word, or edit one by `word_id`; the edit reaches every entry naming it. Its `meaning`, a short phrase saying what the word is, is required. |
 | `set_heard_entry` | Add a heard entry in `pinned` or a speech model, or replace the words it can stand for; optionally approve one as Always, with a reason. |
 | `remove_heard_entry` | Remove a heard entry; its words stay. |
 | `pin_heard_entry` | Move a learned heard entry to pinned. |
@@ -65,15 +65,24 @@ curl -s -X POST localhost:4187/api/dictionary/corrections \
   -d '{"entries": [{"spelling": "Claude Code", "description": "Anthropic'"'"'s coding agent", "heard": ["cloud code"]}], "source": "my-agent"}'
 ```
 
-This confirmed-correction boundary still accepts `spelling`, optional `description`,
-and `heard`, or `replacements`/`terms`, and returns the same `added` shape. A definition
-is needed for contextual selection; otherwise the word is marked for review. Each heard
-phrase becomes a pinned heard entry shared across models, used instead of a learned entry
-with the same text. Pinning protects that knowledge from generation but grants neither
-semantic precedence nor direct-replacement approval. A correction names the word already
-spelled so (and described so, when a description is given); when several match, the one
-pinned entries already name. Repeated submissions are idempotent. The reply lists what was
-new:
+The body is a JSON object with `entries` and an optional `source` (the sender's name,
+shown under **Settings › Integrations**). Each entry has these fields:
+
+| Field | What it is |
+|---|---|
+| `spelling` | Required. The word or name as it should be written. |
+| `description` | Required. A short phrase saying what it is. The decision model reads it to choose the word in context; a word without one can never be chosen. |
+| `heard` | The phrases the speech model wrote instead, as a list. Leave it out for a name that only needs its own spelling pinned. |
+
+A request missing a required field is refused with HTTP 400, and the reply names the
+field and shows the format. The earlier short forms, `terms` and `replacements`, carry no
+description and are refused too. Each heard phrase becomes a pinned heard entry shared
+across models, used instead of a learned entry with the same text. Pinning protects that
+knowledge from generation but grants neither semantic precedence nor direct-replacement
+approval. A correction names the word already spelled and described so, or one spelled so
+that is still waiting for a description, which then takes the one given; a different
+description is another word with the same spelling. When several match, the one pinned
+entries already name. Repeated submissions are idempotent. The reply lists what was new:
 
 ```json
 {"added": [{"spelling": "Claude Code", "description": "Anthropic's coding agent", "heard": ["cloud code"]}]}

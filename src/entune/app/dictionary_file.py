@@ -14,7 +14,7 @@ from collections.abc import Callable
 from entune.app.operations import Operations
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
-from entune.dictionary.corrections import Correction, add_corrections, read_entries
+from entune.dictionary.corrections import FORMAT, Correction, add_corrections, read_entries
 from entune.dictionary.entries import EMPTY, Dictionary
 from entune.storage.store import Store
 
@@ -98,17 +98,20 @@ class DictionaryFile:
     def add_agent_corrections(self, data: object) -> tuple[Correction, ...]:
         """Pin corrections an agent sent after confirming them with the user.
 
-        `data` is the request body: `entries` (spelling, description, heard), or
-        `terms` and `replacements`, plus an optional `source`. Returns what was actually
-        new. Raises ValueError with the reason on bad input.
+        `data` is the request body: `entries` (spelling, description, heard), plus an
+        optional `source`. Returns what was actually new. Raises ValueError with the
+        reason on bad input, missing fields included.
         """
         if not isinstance(data, dict):
-            raise ValueError("Send a JSON object with entries")
-        if "entries" in data:
-            corrections = read_entries(data["entries"], "entries")
-        else:
-            body = {k: v for k, v in data.items() if k in ("terms", "replacements")}
-            corrections = read_entries(body, "corrections")
+            raise ValueError(f"Send a JSON object with entries, as in {FORMAT}")
+        if unknown := sorted(set(data) - {"entries", "source"}):
+            raise ValueError(
+                f"Unknown keys {', '.join(unknown)}: send entries, each with a spelling, a"
+                f" description and heard phrases, as in {FORMAT}"
+            )
+        if "entries" not in data:
+            raise ValueError(f"Send entries, as in {FORMAT}")
+        corrections = read_entries(data["entries"], "entries")
         if not corrections:
             raise ValueError("Nothing to add: give entries with a spelling and heard phrases")
         with self._operations.dictionary_edit(), self.lock:

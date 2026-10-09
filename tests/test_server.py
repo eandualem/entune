@@ -598,7 +598,7 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
         if len(calls) == 2:
             with pytest.raises(ValueError, match="preparing dictionary suggestions"):
                 entune.dictionary.add_agent_corrections(
-                    {"entries": [{"spelling": "Jev", "heard": ["Jeff"]}]}
+                    {"entries": [{"spelling": "Jev", "description": "a model", "heard": ["Jeff"]}]}
                 )
         return json.dumps(proposed("hello there, I use cloud code"))
 
@@ -672,17 +672,24 @@ def test_agent_corrections_are_logged_before_a_reset_can_start(
         log(*args)
 
     entune.store.add_corrections = logging  # type: ignore[method-assign,assignment]
-    entune.dictionary.add_agent_corrections({"terms": ["Soniox"]})
+    entune.dictionary.add_agent_corrections(
+        {"entries": [{"spelling": "Soniox", "description": "a speech model provider"}]}
+    )
     assert held == [True]
 
 
 def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvider) -> None:
     assert client.post("/api/dictionary/corrections", content="nope").status_code == 400
     assert client.post("/api/dictionary/corrections", json={"source": "x"}).status_code == 400
-    bad = client.post("/api/dictionary/corrections", json={"replacements": {"a": 1}})
-    assert bad.status_code == 400 and "corrections.replacements" in bad.text
+    # Every correction says what its word is; the short forms carry no description.
+    bad = client.post("/api/dictionary/corrections", json={"replacements": {"a": "b"}})
+    assert bad.status_code == 400 and "Unknown keys replacements" in bad.text
+    assert '"description"' in bad.text  # the reply shows the format to use
     bad = client.post("/api/dictionary/corrections", json={"entries": [{"heard": ["x"]}]})
-    assert bad.status_code == 400 and "entries.spelling" in bad.text
+    assert bad.status_code == 400 and "entries[0].spelling" in bad.text
+    bad = client.post("/api/dictionary/corrections", json={"entries": [{"spelling": "b"}]})
+    assert bad.status_code == 400 and "entries[0].description" in bad.text
+    assert '"heard": ["cloud code"]' in bad.text  # with the format to use
 
     client.put("/api/dictionary", json=document(group("Claude Code", "cloud code")))
     res = client.post(
@@ -690,7 +697,11 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
         json={
             "entries": [
                 {"spelling": "Wispr Flow", "description": "an app", "heard": ["whisper flow"]},
-                {"spelling": "claude code", "heard": ["cloud code", "claud code"]},
+                {
+                    "spelling": "claude code",
+                    "description": "The named tool Claude Code.",
+                    "heard": ["cloud code", "claud code"],
+                },
             ],
             "source": "entune-agent",
         },
@@ -700,7 +711,11 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
     assert res.json() == {
         "added": [
             {"spelling": "Wispr Flow", "description": "an app", "heard": ["whisper flow"]},
-            {"spelling": "Claude Code", "description": "", "heard": ["claud code"]},
+            {
+                "spelling": "Claude Code",
+                "description": "The named tool Claude Code.",
+                "heard": ["claud code"],
+            },
         ]
     }
     stored = client.get("/api/dictionary").json()
@@ -713,17 +728,19 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
         "claud code",
     ]
     assert all(not h["direct"] for h in stored["pinned"])
-    # The earlier shape, terms and replacements, is still taken.
+    soniox = {"spelling": "Soniox", "description": "a speech model provider"}
     again = client.post(
-        "/api/dictionary/corrections", json={"terms": ["Soniox"], "replacements": {"a": "b"}}
+        "/api/dictionary/corrections",
+        json={"entries": [soniox, {"spelling": "b", "description": "a letter", "heard": ["a"]}]},
     )
     assert again.json() == {
         "added": [
-            {"spelling": "Soniox", "description": "", "heard": []},
-            {"spelling": "b", "description": "", "heard": ["a"]},
+            {"spelling": "Soniox", "description": "a speech model provider", "heard": []},
+            {"spelling": "b", "description": "a letter", "heard": ["a"]},
         ]
     }
-    assert client.post("/api/dictionary/corrections", json={"terms": ["soniox"]}).json() == {
+    soniox["spelling"] = "soniox"
+    assert client.post("/api/dictionary/corrections", json={"entries": [soniox]}).json() == {
         "added": []
     }
     # What arrived is kept, newest first, with its source, for the Agents page.
@@ -978,7 +995,10 @@ def test_a_stale_dictionary_save_is_refused_and_a_fresh_one_accepted(client: Tes
     first = client.get("/api/dictionary")
     version = first.headers["etag"]
     # An agent adds a correction after the page loaded its copy.
-    client.post("/api/dictionary/corrections", json={"terms": ["Soniox"], "source": "agent"})
+    client.post(
+        "/api/dictionary/corrections",
+        json={"entries": [{"spelling": "Soniox", "description": "a provider"}], "source": "agent"},
+    )
     stale = client.put(
         "/api/dictionary",
         json=document(group("Entune", "in tune")),

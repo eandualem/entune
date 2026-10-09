@@ -89,6 +89,8 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
             text="cloud code",
             words=[added["word_id"]],
         )
+        unsaid = call(client, "set_word", version=added["version"], spelling="x", meaning=" ")
+        assert "Give the word's meaning" in unsaid["error"]
         stale = call(client, "set_word", version=read["version"], spelling="x", meaning="y")
         assert "The dictionary changed since that version was read" in stale["error"]
         assert (

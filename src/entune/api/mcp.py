@@ -136,9 +136,11 @@ def server(app: Entune) -> MCPServer:
         word_id: str | None = None,
     ) -> dict[str, str]:
         """Add a word, or with `word_id` edit one; the edit reaches every entry naming it.
-        `meaning` is a short phrase (at most 120 characters) saying what the word is. A new
-        spelling or casing clears Always approvals naming the word. Returns the word's ID
+        `meaning` is required: a short phrase (at most 120 characters) saying what the word
+        is. A new spelling or casing clears Always approvals naming the word. Returns the word's ID
         and the dictionary's new version."""
+        if not meaning.strip():
+            raise ToolError("Give the word's meaning: a short phrase saying what it is")
         identity = word_id or "w_" + uuid.uuid4().hex
         try:
             (word,) = dictionary_document.parse_words(
@@ -149,7 +151,7 @@ def server(app: Entune) -> MCPServer:
                         "meaning": meaning,
                         "personal_context": personal_context or None,
                         "casing": casing,
-                        "needs_review": not meaning.strip(),
+                        "needs_review": False,
                     }
                 ],
                 "word",
