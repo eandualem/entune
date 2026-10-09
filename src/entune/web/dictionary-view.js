@@ -848,7 +848,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const more = node("div", "", "editor-line wrap");
     more.append(button("+ New word", () => change((dd) => { dd.items.push(draftItem(blankWord(), false)); }), "btn link add-more"));
     const keep = button(`+ keep “${words(d.text)}” as written`, () => change((dd) => {
-      const same = dict.words.find((w) => w.casing === "ordinary" && textKey(w.spelling) === textKey(dd.text));
+      const same = dict.words.find((w) => w.casing === "ordinary" && textKey(w.spelling) === textKey(dd.text) && !dd.items.some((item) => item.word.id === w.id));
       dd.items.push(draftItem(same ?? { ...blankWord(), spelling: words(dd.text), casing: "ordinary" }, Boolean(same), "literal"));
     }), "pill dashed");
     keep.dataset.part = "keep:text";
@@ -1414,8 +1414,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   // edits to a new word that other suggestions name too.
   function refreshSummaries() {
     for (const change of proposalChanges) {
-      if (!change.after || change.kind === "word") continue;
+      if (!change.after) continue;
       const set = (part, text) => { const e = proposalBody.querySelector(`[data-summary="${CSS.escape(`${part}:${change.id}`)}"]`); if (e) e.textContent = text; };
+      if (change.kind === "word") { set("after", change.after.meaning || "No description yet."); continue; }
       set("to", label(change.after));
       set("after", describe(change.after));
       set("desc", descriptions(change.after));
@@ -1497,7 +1498,12 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
             for (const choice of change.choices.filter(c => isNewWord(c.word) && proposalWords.has(c.word))) {
               const word = proposalWords.get(choice.word);
               const row = node("div", "", "meaning-editor");
-              field(row, "Write it as", word.spelling, value => {
+              // Every suggestion naming the word shows its fields; an edit updates them all.
+              const sync = (name, value) => {
+                for (const control of proposalBody.querySelectorAll(`[data-word="${CSS.escape(word.id)}"][data-field="${name}"]`)) control.value = value ?? "";
+              };
+              const tag = (control, name) => { control.dataset.word = word.id; control.dataset.field = name; };
+              tag(field(row, "Write it as", word.spelling, value => {
                 word.spelling = value.trim();
                 // An "as written" candidate stays one only while it is spelled like its heard text.
                 const kept = (h, list) => list.map(x => x.word === word.id && x.basis === "literal" && textKey(word.spelling) !== textKey(h.text)
@@ -1507,10 +1513,10 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
                   c.after.candidates = kept(c.after, c.after.candidates);
                   c.choices = kept(c.after, c.choices);
                 }
-                for (const control of proposalBody.querySelectorAll(`input[data-word="${CSS.escape(word.id)}"]`)) control.value = word.spelling;
-              }).dataset.word = word.id;
-              field(row, "What it is", word.meaning, value => { word.meaning = value.trim(); word.needs_review = !word.meaning; });
-              field(row, "How you use it (optional)", word.personal_context, value => { word.personal_context = value.trim() || null; });
+                sync("spelling", word.spelling);
+              }), "spelling");
+              tag(field(row, "What it is", word.meaning, value => { word.meaning = value.trim(); word.needs_review = !word.meaning; sync("meaning", word.meaning); }), "meaning");
+              tag(field(row, "How you use it (optional)", word.personal_context, value => { word.personal_context = value.trim() || null; sync("personal_context", word.personal_context); }), "personal_context");
               editor.append(row);
             }
           }
