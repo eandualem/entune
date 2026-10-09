@@ -75,14 +75,14 @@ def add_corrections(
     added = []
     for correction in corrections:
         # The word itself: the one already spelled so (and described so, when a
-        # description is given; one still waiting for a description is that word), else
-        # a new one.
-        same = [
-            w
-            for w in words.values()
-            if key(w.spelling) == key(correction.spelling)
-            and (not correction.description or not w.meaning or w.meaning == correction.description)
-        ]
+        # description is given; else one still waiting for a description), else a new one.
+        spelled = [w for w in words.values() if key(w.spelling) == key(correction.spelling)]
+        same = (
+            [w for w in spelled if w.meaning == correction.description]
+            or [w for w in spelled if not w.meaning]
+            if correction.description
+            else spelled
+        )
         if len(same) > 1:
             # The one pinned for another heard text first (a confirmed confusion), then
             # any one pinned entries name.

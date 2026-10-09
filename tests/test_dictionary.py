@@ -293,6 +293,11 @@ def test_a_correction_describes_the_word_waiting_for_a_description() -> None:
     # Described now, it is like any other word: another description is another word.
     again, _ = add_corrections(described, (Correction("Wispr Flow", "a band", ()),))
     assert len(again.words) == 2
+    # One described so is chosen before one still waiting for a description.
+    both = replace(doc, words=(waiting, Word("w_app", "Wispr Flow", "a dictation app")))
+    chosen, _ = add_corrections(both, (Correction("Wispr Flow", "a dictation app", ("wisp",)),))
+    assert len(chosen.words) == 2
+    assert [c.word for h in chosen.pinned if h.text == "wisp" for c in h.candidates] == ["w_app"]
 
 
 def test_index_folds_case_as_widely_as_the_matching_regex() -> None:
