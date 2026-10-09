@@ -313,18 +313,20 @@ in this window.
 
 ## Personal dictionary
 
-Speech models mishear names, products and everyday words. The Dictionary tab groups
-recognized forms with their possible meanings, definitions and exact output spellings.
-Explicit associations decide which meanings can compete for a form; context decides
-which one applies. Edit entries directly, or ask the configured language model to
+Speech models mishear names, products and everyday words. The Dictionary tab lists
+heard entries: what a speech model writes, and the words it can stand for. A word is
+defined once, with its exact spelling and a description, and shared by every entry and
+every speech model that uses it. An entry's words compete for it; context decides which
+one applies. Edit entries directly, or ask the configured language model to
 suggest them: **Get suggestions** reads this speech model's raw history, finds the
 words it gets wrong, and can also improve or remove the entries those transcripts show,
 judging what the dictionary step made of each one. **Help**, next to **Add**, opens a short guide.
 Additions, before/after updates, and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
 then apply the remainder once. Dismissing a proposal does not delete active knowledge.
 
-Learned associations stay specific to the speech model. Pinning shares and protects a
-meaning and its associations across models, without giving it priority over competitors.
+Learned entries stay specific to the speech model. Pinning moves one heard entry to
+every speech model and protects it from suggestions, without giving a word priority over
+its competitors; a pinned entry is used instead of a learned one with the same text.
 Confirmed agent corrections still use the existing local API. The dictionary model is chosen on
 the Dictionary page and serves every learning run; keys are added in Settings.
 The dictionary model can come from Anthropic, OpenAI, Google Gemini, Groq or Mistral;
@@ -333,9 +335,9 @@ Groq uses the same key as Groq speech. ChatGPT sign-in can stand in for an API k
 **Sign in with ChatGPT** and approve Entune on the OpenAI page your browser opens. The plan decides
 which models it allows. For our current recommendation and what the model selector accepts, see
 [Choosing models](models.md#dictionary-generation). The built-in suggested-model list
-may contain older models; it also accepts a custom model ID. **Add an entry** creates a group by
-hand: meanings with output spellings and definitions, recognized forms, and which
-meanings each form may stand for.
+may contain older models; it also accepts a custom model ID. **Add word** creates entries by hand: a
+word with its spelling and description, and each heard text it stands for. **Delete
+word** removes a word from every entry that uses it; removing an entry keeps its words.
 
 **Learn from audio**, in the Dictionary tab, opens a dialog. Choose Entune recordings,
 import recordings from another dictation app on this Mac, or import an audio folder;
