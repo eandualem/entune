@@ -91,7 +91,9 @@ def set_entry(
             raise ValueError(f"No word has the ID {word_id}; read the dictionary or add it first")
         literal = key(word.spelling) == key(text)
         old = kept.get(word_id)
-        if old is not None and (old.basis == "literal") == literal:
+        # Kept as it was, unless it was as written and the word no longer spells the text:
+        # a capitals correction the person added ("anthropic" -> Anthropic) stays theirs.
+        if old is not None and (old.basis != "literal" or literal):
             candidates.append(old)
         else:
             candidates.append(Candidate(word_id, (), "literal" if literal else "user"))

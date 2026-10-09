@@ -303,6 +303,12 @@ def test_agent_edits_follow_the_pages_rules() -> None:
     doc = edits.set_entry(doc, "m", "CLOUD", ["a_claude", "b_cloud"])
     (kept,) = [h for h in doc.learned_for("m") if h.text == "cloud"]
     assert kept.candidates == cloud.candidates[:2]
+    # A capitals correction the person added on the page stays theirs when an agent keeps it.
+    capitals = edits.set_word(doc, Word("w_anth", "Anthropic", "The AI company"))
+    added = Heard("anthropic", (Candidate("w_anth", (), "user"),))
+    capitals = replace(capitals, learned={"m": (*capitals.learned_for("m"), added)})
+    capitals = edits.set_entry(capitals, "m", "anthropic", ["w_anth"])
+    assert [h for h in capitals.learned_for("m") if h.text == "anthropic"] == [added]
     with pytest.raises(ValueError, match="reason"):
         edits.set_entry(doc, "m", "cloud", ["a_claude"], always="a_claude")
     approved = edits.set_entry(doc, "m", "cloud", ["a_claude"], "a_claude", "Always Claude here")
