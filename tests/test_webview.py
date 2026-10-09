@@ -35,18 +35,22 @@ def test_dragged_indicator_position_survives_a_status_change(
         orderFrontRegardless=lambda: None,
         isOnActiveSpace=lambda: True,
         orderOut_=lambda sender: None,
+        invalidateShadow=lambda: None,
         contentView=lambda: SimpleNamespace(layer=lambda: layer),
     )
-    pill._label = SimpleNamespace(
-        setStringValue_=lambda text: None,
-        setFont_=lambda font: None,
-        setTextColor_=lambda color: None,
-        sizeToFit=lambda: None,
-        frame=lambda: SimpleNamespace(size=SimpleNamespace(width=90, height=14)),
-        setFrameOrigin_=lambda point: None,
+    part = SimpleNamespace(
+        setHidden_=lambda hidden: None,
+        setBackgroundColor_=lambda c: None,
+        setOpacity_=lambda o: None,
     )
-    pill._dot = SimpleNamespace(setHidden_=lambda hidden: None, setBackgroundColor_=lambda c: None)
-    monkeypatch.setattr(pill, "_clear_card", lambda: None)  # this test is about the position
+    pill._dot = pill._tape = pill._glyph = pill._sweep = part
+    for name in (
+        "_clear_card",
+        "_describe",
+        "_recolor",
+        "_frame",
+    ):  # this test is about the position
+        monkeypatch.setattr(pill, name, lambda *args: None)
     monkeypatch.setattr(pill, "_animate", lambda on: None)
     pill._placed = (16.0, 16.0)
     monkeypatch.setattr(pill, "_saved_origin", lambda: tuple(saved[ORIGIN_KEY]) if saved else None)
