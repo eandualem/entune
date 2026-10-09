@@ -28,6 +28,11 @@ _NUMBERED = re.compile(r"(\d+)[.)][ \t]")  # an existing numbered list line
 _BLANK_LINE = re.compile(r"\n[ \t]*\n")
 
 
+def ordinal(text: str, span: Sentence) -> bool:
+    """Whether the sentence opens with a spoken ordinal: "Second, ...", "Number three: ..."."""
+    return _ORDINAL.match(text, span.start, span.end) is not None
+
+
 def blank_line(gap: str) -> bool:
     """Whether the text between two spans keeps an empty line: a paragraph boundary."""
     return bool(_BLANK_LINE.search(gap.replace("\r\n", "\n")))
@@ -85,21 +90,24 @@ def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Chang
     that is already a list entry."""
     result: list[Change] = []
     end = 0
-    previous = "continues"
+    listing: str | None = None  # the kind of the list entry being written, while it lasts
     number = 0
     for i, (span, action) in enumerate(zip(spans, actions, strict=True)):
         gap = text[end : span.start]
         replacement = gap
         item = action in LIST_ITEMS
+        if blank_line(gap) or action == "new_paragraph":
+            listing = None
         if not span.protected:
-            # Keep original line endings, blank paragraphs and indentation exactly.
+            # Keep original line endings, blank paragraphs and indentation exactly. A
+            # sentence that continues stays on its line, a list entry's included.
             if i and "\n" not in gap and "\r" not in gap:
-                if action == "new_paragraph" or (previous in LIST_ITEMS and not item):
+                if action == "new_paragraph":
                     replacement = "\n\n"
                 elif item:
-                    replacement = "\n" if previous in LIST_ITEMS else "\n\n"
+                    replacement = "\n" if listing else "\n\n"
             if action == "numbered_item" and not span.listed:
-                number = _number(text, spans[i - 1] if i else None, previous, number, gap)
+                number = _number(text, spans[i - 1] if i else None, listing, number, gap)
                 replacement += f"{number}. "
                 if spoken := _ORDINAL.match(text, span.start, span.end):
                     result.extend(_unsaid(text, span.start, spoken.end()))
@@ -108,11 +116,13 @@ def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Chang
         if replacement != gap:
             assert not gap.strip()
             result.append(Change(end, span.start, gap, replacement))
-        end, previous = span.end, action
+        end = span.end
+        if item:
+            listing = action
     return tuple(sorted(result, key=lambda c: (c.start, c.end)))
 
 
-def _number(text: str, before: Sentence | None, previous: str, number: int, gap: str) -> int:
+def _number(text: str, before: Sentence | None, previous: str | None, number: int, gap: str) -> int:
     """A numbered item continues the list just before it, unless an empty line ends it."""
     if before is None or blank_line(gap):
         return 1

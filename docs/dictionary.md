@@ -223,12 +223,17 @@ formatting asks at most 24 sentences per request: a longer dictation is asked in
 at the same time, each with the whole transcript. The dictionary, filler and formatting
 stages run at the same time, each on the original transcript.
 
-Formatting classifies all eligible spans, including the first, as running prose, a new
-paragraph (a new point, even within one topic), a numbered item or a bullet item. The
-winning probability must reach 0.6, the two list kinds counting together. A middle item
-can join two list items at 0.3 only within an originally flat paragraph. A list, up to
-an empty line, takes its first item's kind and needs two items; a single one starts a
-paragraph instead, and numbering continues an existing numbered line. A new paragraph
+Formatting classifies all eligible spans, including the first, as running prose (which
+includes a follow-up to a list entry), a new paragraph (a new point, even within one
+topic), or the start of a list entry. The winning probability must reach 0.6. The
+decision model only says whether a sentence starts an entry; code says what kind. A
+sentence that opens with a spoken ordinal ("One,", "Second,", "Number three:") starts a
+numbered entry once its list probability reaches 0.3, and inside a numbered list only an
+ordinal starts the next entry; any other entry is a bullet. Every other sentence
+continues where it is, a list entry included, so an entry keeps its follow-up question,
+reason or example on its line; a new paragraph or an empty line ends the list. A list
+takes its first entry's kind and needs two entries; a single one starts a paragraph
+instead, and numbering continues an existing numbered line. A new paragraph
 needs 200 characters of its paragraph before it and leaves 100 in its paragraph after
 it, so a short note stays whole. A paragraph still longer than 700 characters is split at its
 sentence most likely to start one (at least 0.1), leaving both parts at least 200

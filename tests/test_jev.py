@@ -261,25 +261,26 @@ def test_shutdown_cancels_inflight_work_and_rejects_new_requests() -> None:
 
 
 def test_formatting_inserts_breaks_and_bullets_and_keeps_every_word() -> None:
-    text = "Two things. First, the key. And the model.  Second, the port. Then unrelated news."
+    text = "Two things. Tea for the morning. And honey with it.  Coffee at night. Then other news."
     plan = {
-        "S00": {"continues": 1.0, "new_paragraph": 0.0, "bullet_item": 0.0},
-        "S01": {"continues": 0.1, "new_paragraph": 0.1, "bullet_item": 0.8},
-        "S02": {"continues": 0.6, "new_paragraph": 0.05, "bullet_item": 0.35},
-        "S03": {"continues": 0.2, "new_paragraph": 0.1, "bullet_item": 0.7},
-        "S04": {"continues": 0.3, "new_paragraph": 0.7, "bullet_item": 0.0},
+        "S00": {"continues": 1.0, "new_paragraph": 0.0, "list_item": 0.0},
+        "S01": {"continues": 0.1, "new_paragraph": 0.1, "list_item": 0.8},
+        "S02": {"continues": 0.6, "new_paragraph": 0.05, "list_item": 0.35},
+        "S03": {"continues": 0.2, "new_paragraph": 0.1, "list_item": 0.7},
+        "S04": {"continues": 0.3, "new_paragraph": 0.7, "list_item": 0.0},
     }
     requests, handler = answering(lambda name, _: plan[name])
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         formatted = text_edits.apply(text, jev.format_edits(text, call(client)).changes)
+    # A sentence that continues an entry stays on its line; only a new one is a bullet.
     assert (
-        formatted == "Two things.\n\n- First, the key.\n- And the model.\n- Second, the port.\n\n"
-        "Then unrelated news."
+        formatted == "Two things.\n\n- Tea for the morning. And honey with it.\n- Coffee at night."
+        "\n\nThen other news."
     )
     assert formatted.replace("\n", " ").replace("- ", "").split() == text.split()
     assert list(requests[0]["state"]["sentences"]) == ["S00", "S01", "S02", "S03", "S04"]
     assert "S00" in requests[0]["questions"]
-    weak = {name: {"continues": 0.5, "new_paragraph": 0.5, "bullet_item": 0.0} for name in plan}
+    weak = {name: {"continues": 0.5, "new_paragraph": 0.5, "list_item": 0.0} for name in plan}
     with closing(
         jev_client.Client(httpx.MockTransport(answering(lambda name, _: weak[name])[1]))
     ) as client:
@@ -453,9 +454,9 @@ def test_all_three_stages_run_at_once_within_one_deadline() -> None:
         state = json.loads(request.content)["state"]
         if "sentences" in state:
             await asyncio.sleep(1)
-            return answering(
-                lambda *_: {"continues": 0.0, "new_paragraph": 1.0, "bullet_item": 0.0}
-            )[1](request)
+            return answering(lambda *_: {"continues": 0.0, "new_paragraph": 1.0, "list_item": 0.0})[
+                1
+            ](request)
         await asyncio.sleep(0.15)
         if "fillers" in state:
             return answering(lambda *_: {"hesitation": 1.0})[1](request)
@@ -591,7 +592,7 @@ def test_final_write_failure_preserves_completed_stage_evidence(
 
 
 def test_formatting_with_dictionary_disabled_does_not_apply_even_direct_mappings() -> None:
-    requests, handler = answering(lambda *_: {"bullet_item": 1.0})
+    requests, handler = answering(lambda *_: {"list_item": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             "Jeff is fast. Next topic.",

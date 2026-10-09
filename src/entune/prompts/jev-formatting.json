@@ -6,8 +6,8 @@
   },
   "criteria": {
     "continues": {
-      "what": "Continues the point of the previous sentence: running prose, an elaboration, an example, a reason or a follow-up. Also the first sentence of a note.",
-      "not_for": "A sentence that moves on to a new point, or that is one entry of a list."
+      "what": "Continues the point of the previous sentence: running prose, an elaboration, an example, a reason or a follow-up, including a follow-up question, reason or example that adds to the current list entry. Also the first sentence of a note.",
+      "not_for": "A sentence that moves on to a new point, or that starts a new entry of a list."
     },
     "new_paragraph": {
       "what": "Moves on to a new point, step, request or aspect, where a writer would start a new paragraph to keep the note easy to read. A whole note often stays on one topic; its points still get their own paragraphs.",
@@ -18,22 +18,14 @@
         "So overall, what I'm really saying is that the tone has to change."
       ]
     },
-    "numbered_item": {
-      "what": "One entry in a counted or ordered sequence, such as steps, or entries introduced with first, second, one, two, three, firstly, secondly, next, finally.",
-      "not_for": "A sentence that merely mentions a number or an order.",
+    "list_item": {
+      "what": "Starts one entry of a list: a step or point in a counted sequence, often introduced with first, second, one, two, three, next, finally, or one of several parallel items such as names, products, options or features, each said as its own sentence.",
+      "not_for": "A sentence that adds to the entry before it (a follow-up, question, reason or example), that names several things in passing, or that merely mentions a number or an order.",
       "examples": [
         "First of all, we don't want to make it very long.",
         "Secondly, we want to add tags.",
-        "Three, I don't see any formatting."
-      ]
-    },
-    "bullet_item": {
-      "what": "One entry in a list of parallel items without an order, such as names, products, options or features, each said as its own sentence.",
-      "not_for": "A sentence that names several things in passing, or ordinary prose.",
-      "examples": [
         "AssemblyAI for the cloud.",
-        "Parakeet on the Mac.",
-        "Whisper.cpp for older machines."
+        "Parakeet on the Mac."
       ]
     }
   }

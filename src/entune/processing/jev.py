@@ -20,7 +20,9 @@ from entune.processing.text_edits import Change
 # this (the two list kinds together); a sentence between two list items joins the list
 # at the lower bar.
 FORMAT_PROBABILITY = 0.6
-BRIDGE_PROBABILITY = 0.3
+# A sentence that opens with a spoken ordinal ("Second, ...") starts a numbered item at
+# this list probability: the ordinal is the rest of the evidence.
+ORDINAL_PROBABILITY = 0.3
 # A new paragraph needs PARAGRAPH_MIN characters of its paragraph before it and leaves at
 # least LAST_PARAGRAPH_MIN after it, so a short note stays whole. A paragraph still longer
 # than PARAGRAPH_CHARS is split at its sentence most likely to start one, when that is at
@@ -32,7 +34,7 @@ BREAK_FLOOR = 0.1
 # Formatting asks at most this many sentences per request; a longer dictation is asked in
 # sections at once, each with the whole transcript.
 SECTION_SENTENCES = 24
-LISTS = ("numbered_item", "bullet_item")
+ITEMS = ("numbered_item", "bullet_item", "list_item")
 FILLER_PROBABILITY = 0.9  # conservative initial policy; not live calibration
 # Context either side of a match: the sentence boundary nearest WINDOW characters away,
 # no further than WINDOW_MAX; without one, the word boundary nearest WINDOW.
@@ -281,67 +283,92 @@ def format_edits(text: str, call: Call) -> TextResult:
             for part in (asked[i : i + size] for i in range(0, len(asked), size))
         ]
     )
-    actions = ["list_item" if span.listed else "continues" for span in spans]
-    for i, name in enumerate(names):
-        if name in answers:
-            actions[i] = _role(answers[name])
-    # Retain the established list bridge only within an unstructured paragraph.
-    for i in range(1, len(spans) - 1):
-        gap = text[spans[i - 1].end : spans[i + 1].start]
-        if (
-            names[i] in answers
-            and actions[i] == "continues"
-            and actions[i - 1] in LISTS
-            and actions[i + 1] in LISTS
-            and "\n" not in gap
-            and "\r" not in gap
-            and _listed(answers[names[i]]) >= BRIDGE_PROBABILITY
-        ):
-            actions[i] = actions[i - 1]
+    actions = _actions(text, spans, [answers.get(n) for n in names])
     _whole_lists(text, spans, actions)
     _no_short_paragraphs(text, spans, actions)
     _split_long(text, spans, [answers.get(n) for n in names], actions)
     return TextResult(formatting.changes(text, spans, actions))
 
 
-def _listed(probabilities: dict[str, float]) -> float:
-    return sum(probabilities[kind] for kind in LISTS)
-
-
 def _role(probabilities: dict[str, float]) -> str:
-    """continues, new_paragraph or a list kind: the two list kinds count together."""
-    roles = {
-        "continues": probabilities["continues"],
-        "new_paragraph": probabilities["new_paragraph"],
-        "list": _listed(probabilities),
-    }
-    best = max(roles, key=lambda k: roles[k])
-    if roles[best] < FORMAT_PROBABILITY:
+    """continues, new_paragraph or list, when its probability reaches the bar."""
+    best = max(probabilities, key=lambda k: probabilities[k])
+    if probabilities[best] < FORMAT_PROBABILITY:
         return "continues"
-    if best == "list":
-        return max(LISTS, key=lambda k: probabilities[k])
-    return best
+    return "list" if best == "list_item" else best
+
+
+def _actions(
+    text: str, spans: list[formatting.Sentence], answers: list[dict[str, float] | None]
+) -> list[str]:
+    """Each sentence's action. The decision model says whether a sentence starts a list
+    entry; code says what kind: a spoken ordinal makes it numbered, and inside a numbered
+    list only an ordinal starts the next entry. Every other sentence continues where it
+    is, a list entry included, until a new paragraph or an empty line ends the list."""
+    actions = []
+    numbered = False  # a numbered list is going on
+    for i, (span, answer) in enumerate(zip(spans, answers, strict=True)):
+        gap = text[spans[i - 1].end : span.start] if i else ""
+        if formatting.blank_line(gap):
+            numbered = False
+        if span.listed:
+            actions.append("list_item")
+            numbered = False
+            continue
+        role = "continues" if answer is None else _role(answer)
+        ordinal = formatting.ordinal(text, span)
+        if ordinal and answer is not None and answer["list_item"] >= ORDINAL_PROBABILITY:
+            action = "numbered_item"
+        elif role == "list":
+            action = "continues" if numbered else "bullet_item"
+        else:
+            action = role
+        if action == "new_paragraph":
+            numbered = False
+        elif action == "numbered_item":
+            numbered = True
+        actions.append(action)
+    return actions
+
+
+def _in_items(text: str, spans: list[formatting.Sentence], actions: list[str]) -> list[bool]:
+    """Whether each sentence is part of a list entry: the entry's first sentence, or one
+    that continues it on the same line."""
+    inside: list[bool] = []
+    for i, action in enumerate(actions):
+        gap = text[spans[i - 1].end : spans[i].start] if i else ""
+        inside.append(
+            action in ITEMS
+            or (action == "continues" and bool(inside) and inside[-1] and "\n" not in gap)
+        )
+    return inside
 
 
 def _whole_lists(text: str, spans: list[formatting.Sentence], actions: list[str]) -> None:
-    """Each run of new list items, up to an empty line, takes its first item's kind; a run
-    of one item, next to no existing list line, starts a paragraph instead."""
+    """Each list, its entries up to a new paragraph or an empty line, takes its first
+    entry's kind; a list of one entry, next to no existing list line, starts a paragraph
+    instead."""
     i = 0
     while i < len(actions):
-        if actions[i] not in LISTS:
+        if actions[i] not in ("numbered_item", "bullet_item"):
             i += 1
             continue
-        end = i
-        while (
-            end + 1 < len(actions)
-            and actions[end + 1] in LISTS
-            and not formatting.blank_line(text[spans[end].end : spans[end + 1].start])
+        entries, end = [i], i
+        while end + 1 < len(actions) and actions[end + 1] in (
+            "continues",
+            "numbered_item",
+            "bullet_item",
         ):
+            if formatting.blank_line(text[spans[end].end : spans[end + 1].start]):
+                break
             end += 1
-        if end == i and not _beside_existing_list(text, spans, actions, i):
+            if actions[end] != "continues":
+                entries.append(end)
+        if len(entries) == 1 and not _beside_existing_list(text, spans, actions, i):
             actions[i] = "new_paragraph"
         else:
-            actions[i : end + 1] = [actions[i]] * (end + 1 - i)
+            for k in entries:
+                actions[k] = actions[i]
         i = end + 1
 
 
@@ -360,10 +387,11 @@ def _beside_existing_list(
 def _no_short_paragraphs(text: str, spans: list[formatting.Sentence], actions: list[str]) -> None:
     """A new paragraph next to no list continues the previous one when either part would
     be short."""
-    items = (*LISTS, "list_item")
+    items = ITEMS
+    inside = _in_items(text, spans, actions)
     start = 0
     for i in range(1, len(spans)):
-        beside_list = actions[i - 1] in items or (i + 1 < len(spans) and actions[i + 1] in LISTS)
+        beside_list = inside[i - 1] or (i + 1 < len(spans) and actions[i + 1] in items)
         # The paragraph ends at the next line break or list item already decided.
         last = next(
             (
@@ -384,7 +412,7 @@ def _no_short_paragraphs(text: str, spans: list[formatting.Sentence], actions: l
             )
         ):
             actions[i] = "continues"
-        elif actions[i] != "continues" or actions[i - 1] in items or line_break:
+        elif actions[i] != "continues" or inside[i - 1] or line_break:
             start = i
 
 
@@ -394,17 +422,19 @@ def _split_long(
     answers: list[dict[str, float] | None],
     actions: list[str],
 ) -> None:
-    """Split each paragraph longer than PARAGRAPH_CHARS at its most likely break."""
+    """Split each paragraph longer than PARAGRAPH_CHARS at its most likely break; a list
+    entry, with the sentences that continue it, is never split."""
+    inside = _in_items(text, spans, actions)
     starts = [
         i
         for i in range(len(spans))
         if i == 0
         or actions[i] != "continues"
-        or actions[i - 1] not in ("continues", "new_paragraph")
+        or inside[i] != inside[i - 1]
         or "\n" in text[spans[i - 1].end : spans[i].start]
     ]
     for lo, hi in zip(starts, [*starts[1:], len(spans)], strict=True):
-        if actions[lo] in ("continues", "new_paragraph"):
+        if not inside[lo] and actions[lo] in ("continues", "new_paragraph"):
             _split(spans, answers, actions, lo, hi)
 
 

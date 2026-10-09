@@ -24,7 +24,7 @@ from tests.test_server import StubProvider
 
 def test_first_list_item_including_unicode_offsets_keeps_all_source_words() -> None:
     raw = "  😀 First, tea. Second, coffee."
-    requests, handler = answering(lambda *_: {"bullet_item": 1.0})
+    requests, handler = answering(lambda *_: {"list_item": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = jev.format_edits(raw, call(client))
     assert text_edits.apply(raw, result.changes) == "  - 😀 First, tea.\n- Second, coffee."
@@ -35,11 +35,11 @@ def test_first_list_item_including_unicode_offsets_keeps_all_source_words() -> N
 
 def test_a_numbered_list_numbers_its_items_without_the_spoken_ordinals() -> None:
     raw = "Two things. One, the key. Two, the model. Then other news."
-    plan = {"S01": {"numbered_item": 1.0}, "S02": {"bullet_item": 0.7, "numbered_item": 0.3}}
+    plan = {"S01": {"list_item": 1.0}, "S02": {"list_item": 0.35, "continues": 0.65}}
     _, handler = answering(lambda name, _: plan.get(name, {"new_paragraph": 1.0}))
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = jev.format_edits(raw, call(client))
-    # The list takes its first item's kind.
+    # Code numbers what opens with a spoken ordinal, which needs less of the list vote.
     assert text_edits.apply(raw, result.changes) == (
         "Two things.\n\n1. The key.\n2. The model.\n\nThen other news."
     )
@@ -48,9 +48,7 @@ def test_a_numbered_list_numbers_its_items_without_the_spoken_ordinals() -> None
 def test_a_spoken_ordinal_goes_even_when_a_filler_follows_it() -> None:
     raw = "One, um, open the settings. Two, uh, choose a model."
     _, handler = answering(
-        lambda _, q: (
-            {"hesitation": 1.0} if "hesitation" in q["criteria"] else {"numbered_item": 1.0}
-        )
+        lambda _, q: {"hesitation": 1.0} if "hesitation" in q["criteria"] else {"list_item": 1.0}
     )
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
@@ -68,7 +66,7 @@ def test_a_spoken_ordinal_goes_even_when_a_filler_follows_it() -> None:
 
 
 def test_numbering_continues_an_existing_list_and_restarts_after_an_empty_line() -> None:
-    _, handler = answering(lambda *_: {"numbered_item": 1.0})
+    _, handler = answering(lambda *_: {"list_item": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         raw = "1. Open settings.\nSecond, choose the model."
         result = jev.format_edits(raw, call(client))
@@ -78,8 +76,8 @@ def test_numbering_continues_an_existing_list_and_restarts_after_an_empty_line()
             jev.format_edits("1. Open settings.\n\nSecond, choose the model.", call(client)).changes
             == ()
         )
-    plan = {"S00": {"bullet_item": 1.0}, "S01": {"bullet_item": 1.0}}
-    _, handler = answering(lambda name, _: plan.get(name, {"numbered_item": 1.0}))
+    plan = {"S00": {"list_item": 1.0}, "S01": {"list_item": 1.0}}
+    _, handler = answering(lambda name, _: plan.get(name, {"list_item": 1.0}))
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         raw = "Alpha is first here. Beta comes next.\n\nOne, gamma. Two, delta."
         result = jev.format_edits(raw, call(client))
@@ -119,7 +117,7 @@ def test_a_single_list_item_starts_a_paragraph_and_a_short_note_stays_whole() ->
     context = "Some context that runs long enough to stand as its own paragraph. " * 4
     rest = "One, alone. " + ("More text that runs on for a while after it. " * 3).strip()
     raw = context + rest
-    plan = {"S04": {"numbered_item": 1.0}}
+    plan = {"S04": {"list_item": 1.0}}
     _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = jev.format_edits(raw, call(client))
@@ -169,7 +167,7 @@ def test_a_long_dictation_is_asked_in_sections_at_once(monkeypatch: pytest.Monke
     ],
 )
 def test_existing_lists_code_and_unpunctuated_text_need_no_request(raw: str) -> None:
-    requests, handler = answering(lambda *_: {"bullet_item": 1.0})
+    requests, handler = answering(lambda *_: {"list_item": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         assert not jev.format_edits(raw, call(client)).changes
     assert not requests
@@ -354,9 +352,7 @@ def test_a_failed_stage_keeps_its_edits_out_and_the_other_applies(failure: str) 
             return httpx.Response(200, json={"answers": {}})
         return answering(
             lambda _, question: (
-                {"hesitation": 1.0}
-                if "hesitation" in question["criteria"]
-                else {"bullet_item": 1.0}
+                {"hesitation": 1.0} if "hesitation" in question["criteria"] else {"list_item": 1.0}
             )
         )[1](request)
 
@@ -458,8 +454,8 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
         lambda _, question: (
             {"hesitation": 1.0}
             if "hesitation" in question["criteria"]
-            else {"bullet_item": 1.0}
-            if "bullet_item" in question["criteria"]
+            else {"list_item": 1.0}
+            if "list_item" in question["criteria"]
             else {"i0": 1.0}
         )
     )
@@ -520,3 +516,31 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
         everything = saved.correction.changes + saved.cleanup.changes + saved.formatting.changes
         assert text_edits.apply(raw, everything) == saved.text
         assert reopened.get_setting("jev_cleanup") == "1"
+
+
+def test_a_numbered_entry_keeps_its_follow_up_sentences() -> None:
+    raw = (
+        "I want to compare a couple of points. One, the speed, which one is faster? Is it Entune"
+        " or Wispr Flow? Second, the formatting, which one is better? Is it Entune or Wispr"
+        " Flow? Third, can it clean fillers? Like for example, yeah. So overall, that's my goal."
+    )
+    # Even where the model takes a follow-up question for a list entry, only a spoken
+    # ordinal starts the next numbered one.
+    plan = {
+        "S01": {"list_item": 0.9, "continues": 0.1},
+        "S02": {"list_item": 0.7, "continues": 0.3},
+        "S03": {"list_item": 0.9, "continues": 0.1},
+        "S04": {"list_item": 0.7, "continues": 0.3},
+        "S05": {"list_item": 0.9, "continues": 0.1},
+        "S07": {"new_paragraph": 1.0},
+    }
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = jev.format_edits(raw, call(client))
+    assert text_edits.apply(raw, result.changes) == (
+        "I want to compare a couple of points.\n\n"
+        "1. The speed, which one is faster? Is it Entune or Wispr Flow?\n"
+        "2. The formatting, which one is better? Is it Entune or Wispr Flow?\n"
+        "3. Can it clean fillers? Like for example, yeah.\n\n"
+        "So overall, that's my goal."
+    )

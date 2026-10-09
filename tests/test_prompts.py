@@ -8,7 +8,6 @@ import pytest
 from entune import prompts
 from entune.dictionary.entries import Dictionary
 from entune.learning import batches, replies, view
-from entune.processing import jev
 from tests.dictionary_samples import JEV, dictionary
 
 
@@ -34,8 +33,8 @@ def test_packaged_prompts_load_outside_the_project_and_fail_clearly(
     assert prompts.text("dictionary-system.txt").startswith("You keep")
     assert "$" not in batches.system_prompt()
     question = prompts.render_json("jev-formatting.json", sentence="S01")
-    assert set(question["criteria"]) == {"continues", "new_paragraph", *jev.LISTS}
-    assert all(question["criteria"][kind]["examples"] for kind in jev.LISTS)
+    assert set(question["criteria"]) == {"continues", "new_paragraph", "list_item"}
+    assert question["criteria"]["list_item"]["examples"]
     assert len(prompts.render_json("jev-meaning-examples.json")["examples"]) == 4
     with pytest.raises(ValueError, match=r"Missing packaged prompt: absent\.txt"):
         prompts.text("absent.txt")
