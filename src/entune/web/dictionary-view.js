@@ -1375,12 +1375,15 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     lockEditors();
   }
 
-  // A suggestion names words by ID: new ones from the proposal, as the review edits them.
+  // A suggestion names words by ID: a new one as the review edits it, a stored one as its
+  // included clearer meaning leaves it, else as saved.
   const isNewWord = (wid) => !dict.words.some((w) => w.id === wid);
-  const proposalWord = (wid) => proposalWords.get(wid) ?? wordMap().get(wid);
+  const proposalWord = (wid) => isNewWord(wid) ? proposalWords.get(wid)
+    : proposalChanges.find((c) => c.kind === "word" && c.included && c.after.id === wid)?.after ?? wordMap().get(wid);
+  const savedWord = (wid) => wordMap().get(wid);
   const label = (h) => h ? h.candidates.map((c) => proposalWord(c.word)?.spelling ?? c.word).join(" · ") : "";
-  const describe = (h) => h ? [`Heard as: ${h.text}`, ...h.candidates.map((c) => {
-    const w = proposalWord(c.word);
+  const describe = (h, look = proposalWord) => h ? [`Heard as: ${h.text}`, ...h.candidates.map((c) => {
+    const w = look(c.word);
     return `${w?.spelling ?? c.word}${c.basis === "literal" ? " (as written)" : ""}: ${w?.meaning || "no description yet"}`;
   })].join("\n") : "";
   const descriptions = (h) => h.candidates.map((c) => {
@@ -1452,8 +1455,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
         box.append(head);
         if (kind === "word" || kind === "update") {
           const compare = node("div", "", "compare");
-          const shown = (value) => kind === "word" ? value.meaning || "No description yet." : describe(value);
-          compare.append(node("span", "Now", "caption"), node("pre", shown(change.before), "before"),
+          const shown = (value, look) => kind === "word" ? value.meaning || "No description yet." : describe(value, look);
+          compare.append(node("span", "Now", "caption"), node("pre", shown(change.before, savedWord), "before"),
             node("span", "Suggested", "suggested"), summary(node("pre", shown(change.after), "after"), "after"));
           box.append(compare);
         } else if (kind === "add") {

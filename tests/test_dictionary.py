@@ -247,6 +247,10 @@ def test_confirmed_agent_boundary_is_idempotent_and_does_not_grant_precedence() 
     # An existing word gains a heard entry; no new word is made for it.
     more, added = add_corrections(doc, (Correction("GIF", heard=("jiff",)),))
     assert added == (Correction("GIF", "", ("jiff",)),) and more.words == doc.words
+    # A term only learned so far is pinned with its own spelling, for every speech model.
+    pinned, added = add_corrections(doc, (Correction("GIF"),))
+    assert added == (Correction("GIF"),) and pinned.pinned[-1].text == "GIF"
+    assert matching.matches(pinned.active("other/model"), "gif")[0].meanings[0].id == "c_gif"
 
 
 def test_index_folds_case_as_widely_as_the_matching_regex() -> None:

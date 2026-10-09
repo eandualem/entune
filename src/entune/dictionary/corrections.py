@@ -109,10 +109,10 @@ def add_corrections(
 
         heard = tuple(h for h in correction.heard if not named(h))
         texts = list(heard)
-        # A new name also corrects its own capitals: its spelling, written as heard.
+        # A confirmed name also corrects its own capitals in every speech model: its
+        # spelling, written as heard, pinned unless a pinned entry already names it so.
         if (
-            is_new
-            and (word.spelling[0].isalnum() or word.spelling[0] == "_")
+            (word.spelling[0].isalnum() or word.spelling[0] == "_")
             and not named(word.spelling)
             and key(word.spelling) not in map(key, heard)
         ):
@@ -121,7 +121,7 @@ def add_corrections(
             (t, Candidate(word.id, basis="literal" if key(t) == key(word.spelling) else "user"))
             for t in texts
         ]
-        if not heard and not is_new:
+        if not links and not is_new:
             continue
         words[word.id] = word
         for text, candidate in links:
