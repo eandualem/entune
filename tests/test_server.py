@@ -941,6 +941,11 @@ def test_words_kept_counts_the_words_a_replacement_took_out() -> None:
 
     (row,) = model_metrics(History(), [])  # type: ignore[arg-type]
     assert (row.replacements, row.replaced_words, row.words) == (1, 2, 2)
+    # Two corrections inside one word take out one word.
+    halves = (Change(0, 4, "Jeff", "Jev"), Change(5, 9, "Jeff", "Jev"))
+    attempt = replace(attempt, raw_text="Jeff-Jeff", correction=replace(fixed, changes=halves))
+    (row,) = model_metrics(History(), [])  # type: ignore[arg-type]
+    assert (row.replacements, row.replaced_words, row.words) == (2, 1, 1)
 
 
 def test_usage_counts_each_dictation_once_by_its_newest_transcript(

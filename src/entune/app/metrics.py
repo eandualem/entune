@@ -5,6 +5,7 @@ Counts measure work performed and waits observed, never transcription accuracy.
 
 from __future__ import annotations
 
+import re
 import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -133,12 +134,7 @@ def model_metrics(store: Store, providers: list[Provider]) -> list[ModelMetrics]
                 seconds_per_minute=60 * waited / audio if audio else None,
                 timed_runs=len(timed),
                 replacements=sum(len(a.correction.changes or ()) for a in checked if a.correction),
-                replaced_words=sum(
-                    len(c.before.split())
-                    for a in checked
-                    if a.correction
-                    for c in a.correction.changes or ()
-                ),
+                replaced_words=sum(_replaced_words(a) for a in checked),
                 words=sum(len((a.raw_text or "").split()) for a in checked),
                 corrected=sum(bool(a.correction and a.correction.changes) for a in checked),
                 checked=len(checked),
@@ -253,6 +249,14 @@ def _added(stages: list[Stage]) -> float:
     dictations, whose steps ran one after another."""
     seconds = [s.seconds for s in stages]
     return max(seconds, default=0.0) if any(s.together for s in stages) else sum(seconds)
+
+
+def _replaced_words(attempt: Transcription) -> int:
+    """The raw words a dictionary correction touched, each once: "in tune" -> "Entune" is
+    two, and "Jeff-Jeff" with both halves corrected is one, as `words` counts it."""
+    changes = (attempt.correction.changes or ()) if attempt.correction else ()
+    tokens = [m.span() for m in re.finditer(r"\S+", attempt.raw_text or "")]
+    return sum(any(start < c.end and c.start < end for c in changes) for start, end in tokens)
 
 
 def _dictionary_ran(attempt: Transcription) -> bool:
