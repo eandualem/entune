@@ -108,11 +108,46 @@ def test_a_short_dictation_or_a_failed_piece_leaves_the_whole_clip_to_the_plain_
 
     provider = Counting(fail_first=True)
     failed = pieces(provider)
-    failed.feed(speech(21) + silence(0.6) + speech(21) + silence(0.6) + speech(2))
+    failed.feed(speech(21) + silence(0.6) + speech(1))
+    deadline = time.monotonic() + 3
+    while not provider.seconds and time.monotonic() < deadline:
+        time.sleep(0.01)
+    time.sleep(0.2)  # the failure is recorded
+    failed.feed(speech(21) + silence(0.6) + speech(2))
     with caplog.at_level("WARNING"):
         assert failed.finish() is None
     assert "HTTP 504 Gateway Timeout" in caplog.text
     assert len(provider.seconds) == 1  # nothing more is sent after a failure
+
+
+class Slow(Counting):
+    """The first piece answers only once the last one has been sent, as a provider slow
+    for one request: one after another, the last piece would wait for ever."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.last_sent = threading.Event()
+
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
+        self.seconds.append(clip.seconds or 0.0)
+        if len(self.seconds) == 1:
+            assert self.last_sent.wait(5), "the last piece waited for the first"
+            return Transcript("first")
+        self.last_sent.set()
+        return Transcript("last")
+
+
+def test_the_last_piece_is_sent_at_once_and_the_text_keeps_its_order(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    provider = Slow()
+    recording = pieces(provider)
+    recording.feed(speech(21) + silence(0.6) + speech(2))
+    assert recording.finish() == "first last"
+    log = capsys.readouterr().out
+    assert "fast mode piece 1: 0.0-21.3 s of audio, transcribed in" in log
+    assert "fast mode piece 2: 21.3-" in log
+    assert "fast mode: 2 pieces; the last ready" in log
 
 
 def test_cancel_or_abort_stops_the_pieces() -> None:
