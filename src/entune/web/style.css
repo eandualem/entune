@@ -142,10 +142,13 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .sort-bar { display: flex; align-items: center; gap: var(--sp-12); margin-bottom: var(--sp-16); font-size: var(--fs-12); color: var(--text-dim); }
 .source-note { margin: var(--sp-16) 0 0; max-width: 46rem; font-size: var(--fs-11-5); line-height: 1.5; color: var(--text-faint); }
 /* Cloud providers and Local models: one table shape, accuracy and speed as bars. */
-.mtable { border-radius: var(--r-12); background: var(--card); box-shadow: 0 0 0 1px var(--line-soft); }
+.mtable { border-radius: var(--r-12); background: var(--card); box-shadow: 0 0 0 1px var(--line-soft); overflow-x: auto; }
+/* A narrow window scrolls the table sideways rather than squeezing out the model's name. */
+.mtable.local > * { min-width: 38rem; }
+.mtable.cloud > * { min-width: 42.5rem; }
 .mrow { display: grid; align-items: center; column-gap: var(--sp-16); padding: 0.8125rem 1.125rem; }
-.mtable.local .mrow { grid-template-columns: minmax(0, 1fr) 6.5rem 6.5rem 4.125rem 5.75rem; }
-.mtable.cloud .mrow { grid-template-columns: minmax(0, 1fr) 5.75rem 5.75rem 3.5rem 6rem 5.25rem; }
+.mtable.local .mrow { grid-template-columns: minmax(9rem, 1fr) 6.5rem 6.5rem 4.125rem 5.75rem; }
+.mtable.cloud .mrow { grid-template-columns: minmax(9rem, 1fr) 5.75rem 5.75rem 3.5rem 6rem 5.25rem; }
 .mhead { padding: var(--sp-12) 1.125rem var(--sp-10); font-size: var(--fs-11-5); color: var(--text-dim); }
 .mitem { border-top: 1px solid var(--line-soft); }
 .mname { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

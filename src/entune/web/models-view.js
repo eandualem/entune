@@ -61,7 +61,6 @@ export function createModels({ getDefault, reloadSettings, onModelsChanged, onEr
     const local = localList.map((m) => {
       const id = `${m.provider}/${m.name}`;
       const facts = FACTS[id] ?? {};
-      // An engine that is not installed yet is installed by Download.
       const state = m.state === "ready" ? (id === inUse ? "inuse" : "ready") : ["downloading", "error"].includes(m.state) ? m.state : "absent";
       return { ...facts, id, local: true, model: m.name, name: facts.name ?? m.label, sub: facts.sub ?? m.note, note: m.note, size: m.size_bytes, state, progress: m.progress, error: m.error };
     });
@@ -208,9 +207,9 @@ export function createModels({ getDefault, reloadSettings, onModelsChanged, onEr
   }
 
   function renderTables() {
-    // A key being typed survives a redraw.
+    // A key being typed survives a redraw, in its own provider's field only.
     const field = el("cloud-table").querySelector(".keyrow input");
-    const typed = field?.value ?? "";
+    const typed = field?.name === openKey ? field.value : "";
     const focused = field !== null && field === document.activeElement;
     const { local, cloud } = rows();
     renderTable("local", local);
