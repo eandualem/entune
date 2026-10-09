@@ -1015,7 +1015,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
         : "dictionary.json in Entune's data folder, the same content as the list. Forms match whole words regardless of case.";
     return dirty;
   }
-  jsonBox.addEventListener("input", () => { draftBase ??= dictVersion; el("json-error").hidden = true; jsonDirty(); });
+  // Text started before the dictionary loaded names no revision it could have seen:
+  // its first save is refused, and saving again replaces.
+  jsonBox.addEventListener("input", () => { draftBase ??= dictVersion ?? "unloaded"; el("json-error").hidden = true; jsonDirty(); });
   el("revert-dictionary").addEventListener("click", () => { jsonBox.value = savedText; draftBase = null; el("json-error").hidden = true; jsonDirty(); });
   el("save-dictionary").addEventListener("click", async () => {
     let parsed;

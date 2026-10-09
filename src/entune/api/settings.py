@@ -32,10 +32,12 @@ def routes(app: Entune) -> list[Route]:
 
     def summary() -> dict[str, Any]:
         key = (app.store.history_version(), app.settings.decision_model())
-        if key not in summaries:
+        found = summaries.get(key)
+        if found is None:  # requests run side by side: each keeps the summary it made
+            found = asdict(processing_summary(app.store, key[1]))
             summaries.clear()
-            summaries[key] = asdict(processing_summary(app.store, key[1]))
-        return summaries[key]
+            summaries[key] = found
+        return found
 
     def get_settings(_: Request) -> Response:
         return JSONResponse(

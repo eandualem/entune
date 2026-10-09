@@ -89,7 +89,10 @@ function player(id, seconds, label) {
           });
           if (audio.dataset.gone) return; // the card left the page meanwhile
         }
-        audio.currentTime = fraction * audio.duration;
+        // A WebM clip without a length header reports Infinity: use the stored length,
+        // and play from where it is when neither is known.
+        const length = Number.isFinite(audio.duration) ? audio.duration : seconds;
+        if (Number.isFinite(length)) audio.currentTime = fraction * length;
         await audio.play();
       } else if (audio.paused) await audio.play();
       else audio.pause();
