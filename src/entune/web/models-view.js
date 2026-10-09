@@ -423,7 +423,8 @@ export function createModels({ getDefault, reloadSettings, onModelsChanged, onEr
     el("usage-changes-what").textContent = `${changes === 1 ? "change" : "changes"} after transcription`;
     el("usage-words").textContent = plural(u.words, "word");
     const pages = (words) => plural(Math.max(1, Math.round(words / 250)), "page");
-    el("usage-novel").textContent = u.words >= 90000 ? "About the length of a novel" : u.words ? `About ${pages(u.words)}` : "";
+    const novels = Math.round(u.words / 90000); // a novel is about 90,000 words
+    el("usage-novel").textContent = u.words >= 90000 ? `About the length of ${novels === 1 ? "a novel" : `${novels} novels`}` : u.words ? `About ${pages(u.words)}` : "";
     const saved = u.words / 40 - u.audio_seconds / 60; // minutes, typing at 40 words a minute
     el("usage-saved-block").hidden = saved < 1;
     el("usage-saved").textContent = saved >= 60 ? `${Math.round(saved / 60)} h saved` : `${Math.round(saved)} min saved`;
