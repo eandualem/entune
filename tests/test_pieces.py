@@ -195,6 +195,26 @@ def test_dropped_pieces_waiting_for_the_local_slot_never_reach_the_model() -> No
     assert provider.seconds == []
 
 
+class FailsWhileOneRuns(Counting):
+    """The first piece never answers; the last fails at once."""
+
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
+        self.seconds.append(clip.seconds or 0.0)
+        if len(self.seconds) == 1:
+            threading.Event().wait(30)
+            return Transcript("too late")
+        return Failure("HTTP 500")
+
+
+def test_a_failed_piece_ends_the_wait_without_the_slow_ones() -> None:
+    provider = FailsWhileOneRuns()
+    recording = pieces(provider)
+    recording.feed(speech(21) + silence(0.6) + speech(2))
+    started = time.monotonic()
+    assert recording.finish() is None
+    assert time.monotonic() - started < 5
+
+
 def test_a_piece_under_way_never_holds_up_quitting() -> None:
     import subprocess
     import sys

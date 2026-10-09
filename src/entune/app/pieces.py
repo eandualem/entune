@@ -52,6 +52,7 @@ class Pieces:
         self._texts: dict[int, str] = {}  # by piece number, joined in recording order
         self._error: str | None = None
         self._lock = threading.Lock()
+        self._changed = threading.Condition(self._lock)  # a piece finished or failed
         # Daemon threads, as the worker: a request under way never holds up quitting.
         self._slots = threading.BoundedSemaphore(PARALLEL)
         self._sent: list[_Sent] = []
@@ -78,8 +79,13 @@ class Pieces:
         earlier = list(self._sent)
         if self._error is None:
             self._send(self._start + len(self._pcm) // 2)
-        for sent in self._sent:
-            sent.done.wait()
+        # A failed piece makes the others' text useless: stop waiting for them then.
+        with self._changed:
+            while self._error is None and not all(sent.done.is_set() for sent in self._sent):
+                self._changed.wait()
+        if self._error is not None:
+            logging.getLogger(__name__).warning("Fast mode pieces not used: %s", self._error)
+            return None
         done = [sent.finished for sent in self._sent]
         if done:
             # Earlier pieces still under way at release finish after it; 0 when none was.
@@ -89,9 +95,6 @@ class Pieces:
                 f" after release, the earlier ones {others:.1f} s after release",
                 flush=True,
             )
-        if self._error is not None:
-            logging.getLogger(__name__).warning("Fast mode pieces not used: %s", self._error)
-            return None
         if self._cancel.is_set():
             return None
         return " ".join(self._texts[number] for number in sorted(self._texts))
@@ -133,8 +136,10 @@ class Pieces:
             with self._slots:
                 self._piece(number, pcm, start, end)
         finally:
-            sent.finished = time.monotonic()
-            sent.done.set()
+            with self._changed:
+                sent.finished = time.monotonic()
+                sent.done.set()
+                self._changed.notify_all()
 
     def _piece(self, number: int, pcm: bytes, start: int, end: int) -> None:
         began = time.monotonic()
@@ -153,9 +158,10 @@ class Pieces:
         except Exception as exc:
             result = Failure(f"{type(exc).__name__}: {exc}")
         finished = time.monotonic()
-        with self._lock:
+        with self._changed:
             if isinstance(result, Failure):
                 self._error = self._error or result.error
+                self._changed.notify_all()
             elif result.text.strip():
                 self._texts[number] = result.text.strip()
         status = "failed" if isinstance(result, Failure) else "ok"
