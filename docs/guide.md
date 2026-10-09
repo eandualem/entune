@@ -207,8 +207,10 @@ the saved clip goes to that model whole.
 **Fast mode** (the lightning switch at the top of the window, off by default) cuts
 a dictation at natural pauses while you speak, and your speech model, cloud or local,
 transcribes each finished part in the background, the same way it transcribes a whole
-clip. When you stop, only the last part is left; the parts' text is joined and
-processed once. A part ends in the middle of a pause of at least 0.4 s, and only once
+clip. Parts are transcribed in parallel, each as soon as it is cut, so a slow one does
+not hold up the next (a local model takes one at a time). When you stop, the last part
+is sent at once; the parts' text is joined in order and processed once. Each part's
+timing is written to `entune.log`. A part ends in the middle of a pause of at least 0.4 s, and only once
 it is long enough for the model: 30 s for Parakeet, 25 s for Whisper.cpp, 20 s for a
 cloud model. A shorter dictation is transcribed whole, as without fast mode, and so is
 any dictation in which a part fails. Fast mode applies to dictations made with the

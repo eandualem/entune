@@ -24,7 +24,8 @@ speech, and the dictionary is applied to what comes back (see
 [the dictionary file](dictionary.md)).
 
 Fast mode needs nothing from an adapter: it cuts a dictation at pauses
-and sends each piece through `transcribe` as a WAV clip of its own.
+and sends each piece through `transcribe` as a WAV clip of its own, up to four at
+once, so an adapter may be called from several threads.
 
 Two optional capabilities, without an adapter inheritance hierarchy:
 
