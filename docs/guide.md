@@ -286,18 +286,14 @@ single retry is freed right after.
 Measured on 2026-09-18 on an M5: base.en transcribes 25 s of speech in
 under a second.
 
-**Parakeet** was the most accurate offline model in our tests, but its
-engine (Apple's MLX and the `parakeet-mlx` package, about 480 MB, Apple
-Silicon only) is not bundled, so the app stays small for everyone who does
-not want it. Install the engine once, from a terminal:
-
-```sh
-uv tool install parakeet-mlx
-```
-
-Entune finds it on its own, and Parakeet appears under Local models with
-the same Download and Remove buttons; the weights are 2.5 GB. The model
-runs in a helper process inside that installation, loaded once.
+**Parakeet** was the most accurate offline model in our tests. Its engine
+(Apple's MLX and the `parakeet-mlx` package, about 480 MB, Apple Silicon
+only) is not part of Entune's install, so the app stays small for everyone
+who does not want it: under Local models, Download installs the engine
+first, into Entune's models folder, then fetches the 2.5 GB of weights, and
+Remove deletes both. The model runs in a helper process inside that engine,
+loaded once. An engine you installed yourself with
+`uv tool install parakeet-mlx` is used when Entune has none of its own.
 
 ## History
 

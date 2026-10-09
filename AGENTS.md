@@ -43,7 +43,7 @@ first two; add the rest only when an issue asks.
 | OpenAI | gpt-4o-transcribe | ubiquitous |
 | Mistral | Voxtral Transcribe 2 | open weights |
 | Local | whisper.cpp (large-v3-turbo and smaller) | offline, no key; models downloaded from Settings (added 2026-09-18) |
-| Parakeet (local) | parakeet-tdt-0.6b-v3 on MLX | most accurate offline in tests; engine installed by the user with `uv tool install parakeet-mlx`, never bundled (owner's decision 2026-09-18); Apple Silicon only |
+| Parakeet (local) | parakeet-tdt-0.6b-v3 on MLX | most accurate offline in tests; engine installed by Entune, pinned, when the model is downloaded (owner's decision 2026-10-09, replacing "installed by the user, never bundled" of 2026-09-18); Apple Silicon only |
 
 Dictation is push-to-talk: a clip of seconds to a minute, transcribed once
 after release. Use each provider's synchronous or file endpoint, never its

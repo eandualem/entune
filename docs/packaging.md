@@ -105,8 +105,8 @@ uv run --group build python packaging/build_app.py
 microphone usage string, the web page and assets, the Parakeet helper
 script, and the whisper.cpp libraries (collected with the bindings) inside,
 `Entune.icns` as the icon. The bundle is about 110 MB. The Parakeet engine
-itself (MLX, about 480 MB) is deliberately not bundled; it is installed
-with `uv tool install parakeet-mlx` and found at run time. The build writes
+itself (MLX, about 480 MB) is deliberately not bundled; the model's Download
+button installs it into the models folder at run time. The build writes
 `dist/Entune.app`; `entune install-app --from dist/Entune.app` copies and
 signs it.
 
