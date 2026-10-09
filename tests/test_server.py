@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 from dataclasses import replace
+from datetime import date, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -19,12 +20,15 @@ from starlette.testclient import TestClient
 
 from entune.api import data as data_api
 from entune.app.entune import Entune
-from entune.app.metrics import model_metrics
+from entune.app.metrics import model_metrics, usage
 from entune.app.shortcuts import DEFAULT_CANCEL
 from entune.audio.formats import wav_bytes
 from entune.learning.suggestion_model import Request, chatgpt
+from entune.processing.results import Stage
+from entune.processing.text_edits import Change
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from entune.server import create_app
+from entune.storage.records import Transcription
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, mock_client, wait_for_build
 from tests.dictionary_samples import JEV, document, group, proposed
@@ -922,6 +926,51 @@ def test_metrics_are_computed_from_timed_attempts(client: TestClient) -> None:
     )
     assert row["audio_seconds"] == 8.0 and row["provider_name"] == "Stub"
     assert "median_wait" not in row and "speed" not in row
+
+
+def test_words_kept_counts_the_words_a_replacement_took_out() -> None:
+    fixed = Stage("succeeded", "contextual", changes=(Change(0, 7, "in tune", "Entune"),))
+    attempt = Transcription(
+        1, 1, "stub", "good", "ok", "Entune", None, "", raw_text="in tune",
+        audio_seconds=1.0, elapsed_seconds=0.1, correction=fixed,
+    )  # fmt: skip
+
+    class History:
+        def timed_transcriptions(self) -> list[Transcription]:
+            return [attempt]
+
+    (row,) = model_metrics(History(), [])  # type: ignore[arg-type]
+    assert (row.replacements, row.replaced_words, row.words) == (1, 2, 2)
+    # Two corrections inside one word take out one word.
+    halves = (Change(0, 4, "Jeff", "Jev"), Change(5, 9, "Jeff", "Jev"))
+    attempt = replace(attempt, raw_text="Jeff-Jeff", correction=replace(fixed, changes=halves))
+    (row,) = model_metrics(History(), [])  # type: ignore[arg-type]
+    assert (row.replacements, row.replaced_words, row.words) == (2, 1, 1)
+
+
+def test_usage_counts_each_dictation_once_by_its_newest_transcript(
+    tmp_path: Path, stub: StubProvider
+) -> None:
+    store = Store(tmp_path)
+    with TestClient(create_app(Entune(store, [stub])), base_url="http://localhost") as client:
+        client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+        clip = ("a.wav", wav_bytes(b"\x00\x00" * 16_000 * 3))
+        client.post("/api/recordings", files={"audio": clip}, data={"model": "stub/bad"})
+        retried = client.post(
+            "/api/recordings", files={"audio": clip}, data={"model": "stub/bad"}
+        ).json()
+        client.post(f"/api/recordings/{retried['id']}/transcriptions", json={"model": "stub/good"})
+        client.post("/api/recordings", files={"audio": clip})
+        client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})  # no length
+        summary = client.get("/api/usage").json()
+    assert (summary["dictations"], summary["transcribed"], summary["words"]) == (4, 3, 18)
+    assert summary["audio_seconds"] == 6.0 and summary["timed_words"] == 12
+    assert [w["words"] for w in summary["weeks"]] == [0] * 7 + [18]
+    assert summary["previous_best_week"] == 0
+    assert [summary[s]["count"] for s in ("dictionary", "fillers", "layout")] == [0, 0, 0]
+    later = usage(store, today=date.today() + timedelta(weeks=8))
+    assert later.words == 18 and all(w.words == 0 for w in later.weeks)
+    assert later.previous_best_week == 18  # a week before the eight shown still counts
 
 
 def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: StubProvider) -> None:

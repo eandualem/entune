@@ -217,13 +217,16 @@ any dictation in which a part fails. Fast mode applies to dictations made with t
 shortcut.
 
 **Performance.** Every transcription records how long the clip was, how long
-the provider took, and whether fast mode was used. The chart button next
-to the model picker opens the table by model and mode. **Speed** is the transcription
-wait for one minute of audio, from successful runs whose length and wait were both
-measured (it covers the speech step, not later processing). **Corrections** counts
-dictionary replacements per 100 words in dictations where the dictionary step ran; it
-reflects the confusions the dictionary knows, not overall accuracy. **Used** combines the
-number of runs, failures and total audio. Simulated on dictations from October 2026,
+the provider took, and whether fast mode was used. Models › Performance plots each
+model you have used, with fast mode apart. Across is the wait after you stop for one
+minute of audio, from successful runs whose length and wait were both measured (it
+covers the speech step, not later processing). Up is the share of words your
+dictionary did not need to correct, in dictations where the dictionary step ran; it
+reflects the confusions the dictionary knows, not overall accuracy. **Reported** plots
+every model on published benchmarks instead, the same figures Cloud providers and
+Local models show beside each model, with their sources. Models › Usage adds up your
+dictations: how many were transcribed, the hours of audio, words per week, and what
+each processing step changed. Simulated on dictations from October 2026,
 cut where fast mode would cut them: the median wait after stopping fell from 3.7 s to
 1.1 s with AssemblyAI Universal-3.5 Pro (59 dictations of 30 s to 4 min) and from
 1.0 s to 0.4 s with Parakeet (146 dictations of 30 s to 23 min). The text is not
@@ -250,8 +253,8 @@ A speech model turns a recording into text. These are the ones Entune can use:
 | Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
 | Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed by its Download button |
 
-Enter a provider's API key on the Models page (**Get a key** beside each provider opens
-its API key page in your browser) and its model appears in the
+Enter a provider's API key on the Models page (**Add key** on its row opens a field,
+and **Get a key** there opens its API key page in your browser) and its model appears in the
 model list; pick one as the default. You pay each provider directly, per minute
 of audio, at its own published rate:
 [AssemblyAI](https://www.assemblyai.com/pricing),

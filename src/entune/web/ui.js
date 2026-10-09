@@ -72,11 +72,3 @@ export function fillModels(models, select, selected, emptyLabel) {
   select.disabled = false;
   for (const m of models) select.append(new Option(m.label, m.id, false, m.id === selected));
 }
-
-// A table cell: the figure, and an optional line of context beneath it.
-export function figure(main, sub = "", subClass = "") {
-  const cell = Object.assign(document.createElement("span"), { className: "num" });
-  cell.append(Object.assign(document.createElement("span"), { className: "cell-main", textContent: main }));
-  if (sub) cell.append(Object.assign(document.createElement("span"), { className: `cell-sub ${subClass}`.trim(), textContent: sub }));
-  return cell;
-}

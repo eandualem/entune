@@ -1,4 +1,4 @@
-"""Speech models: the model list, local model downloads, and performance."""
+"""Speech models: the model list, local model downloads, performance and usage."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from starlette.routing import Route
 
 from entune.api.common import bad
 from entune.app.entune import Entune
-from entune.app.metrics import model_metrics
+from entune.app.metrics import model_metrics, usage
 
 
 def routes(app: Entune) -> list[Route]:
@@ -38,9 +38,13 @@ def routes(app: Entune) -> list[Route]:
     def metrics(_: Request) -> Response:
         return JSONResponse([asdict(m) for m in model_metrics(app.store, app.providers)])
 
+    def usage_summary(_: Request) -> Response:
+        return JSONResponse(asdict(usage(app.store)))
+
     return [
         Route("/api/models", models),
         Route("/api/metrics", metrics),
+        Route("/api/usage", usage_summary),
         Route("/api/local/models", local_models),
         Route("/api/local/models/{name}/download", download_local_model, methods=["POST"]),
         Route("/api/local/models/{name}", remove_local_model, methods=["DELETE"]),

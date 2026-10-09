@@ -5,8 +5,10 @@ Counts measure work performed and waits observed, never transcription accuracy.
 
 from __future__ import annotations
 
+import re
 import statistics
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 
 from entune.processing.results import Stage
 from entune.providers.contracts import Provider
@@ -29,7 +31,9 @@ class ModelMetrics:
     timed_runs: int
     # Dictionary replacements over the raw words of dictations where the dictionary
     # step ran and recorded its edits (`checked`); other dictations are not evidence.
+    # `replaced_words` counts the raw words they replaced: "in tune" -> "Entune" is two.
     replacements: int
+    replaced_words: int
     words: int
     corrected: int
     checked: int
@@ -68,6 +72,34 @@ class ProcessingSummary:
     median_seconds: float | None
 
 
+@dataclass(frozen=True)
+class StepUsage:
+    count: int  # words corrected, fillers removed or layout changes
+    median_seconds: float | None  # the time the step typically added; None: never ran
+
+
+@dataclass(frozen=True)
+class WeekWords:
+    start: str  # the week's Monday in local time, YYYY-MM-DD
+    words: int
+
+
+@dataclass(frozen=True)
+class Usage:
+    """What the dictations add up to, for the Usage page."""
+
+    dictations: int  # recordings with a speech attempt
+    transcribed: int  # of them, with a transcript
+    audio_seconds: float  # the transcribed ones' audio, where its length is known
+    words: int  # in their transcripts
+    timed_words: int  # in the transcripts whose audio length is known
+    weeks: list[WeekWords]  # the last eight, oldest first, this week last
+    previous_best_week: int  # the most words in any week before this one
+    dictionary: StepUsage  # its count: the raw words corrected
+    fillers: StepUsage
+    layout: StepUsage
+
+
 def model_metrics(store: Store, providers: list[Provider]) -> list[ModelMetrics]:
     """How each model has performed in real use, fast mode apart.
 
@@ -102,6 +134,7 @@ def model_metrics(store: Store, providers: list[Provider]) -> list[ModelMetrics]
                 seconds_per_minute=60 * waited / audio if audio else None,
                 timed_runs=len(timed),
                 replacements=sum(len(a.correction.changes or ()) for a in checked if a.correction),
+                replaced_words=sum(_replaced_words(a) for a in checked),
                 words=sum(len((a.raw_text or "").split()) for a in checked),
                 corrected=sum(bool(a.correction and a.correction.changes) for a in checked),
                 checked=len(checked),
@@ -162,11 +195,77 @@ def processing_summary(store: Store, model: str | None = None) -> ProcessingSumm
     )
 
 
+def usage(store: Store, today: date | None = None) -> Usage:
+    """Each dictation counts once, by its newest transcript; the steps count all their work."""
+    this_week = today or datetime.now().astimezone().date()
+    this_week -= timedelta(days=this_week.weekday())
+    every_week: dict[date, int] = {}
+    dictations = transcribed = words = timed_words = 0
+    audio = 0.0
+    for recording in store.list_recordings():
+        if not recording.transcriptions:
+            continue
+        dictations += 1
+        latest = next((a for a in recording.transcriptions if a.status == "ok"), None)
+        if latest is None:
+            continue
+        transcribed += 1
+        seconds = max((a.audio_seconds or 0.0 for a in recording.transcriptions), default=0.0)
+        count = len((latest.text or "").split())
+        audio += seconds
+        words += count
+        timed_words += count if seconds else 0
+        day = datetime.fromisoformat(recording.created_at.replace("Z", "+00:00")).astimezone()
+        week = day.date() - timedelta(days=day.weekday())
+        every_week[week] = every_week.get(week, 0) + count
+    weeks = [this_week - timedelta(weeks=n) for n in range(7, -1, -1)]
+    processed = store.processed_transcriptions()
+    stages = [
+        stage
+        for a in processed
+        for stage in (a.correction, a.cleanup, a.formatting)
+        if stage is not None
+    ]
+
+    def step(count: int, *methods: str) -> StepUsage:
+        waits = [
+            s.seconds for s in stages if s.method in methods and s.status in ("succeeded", "failed")
+        ]
+        return StepUsage(count, statistics.median(waits) if waits else None)
+
+    return Usage(
+        dictations=dictations,
+        transcribed=transcribed,
+        audio_seconds=audio,
+        words=words,
+        timed_words=timed_words,
+        weeks=[WeekWords(start.isoformat(), every_week.get(start, 0)) for start in weeks],
+        previous_best_week=max((n for w, n in every_week.items() if w < this_week), default=0),
+        dictionary=step(
+            sum(_replaced_words(a) for a in processed if _dictionary_ran(a)),
+            "contextual",
+            "deterministic",
+        ),
+        fillers=step(sum(s.removed_words for s in stages if s.method == "cleanup"), "cleanup"),
+        layout=step(
+            sum(len(s.changes or ()) for s in stages if s.method == "formatting"), "formatting"
+        ),
+    )
+
+
 def _added(stages: list[Stage]) -> float:
     """The time the steps added: the longest when they ran at once; the sum for older
     dictations, whose steps ran one after another."""
     seconds = [s.seconds for s in stages]
     return max(seconds, default=0.0) if any(s.together for s in stages) else sum(seconds)
+
+
+def _replaced_words(attempt: Transcription) -> int:
+    """The raw words a dictionary correction touched, each once: "in tune" -> "Entune" is
+    two, and "Jeff-Jeff" with both halves corrected is one, as `words` counts it."""
+    changes = (attempt.correction.changes or ()) if attempt.correction else ()
+    tokens = [m.span() for m in re.finditer(r"\S+", attempt.raw_text or "")]
+    return sum(any(start < c.end and c.start < end for c in changes) for start, end in tokens)
 
 
 def _dictionary_ran(attempt: Transcription) -> bool:

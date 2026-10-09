@@ -69,52 +69,68 @@
             <button type="button" id="msec-cloud" aria-selected="true">Cloud providers</button>
             <button type="button" id="msec-local" aria-selected="false">Local models</button>
             <button type="button" id="msec-performance" aria-selected="false">Performance</button>
+            <button type="button" id="msec-usage" aria-selected="false">Usage</button>
             <div class="spacer"></div>
             <p class="rail-note">Pick the model your shortcut uses in the toolbar.</p>
           </nav>
 
-          <div class="settings-content">
+          <div class="settings-content models-content">
             <div class="section" id="models-cloud" data-active>
               <h1 class="page-title">Cloud providers</h1>
-              <p class="caption section-intro">Add a key only for the services you use; their models then appear in the toolbar picker. Your audio is sent to the service you pick.</p>
-              <form class="scard" id="keys-form">
-                <div id="keys"></div>
-                <div class="srow foot"><button type="submit" class="btn accent" title="Keys are only sent when you save">Save keys</button><span class="caption">Only filled-in keys are saved.</span><span class="caption save-status" id="keys-status" role="status"></span></div>
-              </form>
+              <p class="caption section-intro">Add a key only for the services you use. Your audio is sent to the service you pick.</p>
+              <div class="sort-bar"><span>Sort by</span><div class="segmented small" role="tablist" aria-label="Sort by"><button type="button" role="tab" data-sort="acc" aria-selected="true">Accuracy</button><button type="button" role="tab" data-sort="spd" aria-selected="false">Speed</button><button type="button" role="tab" data-sort="extra" aria-selected="false">Price</button></div></div>
+              <div class="mtable cloud" id="cloud-table"></div>
+              <p class="models-note" id="cloud-source"></p>
             </div>
 
             <div class="section" id="models-local">
               <h1 class="page-title">Local models</h1>
               <p class="caption section-intro">Speech recognition that runs on this Mac: your audio stays here.</p>
-              <div class="local-bar">
-                <input class="input search" id="local-search" type="search" placeholder="Search models" aria-label="Search models on this Mac" />
-                <span class="caption" id="local-summary"></span>
-              </div>
-              <div id="local-cards"></div>
+              <div class="sort-bar"><span>Sort by</span><div class="segmented small" role="tablist" aria-label="Sort by"><button type="button" role="tab" data-sort="acc" aria-selected="true">Accuracy</button><button type="button" role="tab" data-sort="spd" aria-selected="false">Speed</button><button type="button" role="tab" data-sort="extra" aria-selected="false">Size</button></div></div>
+              <div class="mtable local" id="local-table"></div>
+              <p class="models-note">Accuracy is the share of words right on the FLEURS English test; speed is measured on a reference laptop (Handy models benchmark). Your own numbers are in Performance.</p>
             </div>
 
             <div class="section" id="models-performance">
-              <h1 class="page-title">Performance</h1>
-              <h2 class="sec-label">Speech models</h2>
-              <div class="scard perf-card">
-                <div class="perf-table" id="metrics-table">
-                  <div class="perf-grid perf-head"><span>Model</span><span class="num">Wait per audio minute</span><span class="num">Dictionary corrections</span><span class="num">Runs</span><span class="num">Audio</span></div>
-                  <div id="metrics-rows"></div>
+              <div class="perf-top">
+                <div>
+                  <h1 class="page-title">Performance</h1>
+                  <p class="caption section-intro" id="perf-sub"></p>
                 </div>
-                <p class="caption perf-empty" id="metrics-empty" hidden>Nothing to compare yet. Each model you dictate with appears here.</p>
-                <div class="srow foot"><span class="caption"><b>Wait</b>: transcription time after you stop, per minute of audio. <b>Corrections</b>: dictionary replacements per 100 words. Neither measures accuracy.</span></div>
+                <div class="segmented small" role="tablist" aria-label="Show"><button type="button" role="tab" data-mode="you" aria-selected="true">For you</button><button type="button" role="tab" data-mode="reported" aria-selected="false">Reported</button></div>
               </div>
-              <h2 class="sec-label" id="activity-label" hidden>Corrections &amp; formatting</h2>
-              <div class="scard activity-card" id="processing-activity" hidden>
-                <p class="caption activity-total" id="activity-total"></p>
-                <div class="perf-table" id="activity-table" hidden>
-                  <div class="activity-grid perf-head"><span>Step</span><span class="num">Dictations</span><span class="num">Changes made</span><span class="num">Unresolved</span><span class="num">Added time</span></div>
-                  <div id="activity-rows"></div>
+              <div class="perf-layout">
+                <div class="chart" id="perf-chart">
+                  <div id="perf-axes"></div>
+                  <span class="legend" aria-hidden="true"><span><i></i>On this Mac</span><span><i class="cloud"></i>Cloud</span></span>
                 </div>
-                <details class="activity-details" id="activity-details" hidden>
-                  <summary>Details: decisions, kept as written, retries</summary>
-                  <div id="activity-diagnostics"></div>
-                </details>
+                <div class="ppanel" id="perf-panel"></div>
+              </div>
+              <p class="models-note" id="perf-note"></p>
+            </div>
+
+            <div class="section" id="models-usage">
+              <h1 class="page-title">Usage</h1>
+              <div class="usage-tiles">
+                <div class="tile accent"><span class="big" id="usage-transcribed"></span><span class="unote" id="usage-transcribed-of"></span></div>
+                <div class="tile"><span class="big" id="usage-audio"></span><span class="unote">of audio transcribed</span></div>
+                <div class="tile"><span class="big" id="usage-changes"></span><span class="unote" id="usage-changes-what"></span></div>
+              </div>
+              <div class="usage-pair">
+                <div class="ucard">
+                  <span class="uhead">What that adds up to</span>
+                  <div class="ufigure"><span class="big" id="usage-words"></span><span class="unote" id="usage-novel"></span></div>
+                  <div class="ufigure saved" id="usage-saved-block"><span class="big" id="usage-saved"></span><span class="unote">versus typing it at 40 words a minute</span></div>
+                </div>
+                <div class="ucard weeks-card">
+                  <span class="uhead"><span>Words per week</span><span class="quiet">last 8 weeks</span></span>
+                  <div class="weeks" id="usage-weeks"></div>
+                  <span class="week-line"><span class="strong" id="usage-week"></span><span id="usage-week-pages"></span></span>
+                </div>
+              </div>
+              <div class="ucard">
+                <span class="uhead">After transcription</span>
+                <div class="pipe" id="usage-steps"></div>
               </div>
             </div>
           </div>
