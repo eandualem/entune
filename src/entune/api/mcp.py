@@ -49,7 +49,9 @@ def server(app: Entune) -> MCPServer:
             raise ToolError(str(exc)) from exc
 
     def scope_of(scope: str) -> str:
-        if scope != edits.PINNED and app.models.resolve(scope) is None:
+        # A speech model removed since keeps its learned entries: those stay editable.
+        known = scope == edits.PINNED or scope in app.dictionary.dictionary().learned
+        if not known and app.models.resolve(scope) is None:
             raise ToolError(
                 f'Unknown speech model "{scope}": use "pinned" or a speech model from'
                 " read_dictionary"
@@ -86,7 +88,8 @@ def server(app: Entune) -> MCPServer:
         model = speech_model or app.models.default_model()
         if model is None:
             raise ToolError("No default speech model is set; name one from read_dictionary")
-        provider, _, name = scope_of(model).partition("/")
+        # Any speech model's transcripts, including one removed since.
+        provider, _, name = model.partition("/")
         found = []
         for item in app.store.learning_inputs(provider, name, scope="all"):
             for start, end in occurrences(item.text, text):

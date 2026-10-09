@@ -109,3 +109,30 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
         )
         assert refused.status_code == 403
         assert client.post("/mcp", headers={**HEADERS, "host": "evil.example"}).status_code == 403
+
+
+def test_edits_keep_the_file_readable_and_reach_a_removed_speech_models_entries(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    app = Entune(store, [StubProvider()])
+    with closing(store), TestClient(create_app(app), base_url="http://localhost") as client:
+        assert client.put("/api/dictionary", json=document(learned={"gone/model": (CLOUD,)}))
+        version = call(client, "read_dictionary")["version"]
+        unreadable = call(
+            client,
+            "set_heard_entry",
+            version=version,
+            scope="gone/model",
+            text='"cloud"',
+            words=["a_claude"],
+        )
+        assert "starts with a letter or digit" in unreadable["error"]
+        removed = call(
+            client, "remove_heard_entry", version=version, scope="gone/model", text="Claude"
+        )
+        assert [
+            h["text"] for h in client.get("/api/dictionary").json()["learned"]["gone/model"]
+        ] == ["cloud"]
+        assert call(client, "find_in_transcripts", text="cloud", speech_model="gone/model") == []
+        assert removed["version"] == call(client, "read_dictionary")["version"]

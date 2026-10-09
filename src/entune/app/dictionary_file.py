@@ -82,7 +82,9 @@ class DictionaryFile:
                     "The dictionary changed since that version was read; read it again and"
                     " redo the change on the current one."
                 )
-            dictionary_document.save(self._store.data_dir, update(self.dictionary()))
+            # Read back as the file will be, so an edit can never leave it unreadable.
+            text = dictionary_document.dumps(update(self.dictionary()))
+            dictionary_document.save(self._store.data_dir, dictionary_document.parse(text))
             changed = self.dictionary_version()
         self._changed()
         return changed

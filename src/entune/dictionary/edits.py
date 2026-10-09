@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import replace
 
@@ -75,8 +76,8 @@ def set_entry(
     `always` approves one word as Always with `reason`; "" clears an approval; None keeps
     one whose word is still a candidate."""
     text = " ".join(text.split())
-    if not text:
-        raise ValueError("Give the heard text")
+    if not re.match(r"\w", text):
+        raise ValueError("A heard text starts with a letter or digit")
     if scope != PINNED and any(key(h.text) == key(text) for h in dictionary.pinned):
         raise ValueError(f'"{text}" is pinned for every speech model; edit the pinned entry')
     entries = _section(dictionary, scope)
