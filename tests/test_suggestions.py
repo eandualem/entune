@@ -22,7 +22,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from entune.dictionary import changes as dictionary_changes
-from entune.dictionary.entries import Dictionary, Word
+from entune.dictionary.entries import Candidate, Dictionary, Heard, Word
 from entune.learning import batches, generate, replies, suggestion_model, view
 from entune.learning import inputs as learning_inputs
 from entune.learning.suggestion_model import Request, call, chatgpt, providers
@@ -334,6 +334,28 @@ def test_stored_words_are_reused_by_id_and_by_name_never_defined_again() -> None
         heard = {"text": "catch", "candidates": [candidate("n1", "text", (10, 15))]}
         result = parse(reply([word], [heard]), (text,), working)
         assert (result.words == (cache,)) is reused and len(result.words) == 2 - reused
+
+
+def test_a_stored_word_without_a_meaning_takes_the_one_suggested_or_is_refused() -> None:
+    grafana = Word("w_grafana", "Grafana", "", needs_review=True)
+    working = Dictionary(
+        (grafana,), (Heard("Grafana", (Candidate("w_grafana", basis="literal"),)),)
+    )
+    text = "open the gray fauna panel for Grafana"
+    heard = {"text": "gray fauna", "candidates": [candidate("w1", "text", (9, 19))]}
+    with pytest.raises(ValueError, match="no meaning yet"):
+        parse(reply(heard=[heard]), (text,), working)
+    word = {
+        "id": "n1",
+        "spelling": "Grafana",
+        "meaning": "dashboards for metrics",
+        "casing": "fixed",
+    }
+    heard["candidates"][0]["word"] = "n1"
+    result = parse(reply([word], [heard]), (text,), working)
+    assert result.words == (replace(grafana, meaning="dashboards for metrics"),)
+    proposal = dictionary_changes.propose(working, result, "s/m")
+    assert [c.kind for c in proposal.changes] == ["add", "word"]
 
 
 def test_a_clearer_meaning_changes_the_shared_word_for_review() -> None:

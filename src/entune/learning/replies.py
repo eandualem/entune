@@ -131,6 +131,7 @@ def parse_reply(
     # New words: a stored word when it is the same, else a new ID assigned once.
     labels: dict[str, str] = {}
     new: dict[str, Word] = {}
+    filled: dict[str, str] = {}
     for item in data["words"]:
         label = item["id"]
         if label in shown.word_ids or label in labels:
@@ -143,8 +144,13 @@ def parse_reply(
         if same is None:
             same = Word("w_" + uuid.uuid4().hex, spelling, meaning, casing=item["casing"])
             new[same.id] = same
+        elif not same.meaning:
+            # A stored word without a description takes this one, for the person to review.
+            filled[same.id] = meaning
         labels[label] = same.id
     words = {**stored, **new}
+    for identity, meaning in filled.items():
+        words[identity] = replace(words[identity], meaning=meaning)
 
     def word_id(label: str) -> str:
         identity = shown.word_ids.get(label) or labels.get(label)
@@ -201,6 +207,11 @@ def parse_reply(
                     )
                 candidates[identity] = kept[identity]
                 continue
+            if not word.meaning:
+                raise ValueError(
+                    f"{word.spelling} has no meaning yet, so it cannot be chosen; give it one"
+                    " in meanings"
+                )
             evidence = [_locate(_evidence(e, shown), text, supplied) for e in link["evidence"]]
             if not evidence:
                 raise ValueError(
