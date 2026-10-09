@@ -1203,10 +1203,11 @@ def test_a_retried_part_starts_from_the_working_dictionary_and_repeats_no_finish
 
 
 def test_starting_entune_loads_no_suggestion_sdk() -> None:
-    """Pydantic AI and the provider SDKs load with the first suggestion call, not at startup."""
+    """Pydantic AI and the provider SDKs load with the first suggestion call, and the MCP
+    SDK with the first agent request, not at startup."""
     code = (
         "import sys, entune.cli, entune.server; "
-        "print([m for m in ('pydantic_ai', 'httpx2') if m in sys.modules])"
+        "print([m for m in ('pydantic_ai', 'httpx2', 'mcp') if m in sys.modules])"
     )
     loaded = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True

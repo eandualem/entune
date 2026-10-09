@@ -9,9 +9,11 @@ src/entune/
   cli.py          the `entune` command: installs the app, then data directory, port check,
                   server thread, desktop app
   server.py       the page, static files and middleware: refuses requests not addressed to
-                  localhost and state changes from other origins; assembles api/
+                  localhost and state changes from other origins; assembles api/, and
+                  starts the MCP endpoint at /mcp when an agent first connects
   api/            the HTTP routes, one module per resource (settings, models, recordings,
-                  dictionary, learning, data, desktop); common.py: errors and JSON shapes
+                  dictionary, learning, data, desktop); mcp.py: the agents' MCP tools;
+                  common.py: errors and JSON shapes
   app/            what the app does, whoever asks; entune.py builds and wires the parts:
                   settings.py (keys, fast mode, the decision model and its steps, suggestion
                   model, shortcuts), decision_models.py (which one the steps ask, Laya's lifetime),
@@ -39,6 +41,7 @@ src/entune/
                   meaning, filler and paragraph questions; formatting.py, cleanup.py,
                   text_edits.py
   dictionary/     entries.py: words and heard entries; document.py: dictionary.json;
+                  edits.py: single edits agents make;
                   changes.py: pinning, proposals and review; matching.py: eligible words
                   and exact edits; corrections.py: confirmed corrections from other apps
   learning/       dictionary suggestions: suggestion_model/ (catalog, providers and one

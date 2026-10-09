@@ -21,7 +21,7 @@ a = Analysis(
         *[
             (str(path), "entune/prompts")
             for path in (PACKAGE_DIR / "prompts").iterdir()
-            if path.suffix in {".txt", ".json"}
+            if path.suffix in {".txt", ".json", ".md"}
         ],
         (str(PACKAGE_DIR / "providers" / "local" / "parakeet_helper.py"), "entune/providers/local"),
         # Both read their own version from package metadata when imported.

@@ -299,7 +299,7 @@ def _check(evidence: Evidence, text: str, supplied: dict[str, str]) -> None:
         raise ValueError("Evidence must reference the exact whole heard text")
 
 
-def _occurrences(source: str, text: str) -> list[tuple[int, int]]:
+def occurrences(source: str, text: str) -> list[tuple[int, int]]:
     """Every whole-word occurrence of `text` in `source`, compared as validation compares."""
     words = text.split()
     if not words:
@@ -321,7 +321,7 @@ def _locate(evidence: Evidence, text: str, supplied: dict[str, str]) -> Evidence
     of that text in the same source. Evidence for a text that does not occur in that
     source is left unchanged, so validation still rejects it."""
     source = supplied.get(evidence.source)
-    spans = _occurrences(source, text) if source is not None else []
+    spans = occurrences(source, text) if source is not None else []
     if spans and (evidence.start, evidence.end) not in spans:
         start, end = min(spans, key=lambda span: abs(span[0] - evidence.start))
         return replace(evidence, start=start, end=end)

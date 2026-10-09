@@ -518,6 +518,8 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
 
   // Integrations: the local API, and what arrived through it.
   function renderAgents() {
+    el("mcp-endpoint").textContent = `${location.origin}/mcp`;
+    el("mcp-command").textContent = `claude mcp add --transport http entune ${location.origin}/mcp`;
     const endpoint = `${location.origin}/api/dictionary/corrections`;
     el("agent-endpoint").textContent = endpoint;
     el("agent-curl").textContent = `curl -s -m 2 -X POST ${endpoint} \\\n  -H 'content-type: application/json' \\\n  -d '{"entries": [{"spelling": "Claude Code", "description": "Anthropic'"'"'s coding agent", "heard": ["cloud code"]}], "source": "my-agent"}'`;
