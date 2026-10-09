@@ -289,7 +289,7 @@ export function createSettings({ onLoaded, onShortcutsChanged, onError }) {
     if (await saveSetting({ keys: { openai: key }, ...choice }, el("openai-key-status"))) { picked = null; await loadSettings(); }
   });
   el("remove-silence").addEventListener("change", async (e) => {
-    if (!(await saveSetting({ removeSilence: e.target.checked }, el("remove-silence-status")))) e.target.checked = !e.target.checked;
+    if (!(await saveSetting({ removeSilence: e.target.checked }, null))) e.target.checked = !e.target.checked;
   });
   for (const name of ["dictionary", "formatting", "cleanup"]) {
     jev[name].addEventListener("change", async () => {
