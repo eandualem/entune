@@ -281,6 +281,20 @@ def test_confirmed_agent_boundary_is_idempotent_and_does_not_grant_precedence() 
     assert matching.matches(pinned.active("other/model"), "gif")[0].meanings[0].id == "c_gif"
 
 
+def test_a_correction_describes_the_word_waiting_for_a_description() -> None:
+    waiting = Word("w_flow", "Wispr Flow", "", needs_review=True)
+    doc = Dictionary((waiting,), (Heard("whisper flow", (Candidate("w_flow", basis="user"),)),), {})
+    described, added = add_corrections(
+        doc, (Correction("Wispr Flow", "a dictation app", ("whisper flow",)),)
+    )
+    (word,) = described.words
+    assert (word.id, word.meaning, word.needs_review) == ("w_flow", "a dictation app", False)
+    assert added == (Correction("Wispr Flow", "a dictation app", ()),)
+    # Described now, it is like any other word: another description is another word.
+    again, _ = add_corrections(described, (Correction("Wispr Flow", "a band", ()),))
+    assert len(again.words) == 2
+
+
 def test_index_folds_case_as_widely_as_the_matching_regex() -> None:
     sigma, final_sigma, micro, capital_mu = "\u03c3", "\u03c2", "\u00b5", "\u039c"
     active = combine(group("Sigma", sigma), group("Micro", micro), group("Street", "stra\u00dfe"))
