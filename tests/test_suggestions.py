@@ -356,6 +356,15 @@ def test_a_stored_word_without_a_meaning_takes_the_one_suggested_or_is_refused()
     assert result.words == (replace(grafana, meaning="dashboards for metrics"),)
     proposal = dictionary_changes.propose(working, result, "s/m")
     assert [c.kind for c in proposal.changes] == ["add", "word"]
+    # The heard text's own word, kept as written, needs a meaning too.
+    cloud = Word("w_cloud", "cloud", "", casing="ordinary", needs_review=True)
+    working = Dictionary((cloud,))
+    text = "ask cloud about the cloud storage"
+    assert json.loads(view.build(working, "s/m", snippets(text)).words)[0]["id"] == "w1"
+    word = {"id": "n1", "spelling": "Claude", "meaning": "an AI assistant", "casing": "fixed"}
+    claude, kept = candidate("n1", "text", (4, 9)), candidate("w1", "literal")
+    with pytest.raises(ValueError, match="no meaning yet"):
+        parse(reply([word], [{"text": "cloud", "candidates": [claude, kept]}]), (text,), working)
 
 
 def test_a_clearer_meaning_changes_the_shared_word_for_review() -> None:

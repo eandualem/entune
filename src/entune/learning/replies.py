@@ -189,6 +189,11 @@ def parse_reply(
             word = words[identity]
             if identity in candidates:
                 continue
+            if identity not in kept and not word.meaning:
+                raise ValueError(
+                    f"{word.spelling} has no meaning yet, so it cannot be chosen; give it one"
+                    " in meanings"
+                )
             if key(text) == key(word.spelling):
                 # Matching ignores case: "LangFuse" is Langfuse written as it is, not a
                 # confusion, so it is the literal candidate and needs no evidence.
@@ -207,11 +212,6 @@ def parse_reply(
                     )
                 candidates[identity] = kept[identity]
                 continue
-            if not word.meaning:
-                raise ValueError(
-                    f"{word.spelling} has no meaning yet, so it cannot be chosen; give it one"
-                    " in meanings"
-                )
             evidence = [_locate(_evidence(e, shown), text, supplied) for e in link["evidence"]]
             if not evidence:
                 raise ValueError(
