@@ -1,8 +1,8 @@
-import { ICON, THIS_DEVICE, api, el, errorText, figure, flash, whenLabel } from "./ui.js";
+import { THIS_DEVICE, api, el, errorText, flash, whenLabel } from "./ui.js";
 
-// Settings owns its forms, local-model polling and shortcut capture. Callbacks
-// refresh the model and dictionary views after a successful configuration change.
-export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, onError }) {
+// Settings owns its forms and shortcut capture. Callbacks refresh the model and
+// dictionary views after a successful configuration change.
+export function createSettings({ onLoaded, onShortcutsChanged, onError }) {
   let settings = null;
   const fastInput = el("fast-mode");
 
@@ -19,49 +19,6 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   }
 
   // ---- Settings ----
-  // Where each speech provider hands out API keys; the link opens in the browser, where
-  // the provider may ask to sign in first.
-  const KEY_PAGES = {
-    assemblyai: "https://www.assemblyai.com/dashboard/api-keys",
-    elevenlabs: "https://elevenlabs.io/app/developers/api-keys",
-    groq: "https://console.groq.com/keys",
-    soniox: "https://console.soniox.com/",
-    xai: "https://console.x.ai/",
-  };
-  function keyRow(provider) {
-    const row = document.createElement("div");
-    row.className = "srow key-row";
-    const label = document.createElement("label");
-    label.className = "name";
-    label.htmlFor = `key-${provider.id}`;
-    label.textContent = provider.name;
-    const input = document.createElement("input");
-    input.className = "input field";
-    input.id = `key-${provider.id}`;
-    input.type = "password";
-    input.name = provider.id;
-    input.autocomplete = "off";
-    input.placeholder = provider.keyHint ? `saved ${provider.keyHint} · type to replace` : "Not set";
-    row.append(label, input);
-    if (KEY_PAGES[provider.id]) {
-      const link = Object.assign(document.createElement("a"), { className: "key-link", href: KEY_PAGES[provider.id], target: "_blank", rel: "noopener", textContent: "Get a key" });
-      link.title = `Open ${provider.name}'s API key page in your browser`;
-      row.append(link);
-    }
-    return row;
-  }
-
-  const keysForm = el("keys-form");
-  keysForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const keys = {};
-    for (const input of keysForm.querySelectorAll("input[type=password]")) {
-      if (input.value.trim()) keys[input.name] = input.value.trim();
-    }
-    if (Object.keys(keys).length === 0) { flash(el("keys-status"), "Nothing to save", "ok"); return; }
-    if (await saveSetting({ keys }, el("keys-status"))) await loadSettings();
-  });
-
   // The dictionary model: a summary line with Change, then provider, key and model. OpenAI
   // is reached with an API key or on a ChatGPT subscription (PLAN, its own provider id).
   const dm = { edit: el("dm-edit"), provider: el("dm-provider"), key: el("dm-key"), model: el("dm-model"), custom: el("dm-model-custom"), access: document.querySelectorAll('input[name="dm-access"]') };
@@ -301,51 +258,6 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     for (const name of ["total_seconds", "attempt_seconds", "max_attempts"]) {
       el(`jev-${name}`).value = j.policy[name];
     }
-    renderJevSummary();
-  }
-  // Corrections & formatting activity on the Performance page: one aligned row per step,
-  // across every dictation and speech model. Counts describe work done, not accuracy.
-  function renderJevSummary() {
-    const j = settings.jev;
-    const s = j.summary;
-    const seconds = (value) => (value === null || value === undefined ? "–" : `+${value.toFixed(1)} s`);
-    el("activity-total").textContent = s.transcriptions
-      ? `${s.transcriptions} processed dictation${s.transcriptions === 1 ? "" : "s"} · median ${seconds(s.median_seconds)} added per dictation.` : "";
-    const steps = [["contextual", "Dictionary, read in context"], ["deterministic", "Dictionary, always-apply entries"], ["cleanup", "Fillers"], ["formatting", "Paragraphs and bullets"]];
-    const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-    const rows = [];
-    const details = [];
-    for (const [method, label] of steps) {
-      const stage = s.stages[method];
-      // Dictations the step handled; skips caused by an earlier failure or a cancel are not.
-      const ran = stage.succeeded + stage.failed + stage.skipped - (stage.blocked ?? 0);
-      if (!s.transcriptions || !ran) continue;
-      // Changes the step made, in its own unit; runs that did not record their edits are
-      // counted apart, because their changes are unknown rather than none.
-      const made = method === "cleanup" ? plural(stage.removed_words, "word") + " removed"
-        : method === "formatting" ? plural(stage.changes, "layout change")
-        : plural(stage.replacements, "replacement");
-      const notes = [];
-      if (method === "contextual" && stage.direct_replacements) notes.push(`${stage.direct_replacements} always-apply`);
-      if (stage.unrecorded) notes.push(`${plural(stage.unrecorded, "run")} not recorded`);
-      const row = document.createElement("div");
-      row.className = "activity-grid";
-      row.append(
-        Object.assign(document.createElement("span"), { textContent: label }),
-        figure(String(ran), stage.failed ? `${stage.failed} failed` : "", stage.failed ? "perf-failed" : ""),
-        figure(made, notes.join(" · ")),
-        figure(String(stage.abstained), stage.abstained ? "left as heard" : ""),
-        figure(seconds(stage.median_seconds), stage.median_seconds === null ? "not timed" : "median"),
-      );
-      rows.push(row);
-      details.push(`${label}: ${plural(stage.decisions, "decision")} · ${stage.preserved} kept as written · ${stage.retries} ${stage.retries === 1 ? "retry" : "retries"} · ${stage.skipped - (stage.blocked ?? 0)} with nothing to decide${stage.blocked ? ` · ${stage.blocked} not run after an earlier failure or cancel` : ""}`);
-    }
-    el("activity-diagnostics").replaceChildren(...details.map((text) => Object.assign(document.createElement("p"), { className: "caption", textContent: text })));
-    el("activity-details").hidden = details.length === 0;
-    el("activity-rows").replaceChildren(...rows);
-    el("activity-table").hidden = rows.length === 0;
-    // The section shows only once a step has run; until then it would describe nothing.
-    el("activity-label").hidden = el("processing-activity").hidden = rows.length === 0;
   }
   el("jev-policy-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -382,133 +294,6 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       else jev[name].checked = !jev[name].checked;
     });
   }
-
-  // Local models: a card per local provider, rows with size, state and one button.
-  let localPoll = null;
-  let localList = [];
-  const localSearch = el("local-search");
-  localSearch.addEventListener("input", () => renderLocalModels());
-
-  async function loadLocalModels() {
-    const providers = (settings?.providers ?? []).filter((p) => p.local);
-    if (providers.length === 0) return;
-    localList = await api("/api/local/models");
-    renderLocalModels();
-    const busy = localList.some((m) => m.state === "downloading");
-    if (busy && !localPoll) localPoll = setInterval(() => loadLocalModels().catch(() => {}), 1500);
-    if (!busy && localPoll) {
-      clearInterval(localPoll);
-      localPoll = null;
-      await onModelsChanged(); // a model that just finished downloading is now offered
-    }
-  }
-
-  const gb = (bytes) => (bytes >= 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` : `${(bytes / 1048576).toFixed(0)} MB`);
-
-  function renderLocalModels() {
-    const query = localSearch.value.trim().toLowerCase();
-    const ready = localList.filter((m) => m.state === "ready");
-    const onDisk = ready.reduce((n, m) => n + m.size_bytes, 0);
-    el("local-summary").textContent = localList.length ? `${ready.length} of ${localList.length} downloaded · ${gb(onDisk)} on disk` : "";
-    const cards = [];
-    for (const provider of settings.providers.filter((p) => p.local)) {
-      const mine = localList.filter((m) => m.provider === provider.id && (!query || `${m.label} ${m.note}`.toLowerCase().includes(query)));
-      if (query && mine.length === 0) continue;
-      const card = document.createElement("div");
-      card.className = "scard";
-      const head = document.createElement("div");
-      head.className = "scard-head";
-      const isParakeet = provider.id === "parakeet";
-      head.innerHTML = isParakeet
-        ? `<div class="name strong">Parakeet <span class="caption">· NVIDIA on Apple MLX</span></div><div class="caption">The most accurate offline model. Download installs its engine (about 480 MB) the first time, then the model.</div>`
-        : `<div class="name strong">Whisper <span class="caption">· whisper.cpp</span></div><div class="caption">Downloaded inside Entune with one click. Speech recognition runs on ${THIS_DEVICE}.</div>`;
-      card.append(head, ...mine.map((m) => localRow(m, isParakeet)));
-      const missing = mine.find((m) => m.state === "unavailable");
-      if (isParakeet && missing) card.append(engineNote(missing));
-      cards.push(card);
-    }
-    el("local-cards").replaceChildren(...cards);
-  }
-
-  function localRow(m, isParakeet) {
-    const row = document.createElement("div");
-    row.className = "lrow";
-    const name = document.createElement("div");
-    name.innerHTML = `<div class="name"></div><div class="note"></div>`;
-    name.querySelector(".name").textContent = m.label;
-    name.querySelector(".note").textContent = m.note;
-    const size = document.createElement("span");
-    size.className = "size";
-    size.textContent = gb(m.size_bytes);
-    const state = document.createElement("div");
-    state.className = "state";
-    const dot = document.createElement("span");
-    dot.className = "dot";
-    const text = document.createElement("span");
-    if (m.state === "ready") { dot.classList.add("ok"); text.textContent = "ready"; }
-    else if (m.state === "downloading") { dot.classList.add("busy"); text.textContent = `${Math.round(m.progress * 100)}%`; }
-    else if (m.state === "error") { dot.classList.add("err"); text.textContent = "failed"; }
-    else if (m.state === "unavailable") { dot.classList.add("busy"); text.textContent = "setup required"; state.classList.add("setup"); }
-    else text.textContent = "not downloaded";
-    state.append(dot, text);
-    if (m.state === "downloading") {
-      const bar = document.createElement("span");
-      bar.className = "bar";
-      bar.innerHTML = `<span style="width:${Math.round(m.progress * 100)}%"></span>`;
-      state.append(bar);
-    }
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "btn sm";
-    button.dataset.model = m.name;
-    if (m.state === "ready") { button.textContent = "Remove"; button.dataset.action = "remove"; }
-    else if (m.state === "downloading") { button.textContent = "Cancel"; button.dataset.action = "remove"; }
-    else if (m.state === "unavailable") { button.textContent = "Check installation"; button.classList.add("setup"); button.dataset.action = "check"; }
-    else { button.textContent = m.state === "error" ? "Retry" : "Download"; button.dataset.action = "download"; }
-    row.append(name, size, state, button);
-    if (m.state === "error" && m.error) {
-      const wrap = document.createElement("div");
-      wrap.append(row);
-      const why = document.createElement("div");
-      why.className = "engine";
-      why.innerHTML = `<span class="dot err"></span>`;
-      why.append(m.error);
-      wrap.append(why);
-      return wrap;
-    }
-    return row;
-  }
-
-  let engineStepsOpen = false;
-  function engineNote(m) {
-    const wrap = document.createElement("div");
-    const line = document.createElement("div");
-    line.className = "engine";
-    line.innerHTML = `<span>Engine not found. Install it in Terminal, then check again.</span><span class="spacer"></span><button type="button" class="btn link steps-toggle">${ICON.chevron}Installation steps</button>`;
-    const steps = document.createElement("div");
-    steps.className = "engine-steps";
-    steps.hidden = !engineStepsOpen;
-    steps.innerHTML = `<span class="n">1</span><div>Install the engine, once:<pre>uv tool install parakeet-mlx</pre></div>
-      <span class="n">2</span><div>Come back and press <b>Check installation</b>. Entune looks for <code>parakeet-mlx</code> where uv installs tools.</div>
-      <span class="n">3</span><div>Then press <b>Download</b> here to fetch the model (about ${gb(m.size_bytes)}).</div>`;
-    line.querySelector(".steps-toggle").addEventListener("click", () => { engineStepsOpen = !engineStepsOpen; steps.hidden = !engineStepsOpen; });
-    wrap.append(line, steps);
-    return wrap;
-  }
-
-  el("local-cards").addEventListener("click", async (e) => {
-    const button = e.target.closest("button[data-model]");
-    if (!button) return;
-    const { model, action } = button.dataset;
-    try {
-      if (action === "download") await api(`/api/local/models/${model}/download`, { method: "POST" });
-      else if (action === "remove") await api(`/api/local/models/${model}`, { method: "DELETE" });
-      await loadLocalModels();
-      if (action === "remove") await onModelsChanged();
-    } catch (err) {
-      el("local-summary").textContent = errorText(err);
-    }
-  });
 
   // Integrations: the local API, and what arrived through it.
   function renderAgents() {
@@ -602,7 +387,6 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
 
   async function loadSettings() {
     settings = await api("/api/settings");
-    el("keys").replaceChildren(...settings.providers.filter((p) => !p.local).map(keyRow));
     fastInput.checked = Boolean(settings.fastMode);
     onShortcutsChanged(settings.shortcuts);
     el("shortcut-hold").textContent = settings.shortcuts.hold ?? "";
@@ -611,7 +395,6 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
     renderDictionaryModel();
     renderJev();
     renderAgents();
-    loadLocalModels().catch(() => {});
     loadCorrections().catch(() => {});
     await onLoaded(settings);
   }
@@ -746,6 +529,5 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
   return {
     load: loadSettings, save: saveSetting,
     refreshCorrections: () => Promise.all([loadCorrections(), loadTracing()]).catch((err) => onError(errorText(err))),
-    async refreshJev() { if (settings) { settings.jev.summary = (await api("/api/settings")).jev.summary; renderJevSummary(); } },
   };
 }

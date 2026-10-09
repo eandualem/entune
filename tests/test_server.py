@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 from dataclasses import replace
+from datetime import date, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -19,7 +20,7 @@ from starlette.testclient import TestClient
 
 from entune.api import data as data_api
 from entune.app.entune import Entune
-from entune.app.metrics import model_metrics
+from entune.app.metrics import model_metrics, usage
 from entune.app.shortcuts import DEFAULT_CANCEL
 from entune.audio.formats import wav_bytes
 from entune.learning.suggestion_model import Request, chatgpt
@@ -922,6 +923,28 @@ def test_metrics_are_computed_from_timed_attempts(client: TestClient) -> None:
     )
     assert row["audio_seconds"] == 8.0 and row["provider_name"] == "Stub"
     assert "median_wait" not in row and "speed" not in row
+
+
+def test_usage_counts_each_dictation_once_by_its_newest_transcript(
+    tmp_path: Path, stub: StubProvider
+) -> None:
+    store = Store(tmp_path)
+    with TestClient(create_app(Entune(store, [stub])), base_url="http://localhost") as client:
+        client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+        clip = ("a.wav", wav_bytes(b"\x00\x00" * 16_000 * 3))
+        client.post("/api/recordings", files={"audio": clip}, data={"model": "stub/bad"})
+        retried = client.post(
+            "/api/recordings", files={"audio": clip}, data={"model": "stub/bad"}
+        ).json()
+        client.post(f"/api/recordings/{retried['id']}/transcriptions", json={"model": "stub/good"})
+        client.post("/api/recordings", files={"audio": clip})
+        summary = client.get("/api/usage").json()
+    assert (summary["dictations"], summary["transcribed"], summary["words"]) == (3, 2, 12)
+    assert summary["audio_seconds"] == 6.0
+    assert [w["words"] for w in summary["weeks"]] == [0] * 7 + [12]
+    assert [summary[s]["count"] for s in ("dictionary", "fillers", "layout")] == [0, 0, 0]
+    later = usage(store, today=date.today() + timedelta(weeks=8))
+    assert later.words == 12 and all(w.words == 0 for w in later.weeks)
 
 
 def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: StubProvider) -> None:

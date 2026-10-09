@@ -5,11 +5,12 @@
 import { createHistory } from "./history.js";
 import { renderCard } from "./history-card.js";
 import { createDictionary } from "./dictionary-view.js";
+import { createModels } from "./models-view.js";
 import { createSettings } from "./settings-view.js";
 import { openApp } from "./intro.js";
 import { LINUX_LABELS, LINUX_SETUP, copySetup, createPermissions } from "./permissions-view.js";
 import { initRecording } from "./recording.js";
-import { ICON, THIS_DEVICE, api, el, errorText, figure, fillModels, segmentedGroup } from "./ui.js";
+import { ICON, THIS_DEVICE, api, el, errorText, fillModels, segmentedGroup } from "./ui.js";
 
 const status = el("status");
 const modelSelect = el("model");
@@ -113,17 +114,16 @@ function showView(name) {
   for (const key in views) views[key].toggleAttribute("data-active", key === name);
   views[name].scrollTop = 0;
   if (name === "history") loadHistory().catch((err) => { status.textContent = errorText(err); });
-  if (name === "models") loadMetrics().catch((err) => { status.textContent = errorText(err); });
+  if (name === "models") modelsView.refresh().catch((err) => { status.textContent = errorText(err); });
   if (name === "dictionary") dictionary.refreshAudio().catch((err) => { status.textContent = errorText(err); });
-  if (name === "models") settingsView.refreshJev().catch((err) => { status.textContent = errorText(err); });
   if (name === "settings" && sections.integrations.hasAttribute("data-active")) settingsView.refreshCorrections();
   permissionsView.setActive(name === "settings" && sections.general.hasAttribute("data-active"));
   permissionsView.setActive(name === "history" && !emptyState.hidden, "start");
 }
 function show(name) { selectTab(name); showView(name); }
 
-// The Models page: three jobs, one at a time, like Settings.
-const MODEL_SECTIONS = ["cloud", "local", "performance"];
+// The Models page: four jobs, one at a time, like Settings.
+const MODEL_SECTIONS = ["cloud", "local", "performance", "usage"];
 const modelSections = Object.fromEntries(MODEL_SECTIONS.map((name) => [name, el(`models-${name}`)]));
 const pickModelSection = segmentedGroup(Object.fromEntries(MODEL_SECTIONS.map((name) => [name, el(`msec-${name}`)])), showModelSection);
 function showModelSection(name) {
@@ -169,6 +169,7 @@ async function loadModels() {
     defaultModel = models.find((m) => m.default) ?? null;
   }
   fillModels(models, modelSelect, defaultModel?.id ?? null, "No models: add a key or download one");
+  modelsView.render();
   // History names each attempt's model from this list, which can arrive after the cards.
   const names = models.map((m) => `${m.id}=${m.label}`).join("|");
   if (names !== modelNames) { modelNames = names; history.redraw().catch(() => {}); }
@@ -205,43 +206,6 @@ fastInput.addEventListener("change", async () => {
   fastSaving = false;
   fastInput.disabled = fastWrap.classList.contains("off");
 });
-
-// ---- Performance by model: the comparison on the Models page ----
-const metricsRows = el("metrics-rows");
-
-function audioLength(seconds) {
-  if (seconds < 60) return `${Math.max(1, Math.round(seconds))} s`;
-  const minutes = Math.round(seconds / 60);
-  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
-}
-async function loadMetrics() {
-  const rows = await api("/api/metrics");
-  el("metrics-table").hidden = rows.length === 0;
-  el("metrics-empty").hidden = rows.length > 0;
-  metricsRows.replaceChildren(
-    ...rows.map((m) => {
-      const row = document.createElement("div");
-      row.className = "perf-grid";
-      const name = document.createElement("span");
-      name.className = "perf-model";
-      name.title = `${m.provider}/${m.model}${m.fast ? " · Fast mode" : ""}`;
-      name.append(Object.assign(document.createElement("span"), { className: "cell-main", textContent: m.provider_name }));
-      if (m.fast) name.firstChild.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "Fast" }));
-      name.append(Object.assign(document.createElement("span"), { className: "cell-sub", textContent: m.model }));
-      const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-      const speed = figure(m.seconds_per_minute === null ? "–"
-        : `${m.seconds_per_minute < 10 ? m.seconds_per_minute.toFixed(1) : Math.round(m.seconds_per_minute)} s`, "");
-      const corrections = m.checked === 0 || m.words === 0
-        ? figure("–", "")
-        : figure(`${m.replacements ? (100 * m.replacements / m.words).toFixed(1) : "0"} per 100 words`, `${m.corrected} of ${plural(m.checked, "dictation")} changed`);
-      const failed = m.runs - m.ok;
-      const used = figure(String(m.runs), failed ? `${failed} failed` : "", failed ? "perf-failed" : "");
-      const audio = figure(m.audio_seconds ? audioLength(m.audio_seconds) : "–", "");
-      row.append(name, speed, corrections, used, audio);
-      return row;
-    }),
-  );
-}
 
 // ---- Getting started: the empty history, as steps that tick themselves off ----
 // In order: a speech model, then (in the Mac app) the permissions, then a shortcut.
@@ -467,16 +431,22 @@ historyList.addEventListener("click", async (e) => {
 
 // ---- Wire the views, then load the saved configuration ----
 const dictionary = createDictionary({ getModel: () => defaultModel, getSettings: () => settings, onSettingsChanged: () => settingsView.load(), openSettings });
+const modelsView = createModels({
+  getDefault: () => defaultModel?.id ?? null,
+  reloadSettings: () => settingsView.load(),
+  onModelsChanged: loadModels,
+  onError(message) { status.textContent = message; },
+  openSection: openModels,
+});
 const permissionsView = createPermissions({
   onChange(answer) { desktop = answer.desktop; system = answer.system; permissionStates = answer.permissions; renderStart(); },
 });
 const settingsView = createSettings({
   async onLoaded(next) {
     settings = next;
-    loadMetrics().catch(() => {});
+    modelsView.setProviders(next.providers);
     await loadModels();
   },
-  onModelsChanged: loadModels,
   onShortcutsChanged(next) {
     const had = Boolean(shortcuts.hold || shortcuts.toggle);
     shortcuts = next;

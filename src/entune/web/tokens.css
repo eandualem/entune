@@ -73,6 +73,9 @@
   --accent-wash: rgba(169, 156, 242, 0.18); /* accent pill / primary-soft button ground */
   --accent-wash-hover: rgba(169, 156, 242, 0.28);
   --accent-ring: rgba(169, 156, 242, 0.5); /* selected option ring */
+  --accent-tint: rgba(169, 156, 242, 0.1); /* a highlighted tile */
+  --halo: rgba(169, 156, 242, 0.22); /* around a selected chart dot */
+  --cloud: #6cc2b4; /* cloud models in charts; local ones take the accent */
   --on-accent: #1c1b19; /* text on a solid accent ground */
   --wave: #4a4641; /* waveform bars */
   --wave-played: #a99cf2; /* played part of a waveform */
@@ -146,6 +149,9 @@
     --accent-wash: rgba(111, 95, 216, 0.12); /* accent pill / primary-soft button ground */
     --accent-wash-hover: rgba(111, 95, 216, 0.2);
     --accent-ring: rgba(111, 95, 216, 0.45); /* selected option ring */
+    --accent-tint: rgba(111, 95, 216, 0.08); /* a highlighted tile */
+    --halo: rgba(111, 95, 216, 0.18); /* around a selected chart dot */
+    --cloud: #2f8578; /* cloud models in charts; local ones take the accent */
     --on-accent: #ffffff; /* text on a solid accent ground */
     --wave: #dcd6cc; /* waveform bars */
     --wave-played: #7d6de0; /* played part of a waveform */
@@ -219,6 +225,9 @@
   --accent-wash: rgba(111, 95, 216, 0.12); /* accent pill / primary-soft button ground */
   --accent-wash-hover: rgba(111, 95, 216, 0.2);
   --accent-ring: rgba(111, 95, 216, 0.45); /* selected option ring */
+  --accent-tint: rgba(111, 95, 216, 0.08); /* a highlighted tile */
+  --halo: rgba(111, 95, 216, 0.18); /* around a selected chart dot */
+  --cloud: #2f8578; /* cloud models in charts; local ones take the accent */
   --on-accent: #ffffff; /* text on a solid accent ground */
   --wave: #dcd6cc; /* waveform bars */
   --wave-played: #7d6de0; /* played part of a waveform */

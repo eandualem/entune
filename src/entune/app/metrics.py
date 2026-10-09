@@ -6,7 +6,9 @@ Counts measure work performed and waits observed, never transcription accuracy.
 from __future__ import annotations
 
 import statistics
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 
 from entune.processing.results import Stage
 from entune.providers.contracts import Provider
@@ -66,6 +68,32 @@ class ProcessingSummary:
     transcriptions: int
     stages: dict[str, StageSummary]
     median_seconds: float | None
+
+
+@dataclass(frozen=True)
+class StepUsage:
+    count: int  # words corrected, fillers removed or layout changes
+    median_seconds: float | None  # the time the step typically added; None: never ran
+
+
+@dataclass(frozen=True)
+class WeekWords:
+    start: str  # the week's Monday in local time, YYYY-MM-DD
+    words: int
+
+
+@dataclass(frozen=True)
+class Usage:
+    """What the dictations add up to, for the Usage page."""
+
+    dictations: int  # recordings with a speech attempt
+    transcribed: int  # of them, with a transcript
+    audio_seconds: float  # the transcribed ones' audio, where its length is known
+    words: int  # in their transcripts
+    weeks: list[WeekWords]  # the last eight, oldest first, this week last
+    dictionary: StepUsage
+    fillers: StepUsage
+    layout: StepUsage
 
 
 def model_metrics(store: Store, providers: list[Provider]) -> list[ModelMetrics]:
@@ -159,6 +187,52 @@ def processing_summary(store: Store, model: str | None = None) -> ProcessingSumm
     ]
     return ProcessingSummary(
         len(attempts), summaries, statistics.median(totals) if totals else None
+    )
+
+
+def usage(store: Store, today: date | None = None) -> Usage:
+    """Each dictation counts once, by its newest transcript; the steps count all their work."""
+    this_week = today or datetime.now().astimezone().date()
+    this_week -= timedelta(days=this_week.weekday())
+    weeks = {this_week - timedelta(weeks=n): 0 for n in range(7, -1, -1)}
+    dictations = transcribed = words = 0
+    audio = 0.0
+    for recording in store.list_recordings():
+        if not recording.transcriptions:
+            continue
+        dictations += 1
+        latest = next((a for a in recording.transcriptions if a.status == "ok"), None)
+        if latest is None:
+            continue
+        transcribed += 1
+        audio += max((a.audio_seconds or 0.0 for a in recording.transcriptions), default=0.0)
+        count = len((latest.text or "").split())
+        words += count
+        day = datetime.fromisoformat(recording.created_at.replace("Z", "+00:00")).astimezone()
+        week = day.date() - timedelta(days=day.weekday())
+        if week in weeks:
+            weeks[week] += count
+    stages = [
+        stage
+        for a in store.processed_transcriptions()
+        for stage in (a.correction, a.cleanup, a.formatting)
+        if stage is not None
+    ]
+
+    def step(methods: tuple[str, ...], count: Callable[[Stage], int]) -> StepUsage:
+        group = [s for s in stages if s.method in methods]
+        waits = [s.seconds for s in group if s.status in ("succeeded", "failed")]
+        return StepUsage(sum(count(s) for s in group), statistics.median(waits) if waits else None)
+
+    return Usage(
+        dictations=dictations,
+        transcribed=transcribed,
+        audio_seconds=audio,
+        words=words,
+        weeks=[WeekWords(start.isoformat(), n) for start, n in weeks.items()],
+        dictionary=step(("contextual", "deterministic"), lambda s: s.replacements),
+        fillers=step(("cleanup",), lambda s: s.removed_words),
+        layout=step(("formatting",), lambda s: len(s.changes or ())),
     )
 
 

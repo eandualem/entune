@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import httpx
@@ -14,6 +15,8 @@ from entune.providers.cloud.http import NotJson
 from entune.providers.cloud.soniox import Soniox
 from entune.providers.cloud.xai import XAI
 from entune.providers.contracts import Clip, Failure, Transcript
+from entune.providers.local import parakeet
+from entune.providers.local.whisper import CATALOGUE
 from entune.providers.registry import default_providers, resolve_model
 from tests.conftest import mock_client
 
@@ -332,3 +335,13 @@ def test_adapters_close_owned_clients_but_leave_injected_clients_to_the_caller(
         for provider in injected:
             provider.close()
             assert not client.is_closed
+
+
+def test_the_models_page_describes_every_speech_model() -> None:
+    """A provider missing from the page's data would have no row, and no way to add its key."""
+    facts = (Path(__file__).parents[1] / "src" / "entune" / "web" / "model-facts.js").read_text()
+    described = set(re.findall(r'^  "([^"]+/[^"]+)":', facts, re.MULTILINE))
+    cloud = (AssemblyAI(), Groq(), Soniox(), ElevenLabs(), XAI())
+    offered = {f"{p.id}/{model}" for p in cloud for model in p.models}
+    offered |= {f"local/{spec.name}" for spec in CATALOGUE} | {f"parakeet/{parakeet.MODEL}"}
+    assert described == offered
