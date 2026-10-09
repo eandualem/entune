@@ -7,7 +7,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -25,7 +25,7 @@ from entune.providers.contracts import Clip, Failure, Transcript
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, wait_for_build
-from tests.dictionary_samples import JEV, group, proposed
+from tests.dictionary_samples import JEV, dictionary, group, proposed
 from tests.test_server import StubProvider
 
 
@@ -43,44 +43,52 @@ def source(store: Store, text: str, model: str = "good") -> int:
 
 
 def test_review_edits_and_dismissal_apply_once_without_deleting_dismissed_entries() -> None:
-    before, removed, added = (
-        group("Claude", "cloud"),
-        group("Keep", "keep term"),
-        group("Groq", "grok"),
+    claude, keep, groq = group("Claude", "cloud"), group("Keep", "keep term"), group("Groq", "grok")
+    current = dictionary(learned={"model": (claude, keep)})
+    clearer = replace(claude.words[0], meaning="An assistant.")
+    proposed_words = (clearer, *current.words[1:], *groq.words)
+    proposal = dictionary_changes.propose(
+        current,
+        Dictionary(proposed_words, (), {"model": (*claude.entries, *groq.entries)}),
+        "model",
     )
-    current = Dictionary(learned={"model": (before, removed)})
-    after = replace(before, meanings=(replace(before.meanings[0], meaning="An assistant."),))
-    proposal = dictionary_changes.propose(current, (after, added), "model")
-    assert {c.kind for c in proposal.changes} == {"add", "update", "remove"}
-    edited = after.as_json()
-    edited["meanings"][0]["meaning"] = "A reviewed assistant definition."
+    assert {c.kind for c in proposal.changes} == {"add", "remove", "word"}
+    edited = {**asdict(clearer), "meaning": "A reviewed assistant definition."}
     result = dictionary_changes.review(
         current,
         proposal,
         [
-            {"id": after.id, "after": edited},
-            {"id": added.id, "after": added.as_json()},
+            {"id": "word:a_claude", "after": edited},
+            {"id": "heard:grok", "after": groq.entries[0].as_json()},
         ],
     )
-    groups = {g.id: g for g in result.learned_for("model")}
-    assert groups[removed.id] == removed  # dismissing the removal keeps active knowledge
-    assert groups[before.id].meanings[0].meaning == "A reviewed assistant definition."
-    assert groups[added.id] == added
+    # Dismissing the removals keeps active knowledge; the new word comes with its entry.
+    assert [h.text for h in result.learned_for("model")] == [
+        "cloud",
+        "Claude",
+        "keep term",
+        "Keep",
+        "grok",
+    ]
+    assert result.words[0].meaning == "A reviewed assistant definition."
+    assert result.words[-1] == groq.words[0]
     assert dictionary_changes.review(current, proposal, []) is current
 
 
-def test_review_validation_rejects_pinned_removal_even_in_edited_whole_group() -> None:
-    current = Dictionary((JEV,))
-    changed = replace(
-        JEV, meanings=(replace(JEV.meanings[0], meaning="A classifier."), *JEV.meanings[1:])
+def test_review_validation_rejects_an_edit_naming_a_missing_word() -> None:
+    current = dictionary(learned={"model": (JEV,)})
+    groq = group("Groq", "grok")
+    proposal = dictionary_changes.propose(
+        current,
+        Dictionary((*current.words, *groq.words), (), {"model": (*JEV.entries, groq.entries[0])}),
+        "model",
     )
-    proposal = dictionary_changes.propose(current, (changed,), "model")
-    record = changed.as_json()
-    record["recognized_forms"] = record["recognized_forms"][1:]
-    with pytest.raises(ValueError, match="pinned variant"):
-        dictionary_changes.review(current, proposal, [{"id": JEV.id, "after": record}])
+    record = groq.entries[0].as_json()
+    record["candidates"][0]["word"] = "w_missing"
+    with pytest.raises(ValueError, match="missing word"):
+        dictionary_changes.review(current, proposal, [{"id": "heard:grok", "after": record}])
     approved = dictionary_changes.review(current, proposal)
-    assert approved.pinned[0].meanings[0].meaning == "A classifier."
+    assert approved.learned_for("model")[-1] == groq.entries[0]
 
 
 def test_apply_consumes_only_examined_model_inputs_and_new_review_data_stays_eligible(
@@ -176,11 +184,11 @@ def test_partial_generation_keeps_validated_proposal_and_only_fully_covered_inpu
         if calls == 1:
             return json.dumps(proposed("cloud code"))
         if calls == 2:
-            return '{"additions": [], "revisions": [], "removals": []}'
+            return '{"words": [], "meanings": [], "heard": [], "removals": []}'
         if stop:
             later.set()
             await asyncio.sleep(30)
-        return '{"additions": ["malformed"]}'
+        return '{"words": ["malformed"]}'
 
     with closing(Store(tmp_path)) as store:
         # Newest-first selection is deliberately not a timestamp prefix.
@@ -254,7 +262,7 @@ def test_a_recording_recovered_on_retry_is_not_left_out_of_generation(
         attempts["generation"] += 1
         if attempts["generation"] == 2:
             raise ValueError("generation stopped")  # after the first part finished
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     with closing(Store(tmp_path)) as store:
         app, client = setup(store, call)
@@ -323,7 +331,7 @@ def test_old_saved_recordings_are_selectable_with_duration_and_never_gain_learni
     tmp_path: Path,
 ) -> None:
     async def call(_: Request) -> str:
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     with closing(Store(tmp_path)) as store:
         r = store.create_recording(wav_bytes(b"\0\0" * 16000))
@@ -362,7 +370,7 @@ def test_learning_starts_while_speech_is_running(
         return Transcript("cloud code")
 
     async def call(_: Request) -> str:
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     with closing(Store(tmp_path)) as store:
         source(store, "cloud code")
@@ -396,7 +404,7 @@ def test_retry_resumes_completed_generation_batches_with_accumulated_groups(
         # Batch one's entry is kept for the proposal, but a part shows only entries
         # that occur in its own dictations.
         assert "Claude Code" not in request.user
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     with closing(Store(tmp_path)) as store:
         source(store, "older data")
@@ -495,7 +503,7 @@ def test_audio_from_other_models_creates_then_refines_the_selected_models_dictio
         return json.dumps(
             proposed(heard)
             if len(prompts) == 1
-            else {"additions": [], "revisions": [], "removals": []}
+            else {"words": [], "meanings": [], "heard": [], "removals": []}
         )
 
     with closing(Store(tmp_path)) as store:
@@ -590,20 +598,18 @@ def test_refinement_pairs_raw_text_with_the_dictionary_step_result_only(tmp_path
         paired = inputs[str(attempts["paired"])]
         assert paired.text == raw and paired.result is not None
 
-        claude = dictionary_entries.Meaning("m_claude", "Claude", "An AI assistant.")
-        form = dictionary_entries.Form("cloud", (dictionary_entries.Association("m_claude"),))
-        current = Dictionary(
-            learned={"stub/good": (dictionary_entries.Group("g", (claude,), (form,)),)}
-        )
+        claude = dictionary_entries.Word("m_claude", "Claude", "An AI assistant.")
+        form = dictionary_entries.Heard("cloud", (dictionary_entries.Candidate("m_claude"),))
+        current = Dictionary((claude,), (), {"stub/good": (form,)})
         (step,) = batches.learning_batches(list(inputs.values()))
-        shown = view.build(current.effective("stub/good"), current.pinned, step.snippets)
+        shown = view.build(current, "stub/good", step.snippets)
         prompt = batches.user_prompt("stub/good", shown)
         by_text = {e["text"]: e for e in json.loads(shown.dictations)}
         pair = by_text[raw]
         assert pair["after_dictionary"] == corrected
         assert pair["decisions"] == [
-            {"heard": "cloud", "wrote": "Claude", "method": "contextual", "meanings": ["e1a"]},
-            {"heard": "cloud", "wrote": "cloud", "method": "contextual", "meanings": ["removed"]},
+            {"heard": "cloud", "wrote": "Claude", "method": "contextual", "words": ["w1"]},
+            {"heard": "cloud", "wrote": "cloud", "method": "contextual", "words": ["removed"]},
         ]
         # Nothing to show where the dictionary changed nothing or did not run.
         assert set(by_text["Nothing matched here."]) == {"id", "text"}
@@ -613,12 +619,9 @@ def test_refinement_pairs_raw_text_with_the_dictionary_step_result_only(tmp_path
         assert by_text["Old cloud record."]["after_dictionary"] == "Old Claude record."
         assert by_text["Old cloud record."]["decisions"] == [{"heard": "cloud", "wrote": "Claude"}]
         assert later not in prompt  # filler reduction and delivered text never stand in
-        # The entry is shown by a short label, without its stored ID.
-        assert json.loads(shown.dictionary) == [
-            {
-                "id": "e1",
-                "meanings": [{"id": "e1a", "spelling": "Claude", "meaning": "An AI assistant."}],
-                "heard": {"cloud": ["e1a"]},
-            }
+        # The word is shown by a short label, without its stored ID.
+        assert json.loads(shown.words) == [
+            {"id": "w1", "spelling": "Claude", "meaning": "An AI assistant."}
         ]
+        assert json.loads(shown.entries) == [{"text": "cloud", "words": ["w1"]}]
         assert "m_claude" not in prompt

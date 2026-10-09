@@ -356,16 +356,20 @@ CLAUDE_CODE = {"spelling": "Claude Code", "description": "the agent", "heard": [
 def test_dictionary_direct_mappings_are_explicit_and_scope_is_preserved(
     client: TestClient, stub: StubProvider
 ) -> None:
-    assert client.get("/api/dictionary").json() == {"version": 2, "pinned": [], "learned": {}}
+    assert client.get("/api/dictionary").json() == {
+        "version": 3,
+        "words": [],
+        "pinned": [],
+        "learned": {},
+    }
     bad = client.put("/api/dictionary", content='{"pinned":[]}')
     assert bad.status_code == 400 and 'needs "version"' in bad.text
     saved = client.put(
         "/api/dictionary",
-        json={
-            "version": 2,
-            "pinned": [group("Claude Code", "cloud code", direct=True).as_json()],
-            "learned": {"stub/bad": [group("Hello", "hello", direct=True).as_json()]},
-        },
+        json=document(
+            group("Claude Code", "cloud code", direct=True),
+            learned={"stub/bad": (group("Hello", "hello", direct=True),)},
+        ),
     )
     assert saved.status_code == 200, saved.text
     client.put(
@@ -625,7 +629,8 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     assert calls == [("openai:gpt-6-astra", "sk-1")]
     assert proposal["model"] == "stub/good"
     assert len(proposal["changes"]) == 1
-    assert proposal["changes"][0]["after"]["meanings"][0]["spelling"] == "Claude Code"
+    assert proposal["changes"][0]["after"]["text"] == "cloud code"
+    assert [w["spelling"] for w in proposal["words"]] == ["Claude Code"]
     assert proposal["version"] == client.get("/api/dictionary").headers["etag"]
     assert proposal["changes"][0]["kind"] == "add" and proposal["changes"][0]["before"] is None
     # Nothing is saved until the page accepts.
@@ -699,13 +704,15 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
         ]
     }
     stored = client.get("/api/dictionary").json()
-    assert [g["meanings"][0]["spelling"] for g in stored["pinned"]] == ["Claude Code", "Wispr Flow"]
-    assert {f["text"] for f in stored["pinned"][0]["recognized_forms"]} == {
-        "Claude Code",
+    assert [w["spelling"] for w in stored["words"]] == ["Claude Code", "Wispr Flow"]
+    assert [h["text"] for h in stored["pinned"]] == [
         "cloud code",
+        "Claude Code",
+        "whisper flow",
+        "Wispr Flow",
         "claud code",
-    }
-    assert all(not f["direct"] for g in stored["pinned"] for f in g["recognized_forms"])
+    ]
+    assert all(not h["direct"] for h in stored["pinned"])
     # The earlier shape, terms and replacements, is still taken.
     again = client.post(
         "/api/dictionary/corrections", json={"terms": ["Soniox"], "replacements": {"a": "b"}}
@@ -978,20 +985,22 @@ def test_a_stale_dictionary_save_is_refused_and_a_fresh_one_accepted(client: Tes
         headers={"if-match": version},
     )
     assert stale.status_code == 409 and "changed" in stale.text
-    assert client.get("/api/dictionary").json()["pinned"][0]["meanings"][0]["spelling"] == "Soniox"
+    assert client.get("/api/dictionary").json()["words"][0]["spelling"] == "Soniox"
     fresh = client.get("/api/dictionary")
     current, fresh_version = fresh.json(), fresh.headers["etag"]
     assert fresh_version != version
+    entune = document(group("Entune", "in tune"))
     ok = client.put(
         "/api/dictionary",
-        json={**current, "pinned": [*current["pinned"], group("Entune", "in tune").as_json()]},
+        json={
+            **current,
+            "words": [*current["words"], *entune["words"]],
+            "pinned": [*current["pinned"], *entune["pinned"]],
+        },
         headers={"if-match": fresh_version},
     )
     assert ok.status_code == 200 and ok.headers["etag"] != fresh_version
-    assert {m["spelling"] for g in ok.json()["pinned"] for m in g["meanings"]} == {
-        "Soniox",
-        "Entune",
-    }
+    assert {w["spelling"] for w in ok.json()["words"]} == {"Soniox", "Entune"}
     # Without a version header (curl, or a page repairing a broken file) the write goes through.
     assert client.put("/api/dictionary", json=document()).status_code == 200
 
@@ -1055,25 +1064,19 @@ def test_slow_settings_catalogue_does_not_block_other_requests(
         assert waiting.result(timeout=1).status_code == 200
 
 
-def test_pin_endpoint_needs_revision_and_preserves_competing_meanings(client: TestClient) -> None:
-    response = client.put(
-        "/api/dictionary",
-        json={"version": 2, "pinned": [], "learned": {"stub/good": [JEV.as_json()]}},
-    )
-    body = {"model": "stub/good", "group": "g_jev", "meaning": "a_jev"}
+def test_pin_endpoint_needs_revision_and_moves_heard_entries(client: TestClient) -> None:
+    response = client.put("/api/dictionary", json=document(learned={"stub/good": (JEV,)}))
+    body = {"model": "stub/good", "text": "jeff"}
     assert client.post("/api/dictionary/pin", json=body).status_code == 400
     result = client.post(
         "/api/dictionary/pin", json=body, headers={"If-Match": response.headers["etag"]}
     )
     assert result.status_code == 200, result.text
-    assert result.json()["pinned"][0]["meanings"][0]["spelling"] == "Jev"
-    assert {m["spelling"] for m in result.json()["learned"]["stub/good"][0]["meanings"]} == {
-        "Jeff",
-        "GIF",
-    }
+    assert [h["text"] for h in result.json()["pinned"]] == ["Jeff"]
+    assert [h["text"] for h in result.json()["learned"]["stub/good"]] == ["GIF", "Jif", "Jev"]
     stale = client.post(
         "/api/dictionary/pin",
-        json={**body, "meaning": "b_jeff"},
+        json={**body, "text": "GIF"},
         headers={"If-Match": response.headers["etag"]},
     )
     assert stale.status_code == 409
@@ -1084,11 +1087,8 @@ def test_pin_endpoint_needs_revision_and_preserves_competing_meanings(client: Te
         headers={"If-Match": result.headers["etag"]},
     )
     assert shared.status_code == 200 and not shared.json()["learned"]
-    assert {m["spelling"] for g in shared.json()["pinned"] for m in g["meanings"]} == {
-        "Jev",
-        "Jeff",
-        "GIF",
-    }
+    assert [h["text"] for h in shared.json()["pinned"]] == ["Jeff", "GIF", "Jif", "Jev"]
+    assert shared.json()["words"] == response.json()["words"]
 
 
 def test_safe_recovery_is_derived_and_copies_only_approved_nonambiguous_mappings(
@@ -1110,13 +1110,7 @@ def test_safe_recovery_is_derived_and_copies_only_approved_nonambiguous_mappings
             raw, Stage("failed", "contextual", error="unavailable"), Stage("disabled", "formatting")
         ),
     )
-    client.put(
-        "/api/dictionary",
-        json={
-            "version": 2,
-            "pinned": [group("Entune", "dictim", direct=True).as_json(), JEV.as_json()],
-        },
-    )
+    client.put("/api/dictionary", json=document(group("Entune", "dictim", direct=True), JEV))
     before = client.get("/api/recordings").json()
     result = client.post(f"/api/recordings/{rec.id}/transcriptions/{attempt}/safe-copy")
     assert result.status_code == 200, result.text

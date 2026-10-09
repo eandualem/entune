@@ -1,8 +1,8 @@
 """Confirmed corrections from other apps, added to the pinned dictionary.
 
 Agents and apps you dictate to post what the person confirmed (`POST
-/api/dictionary/corrections`); each becomes a pinned meaning with its recognized forms,
-and competes normally: no implicit priority.
+/api/dictionary/corrections`); each names a word, and its heard phrases become pinned
+heard entries where it competes normally: no implicit priority.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import hashlib
 from dataclasses import dataclass, replace
 
 from entune.dictionary.document import validate
-from entune.dictionary.entries import Association, Dictionary, Form, Group, Meaning, key, merge
+from entune.dictionary.entries import Candidate, Dictionary, Heard, Word, key
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ def read_entries(value: object, where: str) -> tuple[Correction, ...]:
             raise ValueError(f"{where}.heard must be a list of strings")
         phrases = {key(h): " ".join(h.split()) for h in heard if h.strip()}
         if any(not h[0].isalnum() and h[0] != "_" for h in phrases.values()):
-            raise ValueError("A recognized form must start with a letter or digit")
+            raise ValueError("A heard phrase must start with a letter or digit")
         result.append(Correction(spelling.strip(), description.strip(), tuple(phrases.values())))
     return tuple(result)
 
@@ -76,35 +76,61 @@ def add_corrections(
     dictionary: Dictionary, corrections: tuple[Correction, ...]
 ) -> tuple[Dictionary, tuple[Correction, ...]]:
     """Preserve the confirmed-correction API without giving it implicit direct priority."""
-    pinned = dictionary.pinned
+    words = {w.id: w for w in dictionary.words}
+    pinned = {key(h.text): h for h in dictionary.pinned}
     added = []
     for correction in corrections:
-        candidates = [
-            (g, m)
-            for g in pinned
-            for m in g.meanings
-            if key(m.spelling) == key(correction.spelling)
-            and (not correction.description or m.meaning == correction.description)
+        # The word itself: the one already spelled so (and described so, when a
+        # description is given), else a new one.
+        same = [
+            w
+            for w in words.values()
+            if key(w.spelling) == key(correction.spelling)
+            and (not correction.description or w.meaning == correction.description)
         ]
-        if len(candidates) == 1:
-            group, meaning = candidates[0]
+        if len(same) > 1:  # the one the person's pinned entries already name, if only one
+            confirmed = {c.word for h in pinned.values() for c in h.candidates}
+            same = [w for w in same if w.id in confirmed] or same
+        identity = _id("w_", key(correction.spelling) + "\n" + correction.description)
+        if len(same) == 1:
+            word = same[0]
         else:
-            identity = key(correction.spelling) + "\n" + correction.description
-            meaning = Meaning(_id("m_", identity), correction.spelling, correction.description)
-            group = Group(_id("g_", identity), (meaning,), (), not bool(correction.description))
-        known = {
-            key(f.text)
-            for g in pinned
-            for f in g.recognized_forms
-            if any(a.meaning_id == meaning.id for a in f.associations)
-        }
-        heard = tuple(h for h in correction.heard if key(h) not in known)
-        is_new = not any(m.id == meaning.id for g in pinned for m in g.meanings)
+            word = words.get(identity) or Word(
+                identity,
+                correction.spelling,
+                correction.description,
+                needs_review=not correction.description,
+            )
+        is_new = word.id not in words
+
+        def named(text: str, word: Word = word) -> bool:
+            entry = pinned.get(key(text))
+            return entry is not None and any(c.word == word.id for c in entry.candidates)
+
+        heard = tuple(h for h in correction.heard if not named(h))
+        texts = list(heard)
+        # A new name also corrects its own capitals: its spelling, written as heard.
+        if (
+            is_new
+            and (word.spelling[0].isalnum() or word.spelling[0] == "_")
+            and not named(word.spelling)
+            and key(word.spelling) not in map(key, heard)
+        ):
+            texts.append(word.spelling)
+        links = [
+            (t, Candidate(word.id, basis="literal" if key(t) == key(word.spelling) else "user"))
+            for t in texts
+        ]
         if not heard and not is_new:
             continue
-        forms = tuple(Form(h, (Association(meaning.id, basis="user"),)) for h in heard)
-        if is_new and (meaning.spelling[0].isalnum() or meaning.spelling[0] == "_"):
-            forms += (Form(meaning.spelling, (Association(meaning.id, basis="literal"),)),)
-        pinned = merge(pinned, (replace(group, recognized_forms=forms),))
-        added.append(Correction(meaning.spelling, correction.description, heard))
-    return validate(Dictionary(pinned, dictionary.learned)), tuple(added)
+        words[word.id] = word
+        for text, candidate in links:
+            entry = pinned.get(key(text))
+            if entry is None:
+                pinned[key(text)] = Heard(text, (candidate,))
+            else:
+                pinned[key(text)] = replace(entry, candidates=(*entry.candidates, candidate))
+        added.append(Correction(word.spelling, correction.description, heard))
+    return validate(
+        Dictionary(tuple(words.values()), tuple(pinned.values()), dictionary.learned)
+    ), tuple(added)

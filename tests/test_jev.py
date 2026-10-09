@@ -24,18 +24,15 @@ from entune.processing.results import Processed
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
-from tests.dictionary_samples import JEV, group
+from tests.dictionary_samples import JEV, combine, dictionary, document, group
 from tests.test_server import StubProvider
 
-GROUPS = (
-    JEV,
-    group("Claude Code", "cloud code", literal="Program code for cloud infrastructure."),
-    group("Entune", "victim"),
-)
+CLAUDE_CODE = group("Claude Code", "cloud code", literal="Program code for cloud infrastructure.")
+GROUPS = combine(JEV, CLAUDE_CODE, group("Entune", "victim"))
 
 
-def matches(groups: tuple[Any, ...], text: str) -> list[matching.Component]:
-    return matching.components(matching.matches(groups, text))
+def matches(active: dictionary_entries.Active, text: str) -> list[matching.Component]:
+    return matching.components(matching.matches(active, text))
 
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -79,10 +76,10 @@ def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> N
     )
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         context = call(client)
-        document = dictionary_entries.Dictionary(learned={"speech/model": GROUPS})
+        doc = dictionary(learned={"speech/model": (GROUPS,)})
         if pinned:
-            document = dictionary_changes.pin(document, "speech/model", "g_jev", "a_jev")
-        decisions = jev.decide(text, matches(document.effective("speech/model"), text), context)
+            doc = dictionary_changes.pin(doc, "speech/model", "Jeff")
+        decisions = jev.decide(text, matches(doc.active("speech/model"), text), context)
         edits = tuple(d.edit for d in decisions if d.edit)
         assert (
             matching.apply(text, edits)
@@ -395,7 +392,7 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
             )
             client.put(
                 "/api/dictionary",
-                json={"version": 2, "pinned": [GROUPS[1].as_json()]},
+                json=document(CLAUDE_CODE),
             )
             attempt = client.post(
                 "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}
@@ -569,10 +566,7 @@ def test_final_write_failure_preserves_completed_stage_evidence(
                 assert (
                     client.put(
                         "/api/dictionary",
-                        json={
-                            "version": 2,
-                            "pinned": [GROUPS[1].as_json()],
-                        },
+                        json=document(CLAUDE_CODE),
                     ).status_code
                     == 200
                 )
@@ -603,7 +597,7 @@ def test_formatting_with_dictionary_disabled_does_not_apply_even_direct_mappings
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             "Jeff is fast. Next topic.",
-            (group("Jev", "Jeff", direct=True),),
+            group("Jev", "Jeff", direct=True),
             contextual=False,
             formatting=True,
             key="ts-key",
@@ -622,9 +616,7 @@ def test_meanings_that_write_the_same_text_are_one_option() -> None:
 
     requests, handler = answering(lambda *_: {"i0": 0.4, "i1": 0.6})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
-        decisions = jev.decide(
-            "Ask cloud here.", matches((CLOUD,), "Ask cloud here."), call(client)
-        )
+        decisions = jev.decide("Ask cloud here.", matches(CLOUD, "Ask cloud here."), call(client))
     assert requests[0]["questions"]["o0"]["criteria"] == {
         "i0": "cloud means Claude: Anthropic's AI assistant.",
         "i1": "cloud means cloud: Remote computing infrastructure."
@@ -650,7 +642,7 @@ def test_jif_uses_highest_eligible_meaning_even_when_scores_are_close(
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             "Use Jif here.",
-            (JEV,),
+            JEV,
             contextual=True,
             formatting=False,
             key="ts-key",
@@ -676,13 +668,13 @@ def test_exact_tie_honors_validated_provider_choice_not_json_or_candidate_order(
         )
 
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
-        decisions = jev.decide("Jif", matches((JEV,), "Jif"), call(client))
+        decisions = jev.decide("Jif", matches(JEV, "Jif"), call(client))
     assert decisions[0].edit is not None and decisions[0].edit.text == "GIF"
     assert decisions[0].meaning_ids == ("c_gif",)
 
 
 def test_shorter_interpretation_can_win_over_phrase_and_edits_do_not_cascade() -> None:
-    groups = (group("Agent Backbone", "agent back bone"), group("backbone", "back bone"))
+    groups = combine(group("Agent Backbone", "agent back bone"), group("backbone", "back bone"))
     requests, handler = answering(lambda *_: {"i1": 1.0})
     raw = "😀 Restart agent back bone."
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
@@ -716,7 +708,7 @@ def test_direct_only_needs_no_request_but_failure_in_mixed_text_still_returns_al
     with closing(jev_client.Client(httpx.MockTransport(failure))) as client:
         result = process_text(
             "Open dictim.",
-            (direct,),
+            direct,
             contextual=True,
             formatting=False,
             key=None,
@@ -728,7 +720,7 @@ def test_direct_only_needs_no_request_but_failure_in_mixed_text_still_returns_al
         raw = "Open dictim. Use Jeff to classify."
         result = process_text(
             raw,
-            (direct, JEV),
+            combine(direct, JEV),
             contextual=True,
             formatting=False,
             key="ts-key",
@@ -778,7 +770,7 @@ def test_disabled_dictionary_does_not_read_broken_file_or_run_approved_mappings(
 
 def test_meaning_request_variants_add_only_the_compared_context() -> None:
     text = "Parse the jif. " + "Unrelated words. " * 20 + "Done."
-    found = matches((JEV,), text)
+    found = matches(JEV, text)
     focused = jev.meaning_request(text, found)
     assert set(focused.state) == {"occurrences"}
     assert focused.state["occurrences"]["o0"].startswith("Parse the ⟦jif⟧.")
@@ -793,26 +785,26 @@ def test_meaning_request_variants_add_only_the_compared_context() -> None:
 def test_context_ends_at_the_sentence_boundary_nearest_the_window_else_a_word() -> None:
     sentence = "Filler words keep this sentence long enough to matter. "
     text = sentence * 4 + "Use the jif here. " + sentence * 4
-    context = jev.meaning_request(text, matches((JEV,), text)).state["occurrences"]["o0"]
+    context = jev.meaning_request(text, matches(JEV, text)).state["occurrences"]["o0"]
     # The sentence boundaries nearest 160 characters away: 176 before, 174 after.
     assert (
         context == sentence * 3 + "Use the \u27e6jif\u27e7 here. " + sentence * 2 + sentence.strip()
     )
     text = "word " * 100 + "jif " + "word " * 100  # no sentence ends to cut at
-    context = jev.meaning_request(text, matches((JEV,), text)).state["occurrences"]["o0"]
+    context = jev.meaning_request(text, matches(JEV, text)).state["occurrences"]["o0"]
     assert context.startswith("word ") and context.endswith(" word")
     assert len(context) <= 2 * jev.WINDOW + len("\u27e6jif\u27e7")
     text = "\u5b57" * 300 + "\uff0cjif\uff0c" + "\u5b57" * 300  # no spaces to cut at
-    context = jev.meaning_request(text, matches((JEV,), text)).state["occurrences"]["o0"]
+    context = jev.meaning_request(text, matches(JEV, text)).state["occurrences"]["o0"]
     assert len(context) == 2 * jev.WINDOW + len("\u27e6jif\u27e7")
 
 
 def test_overlapping_options_say_which_words_they_change() -> None:
     text = "Use go go go."
-    found = matches((group("GoGo", "go go"),), text)
+    found = matches(group("GoGo", "go go"), text)
     request = jev.meaning_request(text, found)
     options = list(request.questions["o0"]["criteria"].values())
     assert len(set(options)) == len(options) == 2
     assert {o.split('"')[1] for o in options} == {"GoGo go", "go GoGo"}
-    single = jev.meaning_request("Use jif.", matches((JEV,), "Use jif."))
+    single = jev.meaning_request("Use jif.", matches(JEV, "Use jif."))
     assert all("marked words read" not in o for o in single.questions["o0"]["criteria"].values())

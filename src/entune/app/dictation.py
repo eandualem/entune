@@ -21,7 +21,7 @@ from entune.app.operations import Operation, Operations
 from entune.app.pieces import Pieces
 from entune.app.settings import JevStatus, Settings
 from entune.audio.formats import sniff_mime
-from entune.dictionary.entries import Groups
+from entune.dictionary.entries import Active
 from entune.processing import results
 from entune.processing.jev_client import Client as JevClient
 from entune.processing.pipeline import process_text
@@ -282,11 +282,13 @@ class Dictation:
                     if operation:
                         operation.check()
                     # A damaged dictionary must not stop speech transcription or its persistence.
-                    entries = (
-                        self._dictionary.dictionary().effective(ref.id) if status.dictionary else ()
+                    active = (
+                        self._dictionary.dictionary().active(ref.id)
+                        if status.dictionary
+                        else Active()
                     )
                     processed = self.correct(
-                        raw, entries, status, checkpoint=checkpoint, operation=operation
+                        raw, active, status, checkpoint=checkpoint, operation=operation
                     )
                 except CancelledError:
                     self._store.finish_processing(
@@ -341,7 +343,7 @@ class Dictation:
     def correct(
         self,
         raw: str,
-        groups: Groups,
+        active: Active,
         status: JevStatus,
         *,
         checkpoint: Callable[[Processed], None] | None = None,
@@ -350,7 +352,7 @@ class Dictation:
         endpoint, key = self._decisions.chosen()
         return process_text(
             raw,
-            groups,
+            active,
             contextual=status.dictionary,
             formatting=status.formatting,
             cleanup=status.cleanup,
@@ -379,7 +381,7 @@ class Dictation:
             raise ValueError("No original successful transcription for that attempt")
         result = process_text(
             attempt.raw_text,
-            self._dictionary.dictionary().effective(f"{attempt.provider}/{attempt.model}"),
+            self._dictionary.dictionary().active(f"{attempt.provider}/{attempt.model}"),
             contextual=False,
             formatting=False,
             direct=True,

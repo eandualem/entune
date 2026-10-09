@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 
-from entune.dictionary.entries import Groups, Meaning, key
+from entune.dictionary.entries import Active, Word, key
 
 # An overlap is classified as complete, compatible interpretations. Large ambiguous
 # components abstain instead of silently truncating competitors or exploding a lattice.
@@ -19,14 +19,14 @@ MAX_INTERPRETATIONS = 32
 class Match:
     start: int
     end: int
-    meanings: tuple[Meaning, ...]
+    meanings: tuple[Word, ...]
     direct: str | None = None
 
 
 @dataclass(frozen=True)
 class Choice:
     match: Match
-    meaning: Meaning
+    meaning: Word
 
 
 @dataclass(frozen=True)
@@ -79,7 +79,7 @@ class Component:
         return Interpretation((Choice(match, target),))
 
 
-def render(text: str, match: Match, meaning: Meaning) -> str:
+def render(text: str, match: Match, meaning: Word) -> str:
     raw = text[match.start : match.end]
     if meaning.casing == "fixed":
         return meaning.spelling
@@ -92,31 +92,19 @@ def render(text: str, match: Match, meaning: Meaning) -> str:
 
 
 class Matcher:
-    """Compile each form once; same-form edges are a union, never first-entry ownership."""
+    """Compile each heard text once, indexed by its first word."""
 
-    def __init__(self, groups: Groups) -> None:
-        meanings = {m.id: m for g in groups for m in g.meanings}
-        forms: dict[str, set[str]] = {}
-        direct: dict[str, set[str]] = {}
-        for group in groups:
-            for form in group.recognized_forms:
-                normalized = key(form.text)
-                forms.setdefault(normalized, set()).update(a.meaning_id for a in form.associations)
-                if form.direct:
-                    direct.setdefault(normalized, set()).add(form.direct)
-        self._index: dict[str, list[tuple[re.Pattern[str], tuple[Meaning, ...], str | None]]] = {}
-        for surface, ids in forms.items():
+    def __init__(self, active: Active) -> None:
+        words = {w.id: w for w in active.words}
+        self._index: dict[str, list[tuple[re.Pattern[str], tuple[Word, ...], str | None]]] = {}
+        for heard in active.entries:
+            surface = key(heard.text)
             first = re.match(r"\w+", surface)
             assert first is not None
             body = r"\s+".join(map(re.escape, surface.split()))
             pattern = re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
-            approved = direct.get(surface, set())
             self._index.setdefault(_folded(first.group()), []).append(
-                (
-                    pattern,
-                    tuple(meanings[mid] for mid in sorted(ids)),
-                    next(iter(approved)) if len(approved) == 1 else None,
-                )
+                (pattern, tuple(words[c.word] for c in heard.candidates), heard.direct)
             )
 
     def matches(self, text: str) -> list[Match]:
@@ -136,12 +124,12 @@ def _folded(word: str) -> str:
 
 
 @lru_cache(maxsize=8)
-def matcher(groups: Groups) -> Matcher:
-    return Matcher(groups)
+def matcher(active: Active) -> Matcher:
+    return Matcher(active)
 
 
-def matches(groups: Groups, text: str) -> list[Match]:
-    return matcher(groups).matches(text)
+def matches(active: Active, text: str) -> list[Match]:
+    return matcher(active).matches(text)
 
 
 def _overlap(a: Match, b: Match) -> bool:

@@ -1,9 +1,10 @@
 """Propose a speech model's dictionary, one bounded batch at a time.
 
-Each part shows the model its dictations and the entries that occur in them, compactly
-(learning/view.py). The model finds the confusions not covered yet, improves or removes
-the entries shown, and the reply is validated against the stored dictionary. Pinned
-knowledge is shared and protected; it does not take priority over competing meanings.
+Each part shows the model its dictations, the heard entries that occur in them and the
+words they name, compactly (learning/view.py). The model finds the confusions not covered
+yet, improves or removes the learned entries shown, and the reply is validated against
+the working dictionary. Pinned entries are the person's; suggestions leave them as they
+are.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import asyncio
 import time
 from collections.abc import Callable
 
-from entune.dictionary.entries import Dictionary, Groups
+from entune.dictionary.entries import Dictionary
 from entune.learning import view
 from entune.learning.batches import Batch, system_prompt, user_prompt
 from entune.learning.replies import Reply, parse_reply
@@ -80,8 +81,7 @@ async def propose_part(
     provider: str,
     api_key: str,
     model: str,
-    current: Dictionary,
-    proposed: Groups,
+    proposed: Dictionary,
     step: Batch,
     speech_model: str,
     label: str,
@@ -91,7 +91,7 @@ async def propose_part(
     started: Callable[[int], None] | None = None,
     retrying: Callable[[int, str], None] | None = None,
     retrying_part: Callable[[int, str, float], None] | None = None,
-) -> Groups:
+) -> Dictionary:
     """One part: the model reads `step` beside the working dictionary `proposed` and the
     validated result is returned. A reply that breaks a rule is sent back for a fix, and
     `retrying` hears (attempt, rule broken) first. A part that failed for a passing reason
@@ -101,13 +101,13 @@ async def propose_part(
     its time limit or reached the output limit is not tried again: the person is told to
     choose a lower reasoning effort or less audio. Raises StepFailed carrying the
     provider's or the model's own words."""
-    shown = view.build(proposed, current.pinned, step.snippets)
+    shown = view.build(proposed, speech_model, step.snippets)
     request_text = user_prompt(speech_model, shown)
     system = system_prompt()
     texts = [s.text for s in step.snippets]
 
-    def check(reply: str) -> Groups:
-        return parse_reply(reply, shown, proposed, transcripts=texts, pinned=current.pinned)
+    def check(reply: str) -> Dictionary:
+        return parse_reply(reply, shown, proposed, speech_model, transcripts=texts)
 
     request = Request(
         provider,

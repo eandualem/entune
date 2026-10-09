@@ -138,7 +138,7 @@ class Learning:
                     effort=effort or spec.effort,
                     speech_key=speech_key,
                     builder=self._dictionary_builder(),
-                    dictionary=dictionary_changes.share(self._dictionary.dictionary(), set()),
+                    dictionary=self._dictionary.dictionary(),
                     revision=self._dictionary.dictionary_version(),
                 )
 
@@ -224,7 +224,7 @@ class Learning:
         except UnknownModel as exc:
             raise ValueError(str(exc)) from exc
         with self._dictionary.lock:
-            current = dictionary_changes.share(self._dictionary.dictionary(), set())
+            current = self._dictionary.dictionary()
             version = self._dictionary.dictionary_version()
         if source == "history":
             inputs = self._store.learning_inputs(

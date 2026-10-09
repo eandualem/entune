@@ -8,6 +8,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from entune.app.entune import Entune
+from entune.dictionary.entries import Active
 from entune.processing import cleanup, formatting, jev, jev_client, text_edits
 from entune.processing.pipeline import _combine, process_text
 from entune.processing.results import Processed, Stage, notice
@@ -16,7 +17,7 @@ from entune.providers.contracts import Transcript
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
-from tests.dictionary_samples import JEV
+from tests.dictionary_samples import JEV, document
 from tests.test_jev import answering, call
 from tests.test_server import StubProvider
 
@@ -81,7 +82,7 @@ def test_fillers_are_removed_and_repeats_keep_their_first_occurrence() -> None:
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             raw,
-            (),
+            Active(),
             contextual=False,
             formatting=False,
             cleanup=True,
@@ -168,7 +169,7 @@ def test_meaningful_and_uncertain_repetition_survives() -> None:
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             raw,
-            (),
+            Active(),
             contextual=False,
             formatting=False,
             cleanup=True,
@@ -191,7 +192,7 @@ def test_cleanup_is_opt_in_and_invalid_answers_preserve_stage_input() -> None:
     with closing(jev_client.Client(httpx.MockTransport(malformed))) as client:
         off = process_text(
             raw,
-            (),
+            Active(),
             contextual=False,
             formatting=False,
             key="ts-key",
@@ -201,7 +202,7 @@ def test_cleanup_is_opt_in_and_invalid_answers_preserve_stage_input() -> None:
         assert off.text == raw and off.cleanup.status == "disabled" and not requests
         result = process_text(
             raw,
-            (),
+            Active(),
             contextual=False,
             formatting=False,
             cleanup=True,
@@ -237,7 +238,7 @@ def test_a_failed_stage_keeps_its_edits_out_and_the_other_applies(failure: str) 
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
             "Um um first item. Second item.",
-            (),
+            Active(),
             contextual=False,
             formatting=True,
             cleanup=True,
@@ -306,7 +307,7 @@ def test_a_finished_stage_is_saved_before_the_others_end_and_kept_on_cancel() ->
     ):
         process_text(
             "Um, first. Second.",
-            (),
+            Active(),
             contextual=False,
             formatting=True,
             cleanup=True,
@@ -366,10 +367,7 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
             assert (
                 client.put(
                     "/api/dictionary",
-                    json={
-                        "version": 2,
-                        "pinned": [JEV.as_json()],
-                    },
+                    json=document(JEV),
                 ).status_code
                 == 200
             )

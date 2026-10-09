@@ -48,7 +48,7 @@ def test_competing_sources_and_named_actions_share_one_job(
         started.set()
         while not release.is_set():
             await asyncio.sleep(0.01)
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
@@ -158,7 +158,7 @@ def test_cancel_between_chunks_stops_refinement_and_reports_full_input_size(
         calls.append(len(request.system) + len(request.user))
         assert state["inputCharacters"] == calls[0] > batches.BATCH_CHARS
         app.learning.cancel_dictionary_build(str(state["id"]))
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
@@ -280,7 +280,7 @@ def test_a_retried_part_is_shown_and_kept_in_the_runs_record(
         seen.append(app.learning.dictionary_build_status())
         if len(seen) == 1:
             raise ModelHTTPError(503, "gpt-6-luna", "busy")
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
@@ -328,7 +328,7 @@ def test_suggestions_start_while_the_rest_is_still_transcribing(
 
     async def fake(request: Request) -> str:
         suggested.set()
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
     monkeypatch.setattr(app.builds, "_call", fake)
@@ -352,7 +352,7 @@ def test_continue_with_a_lower_reasoning_effort_after_a_slow_part(
         seen.append((request.effort, len(request.user)))
         if len(seen) == 1:
             raise ReplyTimedOut("the reply ran past its 14.5-minute limit", "timed out")
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
@@ -413,7 +413,7 @@ def test_continue_reads_only_the_unread_rest_of_a_long_transcript(
         sent.append(request.user)
         if len(sent) == 2:
             raise ReplyTimedOut("the reply ran past its 14.5-minute limit", "timed out")
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     monkeypatch.setattr(app.builds, "_call", fake)
     client = TestClient(create_app(app), base_url="http://localhost")
@@ -481,7 +481,7 @@ def test_continue_with_nothing_new_to_read_keeps_the_finished_suggestions(
         raise RuntimeError("connection reset by speech-secret")  # never transcribes
 
     async def fake(_: Request) -> str:
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     monkeypatch.setattr(app.providers[0], "transcribe", transcribe)
     monkeypatch.setattr(app.builds, "_call", fake)
@@ -534,7 +534,7 @@ def test_each_part_is_traced_under_its_run(app: Entune, monkeypatch: pytest.Monk
         return nullcontext()
 
     async def fake(_: Request) -> str:
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     monkeypatch.setattr(app.builds, "_trace", trace)
     monkeypatch.setattr(app.builds, "_call", fake)
@@ -562,7 +562,7 @@ def test_a_run_on_a_chatgpt_plan_asks_each_request_with_the_current_access(
             raise ModelHTTPError(503, "gpt-6-sol", "busy")
         if len(asked) == 3:
             raise ValueError(f"refused {request.api_key}")
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     def transcribe(clip: Clip, model: str, key: str) -> Transcript:
         return Transcript("temporary words here")
@@ -611,7 +611,7 @@ def test_signing_out_during_a_plan_run_stops_it_at_the_next_request(
 
     async def fake(request: Request) -> str:
         asked.append(request.api_key)
-        return '{"additions": [], "revisions": [], "removals": []}'
+        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
 
     monkeypatch.setattr(app.providers[0], "transcribe", lambda c, m, k: Transcript("words"))
     monkeypatch.setattr(app.builds, "_call", fake)

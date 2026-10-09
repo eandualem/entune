@@ -72,15 +72,10 @@ class DictionaryFile:
         self._changed()
         return parsed
 
-    def pin_meaning(self, model: str, group: str | None, meaning: str | None, version: str) -> None:
+    def pin(self, model: str, text: str | None, version: str) -> None:
+        """Pin one learned heard entry of `model`, or all of them when `text` is None."""
         with self._operations.dictionary_edit(), self.lock:
-            current = self.dictionary()
-            if group is None or meaning is None:
-                updated = dictionary_changes.share(
-                    current, {m.id for g in current.learned_for(model) for m in g.meanings}
-                )
-            else:
-                updated = dictionary_changes.pin(current, model, group, meaning)
+            updated = dictionary_changes.pin(self.dictionary(), model, text)
             self.set_dictionary(dictionary_document.dumps(updated), version)
 
     def add_agent_corrections(self, data: object) -> tuple[Correction, ...]:
