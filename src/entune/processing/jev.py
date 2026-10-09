@@ -6,6 +6,7 @@ Code alone applies what the answers allow; the decision model never writes text.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -20,7 +21,12 @@ from entune.processing.text_edits import Change
 FORMAT_PROBABILITY = 0.6
 BRIDGE_PROBABILITY = 0.3
 FILLER_PROBABILITY = 0.9  # conservative initial policy; not live calibration
-WINDOW = 160  # characters of context either side of a match
+# Context either side of a match: the sentence boundary nearest WINDOW characters away,
+# no further than WINDOW_MAX; without one, the word boundary nearest WINDOW.
+WINDOW = 160
+WINDOW_MAX = 240
+_WORD_START = re.compile(r"(?<!\S)\S")
+_WORD_END = re.compile(r"\S(?=\s)")
 
 
 # ---- meaning classification
@@ -32,6 +38,9 @@ class Decision:
     edit: Edit | None
     method: str  # contextual, direct, unchanged, uncertain
     meaning_ids: tuple[str, ...] = ()
+    # When the chosen option stood for several readings that write the same text: each
+    # reading's meaning IDs, any one of which was meant.
+    readings: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -55,7 +64,8 @@ class MeaningRequest:
     state: dict[str, Any]
     questions: dict[str, Any]
     outputs: dict[int, dict[str, str]]  # occurrence -> option -> replacement text
-    support: dict[int, dict[str, tuple[str, ...]]]  # occurrence -> option -> meaning IDs
+    # occurrence -> option -> the meaning IDs of each reading the option stands for
+    support: dict[int, dict[str, tuple[tuple[str, ...], ...]]]
 
 
 def _option(text: str, component: Component, interpretation: Interpretation) -> str:
@@ -98,39 +108,85 @@ def settle(text: str, component: Component) -> Decision | None:
     return None
 
 
+def _context(text: str, start: int, end: int, spans: list[formatting.Sentence]) -> tuple[int, int]:
+    """Where the context of a match starts and ends: never inside a word, in a script
+    that separates words with spaces."""
+    starts = [s.start for s in spans if s.start <= start and start - s.start <= WINDOW_MAX]
+    if starts:
+        left = min(starts, key=lambda s: abs(start - s - WINDOW))
+    else:
+        word = _WORD_START.search(text, max(0, start - WINDOW), start)
+        left = word.start() if word else max(0, start - WINDOW)  # no spaces, as in Chinese
+    ends = [s.end for s in spans if s.end >= end and s.end - end <= WINDOW_MAX]
+    if ends:
+        right = min(ends, key=lambda e: abs(e - end - WINDOW))
+    elif end + WINDOW >= len(text):
+        right = len(text.rstrip())
+    else:
+        words = list(_WORD_END.finditer(text, end, end + WINDOW + 1))
+        right = words[-1].end() if words else end + WINDOW
+    return left, max(right, end)
+
+
+def _marked(text: str, start: int, end: int, others: list[Component]) -> str:
+    """The text between start and end, with the other matches asked about marked \u27e8 \u27e9."""
+    parts, at = [], start
+    for other in others:
+        if start <= other.start and other.end <= end:
+            parts += [text[at : other.start], f"\u27e8{text[other.start : other.end]}\u27e9"]
+            at = other.end
+    return "".join(parts) + text[at:end]
+
+
 def meaning_request(
     text: str, components: list[Component], variant: Variant = DEFAULT
 ) -> MeaningRequest:
-    """One focused Choice per occurrence; each option states its own meaning in full."""
+    """One focused Choice per occurrence; each option states its own meaning in full.
+
+    Readings that write the same text are one option, listing each definition once."""
     decisions: dict[int, Decision] = {}
     occurrences: dict[str, object] = {}
     questions: dict[str, Any] = {}
     outputs: dict[int, dict[str, str]] = {}
-    support: dict[int, dict[str, tuple[str, ...]]] = {}
+    support: dict[int, dict[str, tuple[tuple[str, ...], ...]]] = {}
+    asked: dict[int, list[Interpretation]] = {}
     for i, component in enumerate(components):
-        raw = text[component.start : component.end]
         if (settled := settle(text, component)) is not None:
             decisions[i] = settled
             continue
-        plans = component.interpretations
         # Retain imported undefined meanings in storage, but never fabricate a
         # definition to turn them into eligible semantic claims.
-        eligible = [p for p in plans if all(c.meaning.meaning for c in p.choices)]
+        eligible = [
+            p for p in component.interpretations if all(c.meaning.meaning for c in p.choices)
+        ]
         if not eligible:
             decisions[i] = Decision(component, None, "uncertain")
             continue
+        asked[i] = eligible
+    spans = formatting.sentences(text)
+    for i, eligible in asked.items():
+        component = components[i]
+        raw = text[component.start : component.end]
         name = f"o{i}"
         question = prompts.render_json("jev-meaning.json", occurrence=name, recognized=raw)
         if variant.examples:
             question["instructions"].update(prompts.render_json("jev-meaning-examples.json"))
+        options: dict[str, list[Interpretation]] = {}
+        for plan in eligible:
+            options.setdefault(component.output(text, plan), []).append(plan)
         outputs[i], support[i] = {}, {}
-        for n, plan in enumerate(eligible):
+        for n, (output, plans) in enumerate(options.items()):
             option = f"i{n}"
-            question["criteria"][option] = _option(text, component, plan)
-            outputs[i][option] = component.output(text, plan)
-            support[i][option] = tuple(c.meaning.id for c in plan.choices)
-        before = text[max(0, component.start - WINDOW) : component.start]
-        after = text[component.end : component.end + WINDOW]
+            described = dict.fromkeys(_option(text, component, plan) for plan in plans)
+            question["criteria"][option] = " Or: ".join(described)
+            outputs[i][option] = output
+            support[i][option] = tuple(
+                dict.fromkeys(tuple(c.meaning.id for c in plan.choices) for plan in plans)
+            )
+        left, right = _context(text, component.start, component.end, spans)
+        others = [components[j] for j in asked if j != i]
+        before = _marked(text, left, component.start, others)
+        after = _marked(text, component.end, right, others)
         occurrences[name] = f"{before}\u27e6{raw}\u27e7{after}"
         questions[name] = question
     state: dict[str, Any] = {"occurrences": occurrences}
@@ -144,8 +200,8 @@ def decide(
 ) -> list[Decision]:
     """Apply the top eligible interpretation, even when scores are close.
 
-    Literal meanings compete normally. Distinct meanings never pool their scores
-    merely because they emit identical text; invalid responses fail the whole stage.
+    Literal meanings compete normally. Meanings that write the same text share one
+    option (meaning_request); invalid responses fail the whole stage.
     """
     request = meaning_request(text, components, variant)
     decisions = dict(request.decisions)
@@ -155,11 +211,13 @@ def decide(
             probabilities = answers[f"o{i}"]
             option = max(probabilities, key=lambda name: probabilities[name])
             component = components[i]
+            readings = request.support[i][option]
             decisions[i] = Decision(
                 component,
                 Edit(component.start, component.end, values[option]),
                 "contextual",
-                request.support[i][option],
+                tuple(dict.fromkeys(m for reading in readings for m in reading)),
+                readings if len(readings) > 1 else (),
             )
     return [decisions[i] for i in range(len(components))]
 

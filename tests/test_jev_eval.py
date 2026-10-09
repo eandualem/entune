@@ -83,3 +83,31 @@ def test_labels_resolve_overlapping_interpretations_by_span() -> None:
     assert harness.outcome(prepared, chosen) == "correct"
     with pytest.raises(ValueError, match="match 0 options"):
         harness.prepare(harness.Case("off", text, 5, 12, ("a_gogo",)), groups, jev.Variant())
+
+
+def test_options_are_read_as_the_request_numbers_them() -> None:
+    from entune.dictionary.entries import Association, Form, Group, Meaning
+
+    harness = _harness()
+    cloud = Group(
+        "g_cloud",
+        (
+            Meaning("a_cloud", "cloud", "Remote computing.", casing="ordinary"),
+            Meaning("b_cloud", "cloud", "Weather.", casing="ordinary"),
+            Meaning("c_claude", "Claude", "An AI assistant."),
+        ),
+        (
+            Form(
+                "cloud",
+                (
+                    Association("a_cloud", basis="literal"),
+                    Association("b_cloud", basis="literal"),
+                    Association("c_claude"),
+                ),
+            ),
+        ),
+    )
+    case = harness.Case("claude", "Ask cloud here.", 4, 9, ("c_claude",))
+    prepared = harness.prepare(case, (cloud,), jev.Variant())
+    assert prepared.outputs == {"i0": "cloud", "i1": "Claude"}
+    assert harness.outcome(prepared, "i1") == "correct"

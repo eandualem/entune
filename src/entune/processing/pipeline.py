@@ -139,7 +139,7 @@ def _correction(
         abstained=sum(d.method == "uncertain" for d in decisions),
         changes=tuple(Change(e.start, e.end, raw[e.start : e.end], e.text) for e in edits),
         selections=tuple(
-            Selection(d.component.start, d.component.end, d.meaning_ids, d.method)
+            Selection(d.component.start, d.component.end, d.meaning_ids, d.method, d.readings)
             for d in decisions
         ),
         output=matching.apply(raw, edits),

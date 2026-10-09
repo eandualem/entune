@@ -65,8 +65,8 @@ are ordinary candidates: selecting the computing or weather meaning of cloud out
 cloud; selecting Claude outputs Claude. There is no semantic replace/keep choice.
 
 A valid response always selects its highest-scoring eligible interpretation, even
-when probabilities are close. Distinct meanings never pool probability merely because
-they output the same spelling. Exact ties honor the decision model's declared choice after validating
+when probabilities are close. Meanings that output the same text are one option, which
+lists each of their definitions once. Exact ties honor the decision model's declared choice after validating
 that it is tied for highest. There is no generic uncertainty candidate or confidence
 threshold for dictionary choices. Invalid/failed responses fail the stage; missing
 usable definitions or overly complex overlaps remain visibly unresolved without an
@@ -99,9 +99,12 @@ approving the revised mapping.
 Direct-only dictation needs no contextual request (cleanup/formatting may make their own).
 Mixed dictation still makes one request, with one focused Choice per occurrence;
 with Laya, which reads a short input, each occurrence is its own request. The
-state holds only an excerpt of up to 160 characters either side, the span marked; each
-option states its span, output spelling, definition and personal usage directly; for
-overlapping spans it also states how the marked words read with that choice.
+state holds only an excerpt, about 160 characters either side of the span: it ends at the
+sentence boundary nearest that distance, at most 240 characters away, or else between
+words (at 160 characters in text without spaces). The span is marked ⟦ ⟧ and the other occurrences asked about in the same
+request ⟨ ⟩. Each option states its span, output spelling, definition and personal
+usage directly; for overlapping spans it also states how the marked words read with
+that choice.
 `tools/jev_eval.py` compares this request with the previous format, a variant that
 adds the whole transcript, and one with generic contrastive examples, on labelled
 occurrences with a fixed dictionary. It renders requests offline and calls Jev only
