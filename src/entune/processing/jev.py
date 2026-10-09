@@ -353,8 +353,8 @@ def _in_items(text: str, spans: list[formatting.Sentence], actions: list[str]) -
 
 def _whole_lists(text: str, spans: list[formatting.Sentence], actions: list[str]) -> None:
     """Each list, its entries up to a new paragraph or an empty line, is numbered when one
-    of its entries is; a list of one entry, next to no existing list line, starts a
-    paragraph instead."""
+    of its entries is, or takes the kind of an existing list it runs into; a list of one
+    entry, next to no existing list line, starts a paragraph instead."""
     i = 0
     while i < len(actions):
         if actions[i] not in ("numbered_item", "bullet_item"):
@@ -374,13 +374,18 @@ def _whole_lists(text: str, spans: list[formatting.Sentence], actions: list[str]
         if len(entries) == 1 and not _beside_existing_list(text, spans, actions, i, end):
             actions[i] = "new_paragraph"
         else:
-            kind = (
-                "numbered_item"
-                if "numbered_item" in (actions[k] for k in entries)
-                else "bullet_item"
-            )
+            after = end + 1
+            if (
+                after < len(actions)
+                and actions[after] == "list_item"
+                and not _blank_before(text, spans, after)
+            ):
+                # It runs into an existing list: one list, of that list's kind.
+                numbered = formatting.numbered_line(text, spans[after])
+            else:
+                numbered = "numbered_item" in (actions[k] for k in entries)
             for k in entries:
-                actions[k] = kind
+                actions[k] = "numbered_item" if numbered else "bullet_item"
         i = end + 1
 
 

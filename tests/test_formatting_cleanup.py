@@ -581,6 +581,12 @@ def test_a_numbered_entry_keeps_its_follow_up_sentences() -> None:
             ("S02",),
             "1. Open settings.\nThis lets you set things up.\n2. Choose the model.",
         ),
+        # An entry that runs into an existing list takes its kind.
+        (
+            "First, open settings.\n- Choose a model.",
+            ("S00",),
+            "- First, open settings.\n- Choose a model.",
+        ),
         # An entry with a follow-up still counts the existing list line after it.
         (
             "One, open settings. This is necessary.\n2. Choose the model.",
