@@ -23,11 +23,11 @@ from tests.test_server import StubProvider
 
 
 def test_first_list_item_including_unicode_offsets_keeps_all_source_words() -> None:
-    raw = "  😀 First, tea. Second, coffee."
+    raw = "  😀 Green tea. Black coffee."
     requests, handler = answering(lambda *_: {"list_item": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = jev.format_edits(raw, call(client))
-    assert text_edits.apply(raw, result.changes) == "  - 😀 First, tea.\n- Second, coffee."
+    assert text_edits.apply(raw, result.changes) == "  - 😀 Green tea.\n- Black coffee."
     assert set(requests[0]["questions"]) == {"S00", "S01"}
     assert all(not change.before.strip() for change in result.changes)
     assert raw == requests[0]["state"]["transcript"]
@@ -549,11 +549,11 @@ def test_a_numbered_entry_keeps_its_follow_up_sentences() -> None:
 @pytest.mark.parametrize(
     "raw,items,expected",
     [
-        # A later spoken ordinal joins the bullet list its first entry started.
+        # A spoken ordinal numbers the whole list; after it only an ordinal starts an entry.
         (
             "Tea for the morning. Second, coffee for lunch. Water for the evening.",
             ("S00", "S01", "S02"),
-            "- Tea for the morning.\n- Second, coffee for lunch.\n- Water for the evening.",
+            "1. Tea for the morning.\n2. Coffee for lunch. Water for the evening.",
         ),
         # Numbering goes on from an existing line across a follow-up sentence.
         (
@@ -561,6 +561,11 @@ def test_a_numbered_entry_keeps_its_follow_up_sentences() -> None:
             " it.",
             ("S02", "S03"),
             "1. Open settings.\nThis lets you set things up.\n2. Choose the model.\n3. Save it.",
+        ),
+        (
+            "1. Open settings.\nThis lets you set things up. Second, choose the model.",
+            ("S02",),
+            "1. Open settings.\nThis lets you set things up.\n2. Choose the model.",
         ),
         # An entry with a follow-up still counts the existing list line after it.
         (
@@ -578,3 +583,19 @@ def test_a_list_keeps_its_kind_and_numbering_across_follow_ups(
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = jev.format_edits(raw, call(client))
     assert text_edits.apply(raw, result.changes) == expected
+
+
+def test_a_long_follow_up_on_the_next_line_stays_in_its_entry() -> None:
+    follow_up = ("This lets you set up the app before anything else happens here. " * 12).strip()
+    raw = f"1. Open settings.\n{follow_up} Second, choose the model. Third, save it."
+    spans = formatting.sentences(raw)
+    last = len(spans) - 1
+    plan = {f"S{last - 1:02d}": {"list_item": 0.9, "continues": 0.1}}
+    plan[f"S{last:02d}"] = plan[f"S{last - 1:02d}"]
+    # Every follow-up would be a likely enough place for a paragraph outside a list.
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 0.8, "new_paragraph": 0.2}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = jev.format_edits(raw, call(client))
+    assert text_edits.apply(raw, result.changes) == (
+        f"1. Open settings.\n{follow_up}\n2. Choose the model.\n3. Save it."
+    )

@@ -302,53 +302,63 @@ def _actions(
     text: str, spans: list[formatting.Sentence], answers: list[dict[str, float] | None]
 ) -> list[str]:
     """Each sentence's action. The decision model says whether a sentence starts a list
-    entry; code says what kind: a spoken ordinal makes it numbered, and inside a numbered
-    list only an ordinal starts the next entry. Every other sentence continues where it
-    is, a list entry included, until a new paragraph or an empty line ends the list."""
+    entry; code says what kind: a list is numbered when one of its entries opens with a
+    spoken ordinal, and from then on only an ordinal starts the next entry. Every other
+    sentence continues where it is, a list entry included, until a new paragraph or an
+    empty line ends the list."""
     actions = []
-    kind: str | None = None  # the kind of the list going on, taken from its first entry
+    kind: str | None = None  # the kind of the list going on
+    fixed = False  # the kind comes from an existing list line
     for i, (span, answer) in enumerate(zip(spans, answers, strict=True)):
         gap = text[spans[i - 1].end : span.start] if i else ""
         if formatting.blank_line(gap):
-            kind = None
+            kind, fixed = None, False
         if span.listed:
             actions.append("list_item")
             kind = "numbered_item" if formatting.numbered_line(text, span) else "bullet_item"
+            fixed = True
             continue
         role = "continues" if answer is None else _role(answer)
-        ordinal = formatting.ordinal(text, span)
-        if (ordinal and answer is not None and answer["list_item"] >= ORDINAL_PROBABILITY) or (
-            role == "list" and kind != "numbered_item"
-        ):
-            action = kind or ("numbered_item" if ordinal else "bullet_item")
+        cued = (
+            answer is not None
+            and answer["list_item"] >= ORDINAL_PROBABILITY
+            and formatting.ordinal(text, span)
+        )
+        if cued or (role == "list" and kind != "numbered_item"):
+            action = kind if fixed and kind else "numbered_item" if cued else "bullet_item"
             kind = action
         elif role == "list":
             action = "continues"  # inside a numbered list only an ordinal starts an entry
         else:
             action = role
             if action == "new_paragraph":
-                kind = None
+                kind, fixed = None, False
         actions.append(action)
     return actions
 
 
 def _in_items(text: str, spans: list[formatting.Sentence], actions: list[str]) -> list[bool]:
     """Whether each sentence is part of a list entry: the entry's first sentence, or one
-    that continues it on the same line."""
+    that continues it before a new paragraph or an empty line."""
     inside: list[bool] = []
     for i, action in enumerate(actions):
         gap = text[spans[i - 1].end : spans[i].start] if i else ""
         inside.append(
             action in ITEMS
-            or (action == "continues" and bool(inside) and inside[-1] and "\n" not in gap)
+            or (
+                action == "continues"
+                and bool(inside)
+                and inside[-1]
+                and not formatting.blank_line(gap)
+            )
         )
     return inside
 
 
 def _whole_lists(text: str, spans: list[formatting.Sentence], actions: list[str]) -> None:
-    """Each list, its entries up to a new paragraph or an empty line, takes its first
-    entry's kind; a list of one entry, next to no existing list line, starts a paragraph
-    instead."""
+    """Each list, its entries up to a new paragraph or an empty line, is numbered when one
+    of its entries is; a list of one entry, next to no existing list line, starts a
+    paragraph instead."""
     i = 0
     while i < len(actions):
         if actions[i] not in ("numbered_item", "bullet_item"):
@@ -368,22 +378,35 @@ def _whole_lists(text: str, spans: list[formatting.Sentence], actions: list[str]
         if len(entries) == 1 and not _beside_existing_list(text, spans, actions, i, end):
             actions[i] = "new_paragraph"
         else:
+            kind = (
+                "numbered_item"
+                if "numbered_item" in (actions[k] for k in entries)
+                else "bullet_item"
+            )
             for k in entries:
-                actions[k] = actions[i]
+                actions[k] = kind
         i = end + 1
 
 
 def _beside_existing_list(
     text: str, spans: list[formatting.Sentence], actions: list[str], first: int, last: int
 ) -> bool:
-    """Whether an existing list line touches the entry from span `first` to `last` (its
-    follow-up sentences included), with no empty line between them."""
-    return any(
-        0 <= j < len(spans)
-        and actions[j] == "list_item"
-        and not formatting.blank_line(text[spans[min(k, j)].end : spans[max(k, j)].start])
-        for k, j in ((first, first - 1), (last, last + 1))
+    """Whether an existing list line belongs to the same list as the entry from span
+    `first` to `last`: right after it, or before it with only continuing sentences and
+    no empty line between them."""
+    j = first - 1
+    while j >= 0 and actions[j] == "continues" and not _blank_before(text, spans, j + 1):
+        j -= 1
+    after = last + 1
+    return (j >= 0 and actions[j] == "list_item" and not _blank_before(text, spans, j + 1)) or (
+        after < len(spans)
+        and actions[after] == "list_item"
+        and not _blank_before(text, spans, after)
     )
+
+
+def _blank_before(text: str, spans: list[formatting.Sentence], i: int) -> bool:
+    return formatting.blank_line(text[spans[i - 1].end : spans[i].start])
 
 
 def _no_short_paragraphs(text: str, spans: list[formatting.Sentence], actions: list[str]) -> None:
