@@ -689,6 +689,7 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
     assert bad.status_code == 400 and "entries[0].spelling" in bad.text
     bad = client.post("/api/dictionary/corrections", json={"entries": [{"spelling": "b"}]})
     assert bad.status_code == 400 and "entries[0].description" in bad.text
+    assert '"heard": ["cloud code"]' in bad.text  # with the format to use
 
     client.put("/api/dictionary", json=document(group("Claude Code", "cloud code")))
     res = client.post(

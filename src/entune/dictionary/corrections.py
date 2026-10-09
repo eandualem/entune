@@ -43,18 +43,20 @@ def read_entries(value: object, where: str) -> tuple[Correction, ...]:
     for i, item in enumerate(value):
         loc = f"{where}[{i}]"
         if not isinstance(item, dict) or set(item) - {"spelling", "description", "heard"}:
-            raise ValueError(f"{loc}: use spelling, description and heard")
+            raise ValueError(f"{loc}: use spelling, description and heard, as in {FORMAT}")
         spelling, description, heard = (
             item.get("spelling"),
             item.get("description"),
             item.get("heard", []),
         )
         if not isinstance(spelling, str) or not spelling.strip():
-            raise ValueError(f"{loc}.spelling must be a non-empty string")
+            raise ValueError(f"{loc}.spelling must be a non-empty string, as in {FORMAT}")
         if not isinstance(description, str) or not description.strip():
-            raise ValueError(f"{loc}.description must say what the word is, in a short phrase")
+            raise ValueError(
+                f"{loc}.description must say what the word is, in a short phrase, as in {FORMAT}"
+            )
         if not isinstance(heard, list) or not all(isinstance(h, str) for h in heard):
-            raise ValueError(f"{loc}.heard must be a list of strings")
+            raise ValueError(f"{loc}.heard must be a list of strings, as in {FORMAT}")
         phrases = {key(h): " ".join(h.split()) for h in heard if h.strip()}
         if any(not h[0].isalnum() and h[0] != "_" for h in phrases.values()):
             raise ValueError("A heard phrase must start with a letter or digit")
