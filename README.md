@@ -228,6 +228,9 @@ guarantee a better dictionary.
 - **Fast mode:** while you speak, each part of a dictation is transcribed at a
   natural pause, so only the last part is left when you stop, with any speech
   model; the **Performance** chart shows each model's measured wait.
+- **Silence left out:** long pauses are shortened before the audio goes to the speech
+  model, about a quarter less audio to pay for or to compute; your recording keeps
+  every second.
 - **Drop audio to transcribe it:** drop files anywhere on the window, such as a
   recording another app could not transcribe.
 - **Anonymous mode:** the eye switch blurs transcripts for screen recordings.

@@ -65,6 +65,7 @@ def routes(app: Entune) -> list[Route]:
                 ],
                 "dictionaryModel": app.settings.dictionary_model(),
                 "fastMode": app.settings.fast_mode(),
+                "removeSilence": app.settings.remove_silence(),
                 "jev": {
                     **asdict(app.settings.jev_status()),
                     "policy": asdict(app.settings.jev_policy()),
@@ -124,6 +125,8 @@ def routes(app: Entune) -> list[Route]:
                     )
             if "fastMode" in body and not isinstance(body["fastMode"], bool):
                 raise ValueError("fastMode must be a boolean")
+            if "removeSilence" in body and not isinstance(body["removeSilence"], bool):
+                raise ValueError("removeSilence must be a boolean")
             if "decisionModel" in body and body["decisionModel"] not in DECISION_MODELS:
                 raise ValueError("decisionModel must be jev, laya, openai or perplexity")
             jev_settings = body.get("jev", {})
@@ -183,6 +186,8 @@ def routes(app: Entune) -> list[Route]:
                 app.settings.set_dictionary_model(dictionary_model or None)
             if "fastMode" in body:
                 app.settings.set_fast_mode(body["fastMode"])
+            if "removeSilence" in body:
+                app.settings.set_remove_silence(body["removeSilence"])
 
             if any(value is not None for value in processing):
                 app.settings.set_processing(*processing)

@@ -45,10 +45,11 @@ def test_no_cut_without_a_pause_or_before_the_minimum() -> None:
     assert Pauses(RATE, 20.0).feed(speech(21) + silence(0.6)) == []  # speech never resumed
 
 
-def test_steady_speech_is_not_taken_for_a_pause() -> None:
+@pytest.mark.parametrize("modulation", [0.3, 0.15])
+def test_steady_speech_is_not_taken_for_a_pause(modulation: float) -> None:
     # Speech that varies little from frame to frame would lift a floor taken from it alone.
     t = np.arange(45 * RATE) / RATE
-    tone = 3000 * np.sin(2 * np.pi * 220 * t) * (1 + 0.3 * np.sin(2 * np.pi * 3 * t))
+    tone = 3000 * np.sin(2 * np.pi * 220 * t) * (1 + modulation * np.sin(2 * np.pi * 3 * t))
     steady = tone.astype(np.int16).tobytes()
     cuts = Pauses(RATE, 20.0).feed(steady + silence(2) + steady[: 5 * RATE * 2])
     assert len(cuts) == 1 and 45 * RATE < cuts[0] < 47 * RATE
@@ -78,10 +79,17 @@ class Counting:
         return Transcript(f" piece {len(self.seconds)} ")
 
 
-def pieces(provider: Counting, cancel: threading.Event | None = None) -> Pieces:
+def pieces(
+    provider: Counting, cancel: threading.Event | None = None, *, remove_silence: bool = False
+) -> Pieces:
     speech_resources = SpeechResources([provider], lambda _: None)
     return Pieces(
-        ModelRef(provider, "good"), "k", RATE, speech_resources, cancel or threading.Event()
+        ModelRef(provider, "good"),
+        "k",
+        RATE,
+        speech_resources,
+        cancel or threading.Event(),
+        remove_silence=remove_silence,
     )
 
 

@@ -19,6 +19,7 @@ from concurrent.futures import CancelledError
 
 from entune.audio.formats import wav_bytes
 from entune.audio.pauses import Pauses
+from entune.audio.silence import shorten
 from entune.providers.contracts import Clip, Failure, TranscribeResult
 from entune.providers.registry import ModelRef
 from entune.providers.resources import SpeechResources
@@ -41,8 +42,11 @@ class Pieces:
         sample_rate: int,
         speech: SpeechResources,
         cancel: threading.Event,
+        *,
+        remove_silence: bool = False,
     ) -> None:
         self.ref, self._api_key, self._rate = ref, api_key, sample_rate
+        self._remove_silence = remove_silence
         self._speech, self._cancel = speech, cancel
         seconds = PIECE_SECONDS.get(ref.provider.id, CLOUD_PIECE_SECONDS)
         self._pauses = Pauses(sample_rate, seconds)
@@ -151,7 +155,8 @@ class Pieces:
             with self._speech.use(self.ref, cancel=self._aborted):
                 if self._stopped():
                     return
-                clip = Clip(wav_bytes(pcm, self._rate), "audio/wav")
+                sent = shorten(pcm, self._rate) if self._remove_silence else pcm
+                clip = Clip(wav_bytes(sent, self._rate), "audio/wav")
                 result = self.ref.provider.transcribe(clip, self.ref.model, self._api_key)
         except CancelledError:
             return
