@@ -82,7 +82,8 @@ def sentences(text: str) -> list[Sentence]:
         listed = bool(_LIST.match(content))
         locked = line.group().startswith(("    ", "\t")) or overlaps(start, end, excluded)
         if listed or locked:
-            spans.append(Sentence(start, end, listed, locked))
+            # A code line that looks like a list entry is code, never part of a list.
+            spans.append(Sentence(start, end, listed and not locked, locked))
             continue
         offset = 0
         for boundary in _BOUNDARY.finditer(content):

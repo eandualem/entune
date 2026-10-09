@@ -581,6 +581,12 @@ def test_a_numbered_entry_keeps_its_follow_up_sentences() -> None:
             ("S02",),
             "1. Open settings.\nThis lets you set things up.\n2. Choose the model.",
         ),
+        # A numbered example in a code block is not a list to continue.
+        (
+            "```\n9. Example item.\n```\nFirst, open settings. Second, choose the model.",
+            ("S03", "S04"),
+            "```\n9. Example item.\n```\n1. Open settings.\n2. Choose the model.",
+        ),
         # An entry that runs into an existing list takes its kind.
         (
             "First, open settings.\n- Choose a model.",
