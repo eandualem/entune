@@ -236,14 +236,18 @@ def test_confirmed_agent_boundary_is_idempotent_and_does_not_grant_precedence() 
     )
     assert added == (Correction("Jev", "A model.", ("Jeff",)),)
     assert not any(h.direct for h in doc.pinned)
+    # A heard text that is a described word itself keeps it, written as heard.
     assert [(h.text, [c.basis for c in h.candidates]) for h in doc.pinned] == [
-        ("Jeff", ["user"]),
-        ("Jev", ["literal"]),
+        ("Jeff", ["user", "literal"]),
+        ("Jev", ["literal", "literal"]),
     ]
     again, added = add_corrections(doc, (Correction("jev", heard=("JEFF",)),))
     assert not added and again == doc
     # The pinned entry supersedes the learned one with the same text.
-    assert len(matching.matches(doc.active("m"), "Jeff")[0].meanings) == 1
+    assert {w.spelling for w in matching.matches(doc.active("m"), "Jeff")[0].meanings} == {
+        "Jev",
+        "Jeff",
+    }
     # An existing word gains a heard entry; no new word is made for it.
     more, added = add_corrections(doc, (Correction("GIF", heard=("jiff",)),))
     assert added == (Correction("GIF", "", ("jiff",)),) and more.words == doc.words

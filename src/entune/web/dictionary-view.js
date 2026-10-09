@@ -1480,7 +1480,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
           editor.addEventListener("toggle", () => { change.editing = editor.open; });
           if (kind === "word") {
             const row = node("div", "", "meaning-editor");
-            field(row, "What it is", change.after.meaning, value => { change.after.meaning = value.trim(); }, "textarea");
+            field(row, "What it is", change.after.meaning, value => { change.after.meaning = value.trim(); change.after.needs_review = !change.after.meaning; }, "textarea");
             editor.append(row);
           } else {
             // The words it can stand for: one left out stays offered here; at least one stays.

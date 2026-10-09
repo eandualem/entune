@@ -89,9 +89,18 @@ def add_corrections(
             if key(w.spelling) == key(correction.spelling)
             and (not correction.description or w.meaning == correction.description)
         ]
-        if len(same) > 1:  # the one the person's pinned entries already name, if only one
-            confirmed = {c.word for h in pinned.values() for c in h.candidates}
-            same = [w for w in same if w.id in confirmed] or same
+        if len(same) > 1:
+            # The one pinned for another heard text first (a confirmed confusion), then
+            # any one pinned entries name.
+            confirmed = {
+                c.word for h in pinned.values() for c in h.candidates if c.basis != "literal"
+            }
+            pinned_words = {c.word for h in pinned.values() for c in h.candidates}
+            same = (
+                [w for w in same if w.id in confirmed]
+                or [w for w in same if w.id in pinned_words]
+                or same
+            )
         identity = _id("w_", key(correction.spelling) + "\n" + correction.description)
         if len(same) == 1:
             word = same[0]
@@ -134,7 +143,14 @@ def add_corrections(
         for text, candidate in links:
             entry = pinned.get(key(text))
             if entry is None:
-                pinned[key(text)] = Heard(text, (candidate,))
+                # A heard text that is a described word itself keeps that word as a
+                # candidate, written as heard: the new entry supersedes learned ones.
+                own = tuple(
+                    Candidate(w.id, basis="literal")
+                    for w in words.values()
+                    if w.id != candidate.word and w.meaning and key(w.spelling) == key(text)
+                )
+                pinned[key(text)] = Heard(text, (candidate, *own))
             else:
                 pinned[key(text)] = replace(entry, candidates=(*entry.candidates, candidate))
         added.append(Correction(word.spelling, correction.description, heard))
