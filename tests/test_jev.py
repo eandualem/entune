@@ -767,8 +767,9 @@ def test_disabled_dictionary_does_not_read_broken_file_or_run_approved_mappings(
         service.close()
 
 
-def test_an_unreadable_dictionary_fails_only_its_own_step(tmp_path: Path) -> None:
-    # A 0.4 dictionary (format 2) after upgrading: formatting still runs.
+@pytest.mark.parametrize("unreadable", ["format 2", "not a file"])
+def test_an_unreadable_dictionary_fails_only_its_own_step(tmp_path: Path, unreadable: str) -> None:
+    # A 0.4 dictionary (format 2) after upgrading, or one that cannot be opened.
     with closing(Store(tmp_path)) as store:
         client = jev_client.Client(httpx.MockTransport(lambda _: httpx.Response(500)))
         service = Entune(store, [StubProvider()], jev_client=client)
@@ -776,7 +777,10 @@ def test_an_unreadable_dictionary_fails_only_its_own_step(tmp_path: Path) -> Non
         service.models.set_default_model("stub/good")
         service.settings.set_key("typesafe", "k")
         service.settings.set_processing(model="jev", dictionary=True, formatting=True)
-        (tmp_path / "dictionary.json").write_text('{"version": 2, "entries": []}')
+        if unreadable == "format 2":
+            (tmp_path / "dictionary.json").write_text('{"version": 2, "entries": []}')
+        else:
+            (tmp_path / "dictionary.json").mkdir()
         saved: list[Processed] = []
         finish = store.finish_processing
 

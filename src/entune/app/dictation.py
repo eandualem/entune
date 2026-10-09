@@ -315,8 +315,9 @@ class Dictation:
                     if status.dictionary:
                         try:
                             active = self._dictionary.dictionary().active(ref.id)
-                        except ValueError as exc:
+                        except (ValueError, OSError) as exc:
                             unreadable = f"Could not read dictionary.json: {exc}"
+                            checkpoint(latest)  # a cancel from here on keeps the reason
                     processed = damaged(
                         self.correct(
                             raw, active, status, checkpoint=checkpoint, operation=operation
