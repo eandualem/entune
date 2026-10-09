@@ -257,7 +257,9 @@ class Parakeet:
     # ---- the helper process
 
     def engine(self) -> Path | None:
-        if self._engine is None:
+        """The engine's Python, looked up again when the one found before is gone (the
+        model removed, or Entune's data deleted)."""
+        if self._engine is None or not self._engine.exists():
             self._engine = self._find_engine()
         return self._engine
 

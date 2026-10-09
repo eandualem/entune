@@ -71,9 +71,10 @@ def test_download_installs_the_engine_first_and_remove_deletes_it(
     finally:
         installed.set()
     wait_until(lambda: parakeet.models == (MODEL,))
-    # An engine whose Python is gone is not installed: Download can repair it.
+    # An engine whose Python is gone (Entune's data deleted) is not installed, even for
+    # the provider that used it: Download can repair it.
     (tmp_path / ENGINE_DIR / "bin" / "python").unlink()
-    assert Parakeet(tmp_path).engine() is None
+    assert parakeet.engine() is None and parakeet.catalogue()[0].state != "ready"
     (tmp_path / ENGINE_DIR / "bin" / "python").write_text("")
     assert parakeet.engine() == tmp_path / ENGINE_DIR / "bin" / "python"
     parakeet.remove(MODEL)
