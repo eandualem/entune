@@ -375,7 +375,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     name.title = heading;
     if (attention(h, known)) {
       const dot = node("span", "", "attention-dot");
-      dot.title = named(h, known).some((w) => !w.meaning.trim()) ? "A word here needs a description before Entune can choose it" : "Imported: check the descriptions and capitals";
+      dot.title = named(h, known).some((w) => !w.meaning.trim()) ? "A word here needs a description before Entune can choose it" : "A description here is not confirmed yet: check it, then save the entry";
       name.append(dot);
     }
     const heard = node("span", "", "cell-heard");
@@ -450,7 +450,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       card.append(node("span", String(i + 1), "meaning-n"), body);
       list.append(card);
     });
-    if (named(h, known).some((w) => w.needs_review)) list.append(node("p", "Imported: check the descriptions and capitals.", "caption warn"));
+    const unconfirmed = named(h, known).filter((w) => w.needs_review && w.meaning.trim());
+    if (unconfirmed.length) list.append(node("p", `Not confirmed yet: check the description and capitals of ${unconfirmed.map((w) => w.spelling).join(", ")}, then save the entry.`, "caption warn"));
     const actions = node("div", "", "detail-actions");
     actions.append(button("Edit", () => openEditor(scope, h), "btn fill sm"));
     if (scope === "learned") {

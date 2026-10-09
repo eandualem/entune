@@ -234,12 +234,20 @@ def parse_reply(
             before.direct if before else None,
             before.direct_reason if before else "",
         )
-    # Judged once each text's items are merged, whatever their order.
+    # Judged once each text's items are merged, whatever their order. Written as heard
+    # and nothing else changes capitals alone: a new one adds nothing, and an entry whose
+    # corrections a revision took away is removed (unless approved as Always).
+    emptied: set[str] = set()
     for text, entry in list(replied.items()):
-        if text not in learned and all(c.basis == "literal" for c in entry.candidates):
-            # Written as heard and nothing else: capitals alone, which adds nothing.
-            dropped.update(c.word for c in entry.candidates)
-            del replied[text]
+        if not all(c.basis == "literal" for c in entry.candidates):
+            continue
+        before = learned.get(text)
+        if before is not None and before.direct:
+            continue
+        dropped.update(c.word for c in entry.candidates)
+        del replied[text]
+        if before is not None and any(c.basis != "literal" for c in before.candidates):
+            emptied.add(text)
 
     result = dict(learned)
     for text in data["removals"]:
@@ -252,6 +260,8 @@ def parse_reply(
         if learned[key(text)].direct:
             raise ValueError("The generator cannot remove or change an approved direct mapping")
         del result[key(text)]
+    for text in emptied:
+        result.pop(text, None)
     result.update(replied)
 
     named = {c.word for h in replied.values() for c in h.candidates}

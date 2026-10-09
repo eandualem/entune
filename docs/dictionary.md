@@ -45,6 +45,11 @@ an entry from generation; context still decides among its candidates. Removing a
 entry never removes a word. Deleting a word removes it from every entry that names it, and
 an entry left with no candidate goes too.
 
+A word is flagged for review (`needs_review`, shown as "To check") when it has no
+description yet, because the decision model cannot choose it, or when its description
+was written by an agent or suggestions and not confirmed: applying it in the review or
+saving the entry in the editor confirms it.
+
 Definitions describe general meaning; optional personal usage is supporting context,
 not a condition. The hypothetical Jeff above supplies no personal fact about the user.
 Version 1 and version 2 files are refused; the editor offers to replace an unreadable
@@ -294,7 +299,10 @@ entry with a pinned entry's text cannot be added. A new word is the stored one w
 the same: a name spelled like a stored name (exactly, or else ignoring capitals when only
 one matches), or an ordinary word with the same spelling and meaning. A new word must be
 named by an entry of the reply. An addition whose candidates are all literal differs only
-in capitals and adds nothing.
+in capitals and adds nothing; a revision that leaves a corrected entry with only its
+literal candidate removes the entry. A heard text the dictations use correctly is not a
+confusion, and a heard text that is a word, name or acronym in its own right keeps its
+literal candidate.
 
 Default learning uses up to 300 recent, not-yet-covered attempts for this speech model;
 explicit All history includes older data. Applying a run consumes the inputs it fully

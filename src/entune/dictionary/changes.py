@@ -150,7 +150,8 @@ def review(current: Dictionary, proposal: Proposal, selected: object = None) -> 
             (word,) = parse_words([item.get("after")], "edited word")
             if word.id != change.after.id:
                 raise ValueError("Keep the word's ID while editing")
-            words[word.id] = word
+            # Applying a description is the person's check of it.
+            words[word.id] = replace(word, needs_review=not word.meaning)
         elif change.after is None:
             if item.get("after") is not None:
                 raise ValueError("A removal can only be included or dismissed")

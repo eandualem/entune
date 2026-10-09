@@ -42,11 +42,13 @@ which was meant.
   correct neighbouring words.
 - Candidates come from real usage. A heard entry names only the words a dictation used
   that heard text for, each with evidence, never a word because it sounds alike or goes
-  with another candidate. One exception: when the heard text is itself an everyday word
-  or a common name ("camel", "cloud"), also name the word spelled exactly like it, with
-  its usual sense, so the app can keep it as written; without it, the app replaces every
-  occurrence. A heard text with no meaning of its own ("gray fauna") names only what was
-  meant.
+  with another candidate. Evidence is a place where the recognizer got the words wrong: a
+  word or name a dictation uses correctly is not a confusion ("Alice is responsible" is
+  Alice). One exception: when the heard text is itself an everyday word, a name or an
+  acronym in its own right ("camel", "cloud", "Alice", "ONNX"), also name the word
+  spelled exactly like it, with its usual sense, so the app can keep it as written;
+  without it, the app replaces every occurrence. A heard text with no meaning of its own
+  ("gray fauna") names only what was meant.
 - Reuse words. When a word shown here is what was meant, name it by its id; define a
   new word only when none fits. A name is one word however it was heard. Another sense
   of the same spelling is a new word only when a dictation uses that sense.
@@ -54,7 +56,8 @@ which was meant.
   spelling's capitals. Never add an entry for a heard text that differs from a word's
   spelling only in capitals.
 - Spelling is exactly what should be written: official spelling for names, the plural or
-  tense the context shows.
+  tense the context shows. A shown word's spelling is right; never write a name with
+  other capitals than the dictations or the shown words give it.
 - casing: "fixed" for names, products and acronyms; "ordinary" for ordinary words.
 - Meaning: a short phrase, usually 3 to 10 words, at most 120 characters, that says what
   the word is and sets it apart from the other candidates of the same heard text. No

@@ -356,6 +356,10 @@ def test_a_stored_word_without_a_meaning_takes_the_one_suggested_or_is_refused()
     assert result.words == (replace(grafana, meaning="dashboards for metrics"),)
     proposal = dictionary_changes.propose(working, result, "s/m")
     assert [c.kind for c in proposal.changes] == ["add", "word"]
+    # Applying the suggested description is the person's check of it.
+    applied = dictionary_changes.review(working, proposal)
+    confirmed = replace(grafana, meaning="dashboards for metrics", needs_review=False)
+    assert applied.words == (confirmed,)
     # The heard text's own word, kept as written, needs a meaning too.
     cloud = Word("w_cloud", "cloud", "", casing="ordinary", needs_review=True)
     working = Dictionary((cloud,))
@@ -441,6 +445,18 @@ def test_a_heard_text_differing_only_in_capitals_is_not_a_confusion() -> None:
     ]
     result = parse(reply([prs], heard), (text,), working)
     assert result == working
+
+
+def test_an_entry_whose_corrections_a_revision_took_away_is_removed() -> None:
+    # A run added GIF -> get, then a later part saw GIF used correctly and kept only GIF.
+    working = dictionary(learned={"s/m": (group("get", "GIF", literal="an image format"),)})
+    text = "Send the GIF here."
+    shown = json.loads(view.build(working, "s/m", snippets(text)).words)
+    gif = next(w["id"] for w in shown if w["spelling"] == "GIF")
+    kept = {"text": "GIF", "candidates": [candidate(gif, "existing")]}
+    result = parse(reply(heard=[kept]), (text,), working)
+    assert "GIF" not in entries(result)
+    assert result.words == working.words  # the words stay
 
 
 def test_a_heard_text_given_twice_is_one_entry_whatever_the_order() -> None:
