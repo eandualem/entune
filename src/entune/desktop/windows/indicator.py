@@ -23,6 +23,8 @@ from collections.abc import Callable
 from ctypes import wintypes
 from typing import Any
 
+from entune.desktop import pill
+
 assert sys.platform == "win32"  # imported only there; type checkers skip the rest elsewhere
 
 WS_POPUP = 0x80000000
@@ -78,8 +80,7 @@ def _mix(color: int, ground: int, amount: float) -> int:
     return red | green << 8 | blue << 16
 
 
-LIVE, QUIET_STATES = {"recording"}, {"quiet", "silent", "cancelling"}
-SETTLING = {"formatting", "delivering"}
+LIVE, QUIET_STATES = pill.LIVE, pill.QUIET_STATES
 
 LRESULT = wintypes.LPARAM
 WNDPROC = ctypes.WINFUNCTYPE(
@@ -201,6 +202,7 @@ class Indicator:
         self._smoothed: deque[float] = deque([0.0] * BARS_N, maxlen=BARS_N)  # the tape
         self._sampled = 0.0
         self._ticks = 0  # animation frames drawn; tests read it
+        self._motion = pill.Motion()
         self._layout = (0, 0, 0, 0)  # a card's text x, text width, title and body heights
         self.level: Callable[[], float] = lambda: 0.0
         self._proc = WNDPROC(self._window_proc)  # kept: Windows calls it for the window's life
@@ -213,6 +215,7 @@ class Indicator:
         with self._lock:
             if state in LIVE and self._state not in LIVE | QUIET_STATES:
                 self._smoothed.extend([0.0] * BARS_N)  # a new recording, an empty tape
+            self._motion.change(state, time.monotonic())
             self._mode, self._state = "status", state
             self._text, self._actions, self._visible = text, [], True
         self._post()
@@ -446,6 +449,9 @@ class Indicator:
                 self._mode, self._state, self._glyph, self._title, self._body, self._error,
             )  # fmt: skip
             actions, samples = list(self._actions), list(self._smoothed)
+            now = time.monotonic()
+            left, dot = self._motion.tape_x(now), self._motion.dot(now)
+            frame, quiet_dot = self._motion.frame(now, samples), self._motion.quiet_dot
         scale = _scale()
 
         def unit(value: float) -> int:
@@ -461,12 +467,15 @@ class Indicator:
             _gdi32.DeleteObject(background)
             _gdi32.SetBkMode(dc, BK_TRANSPARENT)
             middle = client.bottom // 2
-            tape_x = unit(12 + 7 + 10)
             if mode == "status":
-                self._paint_tape(dc, state, samples, tape_x, middle, unit)
+                self._paint_dot(dc, state, dot, quiet_dot, middle, unit)
+                if frame is not None:
+                    self._paint_text(dc, frame, unit(left), middle - unit(9), unit)
+                else:
+                    self._paint_tape(dc, state, samples, unit(left), middle, unit)
                 return
             if mode == "glyph":
-                x, y = tape_x + unit(33 - 8), middle - unit(8)
+                x, y = unit(pill.GLYPH_X), middle - unit(8)
 
                 def at(points: list[tuple[float, float]]) -> list[tuple[int, int]]:
                     return [(x + unit(a), y + unit(b)) for a, b in points]
@@ -502,35 +511,52 @@ class Indicator:
         finally:
             _user32.EndPaint(hwnd, ctypes.byref(paint))
 
+    def _paint_dot(
+        self, dc: Any, state: str, strength: float, quiet: bool, middle: int,
+        unit: Callable[[float], int],
+    ) -> None:  # fmt: skip
+        """Red with about a 1.3-second breath while recording, steady grey when quiet,
+        fading out once the work starts."""
+        if strength <= 0:
+            return
+        if state in LIVE:
+            strength *= 0.8 + 0.2 * math.sin(2 * math.pi * time.monotonic() / 1.3)
+        size = unit(7)
+        dot = (unit(12), middle - size // 2, unit(12) + size, middle - size // 2 + size)
+        self._shape(dc, _mix(QUIET if quiet else RED, BACKGROUND, strength), dot, 0)
+
     def _paint_tape(
         self, dc: Any, state: str, samples: list[float], left: int, middle: int,
         unit: Callable[[float], int],
     ) -> None:  # fmt: skip
-        """The dot and the tape: live, flat and grey when quiet, or held still at half
-        strength with a light passing over it while the text is made."""
+        """The tape: live, flat and grey when quiet, or held still at half strength with
+        a light passing over it while the text is made."""
         now = time.monotonic()
         quiet, live = state in QUIET_STATES, state in LIVE
-        if live or quiet:
-            # About a 1.3-second breath while recording; steady grey when quiet.
-            size = unit(7)
-            dot = (unit(12), middle - size // 2, unit(12) + size, middle - size // 2 + size)
-            pulse = 0.8 + 0.2 * math.sin(2 * math.pi * now / 1.3)
-            self._shape(dc, QUIET if quiet else _mix(RED, BACKGROUND, pulse), dot, 0)
-        period = 1.8 if state in SETTLING else 1.1
-        sweep = -22 + ((now % period) / period) * (66 + 22)  # the light's left edge, in the tape
-        width = (66 - 2 * (BARS_N - 1)) / BARS_N
+        sweep = -22 + ((now % 1.1) / 1.1) * (66 + 22)  # the light's left edge, in the tape
         for index in range(BARS_N):
-            if quiet:
-                level = 0.0
-            elif state in SETTLING:
-                level = (0.30 + 0.12 * math.sin(index * 0.8) - 0.12) / 0.88
-            else:
-                level = samples[index]
-            half = unit(18 * (0.12 + 0.88 * max(0.0, min(1.0, level))) / 2)
-            start = index * (width + 2)
-            x = left + unit(start)
+            bar = pill.tape_bar(index, 0.0 if quiet else samples[index], 1.0)
+            half = unit(bar.height / 2)
+            x = left + unit(bar.x)
             color = QUIET if quiet else BARS
             if not (live or quiet):
-                color = SWEEP if sweep <= start + width / 2 <= sweep + 22 else BARS_DIM
-            bar = (x, middle - max(half, 1), x + max(unit(width), 1), middle + max(half, 1))
-            self._shape(dc, color, bar, unit(2))
+                color = SWEEP if sweep <= bar.x + bar.width / 2 <= sweep + 22 else BARS_DIM
+            rect = (x, middle - max(half, 1), x + max(unit(bar.width), 1), middle + max(half, 1))
+            self._shape(dc, color, rect, unit(2))
+
+    def _paint_text(
+        self, dc: Any, frame: pill.Frame, left: int, top: int, unit: Callable[[float], int]
+    ) -> None:
+        """Formatting: the tape as lines of words, then the list items' bullets."""
+        for bar in frame.bars:
+            if unit(bar.width) < 1 or bar.opacity <= 0:
+                continue
+            color = _mix(_mix(QUIET, BARS, bar.quiet), BACKGROUND, bar.opacity)
+            x, y = left + unit(bar.x), top + unit(bar.y)
+            self._shape(dc, color, (x, y, x + unit(bar.width), y + unit(bar.height)), unit(2))
+        if frame.bullets > 0:
+            for line in pill.LINES[1:]:
+                x, y, size = left, top + unit(line), unit(pill.BULLET)
+                self._shape(
+                    dc, _mix(BARS, BACKGROUND, frame.bullets), (x, y, x + size, y + size), 0
+                )
