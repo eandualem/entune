@@ -412,6 +412,19 @@ def test_a_heard_text_differing_only_in_capitals_is_not_a_confusion() -> None:
     assert result == working
 
 
+def test_a_heard_text_given_twice_is_one_entry_whatever_the_order() -> None:
+    text = "Keep it in camel. The Camel sleeps."
+    words = [
+        {"id": "n1", "spelling": "camel", "meaning": "the desert animal", "casing": "ordinary"},
+        {"id": "n2", "spelling": "YAML", "meaning": "configuration format", "casing": "fixed"},
+    ]
+    literal = {"text": "Camel", "candidates": [candidate("n1", "text", (22, 27))]}
+    yaml = {"text": "camel", "candidates": [candidate("n2", "text", (11, 16))]}
+    for heard in ([literal, yaml], [yaml, literal]):
+        (entry,) = parse(reply(words, heard), (text,)).learned_for("s/m")
+        assert sorted(c.basis for c in entry.candidates) == ["literal", "text"]
+
+
 def test_learned_entries_are_named_once_and_only_when_shown() -> None:
     working = dictionary(
         learned={"s/m": (group("Keep", "keep term"), group("Other", "other term"))}
@@ -422,6 +435,8 @@ def test_learned_entries_are_named_once_and_only_when_shown() -> None:
         parse(reply(removals=["absent"]), texts, working)
     with pytest.raises(ValueError, match="once"):
         parse(reply(heard=[kept], removals=["keep term"]), texts, working)
+    with pytest.raises(ValueError, match="once"):
+        parse(reply(removals=["keep term", "KEEP TERM"]), texts, working)
     assert entries(parse(reply(removals=["keep term"]), texts, working)) == {
         "Keep": ["Keep"],
         "other term": ["Other"],

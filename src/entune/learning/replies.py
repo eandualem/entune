@@ -217,26 +217,27 @@ def parse_reply(
             raise ValueError(f'"{text}" needs at least one candidate word')
         if before is not None and before.direct and before.direct not in candidates:
             raise ValueError("The generator cannot remove or change an approved direct mapping")
-        entry = Heard(
+        replied[key(text)] = Heard(
             before.text if before else text,
             tuple(candidates.values()),
             before.direct if before else None,
             before.direct_reason if before else "",
         )
-        if before is None and all(c.basis == "literal" for c in entry.candidates):
+    # Judged once each text's items are merged, whatever their order.
+    for text, entry in list(replied.items()):
+        if text not in learned and all(c.basis == "literal" for c in entry.candidates):
             # Written as heard and nothing else: capitals alone, which adds nothing.
-            dropped.update(candidates)
-            continue
-        replied[key(text)] = entry
+            dropped.update(c.word for c in entry.candidates)
+            del replied[text]
 
     result = dict(learned)
     for text in data["removals"]:
         if key(text) in pinned:
             raise ValueError("Pinned entries cannot be removed")
+        if key(text) in replied or (key(text) not in result and key(text) in learned):
+            raise ValueError(f'Name "{text}" once, in heard or in removals')
         if key(text) not in learned or key(text) not in shown.heard:
             raise ValueError(f'Removals name a learned entry shown here: "{text}"')
-        if key(text) in replied:
-            raise ValueError(f'Name "{text}" once, in heard or in removals')
         if learned[key(text)].direct:
             raise ValueError("The generator cannot remove or change an approved direct mapping")
         del result[key(text)]

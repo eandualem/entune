@@ -618,8 +618,16 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   // entry that names it, so its edits reach them all. A learned draft belongs to the speech
   // model it was started for, even if the toolbar selection changes before it is saved.
   const blankWord = () => ({ id: id("w"), spelling: "", meaning: "", personal_context: null, casing: "fixed", needs_review: false });
-  // What a draft was made from: the entry and the words it names, as stored.
-  const snapshot = (h, known = wordMap()) => JSON.stringify({ h, words: h.candidates.map((c) => known.get(c.word) ?? null) });
+  // A stored word in a draft keeps the copy it was taken from (`seen`): a save writes only
+  // a word the person changed, and a reload shows whether it changed elsewhere meanwhile.
+  const draftItem = (w, stored, basis = "user", evidence = []) => ({ key: id("c"), word: { ...w, personal_context: w.personal_context ?? "" },
+    stored, seen: stored ? JSON.stringify(w) : null, basis, evidence });
+  function edited(item) {
+    if (!item.stored) return true;
+    const before = JSON.parse(item.seen);
+    return words(item.word.spelling) !== before.spelling || item.word.meaning.trim() !== before.meaning
+      || (item.word.personal_context.trim() || null) !== before.personal_context || item.word.casing !== before.casing;
+  }
   function openEditor(scope, entry, created = false, model = getModel(), fresh = [], more = []) {
     editorError = "";
     const known = wordMap();
@@ -629,12 +637,10 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       notices: more.length ? [`Only “${entry.text}” is in this entry; add ${more.map((t) => `“${t}”`).join(", ")} as entries of their own.`] : [],
       version: dictVersion, // the revision this draft was made from
       original: structuredClone(entry),
-      base: created ? null : snapshot(entry),
       text: entry.text, origText: created ? null : entry.text,
       items: entry.candidates.map((c) => {
         const w = known.get(c.word) ?? blankWord();
-        return { key: id("c"), word: { ...w, meaning: w.meaning ?? "", personal_context: w.personal_context ?? "" }, stored: dict.words.some((x) => x.id === w.id),
-          basis: c.basis, evidence: c.evidence ?? [] };
+        return draftItem(w, dict.words.some((x) => x.id === w.id), c.basis, c.evidence ?? []);
       }),
       direct: entry.direct, direct_reason: entry.direct_reason ?? "",
     };
@@ -840,11 +846,10 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     }
     // More words: a new one, the heard text kept as written, or one already in the dictionary.
     const more = node("div", "", "editor-line wrap");
-    more.append(button("+ New word", () => change((dd) => { dd.items.push({ key: id("c"), word: { ...blankWord(), personal_context: "" }, stored: false, basis: "user", evidence: [] }); }), "btn link add-more"));
+    more.append(button("+ New word", () => change((dd) => { dd.items.push(draftItem(blankWord(), false)); }), "btn link add-more"));
     const keep = button(`+ keep “${words(d.text)}” as written`, () => change((dd) => {
       const same = dict.words.find((w) => w.casing === "ordinary" && textKey(w.spelling) === textKey(dd.text));
-      const word = same ? { ...same, personal_context: same.personal_context ?? "" } : { ...blankWord(), spelling: words(dd.text), casing: "ordinary", personal_context: "" };
-      dd.items.push({ key: id("c"), word, stored: Boolean(same), basis: "literal", evidence: [] });
+      dd.items.push(draftItem(same ?? { ...blankWord(), spelling: words(dd.text), casing: "ordinary" }, Boolean(same), "literal"));
     }), "pill dashed");
     keep.dataset.part = "keep:text";
     keep.hidden = !canKeep(d);
@@ -860,7 +865,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       for (const w of [...others].sort((a, b) => a.spelling.localeCompare(b.spelling))) pick.add(new Option(`${w.spelling} — ${w.meaning || "no description yet"}`, w.id));
       pick.addEventListener("change", () => {
         const w = dict.words.find((x) => x.id === pick.value);
-        if (w) change((dd) => { dd.items.push({ key: id("c"), word: { ...w, personal_context: w.personal_context ?? "" }, stored: true, basis: "user", evidence: [] }); });
+        if (w) change((dd) => { dd.items.push(draftItem(w, true)); });
       });
       more.append(pick);
     }
@@ -900,18 +905,36 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     return parts;
   }
 
-  // A draft is based on its entry and words as they were when opened. After a reload it can
-  // still be saved if they are unchanged; otherwise it reopens on the saved version, so a
-  // save never undoes a change made elsewhere.
+  // A draft is based on its entry and its stored words as they were when taken. After a
+  // reload it can still be saved if they are unchanged; a word the person did not edit just
+  // takes the saved version. Otherwise the saved version is shown, so a save never undoes a
+  // change made elsewhere.
   function rebase(d) {
-    if (d.created || d.version === dictVersion) return true;
-    const list = d.scope === "pinned" ? dict.pinned : dict.learned[d.model.id] ?? [];
-    const fresh = list.find((h) => textKey(h.text) === textKey(d.origText));
-    if (fresh && snapshot(fresh) === d.base) { d.version = dictVersion; return true; }
-    if (!fresh) { closeEditor(); toast("This entry was removed elsewhere; nothing was saved.", "err"); return false; }
-    openEditor(d.scope, fresh, false, d.model);
-    editorError = "This entry changed while you were editing and now shows the saved version. Redo your change.";
-    editorStatus();
+    if (d.version === dictVersion) return true;
+    const known = wordMap();
+    if (!d.created) {
+      const list = d.scope === "pinned" ? dict.pinned : dict.learned[d.model.id] ?? [];
+      const fresh = list.find((h) => textKey(h.text) === textKey(d.origText));
+      if (!fresh) { closeEditor(); toast("This entry was removed elsewhere; nothing was saved.", "err"); return false; }
+      if (JSON.stringify(fresh) !== JSON.stringify(d.original)) {
+        openEditor(d.scope, fresh, false, d.model);
+        editorError = "This entry changed while you were editing and now shows the saved version. Redo your change.";
+        editorStatus();
+        return false;
+      }
+    }
+    let conflict = false;
+    for (const item of [...d.items]) {
+      if (!item.stored || JSON.stringify(known.get(item.word.id) ?? null) === item.seen) continue;
+      conflict ||= edited(item);
+      const fresh = known.get(item.word.id);
+      if (fresh) Object.assign(item, draftItem(fresh, true, item.basis, item.evidence), { key: item.key });
+      else d.items = d.items.filter((x) => x !== item);
+    }
+    d.version = dictVersion;
+    if (!conflict) return true;
+    editorError = "A word here changed elsewhere and now shows the saved version. Redo your change to it, then save.";
+    drawEditor();
     return false;
   }
 
@@ -924,7 +947,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const next = clone();
     // Words: an edited one replaces its stored copy everywhere; a new one is added.
     const changedOutputs = new Set();
-    for (const item of d.items) {
+    for (const item of d.items.filter(edited)) {
       const meaning = item.word.meaning.trim();
       const word = { id: item.word.id, spelling: words(item.word.spelling), meaning, personal_context: item.word.personal_context.trim() || null,
         casing: item.word.casing, needs_review: !meaning };
@@ -1472,10 +1495,12 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
               field(row, "Write it as", word.spelling, value => {
                 word.spelling = value.trim();
                 // An "as written" candidate stays one only while it is spelled like its heard text.
+                const kept = (h, list) => list.map(x => x.word === word.id && x.basis === "literal" && textKey(word.spelling) !== textKey(h.text)
+                  ? {word: x.word, basis: "user", evidence: []} : x);
                 for (const c of proposalChanges) {
                   if (c.kind === "word" || !c.after) continue;
-                  c.after.candidates = c.after.candidates.map(x => x.word === word.id && x.basis === "literal" && textKey(word.spelling) !== textKey(c.after.text)
-                    ? {word: x.word, basis: "user", evidence: []} : x);
+                  c.after.candidates = kept(c.after, c.after.candidates);
+                  c.choices = kept(c.after, c.choices);
                 }
                 for (const control of proposalBody.querySelectorAll(`input[data-word="${CSS.escape(word.id)}"]`)) control.value = word.spelling;
               }).dataset.word = word.id;
