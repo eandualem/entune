@@ -233,7 +233,8 @@ counts: such an ordinal, which the number replaces, or the speaker counting amon
 first words ("my third point is", "secondly", "number two"), whose words stay. A list
 without one is bulleted. Every other sentence continues where it is, a list entry
 included, so an entry keeps its follow-up question, reason or example; a new paragraph
-or an empty line ends the list. A list needs two entries; a single one starts a
+or an empty line ends the list, and inside a list a paragraph probability of 0.25 is
+enough, since a follow-up gets almost none. A list needs two entries; a single one starts a
 paragraph instead, and numbering continues an existing numbered line. A new paragraph
 needs 200 characters of its paragraph before it and leaves 100 in its paragraph after
 it, so a short note stays whole. A paragraph still longer than 700 characters is split at its

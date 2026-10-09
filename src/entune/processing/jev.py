@@ -23,6 +23,9 @@ FORMAT_PROBABILITY = 0.6
 # A sentence that opens with a spoken ordinal ("Second, ...") starts a numbered item at
 # this list probability: the ordinal is the rest of the evidence.
 ORDINAL_PROBABILITY = 0.3
+# Inside a list a follow-up gets almost no paragraph vote, so one this likely already ends
+# the list: the speaker has moved on from it.
+LEAVE_LIST_PROBABILITY = 0.25
 # A new paragraph needs PARAGRAPH_MIN characters of its paragraph before it and leaves at
 # least LAST_PARAGRAPH_MIN after it, so a short note stays whole. A paragraph still longer
 # than PARAGRAPH_CHARS is split at its sentence most likely to start one, when that is at
@@ -305,16 +308,19 @@ def _actions(
     entry, and a spoken ordinal opening it ("Second, ...") lowers the bar; code says what
     kind: a list is numbered when one of its entries counts ("First, ...", "my third
     point is ..."), else bulleted. Every other sentence continues where it is, a list
-    entry included, until a new paragraph or an empty line ends the list."""
+    entry included, until a new paragraph or an empty line ends the list; inside a list a
+    weaker paragraph vote is enough."""
     actions = []
     existing: str | None = None  # the kind of an existing list going on
+    listing = False  # a list is going on
     for i, (span, answer) in enumerate(zip(spans, answers, strict=True)):
         gap = text[spans[i - 1].end : span.start] if i else ""
         if formatting.blank_line(gap):
-            existing = None
+            existing, listing = None, False
         if span.listed:
             actions.append("list_item")
             existing = "numbered_item" if formatting.numbered_line(text, span) else "bullet_item"
+            listing = True
             continue
         role = "continues" if answer is None else _role(answer)
         cued = (
@@ -325,10 +331,13 @@ def _actions(
         if cued or role == "list":
             counted = "numbered_item" if formatting.counted(text, span) else "bullet_item"
             action = existing or counted
+            listing = True
         else:
             action = role
+            if listing and answer is not None and answer["new_paragraph"] >= LEAVE_LIST_PROBABILITY:
+                action = "new_paragraph"
             if action == "new_paragraph":
-                existing = None
+                existing, listing = None, False
         actions.append(action)
     return actions
 

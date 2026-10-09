@@ -645,6 +645,29 @@ def test_a_list_keeps_its_kind_and_numbering_across_follow_ups(
     assert text_edits.apply(raw, result.changes) == expected
 
 
+def test_a_weaker_paragraph_vote_ends_a_list_than_prose() -> None:
+    raw = (
+        "I'm gonna test a couple of things. One, the speed. That's very important for me."
+        " Two, the formatting. Does it have lists? Yeah, hopefully this shows a good result."
+    )
+    # As voted on the dictation this comes from: a follow-up gets almost no paragraph
+    # vote, the remark after the list a third of one.
+    plan = {
+        "S01": {"list_item": 0.95, "continues": 0.05},
+        "S02": {"continues": 1.0, "new_paragraph": 0.0},
+        "S03": {"list_item": 0.97, "new_paragraph": 0.03},
+        "S04": {"continues": 0.97, "list_item": 0.03},
+        "S05": {"continues": 0.64, "new_paragraph": 0.36},
+    }
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = jev.format_edits(raw, call(client))
+    assert text_edits.apply(raw, result.changes) == (
+        "I'm gonna test a couple of things.\n\n1. The speed. That's very important for me.\n"
+        "2. The formatting. Does it have lists?\n\nYeah, hopefully this shows a good result."
+    )
+
+
 def test_a_long_follow_up_on_the_next_line_stays_in_its_entry() -> None:
     follow_up = ("This lets you set up the app before anything else happens here. " * 12).strip()
     raw = f"1. Open settings.\n{follow_up} Second, choose the model. Third, save it."
