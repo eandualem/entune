@@ -3,11 +3,13 @@ Entune window is normally closed and the menu bar may be hidden, so this is the 
 that says a recording is running, and the place results and errors are told.
 
 The pill is a tape of the voice: fifteen bars, each one moment's microphone level, a new
-one entering at the right every 90 ms, beside a red recording dot. Working, the tape stands
-still and a light sweeps across it; done, a check (pasted) or a clipboard (copied) takes
-its place. Routine states have no words on screen; the words are the pill's accessibility
-label and tooltip. A message makes the pill a card: a title, the detail wrapped beneath,
-and for an error a red mark, Retry and Dismiss; an error stays until dismissed.
+one entering at the right every 90 ms, beside a red recording dot. Working, the dot fades,
+the tape moves to the centre and stands still while a light sweeps across it; formatting,
+the tape turns into lines of text (see entune.desktop.pill); done, a check (pasted) or a
+clipboard (copied) takes its place. Routine states have no words on screen; the words are
+the pill's accessibility label and tooltip. A message makes the pill a card: a title, the
+detail wrapped beneath, and for an error a red mark, Retry and Dismiss; an error stays
+until dismissed.
 
 It starts in the bottom-left corner of the screen the pointer is on, and can be dragged
 anywhere; the place it is dropped is kept in the app's defaults and used from then on,
@@ -28,6 +30,8 @@ import AppKit
 import objc
 import Quartz
 from Foundation import NSObject
+
+from entune.desktop import pill
 
 HEIGHT = 32.0
 MARGIN = 16.0
@@ -71,9 +75,7 @@ DOT_RED = _rgb(1.0, 0.259, 0.271)  # recording, and an error's mark
 WHITE = _rgb(1.0, 1.0, 1.0)
 
 # Which look each state of the shell's (shell.INDICATOR) takes.
-LIVE = {"recording"}
-QUIET_STATES = {"quiet", "silent", "cancelling"}
-SETTLING = {"formatting", "delivering"}  # after transcription: a calmer tape, a slower light
+LIVE, QUIET_STATES = pill.LIVE, pill.QUIET_STATES
 
 
 class EntunePillTarget(NSObject):  # type: ignore[misc]
@@ -147,6 +149,7 @@ class Indicator:
         self._tape: Any = None
         self._bars: list[Any] = []
         self._sweep: Any = None
+        self._bullets: list[Any] = []
         self._glyph: Any = None
         self._badge: Any = None
         self._buttons: list[tuple[Any, str, bool]] = []  # each with its label and whether primary
@@ -160,6 +163,7 @@ class Indicator:
         self._samples: deque[float] = deque([0.0] * BARS_N, maxlen=BARS_N)
         self._sampled = 0.0  # when the last sample entered the tape
         self._started = time.monotonic()
+        self._motion = pill.Motion()
 
     # The three things the tray asks for
 
@@ -168,16 +172,15 @@ class Indicator:
         state = state or ("recording" if recording else "transcribing")
         if state in LIVE and self._state not in LIVE | QUIET_STATES:
             self._samples.extend([0.0] * BARS_N)  # a new recording starts with an empty tape
+        self._motion.change(state, time.monotonic())
         self._state, self._mode = state, "status"
         self._clear_card()
         self._describe(text)
         self._tape.setHidden_(False)
         self._glyph.setHidden_(True)
         dark = self._dark()
-        self._dot.setHidden_(state not in LIVE | QUIET_STATES)
-        self._dot.setBackgroundColor_((DOT_RED if state in LIVE else QUIET[dark]).CGColor())
-        self._dot.setOpacity_(1.0)
-        self._sweep.setHidden_(state in LIVE | QUIET_STATES)
+        if state in LIVE | QUIET_STATES:  # otherwise the dot fades in its colour
+            self._dot.setBackgroundColor_((DOT_RED if state in LIVE else QUIET[dark]).CGColor())
         self._place(WIDTH, HEIGHT, HEIGHT / 2)
         self._frame()
         self._animate(True)
@@ -284,6 +287,8 @@ class Indicator:
         clear = AppKit.NSColor.clearColor().CGColor()
         self._sweep.setColors_([clear, SWEEP[dark].CGColor(), clear])
         self._glyph.setStrokeColor_(BARS[dark].CGColor())
+        for bullet in self._bullets:
+            bullet.setBackgroundColor_(BARS[dark].CGColor())
         if self._mode == "card":
             self._label.setTextColor_(TEXT[dark])
             self._body.setTextColor_(MUTED[dark])
@@ -374,34 +379,42 @@ class Indicator:
                 self._sampled = now
         Quartz.CATransaction.begin()
         Quartz.CATransaction.setDisableActions_(True)
-        if self._state in LIVE:
-            # About a 1.3-second breath between 0.6 and 1.
-            self._dot.setOpacity_(0.8 + 0.2 * math.sin(2 * math.pi * now / 1.3))
-        elif self._state not in QUIET_STATES:
-            period = 1.8 if self._state in SETTLING else 1.1
-            phase = ((now - self._started) % period) / period
+        # About a 1.3-second breath between 0.6 and 1 while recording; then it fades out.
+        breath = 0.8 + 0.2 * math.sin(2 * math.pi * now / 1.3) if self._state in LIVE else 1.0
+        strength = breath * self._motion.dot(now)
+        self._dot.setOpacity_(strength)
+        self._dot.setHidden_(strength <= 0.0)
+        self._tape.setFrame_(((self._motion.tape_x(now), (HEIGHT - TAPE_H) / 2), (TAPE_W, TAPE_H)))
+        working = self._state not in LIVE | QUIET_STATES
+        self._sweep.setHidden_(not working or self._motion.formatting)
+        if working:
+            phase = ((now - self._started) % 1.1) / 1.1
             self._sweep.setFrame_(((-SWEEP_W + phase * (TAPE_W + SWEEP_W), 0), (SWEEP_W, TAPE_H)))
         self._paint_bars(self._dark())
         Quartz.CATransaction.commit()
 
     def _paint_bars(self, dark: bool) -> None:
-        """Each bar's height and colour for the state: the live tape, a flat quiet one, the
-        last samples held still, or a calm pattern while the text is finished."""
+        """Each bar for the state: the live tape, a flat quiet one, the last samples held
+        still, or, formatting, part of a word."""
         state = self._state
         quiet = state in QUIET_STATES
-        color = (QUIET if quiet else BARS)[dark].CGColor()
+        frame = self._motion.frame(time.monotonic(), self._samples)
+        for bullet in self._bullets:
+            bullet.setOpacity_(frame.bullets if frame else 0.0)
         for index, bar in enumerate(self._bars):
-            if quiet:
-                level = 0.0
-            elif state in SETTLING:
-                level = (0.30 + 0.12 * math.sin(index * 0.8) - 0.12) / 0.88
+            if frame is not None:
+                shape = frame.bars[index]
+                color = BARS[dark]
+                if shape.quiet > 0:
+                    color = color.blendedColorWithFraction_ofColor_(shape.quiet, QUIET[dark])
             else:
-                level = self._samples[index]
-            height = TAPE_H * (0.12 + 0.88 * max(0.0, min(1.0, level)))
-            frame = bar.frame()
-            bar.setFrame_(((frame.origin.x, (TAPE_H - height) / 2), (frame.size.width, height)))
-            bar.setBackgroundColor_(color)
-            bar.setOpacity_(1.0 if state in LIVE | QUIET_STATES else 0.55)
+                level = 0.0 if quiet else self._samples[index]
+                strength = 1.0 if state in LIVE | QUIET_STATES else pill.HELD
+                shape = pill.tape_bar(index, level, strength)
+                color = (QUIET if quiet else BARS)[dark]
+            bar.setFrame_(((shape.x, shape.y), (shape.width, shape.height)))
+            bar.setBackgroundColor_(color.CGColor())
+            bar.setOpacity_(shape.opacity)
 
     # The panel
 
@@ -462,20 +475,25 @@ class Indicator:
         tape_x = PAD_LEFT + DOT + GAP
         self._tape = layer(root, ((tape_x, (HEIGHT - TAPE_H) / 2), (TAPE_W, TAPE_H)))
         self._tape.setMasksToBounds_(True)
+        self._tape.setGeometryFlipped_(True)  # y down inside the tape, as pill's are
         bar_width = (TAPE_W - BAR_GAP * (BARS_N - 1)) / BARS_N
         for index in range(BARS_N):
             bar = layer(self._tape, ((index * (bar_width + BAR_GAP), 0), (bar_width, TAPE_H)))
             bar.setCornerRadius_(1.0)
             self._bars.append(bar)
+        for line in pill.LINES[1:]:  # the list items' bullets, formatting
+            bullet = layer(self._tape, ((0, line), (pill.BULLET, pill.BULLET)))
+            bullet.setCornerRadius_(pill.BULLET / 2)
+            bullet.setOpacity_(0.0)
+            self._bullets.append(bullet)
         self._sweep = Quartz.CAGradientLayer.layer()
         self._sweep.setStartPoint_((0.0, 0.5))
         self._sweep.setEndPoint_((1.0, 0.5))
         self._sweep.setFrame_(((-SWEEP_W, 0), (SWEEP_W, TAPE_H)))
         self._tape.addSublayer_(self._sweep)
-        # The glyph sits where the tape was; its path is drawn with y down, so it is flipped.
+        # The glyph sits in the middle; its path is drawn with y down, so it is flipped.
         self._glyph = Quartz.CAShapeLayer.layer()
-        center = tape_x + (TAPE_W - GLYPH) / 2
-        self._glyph.setFrame_(((center, (HEIGHT - GLYPH) / 2), (GLYPH, GLYPH)))
+        self._glyph.setFrame_(((pill.GLYPH_X, (HEIGHT - GLYPH) / 2), (GLYPH, GLYPH)))
         self._glyph.setGeometryFlipped_(True)
         self._glyph.setFillColor_(None)
         self._glyph.setLineCap_(Quartz.kCALineCapRound)

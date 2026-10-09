@@ -41,6 +41,8 @@ from PySide6.QtGui import (  # noqa: E402
 )
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget  # noqa: E402
 
+from entune.desktop import pill  # noqa: E402
+
 ASSETS = Path(__file__).resolve().parents[2] / "assets"
 ICON = ASSETS / "icon-512.png"
 APP_ID = "entune"  # the .desktop file's name, so docks and alt-tab show Entune's icon
@@ -235,6 +237,7 @@ class Indicator(QWidget):
         self._level = 0.0  # the microphone level, eased every frame
         self._samples: deque[float] = deque([0.0] * BARS_N, maxlen=BARS_N)  # the tape
         self._sampled = 0.0
+        self._motion = pill.Motion()
         self._layout = (0, 0, 0, 0)  # a card's text x, text width, title and body heights
         self._timer = QTimer(self)
         self._timer.setInterval(33)
@@ -281,6 +284,7 @@ class Indicator(QWidget):
     def _show_status(self, text: str, state: str) -> None:
         if state in LIVE and self._state not in LIVE | QUIET_STATES:
             self._samples.extend([0.0] * BARS_N)  # a new recording starts with an empty tape
+        self._motion.change(state, time.monotonic())
         self._mode, self._state, self._buttons = "status", state, []
         self._describe(text)
         self._place(self.PAD_LEFT + self.DOT + self.GAP + self.TAPE_W + self.PAD_RIGHT, self.HEIGHT)
@@ -386,55 +390,73 @@ class Indicator(QWidget):
             QRectF(self.rect()).adjusted(0.25, 0.25, -0.25, -0.25), radius, radius
         )
         painter.setPen(Qt.PenStyle.NoPen)
-        tape_x = self.PAD_LEFT + self.DOT + self.GAP
         if self._mode == "status":
-            self._paint_tape(painter, tape_x)
+            self._paint_tape(painter, self._motion.tape_x(time.monotonic()))
         elif self._mode == "glyph":
-            self._paint_glyph(painter, tape_x + (self.TAPE_W - 16) / 2, (self.HEIGHT - 16) / 2)
+            self._paint_glyph(painter, pill.GLYPH_X, (self.HEIGHT - 16) / 2)
         else:
             self._paint_card(painter)
         painter.end()
 
     def _paint_tape(self, painter: QPainter, left: float) -> None:
-        """The dot and the tape: live, flat and grey when quiet, or held still at half
-        strength with a light passing over it while the text is made."""
+        """The dot and the tape: live, flat and grey when quiet, held still at half
+        strength with a light passing over it while transcribing, or, formatting, lines
+        of words."""
         state, now, middle = self._state, time.monotonic(), self.HEIGHT / 2
         quiet, live = state in QUIET_STATES, state in LIVE
-        if live or quiet:
-            dot = QColor(QUIET if quiet else RED)
-            if live:  # about a 1.3-second breath
-                dot.setAlphaF(0.8 + 0.2 * math.sin(2 * math.pi * now / 1.3))
+        strength = self._motion.dot(now)
+        if strength > 0:  # about a 1.3-second breath while recording, then a fade
+            dot = QColor(QUIET if quiet or (not live and self._motion.quiet_dot) else RED)
+            if live:
+                strength *= 0.8 + 0.2 * math.sin(2 * math.pi * now / 1.3)
+            dot.setAlphaF(strength)
             painter.setBrush(dot)
             painter.drawEllipse(
                 QPointF(self.PAD_LEFT + self.DOT / 2, middle), self.DOT / 2, self.DOT / 2
             )
-        width = (self.TAPE_W - 2 * (BARS_N - 1)) / BARS_N
-        color = QColor(QUIET if quiet else BARS)
-        if not (live or quiet):
-            color.setAlphaF(0.55)
-        painter.setBrush(color)
+        top = middle - self.TAPE_H / 2
+        frame = self._motion.frame(now, self._samples)
+        if frame is not None:
+            self._paint_text(painter, frame, left, top)
+            return
         for index in range(BARS_N):
-            if quiet:
-                level = 0.0
-            elif state in SETTLING:
-                level = (0.30 + 0.12 * math.sin(index * 0.8) - 0.12) / 0.88
-            else:
-                level = self._samples[index]
-            height = self.TAPE_H * (0.12 + 0.88 * max(0.0, min(1.0, level)))
-            bar = QRectF(left + index * (width + 2), middle - height / 2, width, height)
-            painter.drawRoundedRect(bar, 1, 1)
+            bar = pill.tape_bar(index, 0.0 if quiet else self._samples[index], 1.0)
+            color = QColor(QUIET if quiet else BARS)
+            if not (live or quiet):
+                color.setAlphaF(pill.HELD)
+            painter.setBrush(color)
+            painter.drawRoundedRect(QRectF(left + bar.x, top + bar.y, bar.width, bar.height), 1, 1)
         if not (live or quiet):
-            period = 1.8 if state in SETTLING else 1.1
-            x = left - 22 + ((now % period) / period) * (self.TAPE_W + 22)
+            x = left - 22 + ((now % 1.1) / 1.1) * (self.TAPE_W + 22)
             light = QLinearGradient(x, 0, x + 22, 0)
             light.setColorAt(0, QColor(0, 0, 0, 0))
             light.setColorAt(0.5, SWEEP)
             light.setColorAt(1, QColor(0, 0, 0, 0))
             painter.save()
-            painter.setClipRect(QRectF(left, middle - self.TAPE_H / 2, self.TAPE_W, self.TAPE_H))
+            painter.setClipRect(QRectF(left, top, self.TAPE_W, self.TAPE_H))
             painter.setBrush(light)
-            painter.drawRect(QRectF(x, middle - self.TAPE_H / 2, 22, self.TAPE_H))
+            painter.drawRect(QRectF(x, top, 22, self.TAPE_H))
             painter.restore()
+
+    def _paint_text(self, painter: QPainter, frame: pill.Frame, left: float, top: float) -> None:
+        """Formatting: the tape as lines of words, then the list items' bullets."""
+        for bar in frame.bars:
+            if bar.width <= 0 or bar.opacity <= 0:
+                continue
+            color = QColor(
+                round(BARS.red() + (QUIET.red() - BARS.red()) * bar.quiet),
+                round(BARS.green() + (QUIET.green() - BARS.green()) * bar.quiet),
+                round(BARS.blue() + (QUIET.blue() - BARS.blue()) * bar.quiet),
+            )
+            color.setAlphaF(bar.opacity)
+            painter.setBrush(color)
+            painter.drawRoundedRect(QRectF(left + bar.x, top + bar.y, bar.width, bar.height), 1, 1)
+        if frame.bullets > 0:
+            dot = QColor(BARS)
+            dot.setAlphaF(frame.bullets)
+            painter.setBrush(dot)
+            for line in pill.LINES[1:]:
+                painter.drawEllipse(QRectF(left, top + line, pill.BULLET, pill.BULLET))
 
     def _paint_glyph(self, painter: QPainter, x: float, y: float) -> None:
         path = QPainterPath()
@@ -509,5 +531,4 @@ MUTED = QColor(161, 155, 145)
 WASH = QColor(169, 156, 242, 46)
 LINK = QColor(189, 178, 255)
 BARS_N, SAMPLE_SECONDS = 15, 0.09
-LIVE, QUIET_STATES = {"recording"}, {"quiet", "silent", "cancelling"}
-SETTLING = {"formatting", "delivering"}
+LIVE, QUIET_STATES = pill.LIVE, pill.QUIET_STATES
