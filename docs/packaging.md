@@ -172,8 +172,8 @@ interaction; record which native interactions were actually exercised.
 
 Check that the installed bundle contains the web assets, all prompt resources,
 and `entune/providers/local/parakeet_helper.py`. Verify the helper path resolves
-inside the bundle while `engine_python()` resolves outside it to the separately
-installed engine. Test its protocol without downloading weights or transcribing
+inside the bundle while `engine_python(models_dir)` resolves outside it: to the engine
+Download installed in the models folder, else to a `uv tool install parakeet-mlx` one. Test its protocol without downloading weights or transcribing
 private audio; run real engine/inference tests only with an explicit test corpus.
 
 Windows has its own shortcut, paste, indicator and permission code under

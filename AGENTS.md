@@ -120,8 +120,8 @@ and the numbers that show the improvement, measured with Jev, are kept
 
 In scope since 2026-09-18 (issue #20): fast mode as an opt-in setting that
 streams the recording to the provider while it is made, never changing the
-plain path; local models (whisper.cpp, and Parakeet through a user-installed
-engine) with a Download button, taking memory only while selected; and the
+plain path; local models (whisper.cpp, and Parakeet, whose engine its Download
+installs since 2026-10-09) with a Download button, taking memory only while selected; and the
 performance table built from every transcription's timing.
 
 In scope since 2026-10-01 (issue #36): the same desktop experience on Windows,
