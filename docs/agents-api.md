@@ -89,7 +89,7 @@ silently if Entune is not running.
 
 | Method and path | What |
 |---|---|
-| `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode, `decisionModel` (`jev` or `laya`; on read, also Laya's state on this Mac), `jev` (the processing steps: TypeSafe key hint, `dictionary`, `cleanup` and `formatting` on or off, shared retry policy and the chosen decision model's stage summaries); each provider says whether it `streams` (fast mode) or is `local` |
+| `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode, `removeSilence` (on unless turned off), `decisionModel` (`jev` or `laya`; on read, also Laya's state on this Mac), `jev` (the processing steps: TypeSafe key hint, `dictionary`, `cleanup` and `formatting` on or off, shared retry policy and the chosen decision model's stage summaries); each provider says whether it `streams` (fast mode) or is `local` |
 | `GET /api/models` | the models of every provider that has a key, plus the downloaded local ones |
 | `GET /api/metrics` | the performance table: per model and mode, runs and successes, audio seconds, seconds of wait per minute of audio (with the number of timed runs), and dictionary replacements, the raw words they replaced, words, corrected and checked dictations |
 | `GET /api/usage` | what the dictations add up to: dictations and how many were transcribed, their audio seconds and words (and the words of those whose audio length is known), words in each of the last eight weeks (Monday to Sunday, local time) and the most in any earlier week, and the dictionary (raw words corrected), filler and layout steps' counts with their median time |

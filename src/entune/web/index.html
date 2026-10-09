@@ -492,6 +492,15 @@
                 <div class="srow note" id="shortcut-status-row" hidden><span></span><span class="caption" id="shortcut-status" role="status"></span></div>
               </div>
 
+              <h2 class="sec-label">Speech recognition</h2>
+              <div class="scard">
+                <label class="srow check">
+                  <div><div class="name">Leave out long silences</div><div class="caption">Pauses longer than 0.6 s are shortened before the audio goes to the speech model, so a cloud service bills less and a model on this Mac finishes sooner. Your recording keeps every second.</div></div>
+                  <input type="checkbox" id="remove-silence" />
+                </label>
+                <div class="srow foot"><span class="caption save-status" id="remove-silence-status" role="status"></span></div>
+              </div>
+
               <section id="permissions" hidden aria-labelledby="permissions-title">
                 <h2 class="sec-label" id="permissions-title">Permissions</h2>
                 <div class="scard">

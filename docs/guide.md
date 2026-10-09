@@ -216,6 +216,17 @@ cloud model. A shorter dictation is transcribed whole, as without fast mode, and
 any dictation in which a part fails. Fast mode applies to dictations made with the
 shortcut.
 
+**Silence left out.** Long pauses are left out of what goes to the speech model: a
+pause longer than 0.6 s is shortened to 0.6 s (0.3 s next to the speech on each side),
+and the quiet before and after the dictation to 0.3 s, so a cloud service bills less and
+a model on your computer finishes sooner. Quiet is judged as for fast mode's pauses,
+against the room's own noise. Your recording in History keeps every second, and
+Performance and Usage count its full length. Measured on 904 dictations (15.8 hours,
+October 2026), a quarter of the audio is left out, 29% of dictations over three minutes;
+on 20 of them checked against a cloud transcript, no words were lost. It applies to the
+WAV Entune records; dropped files in other formats are sent as they are. Turn it off
+under **Settings › General › Leave out long silences**.
+
 **Performance.** Every transcription records how long the clip was, how long
 the provider took, and whether fast mode was used. Models › Performance plots each
 model you have used, with fast mode apart. Across is the wait after you stop for one

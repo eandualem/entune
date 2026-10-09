@@ -21,6 +21,7 @@ from entune.app.operations import Operation, Operations
 from entune.app.pieces import Pieces
 from entune.app.settings import JevStatus, Settings
 from entune.audio.formats import sniff_mime
+from entune.audio.silence import shorten_wav
 from entune.dictionary.entries import Active
 from entune.processing import results
 from entune.processing.jev_client import SECTION_CONNECTIONS
@@ -73,7 +74,14 @@ class Dictation:
         )
         if api_key is None:
             return None
-        return Pieces(ref, api_key, sample_rate, self._speech, cancel)
+        return Pieces(
+            ref,
+            api_key,
+            sample_rate,
+            self._speech,
+            cancel,
+            remove_silence=self._settings.remove_silence(),
+        )
 
     def prepare(self) -> None:
         """While the user speaks, open the connections this dictation will use: the default
@@ -209,7 +217,7 @@ class Dictation:
                     result = Failure(f"No API key set for {ref.provider.name}")
                 else:
                     started = time.monotonic()
-                    clip: Clip | None = None
+                    seconds: float | None = None  # the recording's own length
                     joined: str | None = None
                     try:
                         # Before this dictation's own lease: the pieces hold theirs while
@@ -228,6 +236,9 @@ class Dictation:
                         if not mime.startswith("audio/"):
                             mime = sniff_mime(data) or mime
                         clip = Clip(data, mime)
+                        seconds = clip.seconds
+                        if self._settings.remove_silence() and mime == "audio/wav":
+                            clip = Clip(shorten_wav(data), mime)
                         result = (
                             Transcript(joined)
                             if joined is not None
@@ -238,7 +249,7 @@ class Dictation:
                     except Exception as exc:
                         result = Failure(f"{type(exc).__name__}: {exc}")
                     timing = Timing(
-                        clip.seconds if clip else None,
+                        seconds,
                         time.monotonic() - started,
                         joined is not None,
                     )

@@ -78,10 +78,17 @@ class Counting:
         return Transcript(f" piece {len(self.seconds)} ")
 
 
-def pieces(provider: Counting, cancel: threading.Event | None = None) -> Pieces:
+def pieces(
+    provider: Counting, cancel: threading.Event | None = None, *, remove_silence: bool = False
+) -> Pieces:
     speech_resources = SpeechResources([provider], lambda _: None)
     return Pieces(
-        ModelRef(provider, "good"), "k", RATE, speech_resources, cancel or threading.Event()
+        ModelRef(provider, "good"),
+        "k",
+        RATE,
+        speech_resources,
+        cancel or threading.Event(),
+        remove_silence=remove_silence,
     )
 
 

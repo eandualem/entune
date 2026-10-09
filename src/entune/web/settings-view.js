@@ -288,6 +288,9 @@ export function createSettings({ onLoaded, onShortcutsChanged, onError }) {
     const choice = picked === "openai" ? { decisionModel: "openai" } : {};
     if (await saveSetting({ keys: { openai: key }, ...choice }, el("openai-key-status"))) { picked = null; await loadSettings(); }
   });
+  el("remove-silence").addEventListener("change", async (e) => {
+    if (!(await saveSetting({ removeSilence: e.target.checked }, el("remove-silence-status")))) e.target.checked = !e.target.checked;
+  });
   for (const name of ["dictionary", "formatting", "cleanup"]) {
     jev[name].addEventListener("change", async () => {
       if (await saveSetting({ jev: { [name]: jev[name].checked } }, el("decision-status"))) await loadSettings();
@@ -388,6 +391,7 @@ export function createSettings({ onLoaded, onShortcutsChanged, onError }) {
   async function loadSettings() {
     settings = await api("/api/settings");
     fastInput.checked = Boolean(settings.fastMode);
+    el("remove-silence").checked = Boolean(settings.removeSilence);
     onShortcutsChanged(settings.shortcuts);
     el("shortcut-hold").textContent = settings.shortcuts.hold ?? "";
     el("shortcut-toggle").textContent = settings.shortcuts.toggle ?? "";

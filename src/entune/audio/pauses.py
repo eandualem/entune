@@ -22,11 +22,30 @@ QUIET_DB = -55.0
 PAUSE_MS = 400
 
 
+class Quiet:
+    """Whether each 20 ms frame, in order, is quiet against the recent levels."""
+
+    def __init__(self) -> None:
+        self._levels: deque[np.float32] = deque(maxlen=FLOOR_MS // FRAME_MS + 1)
+
+    def __call__(self, level: np.float32) -> bool:
+        self._levels.append(level)
+        floor, loud = np.percentile(np.array(self._levels), (FLOOR_PERCENTILE, LOUD_PERCENTILE))
+        # Also 10 dB under the loud end, or steady speech would raise the floor to itself.
+        return bool(level < max(min(floor, loud - 2 * MARGIN_DB) + MARGIN_DB, QUIET_DB))
+
+
+def levels(frames: np.ndarray) -> np.ndarray:
+    """Each frame's loudness in dBFS: int16 samples, one frame per row."""
+    samples = frames.astype(np.float32)
+    return 20 * np.log10(np.sqrt((samples**2).mean(1)) / 32768 + 1e-9)
+
+
 class Pauses:
     def __init__(self, sample_rate: int, piece_seconds: float) -> None:
         self._rate, self._piece_seconds = sample_rate, piece_seconds
         self._frame = sample_rate * FRAME_MS // 1000
-        self._levels: deque[np.float32] = deque(maxlen=FLOOR_MS // FRAME_MS + 1)
+        self._quiet = Quiet()
         self._pause_frames = PAUSE_MS // FRAME_MS
         self._partial = b""
         self._frames = 0  # frames read so far
@@ -40,15 +59,11 @@ class Pauses:
         self._partial = data[usable:]
         if not usable:
             return []
-        frames = np.frombuffer(data[:usable], np.int16).astype(np.float32).reshape(-1, self._frame)
-        levels = 20 * np.log10(np.sqrt((frames**2).mean(1)) / 32768 + 1e-9)
+        frames = np.frombuffer(data[:usable], np.int16).reshape(-1, self._frame)
         cuts = []
-        for level in levels:
-            self._levels.append(level)
-            floor, loud = np.percentile(np.array(self._levels), (FLOOR_PERCENTILE, LOUD_PERCENTILE))
+        for level in levels(frames):
             frame, self._frames = self._frames, self._frames + 1
-            # Also 10 dB under the loud end, or steady speech would raise the floor to itself.
-            if level < max(min(floor, loud - 2 * MARGIN_DB) + MARGIN_DB, QUIET_DB):
+            if self._quiet(level):
                 if self._quiet_since is None:
                     self._quiet_since = frame
                 continue
