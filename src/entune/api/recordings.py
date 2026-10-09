@@ -12,6 +12,7 @@ from entune.api.common import bad, recording_json
 from entune.app.entune import Entune
 from entune.app.models import NoDefaultModel, UnknownModel
 from entune.audio.formats import extension_for, safe_mime
+from entune.audio.waveform import levels
 
 
 def routes(app: Entune) -> list[Route]:
@@ -126,6 +127,32 @@ def routes(app: Entune) -> list[Route]:
             headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"},
         )
 
+    # The waveform History draws: computed once per recording and bar count, kept while
+    # Entune runs. Recordings never change; the time and file in the key keep a recording
+    # made after deleting all data, which may reuse an ID, from another's waveform.
+    waveforms: dict[tuple[int, str, str, int], list[float]] = {}
+
+    async def waveform(request: Request) -> Response:
+        try:
+            bars = int(request.query_params.get("bars", ""))
+            if not 1 <= bars <= 200:
+                raise ValueError
+        except ValueError:
+            return bad("bars must be 1-200")
+        recording = await run_in_threadpool(app.store.get_recording, int(request.path_params["id"]))
+        if recording is None:
+            return bad("No such recording", 404)
+        key = (recording.id, recording.created_at, recording.file, bars)
+        if key not in waveforms:
+            try:
+                found = await run_in_threadpool(levels, app.store.audio_path(recording), bars)
+            except (OSError, RuntimeError, ValueError) as exc:
+                return bad(f"Could not read the audio: {exc}", 422)
+            if len(waveforms) >= 1000:
+                waveforms.pop(next(iter(waveforms)))
+            waveforms[key] = found
+        return JSONResponse({"levels": waveforms[key]})
+
     return [
         Route(
             "/api/recordings/{id:int}/transcriptions/{attempt:int}/safe-copy",
@@ -141,4 +168,5 @@ def routes(app: Entune) -> list[Route]:
         Route("/api/recordings", create_recording, methods=["POST"]),
         Route("/api/recordings/{id:int}/transcriptions", retry, methods=["POST"]),
         Route("/api/recordings/{id:int}/audio", audio),
+        Route("/api/recordings/{id:int}/waveform", waveform),
     ]

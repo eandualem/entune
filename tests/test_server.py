@@ -222,6 +222,16 @@ def test_permissions_require_a_desktop_and_validate_before_dispatch(
     assert len(requested) == 2
 
 
+def test_waveform_is_one_level_per_bar_against_the_loudest(client: TestClient) -> None:
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    quiet, loud = b"\x00\x00" * 800, (b"\x00\x40" + b"\x00\xc0") * 400
+    rec = client.post("/api/recordings", files={"audio": ("a.wav", wav_bytes(quiet + loud))}).json()
+    levels = client.get(f"/api/recordings/{rec['id']}/waveform?bars=2").json()
+    assert levels == {"levels": [0.0, 1.0]}
+    assert client.get(f"/api/recordings/{rec['id']}/waveform?bars=0").status_code == 400
+    assert client.get("/api/recordings/999/waveform?bars=2").status_code == 404
+
+
 def test_audio_download_has_a_filename(client: TestClient) -> None:
     client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()

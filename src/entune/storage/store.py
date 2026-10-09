@@ -141,15 +141,7 @@ class Store:
                     )
 
     def set_setting(self, key: str, value: str | None) -> None:
-        with self._lock, self._db:
-            if value is None:
-                self._db.execute("DELETE FROM settings WHERE key = ?", (key,))
-            else:
-                self._db.execute(
-                    "INSERT INTO settings (key, value) VALUES (?, ?)"
-                    " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    (key, value),
-                )
+        self.set_settings({key: value})
 
     # Recordings
 

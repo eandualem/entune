@@ -3,7 +3,7 @@
 // the design of 2026-09-18; every colour and size lives in tokens.css.
 
 import { createHistory } from "./history.js";
-import { placeDetails, renderCard } from "./history-card.js";
+import { renderCard } from "./history-card.js";
 import { createDictionary } from "./dictionary-view.js";
 import { createSettings } from "./settings-view.js";
 import { openApp } from "./intro.js";
@@ -21,6 +21,7 @@ const stepsList = el("steps");
 
 let models = [];
 let defaultModel = null; // {id, label} from /api/models, or null
+let modelNames = ""; // the models' ids and labels the History cards were drawn with
 let settings = null; // the last /api/settings answer
 let shortcuts = { hold: null, toggle: null };
 let recordingsCount = 0;
@@ -148,7 +149,13 @@ for (const button of document.querySelectorAll("[data-help]")) {
   });
 }
 
-function openSettings(section) { show("settings"); selectSection(section); showSection(section); }
+// Opens a settings section, at one of its parts when named (an element ID).
+function openSettings(section, part = null) {
+  show("settings");
+  selectSection(section);
+  showSection(section);
+  if (part) el(part)?.scrollIntoView({ block: "start" });
+}
 
 // ---- Models: one default, picked in the toolbar; it applies at once ----
 async function loadModels() {
@@ -162,6 +169,9 @@ async function loadModels() {
     defaultModel = models.find((m) => m.default) ?? null;
   }
   fillModels(models, modelSelect, defaultModel?.id ?? null, "No models: add a key or download one");
+  // History names each attempt's model from this list, which can arrive after the cards.
+  const names = models.map((m) => `${m.id}=${m.label}`).join("|");
+  if (names !== modelNames) { modelNames = names; history.redraw().catch(() => {}); }
   if (!defaultModel && models.length > 0) modelSelect.prepend(new Option("Pick a model", "", true, true));
   fastInput.disabled = !defaultModel || fastSaving;
   fastWrap.classList.toggle("off", !defaultModel);
@@ -173,12 +183,6 @@ async function loadModels() {
   renderStart();
   // That was step one of Get started: go back for the next step.
   if (!hadDefault && defaultModel && !emptyState.hidden && views.models.hasAttribute("data-active")) show("history");
-  // A model change only changes the pickers, never the cards or their audio.
-  for (const select of historyList.querySelectorAll(".retry-model")) {
-    fillModels(models, select, defaultModel?.id ?? select.value, "No models");
-    const retry = select.closest(".card-row").querySelector(".retry");
-    if (!retry.dataset.busy) retry.disabled = select.disabled;
-  }
 }
 
 modelSelect.addEventListener("change", async () => {
@@ -282,7 +286,13 @@ function renderStart() {
       : system === "linux"
         ? step(allowed, "Allow keyboard access", ["So your shortcut works in any app and the text is typed there. Run this once in a terminal, then log out and back in:"], null)
         : step(allowed, "Allow the microphone", ["Windows lets desktop apps use the microphone unless it is turned off in Privacy settings."], null);
-    if (!allowed) li.querySelector(".what").append(permissionRows());
+    if (!allowed) {
+      li.querySelector(".what").append(permissionRows());
+      // The same permissions in Settings, where they stay after this list is gone.
+      const go = Object.assign(document.createElement("button"), { type: "button", className: "btn ghost sm", textContent: "Permissions" });
+      go.addEventListener("click", () => openSettings("general", "permissions"));
+      li.append(go);
+    }
     steps.push(li);
   }
   const dictate = [];
@@ -298,7 +308,7 @@ function renderStart() {
     dictate.push("Press Record above and speak.");
   }
   const needsShortcut = desktop && !haveShortcut;
-  steps.push(step(recordingsCount > 0, needsShortcut ? "Set a shortcut and dictate" : "Dictate", dictate, needsShortcut ? { label: "Set a shortcut", go: () => openSettings("general") } : null));
+  steps.push(step(recordingsCount > 0, needsShortcut ? "Set a shortcut and dictate" : "Dictate", dictate, needsShortcut ? { label: "Set a shortcut", go: () => openSettings("general", "shortcuts-title") } : null));
   stepsList.replaceChildren(...steps);
 }
 
@@ -344,9 +354,9 @@ function permissionRows() {
 // preserves unchanged cards, including playback and a retry already in progress.
 const HISTORY_POLL_MS = 3000;
 const history = createHistory({
-  list: historyList, newer: el("history-newer"), older: el("history-older"), renderCard: (recording) => renderCard(recording, models),
+  list: historyList, newer: el("history-newer"), older: el("history-older"),
+  renderCard: (recording) => renderCard(recording, models, { isLocal: isLocalModel, currentModels: () => models }),
   onChange(recordings) {
-    placeDetails(); // closes the details popover if its card was redrawn
     recordingsCount = recordings.length;
     emptyState.hidden = recordings.length > 0;
     if (recordings.length === 0) renderStart();
@@ -355,6 +365,8 @@ const history = createHistory({
   onError(err) { status.textContent = errorText(err); },
 });
 const loadHistory = (force = false) => history.refresh(force);
+// A speech model that runs on this computer, for the retry menu's notes.
+const isLocalModel = (id) => Boolean(settings?.providers.find((p) => p.id === id.split("/")[0])?.local);
 const historyVisible = () => document.visibilityState === "visible" && views.history.hasAttribute("data-active");
 
 setInterval(() => {
@@ -375,6 +387,8 @@ function revealNewest() {
   const newest = newestCard();
   for (const card of historyList.querySelectorAll(".card")) {
     card.toggleAttribute("data-reveal", on && card === newest && card.dataset.id !== remembered("entune.anonymous.copied"));
+    // A tooltip already up would outlast the blur: clear what was heard as a card hides.
+    if (on && !card.hasAttribute("data-reveal")) for (const word of card.querySelectorAll(".transcript .fixed")) word.title = "";
   }
 }
 // The newest dictation blurs once it has been copied, by any copy action, also one made
@@ -391,7 +405,7 @@ revealNewest();
 historyList.addEventListener("click", async (e) => {
   const recovery = e.target.closest(".safe-copy");
   if (recovery) {
-    const card = recovery.closest(".card"), message = card.querySelector(".card-row .status");
+    const card = recovery.closest(".card"), message = card.querySelector(".card-foot .status");
     recovery.disabled = true;
     try {
       // WebKit only allows a clipboard write that starts in the click, so hand it the pending text.
@@ -422,30 +436,28 @@ historyList.addEventListener("click", async (e) => {
     card._copied = setTimeout(() => card.classList.remove("copied"), 1400);
     return;
   }
-  const retry = e.target.closest(".retry");
-  if (retry) {
-    const card = retry.closest(".card");
-    const rowStatus = card.querySelector(".card-row .status");
-    const select = card.querySelector(".retry-model");
-    const label = select.selectedOptions[0]?.textContent ?? "";
-    retry.disabled = true;
-    retry.dataset.busy = "true";
+  // A model picked in a card's Try another model menu transcribes the recording again.
+  const pick = e.target.closest(".retry-pick");
+  if (pick) {
+    const card = historyList.querySelector(`.card[data-id="${CSS.escape(pick.dataset.card)}"]`);
+    if (!card || card.dataset.busy) return;
+    const rowStatus = card.querySelector(".card-foot .status");
+    card.dataset.busy = "true";
     // Visible while it runs: a spinner and the model's name, and a light along the card.
     card.classList.add("retrying");
     rowStatus.className = "status working";
-    rowStatus.replaceChildren(Object.assign(document.createElement("span"), { className: "spinner" }), `Transcribing with ${label}…`);
+    rowStatus.replaceChildren(Object.assign(document.createElement("span"), { className: "spinner" }), `Transcribing again with ${pick.dataset.label}…`);
     try {
       await api(`/api/recordings/${card.dataset.id}/transcriptions`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: select.value }),
+        body: JSON.stringify({ model: pick.dataset.model }),
       });
     } catch (err) {
       card.classList.remove("retrying");
       rowStatus.className = "status err";
       rowStatus.textContent = errorText(err);
-      retry.disabled = false;
-      delete retry.dataset.busy;
+      delete card.dataset.busy;
       return;
     }
     card.classList.remove("retrying");

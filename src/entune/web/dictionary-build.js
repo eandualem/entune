@@ -10,6 +10,7 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
   let acceptedId = null;
   let version = 0;
   let timer, reading;
+  let drawn = null; // the last answer drawn in full; a failed draw leaves it, so the next poll draws again
   const running = () => ["queued", "transcribing", "building", "cancelling", "cleaning"].includes(state.phase);
   function clearFeedback() {
     clearTimeout(el("build-status")._timer);
@@ -85,8 +86,14 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
       const started = version;
       try {
         const result = await api("/api/dictionary/build");
-        if (version === started) { state = result; await render(); }
+        if (version === started) {
+          // The same answer again needs no redraw, except while running: its clock moves.
+          const key = JSON.stringify(result);
+          state = result;
+          if (key !== drawn || running()) { await render(); drawn = key; }
+        }
       } catch (err) {
+        drawn = null; // the error replaces what was drawn: the next answer is drawn in full
         progress.textContent = `Could not read build progress: ${errorText(err)}`;
         progress.classList.add("err");
         progress.hidden = false;
@@ -100,6 +107,7 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
   }
   async function action(name, id = state.id) {
     version++;
+    drawn = null; // a local change: the next answer is drawn in full
     clearFeedback();
     try {
       const body = name === "accept" ? { selected: getSelected() } : name === "retry" ? getRunSettings() : null;
@@ -123,6 +131,7 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
     discard: (id) => action("discard", id),
     async start(source, selection = {}) {
       version++;
+      drawn = null; // a local change (busy now): the next answer is drawn in full
       clearFeedback();
       onBusy(true);
       try {

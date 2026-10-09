@@ -76,7 +76,6 @@ def wav_duration_seconds(data: bytes) -> float | None:
 # Matroska/WebM element ids. A browser's MediaRecorder writes the Segment and every
 # Cluster with an unknown size and no Duration, so the duration has to come from the
 # last block's timestamp.
-_EBML_HEADER = 0x1A45DFA3
 _SEGMENT = 0x18538067
 _INFO = 0x1549A966
 _TIMESTAMP_SCALE = 0x2AD7B1

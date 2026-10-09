@@ -15,12 +15,16 @@ from entune.app.operations import Operations
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
 from entune.dictionary.corrections import Correction, add_corrections, read_entries
-from entune.dictionary.entries import Dictionary
+from entune.dictionary.entries import EMPTY, Dictionary
 from entune.storage.store import Store
 
 
 class DictionaryChanged(Exception):
     """A dictionary write named a version that is no longer the one on disk."""
+
+
+def _revision(raw: bytes) -> str:
+    return str(hashlib.sha256(raw).hexdigest()[:16])
 
 
 class DictionaryFile:
@@ -37,15 +41,22 @@ class DictionaryFile:
         return dictionary_document.dumps(self.dictionary())
 
     def dictionary_snapshot(self) -> tuple[str, str]:
-        """The editor's document and revision from the same locked read."""
+        """The editor's document and revision from one read of the file, so an edit made
+        outside Entune between two reads can never pair old contents with a new revision."""
         with self.lock:
-            return self.dictionary_text(), self.dictionary_version()
+            raw = self._read()
+            document = EMPTY if raw is None else dictionary_document.parse(raw.decode("utf-8"))
+            return dictionary_document.dumps(document), _revision(raw or b"")
 
     def dictionary_version(self) -> str:
         """A hash of the file as it is on disk; a writer names the version it edited."""
-        path = self._store.data_dir / dictionary_document.FILENAME
-        raw = path.read_bytes() if path.exists() else b""
-        return str(hashlib.sha256(raw).hexdigest()[:16])
+        return _revision(self._read() or b"")
+
+    def _read(self) -> bytes | None:
+        try:
+            return (self._store.data_dir / dictionary_document.FILENAME).read_bytes()
+        except FileNotFoundError:
+            return None
 
     def set_dictionary(self, text: str, expected_version: str | None = None) -> Dictionary:
         """Validate and save the JSON form. Raises ValueError with the reason, and
