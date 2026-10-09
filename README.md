@@ -209,7 +209,10 @@ guarantee a better dictionary.
 - **Drop audio to transcribe it:** drop files anywhere on the window, such as a
   recording another app could not transcribe.
 - **Anonymous mode:** the eye switch blurs transcripts for screen recordings.
-- **For agents and tools:** a [local API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md)
+- **For agents and tools:** connect your coding agent over
+  [MCP](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md#your-agent-and-your-dictionary-mcp)
+  to review and improve your dictionary with you; a
+  [local API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md)
   accepts corrections you have confirmed, and optional
   [Langfuse tracing](https://github.com/eandualem/entune/blob/develop/docs/guide.md#tracing-dictionary-suggestions)
   shows every dictionary-suggestion request.

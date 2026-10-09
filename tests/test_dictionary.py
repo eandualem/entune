@@ -286,3 +286,50 @@ def test_index_folds_case_as_widely_as_the_matching_regex() -> None:
     active = combine(group("Sigma", sigma), group("Micro", micro), group("Street", "stra\u00dfe"))
     found = matching.matches(active, f"{final_sigma} {capital_mu} STRASSE")
     assert [(m.start, m.end) for m in found] == [(0, 1), (2, 3)]
+
+
+def test_agent_edits_follow_the_pages_rules() -> None:
+    from entune.dictionary import edits
+
+    doc = dictionary(learned={"m": (CLOUD,)})
+    # A new word, then an entry naming it next to the heard text's own word.
+    code = Word("w_code", "Claude Code", "Anthropic's coding agent")
+    doc = edits.set_word(doc, code)
+    doc = edits.set_entry(doc, "m", "cloud code", ["w_code"])
+    (entry,) = [h for h in doc.learned_for("m") if h.text == "cloud code"]
+    assert [(c.word, c.basis) for c in entry.candidates] == [("w_code", "user")]
+    # Replacing an entry's words keeps what a kept candidate had; Always needs a reason.
+    cloud = next(h for h in doc.learned_for("m") if h.text == "cloud")
+    doc = edits.set_entry(doc, "m", "CLOUD", ["a_claude", "b_cloud"])
+    (kept,) = [h for h in doc.learned_for("m") if h.text == "cloud"]
+    assert kept.candidates == cloud.candidates[:2]
+    with pytest.raises(ValueError, match="reason"):
+        edits.set_entry(doc, "m", "cloud", ["a_claude"], always="a_claude")
+    approved = edits.set_entry(doc, "m", "cloud", ["a_claude"], "a_claude", "Always Claude here")
+    assert (
+        edits.set_entry(approved, "m", "cloud", ["a_claude", "b_cloud"]).learned_for("m")[0].direct
+        == "a_claude"
+    )
+    assert (
+        edits.set_entry(approved, "m", "cloud", ["a_claude"], always="").learned_for("m")[0].direct
+        is None
+    )
+    # Renaming a word: an as-written candidate it no longer spells becomes the person's.
+    renamed = edits.set_word(approved, replace(CLOUD.words[0], spelling="Claudia"))
+    (claude,) = [h for h in renamed.learned_for("m") if h.text == "Claude"]
+    assert [c.basis for c in claude.candidates] == ["user"]
+    assert next(h for h in renamed.learned_for("m") if h.text == "cloud").direct is None
+    # Pinned entries keep their text for every model; removing never deletes a word.
+    with pytest.raises(ValueError, match="pinned"):
+        edits.set_entry(
+            edits.set_entry(doc, "pinned", "clod", ["a_claude"]), "m", "clod", ["a_claude"]
+        )
+    removed = edits.remove_entry(doc, "m", "cloud code")
+    assert "cloud code" not in [h.text for h in removed.learned_for("m")]
+    assert code in removed.words
+    with pytest.raises(ValueError, match="No heard entry"):
+        edits.remove_entry(removed, "m", "cloud code")
+    # Deleting a word removes it everywhere; an entry left with no word goes too.
+    deleted, touched = edits.delete_word(doc, "w_code")
+    assert touched == ["cloud code"] and code not in deleted.words
+    assert "cloud code" not in [h.text for h in deleted.learned_for("m")]

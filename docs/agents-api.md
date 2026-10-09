@@ -12,6 +12,42 @@ request must be addressed to `localhost` (or `127.0.0.1`), and a state
 change carrying a browser `Origin` other than Entune's own is refused, so a
 web page in a browser cannot use it.
 
+## Your agent and your dictionary (MCP)
+
+Connect a coding agent to your dictionary and ask it to review and improve it with
+you. Entune serves an MCP endpoint at `http://localhost:4187/mcp` while it runs. In
+Claude Code:
+
+```sh
+claude mcp add --transport http entune http://localhost:4187/mcp
+```
+
+Any agent that speaks MCP over HTTP takes the same endpoint; **Settings ›
+Integrations** shows it with the command. The agent gets a guide to how the
+dictionary works and these tools:
+
+| Tool | What it does |
+|---|---|
+| `dictionary_guide` | How the dictionary works, why it is structured so, and what makes an entry right. The server's instructions point the agent to it first. |
+| `read_dictionary` | The whole dictionary (format 3: words, pinned and learned heard entries) with its `version`, the speech models and the default one. |
+| `find_in_transcripts` | Excerpts of your transcripts where a heard text occurs, newest first, for one speech model (the default one when omitted). |
+| `set_word` | Add a word, or edit one by `word_id`; the edit reaches every entry naming it. |
+| `set_heard_entry` | Add a heard entry in `pinned` or a speech model, or replace the words it can stand for; optionally approve one as Always, with a reason. |
+| `remove_heard_entry` | Remove a heard entry; its words stay. |
+| `pin_heard_entry` | Move a learned heard entry to pinned. |
+| `delete_word` | Delete a word from the dictionary and from every entry naming it. |
+
+Every change names the `version` the agent read and returns the new one. A change on
+an older version is refused, so nothing you or Entune added meanwhile is overwritten,
+and changes are validated like edits on the Dictionary page. Editing waits while
+suggestions are open for review. How the agent works with you, for example asking
+before each change, is up to the agent; the guide asks it to change only what you
+agree to.
+
+What the agent reads, transcript excerpts included, goes to your agent's model
+provider. The endpoint has the same boundary as the rest of this API: this machine
+only, no authentication.
+
 ## Corrections
 
 If you dictate to AI agents, they can add to the dictionary once you have
@@ -57,6 +93,7 @@ silently if Entune is not running.
 | `POST /api/recordings` | multipart `audio` (+ optional `model`): store and transcribe |
 | `POST /api/recordings/{id}/transcriptions` | `{"model": "provider/model"}`: transcribe again |
 | `GET /api/recordings/{id}/audio` | the clip |
+| `POST /mcp` | the MCP endpoint above (streamable HTTP, stateless JSON replies) |
 | `GET /api/dictionary`, `PUT /api/dictionary` | the whole version-3 dictionary (words, pinned and learned heard entries) as JSON; the `ETag` names its version, and a `PUT` with `If-Match` set to a stale one gets 409 instead of overwriting what was added meanwhile |
 | `POST /api/dictionary/pin` | `{"model", "text"}` plus `If-Match`: move that model's learned heard entry to pinned, adding its words to a pinned entry with the same text; `{"model"}` explicitly pins all of the model's learned entries |
 | `POST /api/recordings/{id}/transcriptions/{attempt}/safe-copy` | derive text from original using only approved direct mappings for the original speech model; returns text, replacements and unresolved count, without saving or pasting |

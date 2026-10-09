@@ -46,9 +46,9 @@ entry never removes a word. Deleting a word removes it from every entry that nam
 an entry left with no candidate goes too.
 
 A word is flagged for review (`needs_review`, shown as "To check") when it has no
-description yet, because the decision model cannot choose it, or when its description
-was written by an agent or suggestions and not confirmed: applying it in the review or
-saving the entry in the editor confirms it.
+description yet, because the decision model cannot choose it, or when suggestions wrote
+its description and it is not confirmed: applying it in the review, saving the entry in
+the editor, or an edit through your agent confirms it.
 
 Definitions describe general meaning; optional personal usage is supporting context,
 not a condition. The hypothetical Jeff above supplies no personal fact about the user.
@@ -354,5 +354,8 @@ propose deliberate removal/refinement; only acceptance changes learned data.
 The existing agents' confirmed-corrections request/response shape remains supported at
 its boundary; internally it names a word and adds pinned heard entries without granting
 direct replacement or priority. Whole-document editing uses version-3 JSON with ETag/If-Match.
+An agent connected over MCP edits one word or heard entry at a time, each change naming
+the version it read and validated like the page's
+([agents' API](agents-api.md#your-agent-and-your-dictionary-mcp)).
 The file is read on each dictation and writes are atomic under the service lock. A broken
 dictionary is a correction failure, not a lost speech transcription.

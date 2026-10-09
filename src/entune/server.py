@@ -1,9 +1,13 @@
-"""The local HTTP server: the page, its static files, and the API in `entune.api`."""
+"""The local HTTP server: the page, its static files, the API in `entune.api`, and the MCP
+endpoint for agents at /mcp."""
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
@@ -107,14 +111,55 @@ class NoCache(BaseHTTPMiddleware):
         return response
 
 
+class Agents:
+    """The MCP endpoint for agents (entune.api.mcp). Its SDK loads when an agent first
+    connects, not at startup; the server it builds runs inside the app's lifespan."""
+
+    def __init__(self, app: Entune) -> None:
+        self._app = app
+        self._handler: ASGIApp | None = None
+        self._wanted: anyio.Event | None = None
+        self._ready: anyio.Event | None = None
+
+    @asynccontextmanager
+    async def lifespan(self, _: Starlette) -> AsyncIterator[None]:
+        self._wanted, self._ready = anyio.Event(), anyio.Event()
+        async with anyio.create_task_group() as group:
+            group.start_soon(self._serve)
+            yield
+            group.cancel_scope.cancel()
+
+    async def _serve(self) -> None:
+        assert self._wanted is not None and self._ready is not None
+        await self._wanted.wait()
+        from entune.api import mcp
+
+        server, self._handler = mcp.endpoint(self._app)
+        async with server.session_manager.run():
+            self._ready.set()
+            await anyio.sleep_forever()
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if self._wanted is None or self._ready is None:
+            await bad("The agents endpoint runs with the app", 503)(scope, receive, send)
+            return
+        self._wanted.set()
+        await self._ready.wait()
+        assert self._handler is not None
+        await self._handler(scope, receive, send)
+
+
 def create_app(app: Entune) -> Starlette:
     async def index(_: Request) -> Response:
         return FileResponse(WEB_DIR / "index.html")
 
+    agents = Agents(app)
     return Starlette(
         exception_handlers={Busy: lambda request, exc: bad(str(exc), 409)},
         middleware=[Middleware(NoCache), Middleware(LocalOnly)],
+        lifespan=agents.lifespan,
         routes=[
+            Route("/mcp", agents, methods=["GET", "POST", "DELETE"]),
             Route("/", index),
             *settings.routes(app),
             *data.routes(app),

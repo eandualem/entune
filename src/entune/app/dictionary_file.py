@@ -72,6 +72,21 @@ class DictionaryFile:
         self._changed()
         return parsed
 
+    def change(self, update: Callable[[Dictionary], Dictionary], version: str) -> str:
+        """Apply one edit to the dictionary as it is on disk, if it is still `version`, and
+        return the new version. Raises DictionaryChanged on a stale version, ValueError
+        with the reason on an edit the dictionary refuses."""
+        with self._operations.dictionary_edit(), self.lock:
+            if version.strip('"') != self.dictionary_version():
+                raise DictionaryChanged(
+                    "The dictionary changed since that version was read; read it again and"
+                    " redo the change on the current one."
+                )
+            dictionary_document.save(self._store.data_dir, update(self.dictionary()))
+            changed = self.dictionary_version()
+        self._changed()
+        return changed
+
     def pin(self, model: str, text: str | None, version: str) -> None:
         """Pin one learned heard entry of `model`, or all of them when `text` is None."""
         with self._operations.dictionary_edit(), self.lock:
