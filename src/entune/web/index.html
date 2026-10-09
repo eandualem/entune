@@ -78,7 +78,7 @@
             <div class="section" id="models-cloud" data-active>
               <h1 class="page-title">Cloud providers</h1>
               <p class="caption section-intro">Add a key only for the services you use. Your audio is sent to the service you pick.</p>
-              <div class="sort-bar"><span>Sort by</span><div class="segmented small" role="group" aria-label="Sort by"><button type="button" data-sort="acc" aria-selected="true">Accuracy</button><button type="button" data-sort="spd" aria-selected="false">Speed</button><button type="button" data-sort="extra" aria-selected="false">Price</button></div></div>
+              <div class="sort-bar"><span>Sort by</span><div class="segmented small" role="tablist" aria-label="Sort by"><button type="button" role="tab" data-sort="acc" aria-selected="true">Accuracy</button><button type="button" role="tab" data-sort="spd" aria-selected="false">Speed</button><button type="button" role="tab" data-sort="extra" aria-selected="false">Price</button></div></div>
               <div class="mtable cloud" id="cloud-table"></div>
               <p class="source-note" id="cloud-source"></p>
             </div>
@@ -86,7 +86,7 @@
             <div class="section" id="models-local">
               <h1 class="page-title">Local models</h1>
               <p class="caption section-intro">Speech recognition that runs on this Mac: your audio stays here.</p>
-              <div class="sort-bar"><span>Sort by</span><div class="segmented small" role="group" aria-label="Sort by"><button type="button" data-sort="acc" aria-selected="true">Accuracy</button><button type="button" data-sort="spd" aria-selected="false">Speed</button><button type="button" data-sort="extra" aria-selected="false">Size</button></div></div>
+              <div class="sort-bar"><span>Sort by</span><div class="segmented small" role="tablist" aria-label="Sort by"><button type="button" role="tab" data-sort="acc" aria-selected="true">Accuracy</button><button type="button" role="tab" data-sort="spd" aria-selected="false">Speed</button><button type="button" role="tab" data-sort="extra" aria-selected="false">Size</button></div></div>
               <div class="mtable local" id="local-table"></div>
               <p class="source-note">Accuracy is the share of words right on the FLEURS English test; speed is measured on a reference laptop (Handy models benchmark). Your own numbers are in Performance.</p>
             </div>
@@ -97,7 +97,7 @@
                   <h1 class="page-title">Performance</h1>
                   <p class="caption section-intro" id="perf-sub"></p>
                 </div>
-                <div class="segmented small" role="group" aria-label="Show"><button type="button" data-mode="you" aria-selected="true">For you</button><button type="button" data-mode="reported" aria-selected="false">Reported</button></div>
+                <div class="segmented small" role="tablist" aria-label="Show"><button type="button" role="tab" data-mode="you" aria-selected="true">For you</button><button type="button" role="tab" data-mode="reported" aria-selected="false">Reported</button></div>
               </div>
               <div class="perf-layout">
                 <div class="chart" id="perf-chart">

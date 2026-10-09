@@ -255,7 +255,8 @@ export function createModels({ getDefault, reloadSettings, onModelsChanged, onEr
       const lowest = Math.min(99.5, ...plotted.map((u) => Math.floor(u.kept * 2) / 2));
       const x = (wait) => Math.log(slowest / wait) / Math.log(slowest / 0.08);
       const y = (kept) => (kept - lowest) / ((100 - lowest) * 1.1);
-      const pick = selected ?? (used.find((u) => u.id === inUse) ?? used[0])?.id ?? inUse ?? all[0]?.id;
+      const still = plotted.some((u) => u.id === selected) ? selected : null; // gone after new data
+      const pick = still ?? (used.find((u) => u.id === inUse) ?? used[0])?.id ?? inUse ?? all[0]?.id;
       const both = (u) => used.some((v) => v.base === u.base && v.fast !== u.fast && plotted.includes(v));
       return {
         pick, used, plotted,
@@ -271,7 +272,7 @@ export function createModels({ getDefault, reloadSettings, onModelsChanged, onEr
     const x = (speed) => Math.log(speed / 3) / Math.log(220 / 3);
     const y = (wer) => (100 - wer - 92) / 6.4;
     return {
-      pick: selected ?? inUse ?? all[0]?.id, used, plotted: [],
+      pick: (all.some((r) => r.id === selected) ? selected : null) ?? inUse ?? all[0]?.id, used, plotted: [],
       dots: all.filter((r) => r.wer !== undefined && r.speed !== undefined).map((r) => ({
         id: r.id, name: r.dot ?? r.name, x: x(r.speed), y: y(r.wer), cloud: !r.local, inUse: r.id === inUse, place: r.place ?? "",
       })),
