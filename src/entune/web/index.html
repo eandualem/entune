@@ -181,11 +181,11 @@
                 <button type="button" role="tab" id="filter-all" aria-selected="true" title="Pinned entries and the ones learned for this speech model">All<span class="count" id="count-all"></span></button>
                 <button type="button" role="tab" id="filter-pinned" aria-selected="false" title="Used with every speech model">Pinned<span class="count" id="count-pinned"></span></button>
                 <button type="button" role="tab" id="filter-learned" aria-selected="false">Learned<span class="count" id="count-learned"></span></button>
-                <button type="button" role="tab" id="filter-attention" aria-selected="false" title="Entries to check: a meaning without a description, which Entune can't choose yet, or an imported entry to confirm" hidden>To check<span class="count" id="count-attention"></span><span class="attention-dot" id="attention-dot" hidden></span></button>
+                <button type="button" role="tab" id="filter-attention" aria-selected="false" title="Entries to check: a word without a description, which Entune can't choose yet, or an imported word to confirm" hidden>To check<span class="count" id="count-attention"></span><span class="attention-dot" id="attention-dot" hidden></span></button>
               </div>
               <label class="dict-search">
                 <svg class="i12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="5" cy="5" r="3.6"/><path d="M8 8l3 3"/></svg>
-                <input class="input" type="search" id="dict-search" placeholder="Search words, heard forms, meanings" aria-label="Search spellings, heard forms and descriptions" />
+                <input class="input" type="search" id="dict-search" placeholder="Search words, heard texts, meanings" aria-label="Search spellings, heard texts and descriptions" />
               </label>
               <span class="spacer"></span>
               <div class="segmented dict-views" role="tablist" aria-label="View" title="Two views of the same dictionary.json">
@@ -204,7 +204,7 @@
               </div>
               <div class="add-hint">
                 <span id="add-hint" role="status"></span>
-                <button type="button" class="btn link" id="add-advanced">Several meanings, keep as written, always replace…</button>
+                <button type="button" class="btn link" id="add-advanced">Several words, keep as written, always replace…</button>
                 <span class="add-buttons">
                   <button type="button" class="btn sm scope-toggle" id="add-scope" aria-pressed="false"></button>
                   <button type="button" class="btn ghost sm" id="add-cancel">Cancel</button>
@@ -239,12 +239,12 @@
                 <h3 id="guide-about">What it's for</h3>
                 <p>Every speech model has words it keeps getting wrong: names, products, technical terms. Your dictionary remembers those mistakes and fixes them in each new dictation, before the text reaches you.</p>
                 <h3 id="guide-entry">How an entry works</h3>
-                <p>An entry pairs what the speech model <em>writes</em> with what you might have <em>meant</em>. Say it often writes “cloud” when you said “Claude”. But sometimes you really mean a cloud. So the entry keeps both meanings:</p>
+                <p>An entry pairs what the speech model <em>writes</em> with the words you might have <em>meant</em>. Say it often writes “cloud” when you said “Claude”. But sometimes you really mean a cloud. So the entry keeps both words:</p>
                 <div class="guide-example"><code>cloud</code> → <b>Claude</b>, an AI assistant you ask to write or code<br><code>cloud</code> → <b>cloud</b>, internet storage and servers</div>
-                <p>In “Ask cloud to draft the reply”, Entune writes <b>Claude</b>. In “The backups are in the cloud”, it leaves <b>cloud</b> alone. It chooses from the surrounding words, which is why each meaning has a short description: write what the thing is and what it goes with.</p>
-                <p>One entry can list several spellings the model writes (“cloud”, “clawed”) and several meanings. Each heard spelling is linked to the meanings it can stand for.</p>
+                <p>In “Ask cloud to draft the reply”, Entune writes <b>Claude</b>. In “The backups are in the cloud”, it leaves <b>cloud</b> alone. It chooses from the surrounding words, which is why each word has a short description: write what the thing is and what it goes with.</p>
+                <p>Each word is defined once and shared by every entry and every speech model that uses it: “clawed” → Claude and “cloud” → Claude name the same Claude. An entry lists only the words its heard text was actually used for, and the heard text itself when that is a real word.</p>
                 <h3 id="guide-suggestions">Getting suggestions</h3>
-                <p>Entune can build the dictionary for you. A suggestion model, the language model you choose with its key in Settings, reads what your speech model wrote and suggests entries for the words it gets wrong. For the entries those transcripts show, it also suggests clearer meanings, more heard spellings, and removals.</p>
+                <p>Entune can build the dictionary for you. A suggestion model, the language model you choose with its key in Settings, reads what your speech model wrote and suggests entries for the words it gets wrong. For the entries those transcripts show, it also suggests more words a heard text was used for, clearer meanings, and removals. It reuses the words already in your dictionary instead of defining them again.</p>
                 <p><b>Get suggestions</b> is the simple path: it reads up to 300 of your speech model's newest transcripts not yet used by suggestions you applied; a run you discard or stop uses none.</p>
                 <h3 id="guide-reuse">Reusing earlier transcripts</h3>
                 <p id="guide-reuse-state"></p>
@@ -260,12 +260,12 @@
                 <p>The estimate uses what Entune has measured: your speech model's transcription times, and the time per part of earlier runs with the same suggestion model and effort. A combination not used before says so.</p>
                 <p>Sometimes a reply starts and then sends only blank space. Entune stops it within a minute or two and tries that part again, three attempts in all. A ChatGPT plan also ends any single reply at about 15 minutes. If a part fails all its attempts, or runs past a time or length limit, Entune stops and keeps the finished parts. Choose a lower reasoning effort, or less audio, and press <b>Continue</b>: it picks up where it stopped. Transcripts made so far are kept for Continue while Entune stays open.</p>
                 <h3 id="guide-review">Reviewing suggestions</h3>
-                <p>Suggestions open in a panel beside your dictionary, grouped into new entries, changes and removals. Edit any of them, leave out the ones you don't want with ×, and apply the rest in one step. Nothing is saved until you apply. Dictation keeps working the whole time; only editing the dictionary waits until you apply or discard.</p>
+                <p>Suggestions open in a panel beside your dictionary, grouped into new entries, changes, removals and clearer meanings. Edit any of them, leave out the ones you don't want with ×, and apply the rest in one step. Nothing is saved until you apply. Dictation keeps working the whole time; only editing the dictionary waits until you apply or discard.</p>
                 <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model chosen when the run starts.</p>
                 <h3 id="guide-pinned">Pinned and learned entries</h3>
-                <p><b>Learned</b> entries are used only with the speech model they were learned for. <b>Pin</b> an entry to use it with every speech model; pinned entries are yours and suggestions can't remove them. Pinning doesn't make an entry win: Entune still reads the sentence.</p>
+                <p><b>Learned</b> entries are used only with the speech model they were learned for. <b>Pin</b> an entry to use it with every speech model; pinned entries are yours and suggestions leave them as they are. A pinned entry is used instead of a learned one with the same heard text. Words aren't pinned: each is shared by every entry that uses it. Pinning doesn't make an entry win: Entune still reads the sentence.</p>
                 <h3 id="guide-add">Adding an entry yourself</h3>
-                <p>Choose <b>Add word</b> and fill in one line: how it's written, what the speech model hears (several, separated by commas) and what it is. For several meanings, a spelling kept as written, or always replacing, open the full editor from the link under that line. <b>Edit</b> on an entry opens the same editor.</p>
+                <p>Choose <b>Add word</b> and fill in one line: how it's written, what the speech model hears (several, separated by commas) and what it is. Each heard text becomes its own entry. For several words, a spelling kept as written, or always replacing, open the full editor from the link under that line. <b>Edit</b> on an entry opens the same editor; <b>Delete word</b> removes a word from every entry that uses it.</p>
               </article>
             </form>
           </dialog>
@@ -273,7 +273,7 @@
           <dialog class="drawer" id="entry-drawer" aria-labelledby="entry-title">
             <div class="drawer-inner">
               <header class="drawer-head">
-                <div><h2 id="entry-title">Edit entry</h2><p class="caption">Several meanings, keep as written, links to other entries, always replace.</p></div>
+                <div><h2 id="entry-title">Edit entry</h2><p class="caption">One heard text and the words it can stand for. A word is shared by every entry that uses it.</p></div>
                 <button type="button" class="btn-icon" id="entry-close" aria-label="Close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
               </header>
               <div class="drawer-body" id="entry-body"></div>
