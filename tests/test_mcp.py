@@ -60,6 +60,12 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
         assert read["default_speech_model"] == "stub/good"
         assert "stub/good" in read["speech_models"]
         assert read["dictionary"]["version"] == 3 and len(read["dictionary"]["words"]) == 3
+        # What the default speech model applies, each entry with its section.
+        assert read["speech_model"] == "stub/good" and read["unused_words"] == []
+        assert [(e["text"], e["scope"]) for e in read["entries_in_use"]] == [
+            ("cloud", "stub/good"),
+            ("Claude", "stub/good"),
+        ]
         found = call(client, "find_in_transcripts", text="cloud code")
         assert found == [
             {
@@ -100,6 +106,13 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
         )
         deleted = call(client, "delete_word", version=pinned["version"], word_id=added["word_id"])
         assert deleted["removed_from"] == ["cloud code"]
+        # Removing entries keeps their words; they show as unused for the person to decide.
+        version = deleted["version"]
+        for text in ("Claude", "cloud"):
+            version = call(
+                client, "remove_heard_entry", version=version, scope="stub/good", text=text
+            )["version"]
+        assert call(client, "read_dictionary")["unused_words"] == ["a_claude", "b_cloud", "c_cloud"]
         final = client.get("/api/dictionary").json()
         assert final["pinned"] == [] and added["word_id"] not in {w["id"] for w in final["words"]}
 
@@ -135,4 +148,6 @@ def test_edits_keep_the_file_readable_and_reach_a_removed_speech_models_entries(
             h["text"] for h in client.get("/api/dictionary").json()["learned"]["gone/model"]
         ] == ["cloud"]
         assert call(client, "find_in_transcripts", text="cloud", speech_model="gone/model") == []
+        view = call(client, "read_dictionary", speech_model="gone/model")
+        assert [e["text"] for e in view["entries_in_use"]] == ["cloud"]
         assert removed["version"] == call(client, "read_dictionary")["version"]

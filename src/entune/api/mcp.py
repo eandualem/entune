@@ -24,7 +24,7 @@ from entune.app.dictionary_file import DictionaryChanged
 from entune.app.entune import Entune
 from entune.dictionary import changes, edits
 from entune.dictionary import document as dictionary_document
-from entune.dictionary.entries import Dictionary
+from entune.dictionary.entries import Dictionary, key
 from entune.learning.replies import occurrences
 
 INSTRUCTIONS = (
@@ -65,16 +65,40 @@ def server(app: Entune) -> MCPServer:
         return prompts.text("dictionary-guide.md")
 
     @mcp.tool(annotations=READ)
-    def read_dictionary() -> dict[str, Any]:
-        """The whole dictionary (words, pinned and learned heard entries) with its version,
-        the speech models it can be used with, and the default one."""
+    def read_dictionary(speech_model: str | None = None) -> dict[str, Any]:
+        """The dictionary with its version. Each speech model has its own dictionary: the
+        pinned entries, shared by every model, and its own learned entries, because every
+        model mishears differently. `entries_in_use` is what `speech_model` (the default
+        one when omitted) applies to a dictation; `dictionary` holds every section, with
+        the learned entries of each model under its ID. `unused_words` are words no entry
+        names any more."""
         text, version = app.dictionary.dictionary_snapshot()
         document = json.loads(text)
+        dictionary = dictionary_document.parse(text)
+        model = speech_model or app.models.default_model()
+        pinned = {key(h.text) for h in dictionary.pinned}
+        in_use = dictionary.effective(model) if model else dictionary.pinned
+        named = {
+            c.word
+            for entries in (dictionary.pinned, *dictionary.learned.values())
+            for h in entries
+            for c in h.candidates
+        }
         models = [m.id for m in app.models.available_models()]
         return {
             "version": version,
             "default_speech_model": app.models.default_model(),
             "speech_models": list(dict.fromkeys((*models, *document["learned"]))),
+            "speech_model": model,
+            "entries_in_use": [
+                {
+                    "text": h.text,
+                    "scope": edits.PINNED if key(h.text) in pinned else model,
+                    "words": [c.word for c in h.candidates],
+                }
+                for h in in_use
+            ],
+            "unused_words": [w.id for w in dictionary.words if w.id not in named],
             "dictionary": document,
         }
 
@@ -151,7 +175,8 @@ def server(app: Entune) -> MCPServer:
         always_reason: str = "",
     ) -> dict[str, str]:
         """Add the heard entry `text`, or replace the words it can stand for. `scope` is
-        "pinned" (every speech model) or a speech model's ID. `words` are word IDs, in
+        "pinned" (every speech model) or the ID of the one speech model whose mistake it
+        is: learned entries belong to that model only. `words` are word IDs, in
         order; a word it already had keeps its evidence. `always` approves one of them to
         be written without reading the sentence (rare; needs `always_reason`); "" clears an
         approval, and leaving it out keeps one. Returns the new version."""

@@ -29,13 +29,19 @@ dictionary works and these tools:
 | Tool | What it does |
 |---|---|
 | `dictionary_guide` | How the dictionary works, why it is structured so, and what makes an entry right. The server's instructions point the agent to it first. |
-| `read_dictionary` | The whole dictionary (format 3: words, pinned and learned heard entries) with its `version`, the speech models and the default one. |
+| `read_dictionary` | The dictionary with its `version`: every section (format 3: words, pinned entries, each speech model's learned entries), the speech models and the default one, the entries one speech model applies (`entries_in_use`, the default model's unless `speech_model` names another), and the words no entry uses any more. |
 | `find_in_transcripts` | Excerpts of your transcripts where a heard text occurs, newest first, for one speech model (the default one when omitted). |
 | `set_word` | Add a word, or edit one by `word_id`; the edit reaches every entry naming it. |
 | `set_heard_entry` | Add a heard entry in `pinned` or a speech model, or replace the words it can stand for; optionally approve one as Always, with a reason. |
 | `remove_heard_entry` | Remove a heard entry; its words stay. |
 | `pin_heard_entry` | Move a learned heard entry to pinned. |
 | `delete_word` | Delete a word from the dictionary and from every entry naming it. |
+
+Each speech model has its own dictionary: the pinned entries, shared by every model,
+and its own learned entries, because every model mishears differently. Transcript
+lookups and learned entries are per speech model; the guide tells the agent to work on
+the model the person dictates with unless they name another, and to pin an entry only
+when the person wants it for every model.
 
 Every change names the `version` the agent read and returns the new one. A change on
 an older version is refused, so nothing you or Entune added meanwhile is overwritten,

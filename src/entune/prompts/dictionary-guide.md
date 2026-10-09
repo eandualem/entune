@@ -20,6 +20,21 @@ what they agree to.
 So the description is what makes a choice possible, and an entry only ever offers the
 words it lists. Nothing is generated or rewritten.
 
+## One dictionary per speech model
+
+Every speech model mishears differently: Parakeet's mistakes are not AssemblyAI's. So each
+speech model has its own dictionary: the **pinned** entries, shared by every model, and
+its own **learned** entries. The person dictates with one model at a time, the default
+one. Before changing anything, know which speech model you are working on:
+
+- `read_dictionary` shows the default speech model, every model with learned entries,
+  and `entries_in_use`: exactly what one model applies (pass `speech_model` for another).
+- `find_in_transcripts` reads one model's transcripts, the default one's unless you name
+  another. A mistake seen there belongs to that model's learned entries.
+- A learned entry is added or changed for one model (`scope` is its ID). Pin an entry
+  only when the person wants it for every speech model; the same mistake by another model
+  needs no pin, just its own learned entry.
+
 ## The structure, and why
 
 A **word** is something the person means: an ID, its exact spelling, its casing, a short
@@ -76,8 +91,9 @@ words are capitalised only at the start of a sentence.
 
 ## Working with the tools
 
-1. `read_dictionary` returns everything with its `version`, the speech models and the
-   default one (the one the person dictates with).
+1. `read_dictionary` returns everything with its `version`, the speech models, the
+   default one (the one the person dictates with), the entries that model applies and
+   the words no entry uses any more (ask the person before deleting them).
 2. `find_in_transcripts` shows short excerpts where a heard text occurs in the person's
    transcripts, newest first, so you can judge an entry by real usage.
 3. Each change tool takes the `version` you read and returns the new one. If the person or
