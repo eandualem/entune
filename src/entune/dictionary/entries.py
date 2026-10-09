@@ -1,12 +1,13 @@
-"""Confusion groups: stable meanings, explicit associations, and speech-model scope.
+"""Words and heard entries.
 
-Group membership alone does not make a form eligible for every meaning; only the
-derived matcher combines associations for an occurrence.
+A word is one thing the person means, defined once and shared by every speech model. A
+heard entry is what a speech model writes and the words it was actually used for; it is
+pinned (every speech model) or learned for one model, keyed by its text within that scope.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 _SPECIAL = str.maketrans({"\u0130": "i", "\u0131": "i", "\u017f": "s", "\u212a": "k"})
@@ -18,12 +19,13 @@ def key(text: str) -> str:
 
 
 @dataclass(frozen=True)
-class Meaning:
+class Word:
     id: str
     spelling: str
     meaning: str
     personal_context: str | None = None
     casing: Literal["fixed", "ordinary"] = "fixed"
+    needs_review: bool = False
 
 
 @dataclass(frozen=True)
@@ -34,26 +36,18 @@ class Evidence:
 
 
 @dataclass(frozen=True)
-class Association:
-    meaning_id: str
+class Candidate:
+    word: str
     evidence: tuple[Evidence, ...] = ()
     basis: Literal["text", "literal", "user"] = "user"
 
 
 @dataclass(frozen=True)
-class Form:
+class Heard:
     text: str
-    associations: tuple[Association, ...]
+    candidates: tuple[Candidate, ...]
     direct: str | None = None
     direct_reason: str = ""
-
-
-@dataclass(frozen=True)
-class Group:
-    id: str
-    meanings: tuple[Meaning, ...]
-    recognized_forms: tuple[Form, ...]
-    needs_review: bool = False
 
     def as_json(self) -> dict[str, Any]:
         # JSON arrays, including at the service boundary (not Python tuples).
@@ -65,99 +59,39 @@ class Group:
         )
 
 
-Groups = tuple[Group, ...]
+Entries = tuple[Heard, ...]
+
+
+@dataclass(frozen=True)
+class Active:
+    """What one speech model uses: its heard entries and the words they name."""
+
+    words: tuple[Word, ...] = ()
+    entries: Entries = ()
 
 
 @dataclass(frozen=True)
 class Dictionary:
-    pinned: Groups = ()
-    learned: dict[str, Groups] = field(default_factory=dict)
+    words: tuple[Word, ...] = ()
+    pinned: Entries = ()
+    learned: dict[str, Entries] = field(default_factory=dict)
 
     def __bool__(self) -> bool:
-        return bool(self.pinned or any(self.learned.values()))
+        return bool(self.words or self.pinned or any(self.learned.values()))
 
-    def learned_for(self, model: str) -> Groups:
+    def learned_for(self, model: str) -> Entries:
         return self.learned.get(model, ())
 
-    def effective(self, model: str) -> Groups:
-        ids = {m.id for g in self.pinned for m in g.meanings}
-        return merge(
-            self.pinned,
-            *(_select(gs, ids, included=True) for gs in self.learned.values()),
-            self.learned_for(model),
-        )
+    def effective(self, model: str) -> Entries:
+        """Pinned entries, then the model's learned ones; a pinned entry supersedes a
+        learned one with the same text."""
+        pinned = {key(h.text) for h in self.pinned}
+        return (*self.pinned, *(h for h in self.learned_for(model) if key(h.text) not in pinned))
+
+    def active(self, model: str) -> Active:
+        entries = self.effective(model)
+        named = {c.word for h in entries for c in h.candidates}
+        return Active(tuple(w for w in self.words if w.id in named), entries)
 
 
 EMPTY = Dictionary()
-
-
-def merge(*sections: Groups) -> Groups:
-    """Union by stable IDs, never by output spelling or first ownership of a form."""
-    groups: dict[str, Group] = {}
-    for section in sections:
-        for group in section:
-            previous = groups.get(group.id)
-            if previous is None:
-                groups[group.id] = group
-                continue
-            meanings = {m.id: m for m in previous.meanings}
-            for meaning in group.meanings:
-                if meaning.id in meanings and meanings[meaning.id] != meaning:
-                    raise ValueError(f"Meaning {meaning.id} has conflicting definitions")
-                meanings[meaning.id] = meaning
-            groups[group.id] = Group(
-                group.id,
-                tuple(meanings.values()),
-                _forms((*previous.recognized_forms, *group.recognized_forms)),
-                previous.needs_review or group.needs_review,
-            )
-    return tuple(groups.values())
-
-
-def _forms(forms: tuple[Form, ...]) -> tuple[Form, ...]:
-    result: dict[str, Form] = {}
-    for form in forms:
-        previous = result.get(key(form.text))
-        if previous is None:
-            result[key(form.text)] = form
-            continue
-        links = {a.meaning_id: a for a in previous.associations}
-        for link in form.associations:
-            old = links.get(link.meaning_id)
-            kept = old or link
-            # A literal link never carries evidence, even merged with a text link.
-            evidence = (*(old.evidence if old else ()), *link.evidence)
-            links[link.meaning_id] = replace(
-                kept, evidence=() if kept.basis == "literal" else tuple(dict.fromkeys(evidence))
-            )
-        direct = {d for d in (previous.direct, form.direct) if d}
-        chosen = next(iter(direct)) if len(direct) == 1 else None
-        result[key(form.text)] = Form(
-            previous.text,
-            tuple(links.values()),
-            chosen,
-            (previous.direct_reason or form.direct_reason) if chosen else "",
-        )
-    return tuple(result.values())
-
-
-def _select(groups: Groups, ids: set[str], *, included: bool) -> Groups:
-    result = []
-    for group in groups:
-        forms = []
-        for form in group.recognized_forms:
-            links = tuple(a for a in form.associations if (a.meaning_id in ids) == included)
-            if links:
-                direct = form.direct if form.direct in {a.meaning_id for a in links} else None
-                forms.append(
-                    replace(
-                        form,
-                        associations=links,
-                        direct=direct,
-                        direct_reason=form.direct_reason if direct else "",
-                    )
-                )
-        meanings = tuple(m for m in group.meanings if (m.id in ids) == included)
-        if meanings or forms:
-            result.append(replace(group, meanings=meanings, recognized_forms=tuple(forms)))
-    return tuple(result)

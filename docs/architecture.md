@@ -38,8 +38,8 @@ src/entune/
                   laya.py runs Laya's server from its external engine; jev.py asks the
                   meaning, filler and paragraph questions; formatting.py, cleanup.py,
                   text_edits.py
-  dictionary/     entries.py: meanings, forms, groups; document.py: dictionary.json;
-                  changes.py: pinning, proposals and review; matching.py: eligible meanings
+  dictionary/     entries.py: words and heard entries; document.py: dictionary.json;
+                  changes.py: pinning, proposals and review; matching.py: eligible words
                   and exact edits; corrections.py: confirmed corrections from other apps
   learning/       dictionary suggestions: suggestion_model/ (catalog, providers and one
                   Pydantic AI call), inputs.py, batches.py (requests), replies.py (reply

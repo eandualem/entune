@@ -11,7 +11,7 @@ from dataclasses import replace
 from typing import Literal
 
 from entune.dictionary import matching
-from entune.dictionary.entries import Groups
+from entune.dictionary.entries import Active
 from entune.processing import jev, jev_client, text_edits
 from entune.processing.results import Processed, Selection, Stage, pending
 from entune.processing.text_edits import Change
@@ -19,7 +19,7 @@ from entune.processing.text_edits import Change
 
 def process_text(
     raw: str,
-    groups: Groups,
+    active: Active,
     *,
     contextual: bool,
     formatting: bool,
@@ -56,7 +56,7 @@ def process_text(
 
     stages: dict[str, Callable[[], Stage]] = {}
     if contextual or direct:
-        stages["correction"] = lambda: _correction(raw, groups, contextual, call(), endpoint)
+        stages["correction"] = lambda: _correction(raw, active, contextual, call(), endpoint)
     if cleanup:
         stages["cleanup"] = lambda: _classify(raw, "cleanup", jev.cleanup_edits, call(), endpoint)
     if formatting:
@@ -99,14 +99,14 @@ def _timed(stage: Callable[[], Stage]) -> Stage:
 
 def _correction(
     raw: str,
-    groups: Groups,
+    active: Active,
     contextual: bool,
     call: jev_client.Call,
     endpoint: jev_client.Endpoint,
 ) -> Stage:
     method: Literal["contextual", "deterministic"] = "contextual" if contextual else "deterministic"
     try:
-        components = matching.components(matching.matches(groups, raw))
+        components = matching.components(matching.matches(active, raw))
         if contextual:
             decisions = jev.decide(raw, components, call)
         else:

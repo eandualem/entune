@@ -1,4 +1,4 @@
-"""The dictionary: read and save the file, pin meanings, and corrections from other apps."""
+"""The dictionary: read and save the file, pin heard entries, and corrections from other apps."""
 
 from __future__ import annotations
 
@@ -44,25 +44,19 @@ def routes(app: Entune) -> list[Route]:
             return bad(str(exc), 409 if isinstance(exc, Busy) else 400)
         return await run_in_threadpool(_dictionary_response, app)
 
-    async def pin_meaning(request: Request) -> Response:
+    async def pin_entry(request: Request) -> Response:
         try:
             body = await request.json()
             version = request.headers.get("if-match")
             if (
                 not isinstance(body, dict)
-                or set(body) not in ({"model"}, {"model", "group", "meaning"})
+                or set(body) not in ({"model"}, {"model", "text"})
                 or not all(isinstance(v, str) and v for v in body.values())
                 or not version
             ):
-                raise ValueError(
-                    "Pinning needs a model, optional group and meaning IDs, and If-Match"
-                )
+                raise ValueError("Pinning needs a model, an optional heard text, and If-Match")
             await run_in_threadpool(
-                app.dictionary.pin_meaning,
-                body["model"],
-                body.get("group"),
-                body.get("meaning"),
-                version.strip('"'),
+                app.dictionary.pin, body["model"], body.get("text"), version.strip('"')
             )
         except DictionaryChanged as exc:
             return bad(str(exc), 409)
@@ -86,7 +80,7 @@ def routes(app: Entune) -> list[Route]:
 
     return [
         Route("/api/dictionary", get_dictionary, methods=["GET"]),
-        Route("/api/dictionary/pin", pin_meaning, methods=["POST"]),
+        Route("/api/dictionary/pin", pin_entry, methods=["POST"]),
         Route("/api/dictionary", put_dictionary, methods=["PUT"]),
         Route("/api/dictionary/corrections", agent_corrections, methods=["POST"]),
         Route("/api/dictionary/corrections", received_corrections, methods=["GET"]),

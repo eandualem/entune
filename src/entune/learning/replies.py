@@ -1,4 +1,4 @@
-"""Read the model's reply: parse, validate and apply proposed groups to the working copy."""
+"""Read the model's reply: parse it, validate it and apply it to the working dictionary."""
 
 from __future__ import annotations
 
@@ -11,10 +11,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
-from entune.dictionary import entries as dictionary_entries
-from entune.dictionary.entries import Dictionary, Groups, key
+from entune.dictionary.entries import Candidate, Dictionary, Evidence, Heard, Word, key
 from entune.learning import view
 from entune.learning.batches import sources
 
@@ -34,38 +32,33 @@ class _Evidence(_Shape):
     end: int
 
 
-class _Link(_Shape):
-    meaning: str  # a meaning's label: e1a for one shown, n1 for a new one
+class _Candidate(_Shape):
+    word: str  # a word's label: w1 for one shown, n1 for a new one
     basis: Literal["text", "literal", "existing"]
     evidence: list[_Evidence]
 
 
 class _Heard(_Shape):
     text: str
-    links: list[_Link]
+    candidates: list[_Candidate]
 
 
-class _Meaning(_Shape):
+class _Word(_Shape):
     id: str
     spelling: str
     meaning: str
     casing: Literal["fixed", "ordinary"]
 
 
-class _Addition(_Shape):
-    meanings: list[_Meaning]
-    heard: list[_Heard]
-
-
-class _Revision(_Shape):
-    id: str
-    meanings: list[_Meaning]
-    heard: list[_Heard]
+class _Meaning(_Shape):
+    word: str
+    meaning: str
 
 
 class Reply(_Shape):
-    additions: list[_Addition]
-    revisions: list[_Revision]
+    words: list[_Word]
+    meanings: list[_Meaning]
+    heard: list[_Heard]
     removals: list[str]
 
 
@@ -83,212 +76,253 @@ def _reply(content: str, fields: set[str]) -> dict[str, Any]:
     return data
 
 
+def _meaning(text: str, spelling: str) -> str:
+    text = text.strip()
+    if not text:
+        raise ValueError(f"{spelling} needs a meaning")
+    if len(text) > view.MEANING_CHARS:
+        raise ValueError(
+            f"Keep each meaning to a short phrase of at most {view.MEANING_CHARS} characters: "
+            f'"{text[:60]}…"'
+        )
+    return text
+
+
+def _same(spelling: str, meaning: str, casing: str, words: Sequence[Word]) -> Word | None:
+    """The stored word a new one is: a name is written one way, so a name spelled like a
+    stored one is that word (exact spelling first, then one ignoring capitals); an
+    ordinary word is the stored one only when its meaning is the same too."""
+    if casing == "fixed":
+        names = [w for w in words if w.casing == "fixed"]
+        exact = [w for w in names if w.spelling == spelling]
+        alike = [w for w in names if key(w.spelling) == key(spelling)]
+        return exact[0] if exact else alike[0] if len(alike) == 1 else None
+    return next(
+        (
+            w
+            for w in words
+            if w.casing == "ordinary"
+            and key(w.spelling) == key(spelling)
+            and key(w.meaning) == key(meaning)
+        ),
+        None,
+    )
+
+
 def parse_reply(
     content: str,
     shown: view.View,
-    proposed: Groups = (),
+    working: Dictionary,
+    model: str,
     *,
     transcripts: Sequence[str] = (),
-    pinned: Groups = (),
-) -> Groups:
-    """New entries, complete revisions of shown entries, and removals of shown learned
-    entries, mapped back onto the stored dictionary and validated."""
+) -> Dictionary:
+    """New words, clearer meanings, new and revised heard entries and removals of shown
+    learned entries, mapped back onto the working dictionary and validated. Only the
+    model's learned entries and the words change; pinned entries are the person's."""
     data = Reply.model_validate(
-        _reply(content, {"additions", "revisions", "removals"})
+        _reply(content, {"words", "meanings", "heard", "removals"})
     ).model_dump()
-    additions, revisions, removals = view.groups(data, shown, (*pinned, *proposed))
-    protected = {m.id for g in pinned for m in g.meanings}
-    for identity in removals:
-        group = next((g for g in proposed if g.id == identity), None)
-        if group is None or any(m.id in protected for m in group.meanings):
-            raise ValueError("Pinned entries cannot be removed")
-    return _apply(proposed, (*additions, *revisions), removals, transcripts, pinned)
-
-
-def _apply(
-    proposed: Groups,
-    revised: Groups,
-    removed: list[str],
-    transcripts: Sequence[str],
-    pinned: Groups,
-) -> Groups:
-    """Validate provenance and apply explicit group changes without discarding meanings."""
-    old = {g.id: g for g in pinned}
-    old.update({g.id: g for g in proposed})
-    known_groups = set(old)
-    known_meanings = {m.id: m for g in old.values() for m in g.meanings}
-    known_links: dict[tuple[str, str], list[dictionary_entries.Association]] = {}
-    for group in old.values():
-        for form in group.recognized_forms:
-            for association in form.associations:
-                known_links.setdefault((key(form.text), association.meaning_id), []).append(
-                    association
-                )
-    approved = {
-        (g.id, key(f.text)): (f.direct, f.direct_reason)
-        for g in old.values()
-        for f in g.recognized_forms
-        if f.direct
-    }
+    stored = {w.id: w for w in working.words}
+    learned = {key(h.text): h for h in working.learned_for(model)}
+    pinned = {key(h.text) for h in working.pinned}
     supplied = sources(transcripts)
-    revised = _locate(revised, supplied)
-    # New temporary IDs are assigned once by code. Revisions keep persisted IDs.
-    ids: dict[str, str] = {}
-    seen_meanings = list(known_meanings.values())
-    for group in revised:
-        if group.id not in known_groups:
-            if not group.id.startswith("new_"):
-                raise ValueError("New group IDs must start with new_")
-            if group.id in ids:
-                raise ValueError("New groups and meanings need distinct temporary IDs")
-            ids[group.id] = "g_" + uuid.uuid4().hex
-        for m in group.meanings:
-            if m.id not in known_meanings:
-                if not m.id.startswith("new_"):
-                    raise ValueError("New meaning IDs must start with new_")
-                if m.id in ids and ids[m.id].startswith("g_"):
-                    raise ValueError("New groups and meanings need distinct temporary IDs")
-                if any(
-                    m.id != old.id
-                    and key(m.spelling) == key(old.spelling)
-                    and m.meaning == old.meaning
-                    and m.personal_context == old.personal_context
-                    and m.casing == old.casing
-                    for old in seen_meanings
-                ):
+
+    # New words: a stored word when it is the same, else a new ID assigned once.
+    labels: dict[str, str] = {}
+    new: dict[str, Word] = {}
+    filled: dict[str, str] = {}
+    for item in data["words"]:
+        label = item["id"]
+        if label in shown.word_ids or label in labels:
+            raise ValueError(f"Give each new word its own label (n1, n2, …): {label}")
+        spelling = " ".join(item["spelling"].split())
+        if not spelling:
+            raise ValueError(f"Word {label} needs a spelling")
+        meaning = _meaning(item["meaning"], spelling)
+        same = _same(spelling, meaning, item["casing"], (*stored.values(), *new.values()))
+        if same is None:
+            same = Word("w_" + uuid.uuid4().hex, spelling, meaning, casing=item["casing"])
+            new[same.id] = same
+        elif not same.meaning:
+            # A stored word without a description takes this one, for the person to review.
+            filled[same.id] = meaning
+        labels[label] = same.id
+    words = {**stored, **new}
+    for identity, meaning in filled.items():
+        words[identity] = replace(words[identity], meaning=meaning)
+
+    def word_id(label: str) -> str:
+        identity = shown.word_ids.get(label) or labels.get(label)
+        if identity is None:
+            raise ValueError(f"Name a word shown here (w1, …) or one this reply adds: {label}")
+        return identity
+
+    described: set[str] = set()
+    for item in data["meanings"]:
+        shown_id = shown.word_ids.get(item["word"])
+        if shown_id is None or shown_id in described:
+            raise ValueError(f"Describe each shown word at most once: {item['word']}")
+        described.add(shown_id)
+        word = words[shown_id]
+        words[shown_id] = replace(word, meaning=_meaning(item["meaning"], word.spelling))
+
+    replied: dict[str, Heard] = {}
+    dropped: set[str] = set()  # words named only by additions that add nothing
+    for item in data["heard"]:
+        text = " ".join(item["text"].split())
+        if not re.match(r"\w", text):
+            raise ValueError(f'A heard text starts with a letter or digit: "{text}"')
+        if key(text) in pinned:
+            raise ValueError(f'"{text}" is pinned by the person; leave it as it is')
+        before = learned.get(key(text))
+        if before is not None and key(text) not in shown.heard:
+            raise ValueError(f'"{text}" is learned already and not in these dictations')
+        kept = {c.word: c for c in (before.candidates if before else ())}
+        candidates: dict[str, Candidate] = {}
+        if key(text) in replied:
+            # The same text again in another case: one entry, each word named once.
+            text = replied[key(text)].text
+            candidates = {c.word: c for c in replied[key(text)].candidates}
+        for link in item["candidates"]:
+            identity = word_id(link["word"])
+            word = words[identity]
+            if identity in candidates:
+                continue
+            if identity not in kept and not word.meaning:
+                raise ValueError(
+                    f"{word.spelling} has no meaning yet, so it cannot be chosen; give it one"
+                    " in meanings"
+                )
+            # A candidate kept as it was comes first: one the person added that changes
+            # capitals alone ("anthropic" -> Anthropic) is theirs, not written as heard.
+            if link["basis"] == "existing" or (identity in kept and kept[identity].basis == "user"):
+                if identity not in kept:
                     raise ValueError(
-                        "Reuse the existing ID for the same meaning; "
-                        "case alone is not a new meaning"
+                        f'"{text}" did not name {link["word"]} before; a new candidate needs'
+                        " basis text with evidence"
                     )
-                ids.setdefault(m.id, "m_" + uuid.uuid4().hex)
-                seen_meanings.append(m)
-    meanings = {**known_meanings, **{m.id: m for g in revised for m in g.meanings}}
-    preview = (
-        *(g for g in old.values() if g.id not in set(removed) | {r.id for r in revised}),
-        *revised,
-    )
-    forms = [f for g in preview for f in g.recognized_forms]
-    confused_forms = {
-        key(f.text)
-        for f in forms
-        if any(
-            a.meaning_id in meanings and key(f.text) != key(meanings[a.meaning_id].spelling)
-            for a in f.associations
-        )
-    }
-    connected = {
-        a.meaning_id for f in forms if key(f.text) in confused_forms for a in f.associations
-    }
-    for group in revised:
-        for form in group.recognized_forms:
-            approval = (form.direct, form.direct_reason)
-            if form.direct and approved.get((group.id, key(form.text))) != approval:
-                raise ValueError("The generator cannot approve direct replacements")
-            for link in form.associations:
-                meaning = meanings.get(link.meaning_id)
-                previous = known_links.get((key(form.text), link.meaning_id), [])
-                if meaning is None or (not meaning.meaning and link not in previous):
-                    raise ValueError("Every new association needs a defined meaning")
-                if link.basis == "literal":
-                    if key(form.text) != key(meaning.spelling) or link.evidence:
-                        raise ValueError(
-                            "Literal associations preserve spelling and need no inferred evidence"
-                        )
-                    continue
-                if link.basis != "text" and link not in previous:
-                    raise ValueError("New generated associations need textual evidence")
-                for evidence in link.evidence:
-                    if any(evidence in old.evidence for old in previous):
-                        continue
-                    source = supplied.get(evidence.source)
-                    if source is None or evidence.end > len(source):
-                        raise ValueError("Evidence references an unavailable source occurrence")
-                    heard = source[evidence.start : evidence.end]
-                    if (
-                        key(heard) != key(form.text)
-                        or (evidence.start and re.match(r"\w", source[evidence.start - 1]))
-                        or (evidence.end < len(source) and re.match(r"\w", source[evidence.end]))
-                    ):
-                        raise ValueError("Evidence must reference the exact whole recognized form")
-                if link.basis == "text" and not link.evidence:
-                    raise ValueError("Textual associations need a referenced source occurrence")
-        # Relevant literal competitors can live beside a protected pinned group.
-        if any(m.id not in known_meanings and m.id not in connected for m in group.meanings):
-            raise ValueError(
-                "New meanings must belong to an evidenced confusion, not a vocabulary glossary"
+                candidates[identity] = kept[identity]
+                continue
+            if key(text) == key(word.spelling):
+                # Matching ignores case: "LangFuse" is Langfuse written as it is, not a
+                # confusion, so it is the literal candidate and needs no evidence.
+                candidates[identity] = Candidate(identity, (), "literal")
+                continue
+            if link["basis"] == "literal":
+                raise ValueError(
+                    f'"{text}" is not spelled {word.spelling}; a literal candidate is the'
+                    " word written as heard"
+                )
+            evidence = [_locate(_evidence(e, shown), text, supplied) for e in link["evidence"]]
+            if not evidence:
+                raise ValueError(
+                    f'"{text}" → {word.spelling}: a new candidate needs evidence, a dictation'
+                    f' where "{text}" was used for it'
+                )
+            for e in evidence:
+                _check(e, text, supplied)
+            earlier = kept[identity].evidence if identity in kept else ()
+            candidates[identity] = Candidate(
+                identity, tuple(dict.fromkeys((*earlier, *evidence))), "text"
             )
-    raw_groups = [g.as_json() for g in revised]
-    for record in raw_groups:
-        record["id"] = ids.get(record["id"], record["id"])
-        for meaning in record["meanings"]:
-            meaning["id"] = ids.get(meaning["id"], meaning["id"])
-        for form in record["recognized_forms"]:
-            for link in form["associations"]:
-                link["meaning_id"] = ids.get(link["meaning_id"], link["meaning_id"])
-    revised = dictionary_document.parse_groups(raw_groups, "the model's reply")
-    updated = {gid: group for gid, group in old.items() if gid not in removed}
-    updated.update({g.id: g for g in revised})
-    result = tuple(updated.values())
-    for (gid, surface), approval in approved.items():
-        assert approval[0] is not None
-        current = next(
-            (
-                f
-                for g in result
-                if g.id == gid
-                for f in g.recognized_forms
-                if key(f.text) == surface
-            ),
-            None,
-        )
-        if (
-            current is None
-            or (current.direct, current.direct_reason) != approval
-            or (meanings[approval[0]].spelling, meanings[approval[0]].casing)
-            != (known_meanings[approval[0]].spelling, known_meanings[approval[0]].casing)
-        ):
+        if not candidates:
+            raise ValueError(f'"{text}" needs at least one candidate word')
+        if before is not None and before.direct and before.direct not in candidates:
             raise ValueError("The generator cannot remove or change an approved direct mapping")
-    dictionary_changes.protect_pinned(pinned, result)
-    dictionary_document.validate(Dictionary(learned={"working": result}))
-    return result
+        replied[key(text)] = Heard(
+            before.text if before else text,
+            tuple(candidates.values()),
+            before.direct if before else None,
+            before.direct_reason if before else "",
+        )
+    # Judged once each text's items are merged, whatever their order. Written as heard
+    # and nothing else changes capitals alone: a new one adds nothing, and an entry whose
+    # corrections a revision took away is removed (unless approved as Always).
+    emptied: set[str] = set()
+    for text, entry in list(replied.items()):
+        if not all(c.basis == "literal" for c in entry.candidates):
+            continue
+        before = learned.get(text)
+        if before is not None and before.direct:
+            continue
+        dropped.update(c.word for c in entry.candidates)
+        del replied[text]
+        if before is not None and any(c.basis != "literal" for c in before.candidates):
+            emptied.add(text)
+
+    result = dict(learned)
+    for text in data["removals"]:
+        if key(text) in pinned:
+            raise ValueError("Pinned entries cannot be removed")
+        if key(text) in replied or (key(text) not in result and key(text) in learned):
+            raise ValueError(f'Name "{text}" once, in heard or in removals')
+        if key(text) not in learned or key(text) not in shown.heard:
+            raise ValueError(f'Removals name a learned entry shown here: "{text}"')
+        if learned[key(text)].direct:
+            raise ValueError("The generator cannot remove or change an approved direct mapping")
+        del result[key(text)]
+    for text in emptied:
+        result.pop(text, None)
+    result.update(replied)
+
+    named = {c.word for h in replied.values() for c in h.candidates}
+    for identity, word in new.items():
+        if identity not in named and identity not in dropped:
+            raise ValueError(
+                f"New words must belong to a heard entry, not a vocabulary list: {word.spelling}"
+            )
+    kept_words = tuple(w for i, w in words.items() if i not in new or i in named)
+    sections = {m: es for m, es in working.learned.items() if m != model}
+    if result:
+        sections[model] = tuple(result.values())
+    return dictionary_document.validate(Dictionary(kept_words, working.pinned, sections))
 
 
-def _occurrences(source: str, form: str) -> list[tuple[int, int]]:
-    """Every whole-word occurrence of `form` in `source`, compared as validation compares."""
-    words = form.split()
+def _evidence(item: dict[str, Any], shown: view.View) -> Evidence:
+    source = shown.sources.get(item["dictation"])
+    if source is None:
+        raise ValueError(f"Evidence names an unknown dictation: {item['dictation']}")
+    return Evidence(source, item["start"], item["end"])
+
+
+def _check(evidence: Evidence, text: str, supplied: dict[str, str]) -> None:
+    source = supplied.get(evidence.source)
+    if source is None or evidence.end > len(source) or evidence.start >= evidence.end:
+        raise ValueError("Evidence references an unavailable source occurrence")
+    heard = source[evidence.start : evidence.end]
+    if (
+        key(heard) != key(text)
+        or (evidence.start and re.match(r"\w", source[evidence.start - 1]))
+        or (evidence.end < len(source) and re.match(r"\w", source[evidence.end]))
+    ):
+        raise ValueError("Evidence must reference the exact whole heard text")
+
+
+def _occurrences(source: str, text: str) -> list[tuple[int, int]]:
+    """Every whole-word occurrence of `text` in `source`, compared as validation compares."""
+    words = text.split()
     if not words:
         return []
     pattern = r"(?<!\w)" + r"\s+".join(re.escape(w) for w in words) + r"(?!\w)"
     return [
         (m.start(), m.end())
         for m in re.finditer(pattern, source, re.IGNORECASE)
-        if key(m.group()) == key(form)
+        if key(m.group()) == key(text)
     ]
 
 
-def _locate(revised: Groups, supplied: dict[str, str]) -> Groups:
-    """Point each evidence span at an actual occurrence of its form in its source.
+def _locate(evidence: Evidence, text: str, supplied: dict[str, str]) -> Evidence:
+    """Point an evidence span at an actual occurrence of its heard text in its source.
 
     The model names an occurrence by source and character span, and counting characters
     across a long batch is unreliable for a model: one miscount used to reject the whole
-    step. A span that is not exactly the form moves to the nearest whole-word occurrence
-    of that form in the same source. Evidence for a form that does not occur in that
+    step. A span that is not exactly the text moves to the nearest whole-word occurrence
+    of that text in the same source. Evidence for a text that does not occur in that
     source is left unchanged, so validation still rejects it."""
-    located = []
-    for group in revised:
-        forms = []
-        for form in group.recognized_forms:
-            links = []
-            for link in form.associations:
-                evidence = []
-                for item in link.evidence:
-                    source = supplied.get(item.source)
-                    spans = _occurrences(source, form.text) if source is not None else []
-                    if spans and (item.start, item.end) not in spans:
-                        start, end = min(spans, key=lambda span: abs(span[0] - item.start))
-                        item = replace(item, start=start, end=end)
-                    evidence.append(item)
-                links.append(replace(link, evidence=tuple(dict.fromkeys(evidence))))
-            forms.append(replace(form, associations=tuple(links)))
-        located.append(replace(group, recognized_forms=tuple(forms)))
-    return tuple(located)
+    source = supplied.get(evidence.source)
+    spans = _occurrences(source, text) if source is not None else []
+    if spans and (evidence.start, evidence.end) not in spans:
+        start, end = min(spans, key=lambda span: abs(span[0] - evidence.start))
+        return replace(evidence, start=start, end=end)
+    return evidence

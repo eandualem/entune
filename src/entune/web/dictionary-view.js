@@ -6,8 +6,8 @@ import { createDictionaryBuild } from "./dictionary-build.js";
 // The dictionary owns its document, revision and pending proposal. Model selection
 // stays in the app; getters read the current selection when an action is made.
 export function createDictionary({ getModel, getSettings, onSettingsChanged, openSettings }) {
-  // Confusion groups are the edit unit; stable IDs distinguish meanings with one spelling.
-  let dict = { version: 2, pinned: [], learned: {} };
+  // Words are defined once; a heard entry is the edit unit, keyed by its text in its scope.
+  let dict = { version: 3, words: [], pinned: [], learned: {} };
   let dictVersion = null; // the server's ETag for the document we edit; null after a failed load
   let savedText = ""; // the JSON view's last loaded or saved text
   let draftBase = null; // the revision the JSON view's unsaved text was started from
@@ -16,12 +16,13 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   let run = { phase: "idle" };
   let filter = "all";
   let query = "";
-  let openId = null; // the one entry shown expanded, as scope:group (pinning can split a group's ID across both)
+  let openId = null; // the one entry shown expanded, as scope:heard text
   let addPinned = false;
   let draft = null; // the entry open in the editor panel
   let editorError = ""; // a refused save, shown until the draft changes
   let saving = false; // one editor save at a time
   let proposalChanges = [];
+  let proposalWords = new Map(); // the words a proposal names, new ones as the review edits them
   let proposalModel = null;
   let missingKey = false; // the saved dictionary model's provider has no key
   const modelSelect = el("dictionary-model");
@@ -52,7 +53,13 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     onState(value) { showRun(value); },
     onProposal(value) { if (value) renderProposal(value); else { proposalChanges = []; el("proposal").hidden = true; } },
     onAccepted: () => loadDictionary(false),
-    getSelected: () => proposalChanges.filter(c => c.included).map(c => ({id: c.id, after: c.after})),
+    getSelected: () => {
+      // Included changes, and each new word the included entries name, as the review left it.
+      const chosen = proposalChanges.filter(c => c.included);
+      const named = new Set(chosen.filter(c => c.kind !== "word").flatMap(c => (c.after?.candidates ?? []).map(x => x.word)));
+      return [...chosen.map(c => ({id: c.id, after: c.after})),
+        ...[...named].filter(isNewWord).map(wid => ({id: `word:${wid}`, after: proposalWords.get(wid)})).filter(x => x.after)];
+    },
     getRunSettings: runSettings,
   });
   // A radio group drawn as a segmented control: the selected segment is also the checked radio.
@@ -108,31 +115,37 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   // A speech model that runs on this computer: transcribing costs time, never money.
   const isLocal = (id) => Boolean(id && getSettings()?.providers.find((p) => p.id === id.split("/")[0])?.local);
 
-  // A heard form is kept as written only when it is the meaning's own spelling: exactly
+  // A heard text is kept as written only when it is the word's own spelling: exactly
   // for fixed capitals, ignoring case for a normal word. "anthropic" → "Anthropic" is a fix.
-  function isLiteral(meaning, text) {
-    const a = words(meaning?.spelling ?? ""), b = words(text ?? "");
+  function isLiteral(word, text) {
+    const a = words(word?.spelling ?? ""), b = words(text ?? "");
     if (!a || !b) return false;
-    return meaning.casing === "ordinary" ? a.toLowerCase() === b.toLowerCase() : a === b;
+    return word.casing === "ordinary" ? a.toLowerCase() === b.toLowerCase() : a === b;
   }
-  function meanings(doc = dict, modelId = getModel()?.id) {
-    const learned = modelId ? doc.learned[modelId] ?? [] : [];
-    return new Map([...doc.pinned, ...learned].flatMap((g) => g.meanings).map((m) => [m.id, m]));
-  }
-  const pinnedIds = () => new Set(dict.pinned.flatMap((g) => g.meanings.map((m) => m.id)));
-  // An extension group has no meanings of its own; it is named by the meanings it links to.
-  function title(g, known = meanings()) {
-    if (g.meanings.length) return g.meanings.map((m) => m.spelling).join(" · ");
-    return [...new Set(g.recognized_forms.flatMap((f) => f.associations.map((a) => a.meaning_id)))].map((mid) => known.get(mid)?.spelling ?? mid).join(" · ");
-  }
-  const attention = (g) => g.needs_review || g.meanings.some((m) => !m.meaning.trim());
+  // Heard texts match ignoring case and spacing; one entry per text in each scope.
+  const textKey = (text) => words(text ?? "").toLowerCase();
+  const wordMap = (doc = dict) => new Map(doc.words.map((w) => [w.id, w]));
+  // The words an entry can stand for, in its order.
+  const named = (h, known = wordMap()) => h.candidates.map((c) => known.get(c.word) ?? { id: c.word, spelling: c.word, meaning: "", personal_context: null, casing: "fixed", needs_review: false });
+  const title = (h, known = wordMap()) => named(h, known).map((w) => w.spelling).join(" · ");
+  const attention = (h, known = wordMap()) => named(h, known).some((w) => w.needs_review || !w.meaning.trim());
   // The letter a title is listed under: its first letter or digit, without accents.
   const initial = (text) => (text.normalize("NFD").match(/[\p{L}\p{N}]/u)?.[0] ?? "#").toUpperCase();
-  // The entries that apply to the selected speech model: pinned, then its learned ones.
+  // The entries that apply to the selected speech model: pinned, then its learned ones. A
+  // learned entry is not used while a pinned one has its text.
   function visible() {
     const model = getModel();
-    return [...dict.pinned.map((g) => ({ g, scope: "pinned" })), ...(model ? dict.learned[model.id] ?? [] : []).map((g) => ({ g, scope: "learned" }))];
+    const pinnedTexts = new Set(dict.pinned.map((h) => textKey(h.text)));
+    return [...dict.pinned.map((h) => ({ h, scope: "pinned" })),
+      ...(model ? dict.learned[model.id] ?? [] : []).map((h) => ({ h, scope: "learned", superseded: pinnedTexts.has(textKey(h.text)) }))];
   }
+  // Every entry that names a word, in every section: an edit to the word reaches them all.
+  function usesOf(wid, doc = dict) {
+    return [...doc.pinned.map((h) => ({ h, scope: "pinned", model: null })),
+      ...Object.entries(doc.learned).flatMap(([m, list]) => list.map((h) => ({ h, scope: "learned", model: m })))]
+      .filter((u) => u.h.candidates.some((c) => c.word === wid));
+  }
+  const whereUsed = (u) => `“${u.h.text}”${u.scope === "pinned" ? " (pinned)" : ` (${speechShort(u.model)})`}`;
 
   // ---- Toasts and confirmation ----
   let toastTimer;
@@ -281,10 +294,11 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       if (!draft) { jsonBox.value = jsonText; draftBase = null; el("json-error").hidden = true; }
     }
     const model = getModel();
-    const groups = visible();
-    const learned = groups.filter((v) => v.scope === "learned").length;
+    const known = wordMap();
+    const entries = visible();
+    const learned = entries.filter((v) => v.scope === "learned").length;
     if (filter === "learned" && !model) { filter = "all"; selectFilter("all"); }
-    const counts = { all: groups.length, pinned: dict.pinned.length, learned, attention: groups.filter((v) => attention(v.g)).length };
+    const counts = { all: entries.length, pinned: dict.pinned.length, learned, attention: entries.filter((v) => attention(v.h, known)).length };
     for (const [name, count] of Object.entries(counts)) el(`count-${name}`).textContent = count ? String(count) : "";
     el("attention-dot").hidden = !counts.attention;
     // "To check" shows only while something needs checking.
@@ -292,7 +306,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     if (filter === "attention" && !counts.attention) { filter = "all"; selectFilter("all"); }
     el("filter-learned").title = model ? `Learned only for ${speechName(model)}` : "Choose a speech model in the toolbar first";
     el("filter-learned").disabled = !model;
-    el("dict-summary").textContent = [plural(groups.length, "entry", "entries"), `${dict.pinned.length} pinned for every speech model`,
+    el("dict-summary").textContent = [plural(entries.length, "entry", "entries"), `${dict.pinned.length} pinned for every speech model`,
       ...(model ? [`${learned} learned for ${shortName(model)}`] : [])].join(" · ");
     drawMenu();
     el("learn-source").textContent = !model ? "Choose a speech model first."
@@ -306,21 +320,19 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
 
   function renderRows() {
     const model = getModel();
-    const known = meanings();
-    const groups = visible();
+    const known = wordMap();
     const q = query.trim().toLowerCase();
-    const shown = groups
-      .filter((v) => filter === "all" || (filter === "attention" ? attention(v.g) : v.scope === filter))
-      .filter((v) => !q || [title(v.g, known), ...v.g.recognized_forms.map((f) => f.text), ...v.g.meanings.map((m) => m.meaning)].join(" ").toLowerCase().includes(q))
-      .map((v) => ({ ...v, name: v.g.meanings[0]?.spelling ?? title(v.g, known) }))
-      .sort((a, b) => initial(a.name).localeCompare(initial(b.name)) || a.name.localeCompare(b.name));
-    const pinned = pinnedIds();
+    const shown = visible()
+      .filter((v) => filter === "all" || (filter === "attention" ? attention(v.h, known) : v.scope === filter))
+      .filter((v) => !q || [v.h.text, ...named(v.h, known).flatMap((w) => [w.spelling, w.meaning])].join(" ").toLowerCase().includes(q))
+      .map((v) => ({ ...v, name: title(v.h, known) || v.h.text }))
+      .sort((a, b) => initial(a.name).localeCompare(initial(b.name)) || a.name.localeCompare(b.name) || a.h.text.localeCompare(b.h.text));
     // Entries under the first letter of their title, A to Z.
     const letters = [];
     for (const v of shown) {
       const letter = initial(v.name);
       if (letters.at(-1)?.letter !== letter) letters.push({ letter, items: node("div", "", "dict-group-items") });
-      letters.at(-1).items.append(entryRow(v, known, pinned));
+      letters.at(-1).items.append(entryRow(v, known));
     }
     el("dict-rows").replaceChildren(...letters.map(({ letter, items }) => {
       const group = node("div", "", "dict-group");
@@ -331,9 +343,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("dict-empty").hidden = !empty;
     if (empty) {
       const short = shortName(model);
-      const [heading, body] = q ? ["No matches", "Try a spelling, a heard form or a word from a description."]
+      const [heading, body] = q ? ["No matches", "Try a spelling, a heard text or a word from a description."]
         : filter === "learned" ? [`Nothing learned for ${short} yet`, "Each speech model makes its own mistakes. Suggestions read its recent transcripts and propose first entries."]
-          : filter === "attention" ? ["Nothing needs attention", "Every meaning has a description."]
+          : filter === "attention" ? ["Nothing needs attention", "Every word has a description."]
             : filter === "pinned" ? ["No pinned entries", "Pin a learned entry to use it with every speech model, or add one yourself."]
               : ["Your dictionary is empty", "Add a word, or get suggestions from your transcripts."];
       el("empty-title").textContent = heading;
@@ -347,34 +359,33 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const CHEVRON = '<svg class="i12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5L8 6l-3.5 3.5"/></svg>';
   const ARROW = '<svg class="i14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 7h9M8 4l3 3-3 3"/></svg>';
   const icon = (svg, cls) => { const span = node("span", "", cls); span.innerHTML = svg; return span; };
-  // One line per entry; a click shows its heard forms and meanings underneath.
-  function entryRow({ g, scope, name: heading }, known, pinned) {
+  // One line per heard entry: the words it can mean, what was heard, a description and
+  // where it applies. A click shows the words in full underneath.
+  function entryRow({ h, scope, superseded, name: heading }, known) {
     const model = getModel();
     const item = node("div", "", "dict-entry");
     const line = node("div", "", "dict-row");
-    const rowKey = `${scope}:${g.id}`;
+    const rowKey = `${scope}:${textKey(h.text)}`;
     const open = openId === rowKey;
     line.tabIndex = 0;
     line.setAttribute("role", "button");
     line.setAttribute("aria-expanded", String(open));
     const name = node("span", "", "cell-title");
     name.append(node("span", heading, "title-text"));
-    name.title = title(g, known);
-    if (attention(g)) {
+    name.title = heading;
+    if (attention(h, known)) {
       const dot = node("span", "", "attention-dot");
-      dot.title = g.meanings.some((m) => !m.meaning.trim()) ? "Needs a description before Entune can choose it" : "Imported: check the descriptions and capitals";
+      dot.title = named(h, known).some((w) => !w.meaning.trim()) ? "A word here needs a description before Entune can choose it" : "A description here is not confirmed yet: check it, then save the entry";
       name.append(dot);
     }
-    // The first two heard forms, then how many more.
-    const forms = g.recognized_forms.map((f) => f.text);
     const heard = node("span", "", "cell-heard");
-    heard.title = forms.join(" · ");
-    heard.append(...forms.slice(0, 2).map((text) => node("code", text, "chip")));
-    if (forms.length > 2) heard.append(node("span", `+${forms.length - 2}`, "more"));
-    const description = g.meanings.find((m) => m.meaning.trim())?.meaning;
-    const linksPinned = !g.meanings.length && g.recognized_forms.every((f) => f.associations.every((a) => pinned.has(a.meaning_id)));
-    const what = node("span", description ?? (g.meanings.length ? "No description yet" : `Another way ${shortName(model)} hears ${linksPinned ? "a pinned word" : "a word from another entry"}`),
-      description ? "cell-desc" : g.meanings.length ? "cell-desc missing" : "cell-desc faint");
+    heard.title = h.text;
+    heard.append(node("code", h.text, "chip"));
+    // The description of what it was heard for first, then of the word kept as written.
+    const order = [...h.candidates.filter((c) => c.basis !== "literal"), ...h.candidates.filter((c) => c.basis === "literal")];
+    const description = order.map((c) => known.get(c.word)?.meaning.trim()).find(Boolean);
+    const what = node("span", superseded ? "Not used: pinned for every model" : description ?? "No description yet",
+      superseded ? "cell-desc faint" : description ? "cell-desc" : "cell-desc missing");
     const where = node("span", "", "cell-scope");
     if (scope === "pinned") where.innerHTML = PIN;
     where.append(scope === "pinned" ? "Pinned" : shortName(model));
@@ -385,72 +396,71 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     item.dataset.entry = rowKey;
     item.classList.toggle("open", open);
     item.append(line);
-    if (open) item.append(entryDetail(g, scope, known, pinned));
+    if (open) item.append(entryDetail(h, scope, superseded, known));
     return item;
   }
 
-  // Heard → written on the left, beside the meanings the decision model chooses from.
-  function entryDetail(g, scope, known, pinned) {
+  // Heard → written on the left, beside the words the decision model chooses from.
+  function entryDetail(h, scope, superseded, known) {
     const model = getModel();
     const detail = node("div", "", "dict-detail");
     const forms = node("div", "", "detail-forms");
     forms.append(node("p", model ? `When ${shortName(model)} hears` : "When the speech model hears", "detail-label"));
-    for (const form of g.recognized_forms) {
-      const line = node("div", "", "heard-line");
-      line.append(node("code", form.text, "heard"), icon(ARROW, "arrow"));
-      form.associations.forEach((link, i) => {
-        const target = node("span", "", "target");
-        if (i) target.append(node("span", "or", "or"));
-        const meaning = known.get(link.meaning_id);
-        const own = g.meanings.some((m) => m.id === link.meaning_id);
-        const literal = link.basis === "literal";
-        target.append(node("span", meaning?.spelling ?? link.meaning_id, literal ? "word literal" : "word"));
-        const note = literal ? "as written" : own ? "" : pinned.has(link.meaning_id) ? "pinned" : "other entry";
-        if (note) target.append(node("span", note, "note"));
-        if (literal) target.title = "Left as written when this meaning fits the sentence";
-        line.append(target);
-      });
-      if (form.direct) {
-        const chip = node("span", "Always", "always-chip");
-        chip.title = `Always used, without reading the sentence: ${form.direct_reason}`;
-        line.append(chip);
+    const line = node("div", "", "heard-line");
+    line.append(node("code", h.text, "heard"), icon(ARROW, "arrow"));
+    h.candidates.forEach((candidate, i) => {
+      const target = node("span", "", "target");
+      if (i) target.append(node("span", "or", "or"));
+      const literal = candidate.basis === "literal";
+      target.append(node("span", known.get(candidate.word)?.spelling ?? candidate.word, literal ? "word literal" : "word"));
+      if (literal) {
+        target.append(node("span", "as written", "note"));
+        target.title = "Left as written when this word fits the sentence";
       }
-      forms.append(line);
+      line.append(target);
+    });
+    if (h.direct) {
+      const chip = node("span", "Always", "always-chip");
+      chip.title = `Always used, without reading the sentence: ${h.direct_reason}`;
+      line.append(chip);
     }
-    if (!g.recognized_forms.length) forms.append(node("p", "No heard forms yet.", "caption"));
+    forms.append(line);
+    if (superseded) forms.append(node("p", "Not used: a pinned entry hears the same words. Pin this one to add its words to that entry, or remove it.", "caption warn"));
     const list = node("div", "", "detail-meanings");
-    list.append(node("p", g.meanings.length > 1 ? "Meanings · Entune picks one from the sentence" : "Meaning", "detail-label"));
-    g.meanings.forEach((meaning, i) => {
+    list.append(node("p", h.candidates.length > 1 ? "Words · Entune picks one from the sentence" : "Word", "detail-label"));
+    named(h, known).forEach((word, i) => {
       const card = node("div", "", "meaning-card");
       const body = node("div", "", "meaning-body");
       const head = node("div", "", "meaning-head");
-      head.append(node("b", meaning.spelling), node("span", meaning.casing === "fixed" ? "exact capitals" : "normal word", "casing"));
-      // Pinning one meaning of several leaves its competitors learned for this model.
-      if (scope === "learned" && g.meanings.length > 1) {
-        const pin = button("Pin", () => pinMeanings(g, [meaning]), "btn link pin-meaning");
-        pin.title = `Use ${meaning.spelling} with every speech model`;
-        head.append(pin);
+      head.append(node("b", word.spelling), node("span", word.casing === "fixed" ? "exact capitals" : "normal word", "casing"));
+      if (known.has(word.id)) {
+        const remove = button("Delete word", () => deleteWord(word), "btn link pin-meaning");
+        remove.title = `Delete ${word.spelling} from your dictionary and from every entry that uses it`;
+        head.append(remove);
       }
-      body.append(head, node("p", meaning.meaning || "No description yet. Entune can't choose this meaning until it has one.", meaning.meaning ? "definition" : "definition missing"));
-      if (meaning.personal_context) {
+      body.append(head, node("p", word.meaning || "No description yet. Entune can't choose this word until it has one.", word.meaning ? "definition" : "definition missing"));
+      if (word.personal_context) {
         const personal = node("p", "", "personal");
-        personal.append(node("span", "Personal · ", "faint"), meaning.personal_context);
+        personal.append(node("span", "Personal · ", "faint"), word.personal_context);
         body.append(personal);
       }
+      // Where else the word is used, so the reach of an edit is clear.
+      const others = usesOf(word.id).filter((u) => u.h !== h);
+      if (others.length) body.append(node("p", `Also for ${others.slice(0, 3).map(whereUsed).join(", ")}${others.length > 3 ? ` and ${others.length - 3} more` : ""}`, "personal"));
       card.append(node("span", String(i + 1), "meaning-n"), body);
       list.append(card);
     });
-    if (!g.meanings.length) list.append(node("p", `No meanings of its own: teaches ${shortName(model)} another way it hears a word from another entry.`, "caption"));
-    if (g.needs_review) list.append(node("p", "Imported: check the descriptions and capitals.", "caption warn"));
+    const unconfirmed = named(h, known).filter((w) => w.needs_review && w.meaning.trim());
+    if (unconfirmed.length) list.append(node("p", `Not confirmed yet: check the description and capitals of ${unconfirmed.map((w) => w.spelling).join(", ")}, then save the entry.`, "caption warn"));
     const actions = node("div", "", "detail-actions");
-    actions.append(button("Edit", () => openEditor(scope, g), "btn fill sm"));
-    if (scope === "learned" && g.meanings.length) {
-      const pin = button("Pin for every model", () => pinMeanings(g, g.meanings), "btn sm");
+    actions.append(button("Edit", () => openEditor(scope, h), "btn fill sm"));
+    if (scope === "learned") {
+      const pin = button("Pin for every model", () => pinEntry(h), "btn sm");
       pin.insertAdjacentHTML("afterbegin", PIN);
       pin.title = "Use with every speech model and protect from suggestions";
       actions.append(pin);
     }
-    actions.append(button("Remove", () => removeEntry(scope, g), "btn ghost sm remove"), node("span", "", "spacer"),
+    actions.append(button("Remove", () => removeEntry(scope, h), "btn ghost sm remove"), node("span", "", "spacer"),
       node("span", scope === "pinned" ? "Pinned · used with every speech model" : `Learned · ${speechName(model)} only`, "caption"));
     detail.append(forms, list, actions);
     return detail;
@@ -468,58 +478,50 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     renderDictionary(text);
     return true;
   }
-  // The server pins one meaning at a time; the learned group keeps its ID for the rest, under
-  // the model it was learned for even if the toolbar selection changes meanwhile.
-  async function pinMeanings(g, list) {
-    const model = getModel()?.id;
-    for (const meaning of list) if (!await pin({ group: g.id, meaning: meaning.id }, model)) return;
-    toast(`Pinned ${list.map((m) => m.spelling).join(" · ")} for every speech model`);
+  // The server moves the learned entry, under the model it was learned for even if the
+  // toolbar selection changes meanwhile; a pinned one with its text gains its words.
+  async function pinEntry(h) {
+    if (!await pin({ text: h.text }, getModel()?.id)) return;
+    openId = `pinned:${textKey(h.text)}`;
+    renderRows();
+    toast(`Pinned “${h.text}” for every speech model`);
   }
 
-  // Removing an entry removes the links other entries made to its meanings, where no other
-  // entry still defines them: pinned ones for every section, learned ones for their model.
-  // A heard form left with no meaning, and an entry left empty, go with them.
-  function withoutMeanings(doc, removed) {
-    const defined = (groups) => groups.flatMap((g) => g.meanings.map((m) => m.id));
-    const pinned = defined(doc.pinned);
-    let touched = 0;
-    for (const section of [doc.pinned, ...Object.values(doc.learned)]) {
-      const available = new Set(section === doc.pinned ? pinned : [...pinned, ...defined(section)]);
-      const gone = new Set([...removed].filter((mid) => !available.has(mid)));
-      if (!gone.size) continue;
-      for (let i = section.length - 1; i >= 0; i--) {
-        const g = section[i];
-        let changed = false;
-        g.recognized_forms = g.recognized_forms.filter((f) => {
-          const kept = f.associations.filter((a) => !gone.has(a.meaning_id));
-          if (kept.length !== f.associations.length) {
-            changed = true;
-            f.associations = kept;
-            if (gone.has(f.direct)) { f.direct = null; f.direct_reason = ""; }
-          }
-          return kept.length > 0;
-        });
-        if (changed) touched++;
-        if (!g.meanings.length && !g.recognized_forms.length) section.splice(i, 1);
-      }
-    }
-    return touched;
-  }
-  async function removeEntry(scope, g) {
+  // Removing a heard entry never deletes a word: other entries may use it.
+  async function removeEntry(scope, h) {
     const version = dictVersion; // a reload while confirming makes this a conflict, not an overwrite
     const next = clone();
     const list = scope === "pinned" ? next.pinned : next.learned[getModel()?.id] ?? [];
-    const at = list.findIndex((x) => x.id === g.id);
+    const at = list.findIndex((x) => textKey(x.text) === textKey(h.text));
     if (at >= 0) list.splice(at, 1);
-    const others = withoutMeanings(next, new Set(g.meanings.map((m) => m.id)));
-    const name = title(g);
-    const body = "Its meanings and heard forms are deleted." + (others ? ` ${plural(others, "other entry", "other entries")} linked to its meanings; those links are removed too.` : "");
-    if (!await confirmAction(`Remove “${name}”?`, body, "Remove")) return;
+    if (!await confirmAction(`Remove “${h.text}”?`, `Entune stops changing “${h.text}”. Its words stay in your dictionary.`, "Remove")) return;
     const problem = await saveDictionary(next, false, version);
     if (problem) { toast(problem, "err"); return; }
     openId = null;
     renderRows();
-    toast(`Removed ${name}`);
+    toast(`Removed “${h.text}”`);
+  }
+  // Deleting a word removes it from every entry that names it; an entry left with no word goes.
+  async function deleteWord(word) {
+    const version = dictVersion;
+    const next = clone();
+    const uses = usesOf(word.id, next);
+    next.words = next.words.filter((w) => w.id !== word.id);
+    let gone = 0;
+    for (const list of [next.pinned, ...Object.values(next.learned)]) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        const h = list[i];
+        h.candidates = h.candidates.filter((c) => c.word !== word.id);
+        if (h.direct === word.id) { h.direct = null; h.direct_reason = ""; }
+        if (!h.candidates.length) { list.splice(i, 1); gone++; }
+      }
+    }
+    const body = uses.length ? `It is removed from ${plural(uses.length, "heard entry", "heard entries")}: ${uses.map(whereUsed).join(", ")}.${gone ? ` ${plural(gone, "entry", "entries")} left with no word ${gone === 1 ? "goes" : "go"} too.` : ""}` : "No heard entry uses it.";
+    if (!await confirmAction(`Delete the word “${word.spelling}”?`, body, "Delete")) return;
+    const problem = await saveDictionary(next, false, version);
+    if (problem) { toast(problem, "err"); return; }
+    renderRows();
+    toast(`Deleted ${word.spelling}`);
   }
 
   // ---- Add: one line for the simple case ----
@@ -542,7 +544,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("add-save").disabled = building || !words(addFields.spelling.value) || !heardList().length;
     const hint = el("add-hint");
     hint.classList.toggle("err", Boolean(addProblem));
-    hint.textContent = addProblem || "Separate heard forms with commas.";
+    hint.textContent = addProblem || "Separate heard texts with commas.";
   }
   function showAdd(open) {
     addRow.hidden = !open;
@@ -566,23 +568,37 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const spelling = words(addFields.spelling.value), heard = heardList(), description = words(addFields.desc.value);
     if (!spelling || !heard.length || building) return;
     const model = getModel();
-    const meaning = { id: id("m"), spelling, meaning: description, personal_context: null, casing: "fixed" };
-    const group = { id: id("g"), needs_review: !description, meanings: [meaning],
-      recognized_forms: heard.map((text) => ({ text, associations: [{ meaning_id: meaning.id, basis: isLiteral(meaning, text) ? "literal" : "user", evidence: [] }], direct: null, direct_reason: "" })) };
     const scope = addPinned || !model ? "pinned" : "learned";
     const next = clone();
-    (scope === "pinned" ? next.pinned : (next.learned[model.id] ??= [])).push(group);
+    const pinnedTexts = new Set(next.pinned.map((h) => textKey(h.text)));
+    const clash = scope === "learned" && heard.find((text) => pinnedTexts.has(textKey(text)));
+    if (clash) { addProblem = `“${clash}” is pinned for every model; edit that entry instead.`; drawAdd(); return; }
+    const list = scope === "pinned" ? next.pinned : (next.learned[model.id] ??= []);
+    // A name is one word: the one already spelled exactly so, unless it is described otherwise.
+    let word = next.words.find((w) => w.spelling === spelling && (!description || !w.meaning || w.meaning === description));
+    if (word && description && !word.meaning) Object.assign(word, { meaning: description, needs_review: false });
+    if (!word) {
+      word = { id: id("w"), spelling, meaning: description, personal_context: null, casing: "fixed", needs_review: !description };
+      next.words.push(word);
+    }
+    // Each heard text is its own entry; one already in the list gains the word.
+    for (const text of heard) {
+      const candidate = { word: word.id, basis: isLiteral(word, text) ? "literal" : "user", evidence: [] };
+      const entry = list.find((h) => textKey(h.text) === textKey(text));
+      if (!entry) list.push({ text, candidates: [candidate], direct: null, direct_reason: "" });
+      else if (!entry.candidates.some((c) => c.word === word.id)) entry.candidates.push(candidate);
+    }
     addProblem = await saveDictionary(next);
     drawAdd();
     if (addProblem) return;
     clearAdd();
     showAdd(false);
-    reveal(scope, group.id);
+    reveal(scope, heard[0]);
     toast(`Added ${spelling}`);
   }
   // A saved entry opens expanded, whatever filter or search would have hidden it.
-  function reveal(scope, groupId) {
-    openId = `${scope}:${groupId}`;
+  function reveal(scope, text) {
+    openId = `${scope}:${textKey(text)}`;
     query = ""; el("dict-search").value = "";
     if (filter !== "all") { filter = "all"; selectFilter("all"); }
     renderRows();
@@ -590,28 +606,50 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   }
   el("add-advanced").addEventListener("click", () => {
     const model = getModel();
-    const meaning = { id: id("m"), spelling: words(addFields.spelling.value), meaning: words(addFields.desc.value), personal_context: null, casing: "fixed" };
+    const spelling = words(addFields.spelling.value);
     const heard = heardList();
-    openEditor(addPinned || !model ? "pinned" : "learned", { id: id("g"), needs_review: false, meanings: [meaning],
-      recognized_forms: (heard.length ? heard : [""]).map((text) => ({ text, associations: [{ meaning_id: meaning.id, basis: "user", evidence: [] }], direct: null, direct_reason: "" })) }, true);
+    const description = words(addFields.desc.value);
+    // The same rule as the add line: a stored word only when it is not described otherwise.
+    const same = spelling && dict.words.find((w) => w.spelling === spelling && (!description || !w.meaning || w.meaning === description));
+    const word = same ? { ...same, meaning: same.meaning || description }
+      : { id: id("w"), spelling, meaning: description, personal_context: null, casing: "fixed", needs_review: false };
+    openEditor(addPinned || !model ? "pinned" : "learned", { text: heard[0] ?? "", candidates: [{ word: word.id, basis: "user", evidence: [] }], direct: null, direct_reason: "" },
+      true, model, [word], heard.slice(1));
   });
   el("empty-suggest").addEventListener("click", () => openSuggestions("history"));
 
   // ---- The full editor, in a side panel ----
-  // A learned draft belongs to the speech model it was started for, even if the toolbar
-  // selection changes before it is saved.
-  function openEditor(scope, group, created = false, model = getModel()) {
+  // One heard entry: its text, and the words it can stand for. A word is shared by every
+  // entry that names it, so its edits reach them all. A learned draft belongs to the speech
+  // model it was started for, even if the toolbar selection changes before it is saved.
+  const blankWord = () => ({ id: id("w"), spelling: "", meaning: "", personal_context: null, casing: "fixed", needs_review: false });
+  // A stored word in a draft keeps the copy it was taken from (`seen`): a save writes only
+  // a word the person changed, and a reload shows whether it changed elsewhere meanwhile.
+  const draftItem = (w, stored, basis = "user", evidence = []) => ({ key: id("c"), word: { ...w, personal_context: w.personal_context ?? "" },
+    stored, seen: stored ? JSON.stringify(w) : null, basis, evidence });
+  function edited(item) {
+    if (!item.stored) return true;
+    const before = JSON.parse(item.seen);
+    return words(item.word.spelling) !== before.spelling || item.word.meaning.trim() !== before.meaning
+      || (item.word.personal_context.trim() || null) !== before.personal_context || item.word.casing !== before.casing;
+  }
+  function openEditor(scope, entry, created = false, model = getModel(), fresh = [], more = []) {
     editorError = "";
+    // `fresh`: words as the add line filled them in, over their stored copies.
+    const known = wordMap();
+    for (const w of fresh) known.set(w.id, w);
     draft = {
-      id: group.id, created, scope, notices: [], model,
+      created, scope, model,
+      notices: more.length ? [`Only “${entry.text}” is in this entry; add ${more.map((t) => `“${t}”`).join(", ")} as entries of their own.`] : [],
       version: dictVersion, // the revision this draft was made from
-      original: structuredClone(group),
-      meanings: group.meanings.map((m) => ({ ...m, meaning: m.meaning ?? "", personal_context: m.personal_context ?? "" })),
-      forms: group.recognized_forms.map((f) => ({
-        key: id("f"), text: f.text, origText: created ? null : f.text, links: f.associations.map((a) => a.meaning_id),
-        basis: Object.fromEntries(f.associations.map((a) => [a.meaning_id, { basis: a.basis, evidence: a.evidence ?? [] }])),
-        direct: f.direct, direct_reason: f.direct_reason ?? "",
-      })),
+      original: structuredClone(entry),
+      text: entry.text, origText: created ? null : entry.text,
+      items: entry.candidates.map((c) => {
+        const w = known.get(c.word) ?? blankWord();
+        const stored = dict.words.find((x) => x.id === w.id);
+        return { ...draftItem(w, Boolean(stored), c.basis, c.evidence ?? []), seen: stored ? JSON.stringify(stored) : null };
+      }),
+      direct: entry.direct, direct_reason: entry.direct_reason ?? "",
     };
     el("entry-title").textContent = created ? "New entry" : "Edit entry";
     el("entry-save").textContent = created ? "Add entry" : "Save";
@@ -638,41 +676,33 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const change = (fn) => { editorError = ""; fn(draft); drawEditor(); };
   const part = (name, value) => el("entry-body").querySelector(`[data-part="${CSS.escape(`${name}:${value}`)}"]`);
   const showError = (p, text) => { if (p) { p.textContent = text ?? ""; p.hidden = !text; } };
-  const spellingOf = (mid) => draft.meanings.find((m) => m.id === mid)?.spelling || meanings(dict, draft.model?.id).get(mid)?.spelling || "(no spelling)";
-  const canKeep = (form) => Boolean(words(form.text)) && !draft.meanings.some((m) => literalLink(form, m.id, m));
-  function pillLabel(pill, form, meaning) {
-    const on = form.links.includes(meaning.id);
-    pill.replaceChildren(`${on ? "✓ " : ""}${meaning.spelling || "(no spelling)"}`);
-    if (on && literalLink(form, meaning.id, meaning)) pill.append(node("span", " · as written", "pill-note"));
-  }
+  const spellingOf = (item) => item?.word.spelling || "(no spelling)";
+  // The heard text's own word, kept as written, is offered while no candidate is spelled so.
+  const canKeep = (d) => Boolean(words(d.text)) && !d.items.some((item) => textKey(item.word.spelling) === textKey(d.text));
   function refresh() {
     const d = draft;
     const problems = editorProblems();
-    for (const meaning of d.meanings) {
-      showError(part("error", `m:${meaning.id}`), problems.meanings.get(meaning.id));
-      part("remove-meaning", meaning.id)?.setAttribute("aria-label", `Remove ${meaning.spelling || "this meaning"} and its links`);
+    showError(part("error", "text"), problems.text);
+    for (const item of d.items) {
+      showError(part("error", `w:${item.key}`), problems.items.get(item.key));
+      part("literal", item.key)?.toggleAttribute("hidden", !literalItem(item));
     }
-    for (const form of d.forms) {
-      showError(part("error", `f:${form.key}`), problems.forms.get(form.key));
-      showError(part("error", `r:${form.key}`), problems.direct.has(form.key) ? "Write a reason. Use this only when the phrase can never mean anything else." : "");
-      for (const meaning of d.meanings) { const pill = part("pill", `${form.key}|${meaning.id}`); if (pill) pillLabel(pill, form, meaning); }
-      const keep = part("keep", form.key);
-      if (keep) { keep.hidden = !canKeep(form); keep.textContent = `+ keep “${words(form.text)}” as written`; }
-      const reason = el("entry-body").querySelector(`[data-key="${CSS.escape(`f:${form.key}:reason`)}"]`);
-      if (reason) reason.placeholder = `Why can “${words(form.text)}” never mean anything else?`;
-      for (const option of part("target", form.key)?.options ?? []) option.textContent = spellingOf(option.value);
-      part("remove-form", form.key)?.setAttribute("aria-label", `Remove ${form.text || "this heard form"}`);
-    }
-    showError(part("error", "none"), problems.none ? "Add a meaning, or link a heard form to another entry's meaning." : "");
+    const keep = part("keep", "text");
+    if (keep) { keep.hidden = !canKeep(d); keep.textContent = `+ keep “${words(d.text)}” as written`; }
+    showError(part("error", "reason"), problems.direct ? "Write a reason. Use this only when the words can never mean anything else." : "");
+    const reason = el("entry-body").querySelector('[data-key="reason"]');
+    if (reason) reason.placeholder = `Why can “${words(d.text)}” never mean anything else?`;
+    for (const option of part("target", "always")?.options ?? []) option.textContent = spellingOf(d.items.find((item) => item.word.id === option.value));
+    showError(part("error", "none"), problems.none ? "Add a word it can stand for." : "");
     editorStatus();
   }
-  // An always-replace approval was given for one heard form and one output; changing
+  // An always-replace approval was given for one heard text and one output; changing
   // either clears it, and the panel says so.
-  function clearAlways(form, why) {
-    const notice = `“Always” on “${words(form.text)}” was cleared because you changed ${why}. Turn it on again if it still applies.`;
-    form.direct = null; form.direct_reason = "";
-    part("always-box", form.key)?.remove();
-    const always = part("always", form.key);
+  function clearAlways(why) {
+    const notice = `“Always” on “${words(draft.text)}” was cleared because you changed ${why}. Turn it on again if it still applies.`;
+    draft.direct = null; draft.direct_reason = "";
+    part("always-box", "always")?.remove();
+    const always = part("always", "button");
     always?.classList.remove("on");
     always?.setAttribute("aria-pressed", "false");
     if (draft.notices.includes(notice)) return;
@@ -711,36 +741,36 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     return p;
   };
 
-  // A stored "as written" link stays one while its heard form and meaning are unchanged;
+  // A stored "as written" candidate stays one while its heard text and word are unchanged;
   // otherwise the spelling rule above decides.
-  function literalLink(form, mid, meaning) {
-    const old = words(form.text) === form.origText ? form.basis[mid] : null;
-    const before = draft.original.meanings.find((m) => m.id === mid);
-    const same = !before || (words(before.spelling) === words(meaning?.spelling ?? "") && before.casing === meaning?.casing);
-    return (old?.basis === "literal" && same) || isLiteral(meaning, form.text);
+  function literalItem(item) {
+    const d = draft;
+    const old = words(d.text) === d.origText && item.basis === "literal" ? dict.words.find((w) => w.id === item.word.id) : null;
+    const same = old && words(old.spelling) === words(item.word.spelling) && old.casing === item.word.casing;
+    return Boolean(same) || isLiteral(item.word, d.text);
   }
 
   function editorProblems() {
     const d = draft;
-    const problems = { meanings: new Map(), forms: new Map(), direct: new Set(), none: false, count: 0 };
-    for (const m of d.meanings) if (!words(m.spelling)) problems.meanings.set(m.id, "Write how it should be spelled.");
-    const seen = new Set();
-    for (const f of d.forms) {
-      const text = words(f.text).toLowerCase();
-      const problem = !text ? "Write what the speech model writes." : seen.has(text) ? "Already listed above." : !f.links.length ? "Link at least one meaning it can stand for." : "";
-      seen.add(text);
-      if (problem) problems.forms.set(f.key, problem);
-      if (f.direct && !words(f.direct_reason)) problems.direct.add(f.key);
-    }
-    problems.none = !d.meanings.length && !d.forms.some((f) => f.links.length);
-    problems.count = problems.meanings.size + problems.forms.size + problems.direct.size + (problems.none ? 1 : 0)
+    const problems = { text: "", items: new Map(), direct: false, none: false, count: 0 };
+    const text = textKey(d.text);
+    const list = d.scope === "pinned" ? dict.pinned : dict.learned[d.model?.id] ?? [];
+    const taken = list.some((h) => textKey(h.text) === text && (d.created || text !== textKey(d.origText)));
+    problems.text = !text ? "Write what the speech model writes."
+      : taken ? "Already an entry in this list; edit that one."
+        : d.scope === "learned" && (d.created || text !== textKey(d.origText)) && dict.pinned.some((h) => textKey(h.text) === text)
+          ? "Pinned for every model already; edit that entry." : "";
+    for (const item of d.items) if (!words(item.word.spelling)) problems.items.set(item.key, "Write how it should be spelled.");
+    problems.none = !d.items.length;
+    problems.direct = Boolean(d.direct) && !words(d.direct_reason);
+    problems.count = (problems.text ? 1 : 0) + problems.items.size + (problems.direct ? 1 : 0) + (problems.none ? 1 : 0)
       + (d.scope === "learned" && !d.model ? 1 : 0);
     return problems;
   }
   function editorStatus() {
     if (!draft) return;
     const problems = editorProblems();
-    const missing = draft.meanings.filter((m) => !words(m.meaning)).length;
+    const missing = draft.items.filter((item) => !words(item.word.meaning)).length;
     const status = el("entry-status");
     status.textContent = editorError || (problems.count ? plural(problems.count, "thing") + " to fix"
       : missing ? `${missing} without a description` : "Ready to save");
@@ -752,8 +782,6 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const d = draft;
     const model = d.model;
     const problems = editorProblems();
-    const known = meanings(dict, model?.id);
-    const pinned = pinnedIds();
     const parts = [];
     if (d.created) {
       parts.push(segmented([["pinned", "Every model · pinned", "Shared by every speech model, protected from suggestions"],
@@ -767,160 +795,153 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     notices.append(...d.notices.map((notice) => node("p", notice, "editor-notice")));
     parts.push(notices);
 
-    // Written as: the meanings, one card each.
-    const written = node("section", "", "editor-section");
-    const writtenHead = node("div", "", "editor-head");
-    writtenHead.append(node("h3", "Written as"), node("span", "the meanings · the decision model picks one from the sentence", "caption"));
-    written.append(writtenHead);
-    const own = new Set(d.meanings.map((m) => m.id));
-    for (const meaning of d.meanings) {
-      const card = node("div", "", "editor-card");
-      const top = node("div", "", "editor-line");
-      // Changing a spelling or capitals clears approvals that name this meaning.
-      const spelling = input(meaning.spelling, `m:${meaning.id}:spelling`, (value) => {
-        meaning.spelling = value;
-        for (const form of d.forms) if (form.direct === meaning.id) clearAlways(form, `${meaning.spelling || "the meaning"}'s spelling`);
-      }, { placeholder: "Spelling", cls: "input strong" });
-      top.append(spelling, segmented([["fixed", "Exact capitals", "Always exactly like this: names, acronyms"], ["ordinary", "Normal word", "Capitalised only at a sentence start"]],
-        meaning.casing, (value) => {
-          if (value === meaning.casing) return;
-          meaning.casing = value;
-          for (const form of d.forms) if (form.direct === meaning.id) clearAlways(form, `${meaning.spelling || "the meaning"}'s capitals`);
-          change(() => {});
-        }, "Capitals"));
-      if (d.meanings.length > 1 || d.forms.some((f) => f.links.some((mid) => !own.has(mid)))) {
-        const remove = button("×", () => change((dd) => {
-          dd.meanings = dd.meanings.filter((m) => m.id !== meaning.id);
-          for (const f of dd.forms) { f.links = f.links.filter((l) => l !== meaning.id); if (f.direct === meaning.id) { f.direct = null; f.direct_reason = ""; } }
-        }), "btn-icon remove");
-        remove.dataset.part = `remove-meaning:${meaning.id}`;
-        remove.setAttribute("aria-label", `Remove ${meaning.spelling || "this meaning"} and its links`);
-        remove.title = "Remove this meaning and its links";
-        top.append(remove);
-      }
-      card.append(top, errorLine(`m:${meaning.id}`, problems.meanings.get(meaning.id)));
-      const description = input(meaning.meaning, `m:${meaning.id}:meaning`, (value) => { meaning.meaning = value; description.classList.toggle("missing", !words(value)); warn.hidden = Boolean(words(value)); },
-        { tag: "textarea", placeholder: "What it is and what it goes with. The decision model reads this.", label: "What it is" });
-      description.classList.toggle("missing", !words(meaning.meaning));
-      const warn = node("p", "Without a description the decision model can't choose this meaning. You can save; the entry is flagged.", "field-error");
-      warn.hidden = Boolean(words(meaning.meaning));
-      card.append(description, warn,
-        input(meaning.personal_context, `m:${meaning.id}:context`, (value) => { meaning.personal_context = value; }, { placeholder: "How you use it (optional)", cls: "input small" }));
-      written.append(card);
-    }
-    written.append(button("+ Another meaning", () => change((dd) => { dd.meanings.push({ id: id("m"), spelling: "", meaning: "", personal_context: "", casing: "fixed" }); }), "btn link add-more"));
-    parts.push(written);
-
-    // Heard as: the forms, each linked to the meanings it can stand for.
+    // Heard as: the one text this entry is for.
     const heard = node("section", "", "editor-section");
     const heardHead = node("div", "", "editor-head");
-    heardHead.append(node("h3", "Heard as"), node("span", `what ${model ? shortName(model) : "the speech model"} writes · link the meanings each can stand for`, "caption"));
-    heard.append(heardHead);
-    for (const form of d.forms) {
-      const card = node("div", "", "editor-card");
-      const top = node("div", "", "editor-line wrap");
-      top.append(input(form.text, `f:${form.key}:text`, (value) => {
-        if (form.direct) clearAlways(form, "the heard form");
-        form.text = value;
-      }, { placeholder: "heard form", cls: "input mono heard-input", label: "Heard as" }), node("span", "→", "arrow"));
-      for (const meaning of d.meanings) {
-        const on = form.links.includes(meaning.id);
-        const pill = button("", () => change(() => {
-          form.links = on ? form.links.filter((l) => l !== meaning.id) : [...form.links, meaning.id];
-          if (on && form.direct === meaning.id) { form.direct = null; form.direct_reason = ""; }
-        }), on ? "pill on" : "pill");
-        pill.dataset.part = `pill:${form.key}|${meaning.id}`;
-        pill.setAttribute("aria-pressed", String(on));
-        pill.title = on ? "Click to unlink" : "Click to link";
-        pillLabel(pill, form, meaning);
-        top.append(pill);
-      }
-      for (const mid of form.links.filter((l) => !own.has(l))) {
-        const chip = node("span", `✓ ${spellingOf(mid)}`, "pill on external");
-        chip.title = known.get(mid)?.meaning || "No description yet";
-        chip.append(node("span", pinned.has(mid) ? " · pinned" : " · other entry", "pill-note"));
-        const remove = button("×", () => change(() => { form.links = form.links.filter((l) => l !== mid); if (form.direct === mid) { form.direct = null; form.direct_reason = ""; } }), "pill-remove");
-        remove.setAttribute("aria-label", `Unlink ${spellingOf(mid)}`);
-        chip.append(remove);
-        top.append(chip);
-      }
-      const keep = button(`+ keep “${words(form.text)}” as written`, () => change((dd) => {
-        const mid = id("m");
-        dd.meanings.push({ id: mid, spelling: words(form.text), meaning: "", personal_context: "", casing: "ordinary" });
-        form.links.push(mid);
-      }), "pill dashed");
-      keep.dataset.part = `keep:${form.key}`;
-      keep.hidden = !canKeep(form);
-      keep.title = "Adds a meaning spelled exactly like this, so it's left alone when that sense fits";
-      // The form and its meanings on one line; ways to link more, Always and × beneath.
-      const tools = node("div", "", "editor-line");
-      const links = node("div", "", "editor-line wrap grow");
-      links.append(keep);
-      tools.append(links);
-      const others = [...known].filter(([mid]) => !own.has(mid) && !form.links.includes(mid) && !d.original.meanings.some((m) => m.id === mid));
-      if (others.length) {
-        const pick = document.createElement("select");
-        pick.className = "pill dashed pick";
-        pick.setAttribute("aria-label", "Link a meaning from another entry");
-        pick.title = "Link a meaning from another entry";
-        pick.add(new Option("+ other entry…", ""));
-        for (const [mid, m] of others) pick.add(new Option(`${m.spelling} (${pinned.has(mid) ? "pinned" : "learned"}) — ${m.meaning || "no description yet"}`, mid));
-        pick.addEventListener("change", () => { if (pick.value) change(() => { form.links.push(pick.value); }); });
-        links.append(pick);
-      }
-      const always = button("Always", () => change(() => {
-        form.direct = form.direct ? null : form.links[0];
-        if (!form.direct) form.direct_reason = "";
-      }), form.direct ? "pill always on" : "pill always");
-      always.dataset.part = `always:${form.key}`;
-      always.disabled = !form.links.length;
-      always.setAttribute("aria-pressed", String(Boolean(form.direct)));
-      always.title = "Replace without reading the sentence. Rare.";
-      tools.append(always);
-      if (d.forms.length > 1 || d.meanings.length) {
-        const remove = button("×", () => change((dd) => { dd.forms = dd.forms.filter((f) => f !== form); }), "btn-icon remove");
-        remove.dataset.part = `remove-form:${form.key}`;
-        remove.setAttribute("aria-label", `Remove ${form.text || "this heard form"}`);
-        tools.append(remove);
-      }
-      card.append(top, tools, errorLine(`f:${form.key}`, problems.forms.get(form.key)));
-      if (form.direct) {
-        const box = node("div", "", "always-box");
-        box.dataset.part = `always-box:${form.key}`;
-        const line = node("div", "", "editor-line wrap");
-        const target = document.createElement("select");
-        target.className = "select";
-        target.dataset.part = `target:${form.key}`;
-        target.setAttribute("aria-label", "Always write");
-        for (const mid of form.links) target.add(new Option(spellingOf(mid), mid, false, mid === form.direct));
-        target.addEventListener("change", () => change(() => { form.direct = target.value; }));
-        line.append("Always write ", target, " without reading the sentence.");
-        box.append(line, input(form.direct_reason, `f:${form.key}:reason`, (value) => { form.direct_reason = value; },
-          { placeholder: `Why can “${words(form.text)}” never mean anything else?`, cls: "input small", label: "Why this is always right" }),
-        errorLine(`r:${form.key}`, problems.direct.has(form.key) ? "Write a reason. Use this only when the phrase can never mean anything else." : ""));
-        card.append(box);
-      }
-      heard.append(card);
-    }
-    heard.append(button("+ Another heard form", () => change((dd) => {
-      dd.forms.push({ key: id("f"), text: "", origText: null, links: dd.meanings.length === 1 ? [dd.meanings[0].id] : [], basis: {}, direct: null, direct_reason: "" });
-    }), "btn link add-more"));
-    heard.append(errorLine("none", problems.none ? "Add a meaning, or link a heard form to another entry's meaning." : ""));
+    heardHead.append(node("h3", "Heard as"), node("span", `what ${model ? shortName(model) : "the speech model"} writes`, "caption"));
+    const card = node("div", "", "editor-card");
+    card.append(input(d.text, "text", (value) => {
+      if (d.direct) clearAlways("the heard text");
+      d.text = value;
+    }, { placeholder: "heard text", cls: "input mono heard-input", label: "Heard as" }), errorLine("text", problems.text));
+    heard.append(heardHead, card);
     parts.push(heard);
+
+    // Written as: the words it can stand for, one card each.
+    const written = node("section", "", "editor-section");
+    const writtenHead = node("div", "", "editor-head");
+    writtenHead.append(node("h3", "Written as"), node("span", "the words it can stand for · the decision model picks one from the sentence", "caption"));
+    written.append(writtenHead);
+    for (const item of d.items) {
+      const wordCard = node("div", "", "editor-card");
+      const top = node("div", "", "editor-line");
+      // Changing a spelling or capitals clears an approval that names this word.
+      top.append(input(item.word.spelling, `w:${item.key}:spelling`, (value) => {
+        item.word.spelling = value;
+        if (d.direct === item.word.id) clearAlways(`${item.word.spelling || "the word"}'s spelling`);
+      }, { placeholder: "Spelling", cls: "input strong" }), segmented([["fixed", "Exact capitals", "Always exactly like this: names, acronyms"], ["ordinary", "Normal word", "Capitalised only at a sentence start"]],
+        item.word.casing, (value) => {
+          if (value === item.word.casing) return;
+          item.word.casing = value;
+          if (d.direct === item.word.id) clearAlways(`${item.word.spelling || "the word"}'s capitals`);
+          change(() => {});
+        }, "Capitals"));
+      const literal = node("span", "as written", "pill-note");
+      literal.dataset.part = `literal:${item.key}`;
+      literal.hidden = !literalItem(item);
+      literal.title = "Spelled like the heard text: left as written when this word fits the sentence";
+      top.append(literal);
+      const remove = button("×", () => change((dd) => {
+        dd.items = dd.items.filter((x) => x !== item);
+        if (dd.direct === item.word.id) { dd.direct = null; dd.direct_reason = ""; }
+      }), "btn-icon remove");
+      remove.setAttribute("aria-label", `Remove ${item.word.spelling || "this word"} from this entry`);
+      remove.title = "Remove this word from this entry; the word stays in your dictionary";
+      top.append(remove);
+      wordCard.append(top, errorLine(`w:${item.key}`, problems.items.get(item.key)));
+      const warn = node("p", "Without a description the decision model can't choose this word. You can save; the word is flagged.", "field-error");
+      warn.hidden = Boolean(words(item.word.meaning));
+      const description = input(item.word.meaning, `w:${item.key}:meaning`, (value) => { item.word.meaning = value; description.classList.toggle("missing", !words(value)); warn.hidden = Boolean(words(value)); },
+        { tag: "textarea", placeholder: "What it is and what it goes with. The decision model reads this.", label: "What it is" });
+      description.classList.toggle("missing", !words(item.word.meaning));
+      wordCard.append(description, warn,
+        input(item.word.personal_context, `w:${item.key}:context`, (value) => { item.word.personal_context = value; }, { placeholder: "How you use it (optional)", cls: "input small" }));
+      const self = (u) => !d.created && u.scope === d.scope && textKey(u.h.text) === textKey(d.origText) && (u.scope === "pinned" || u.model === d.model?.id);
+      const others = usesOf(item.word.id).filter((u) => !self(u));
+      if (others.length) wordCard.append(node("p", `Shared with ${others.slice(0, 3).map(whereUsed).join(", ")}${others.length > 3 ? ` and ${others.length - 3} more` : ""}: edits to this word apply there too.`, "caption"));
+      written.append(wordCard);
+    }
+    // More words: a new one, the heard text kept as written, or one already in the dictionary.
+    const more = node("div", "", "editor-line wrap");
+    more.append(button("+ New word", () => change((dd) => { dd.items.push(draftItem(blankWord(), false)); }), "btn link add-more"));
+    const keep = button(`+ keep “${words(d.text)}” as written`, () => change((dd) => {
+      const same = dict.words.find((w) => w.casing === "ordinary" && textKey(w.spelling) === textKey(dd.text) && !dd.items.some((item) => item.word.id === w.id));
+      dd.items.push(draftItem(same ?? { ...blankWord(), spelling: words(dd.text), casing: "ordinary" }, Boolean(same), "literal"));
+    }), "pill dashed");
+    keep.dataset.part = "keep:text";
+    keep.hidden = !canKeep(d);
+    keep.title = "Adds the word spelled exactly like this, so it's left alone when that sense fits";
+    more.append(keep);
+    const others = dict.words.filter((w) => !d.items.some((item) => item.word.id === w.id));
+    if (others.length) {
+      const pick = document.createElement("select");
+      pick.className = "pill dashed pick";
+      pick.setAttribute("aria-label", "Add a word from your dictionary");
+      pick.title = "Add a word already in your dictionary";
+      pick.add(new Option("+ existing word…", ""));
+      for (const w of [...others].sort((a, b) => a.spelling.localeCompare(b.spelling))) pick.add(new Option(`${w.spelling} — ${w.meaning || "no description yet"}`, w.id));
+      pick.addEventListener("change", () => {
+        const w = dict.words.find((x) => x.id === pick.value);
+        if (w) change((dd) => { dd.items.push(draftItem(w, true)); });
+      });
+      more.append(pick);
+    }
+    written.append(more, errorLine("none", problems.none ? "Add a word it can stand for." : ""));
+    parts.push(written);
+
+    // Always: replace without reading the sentence. Rare.
+    const always = node("section", "", "editor-section");
+    const toggle = button("Always", () => change((dd) => {
+      dd.direct = dd.direct ? null : dd.items[0]?.word.id ?? null;
+      if (!dd.direct) dd.direct_reason = "";
+    }), d.direct ? "pill always on" : "pill always");
+    toggle.dataset.part = "always:button";
+    toggle.disabled = !d.items.length;
+    toggle.setAttribute("aria-pressed", String(Boolean(d.direct)));
+    toggle.title = "Replace without reading the sentence. Rare.";
+    const line = node("div", "", "editor-line");
+    line.append(toggle);
+    always.append(line);
+    if (d.direct) {
+      const box = node("div", "", "always-box");
+      box.dataset.part = "always-box:always";
+      const line = node("div", "", "editor-line wrap");
+      const target = document.createElement("select");
+      target.className = "select";
+      target.dataset.part = "target:always";
+      target.setAttribute("aria-label", "Always write");
+      for (const item of d.items) target.add(new Option(spellingOf(item), item.word.id, false, item.word.id === d.direct));
+      target.addEventListener("change", () => change((dd) => { dd.direct = target.value; }));
+      line.append("Always write ", target, " without reading the sentence.");
+      box.append(line, input(d.direct_reason, "reason", (value) => { d.direct_reason = value; },
+        { placeholder: `Why can “${words(d.text)}” never mean anything else?`, cls: "input small", label: "Why this is always right" }),
+      errorLine("reason", problems.direct ? "Write a reason. Use this only when the words can never mean anything else." : ""));
+      always.append(box);
+    }
+    parts.push(always);
     return parts;
   }
 
-  // A draft is based on its entry as it was when opened. After a reload it can still be
-  // saved if that entry is unchanged; otherwise it reopens on the saved version, so a
-  // save never undoes a change made elsewhere.
+  // A draft is based on its entry and its stored words as they were when taken. After a
+  // reload it can still be saved if they are unchanged; a word the person did not edit just
+  // takes the saved version. Otherwise the saved version is shown, so a save never undoes a
+  // change made elsewhere.
   function rebase(d) {
-    if (d.created || d.version === dictVersion) return true;
-    const fresh = (d.scope === "pinned" ? dict.pinned : dict.learned[d.model.id] ?? []).find((g) => g.id === d.id);
-    if (fresh && JSON.stringify(fresh) === JSON.stringify(d.original)) { d.version = dictVersion; return true; }
-    if (!fresh) { closeEditor(); toast("This entry was removed elsewhere; nothing was saved.", "err"); return false; }
-    openEditor(d.scope, fresh, false, d.model);
-    editorError = "This entry changed while you were editing and now shows the saved version. Redo your change.";
-    editorStatus();
+    if (d.version === dictVersion) return true;
+    const known = wordMap();
+    if (!d.created) {
+      const list = d.scope === "pinned" ? dict.pinned : dict.learned[d.model.id] ?? [];
+      const fresh = list.find((h) => textKey(h.text) === textKey(d.origText));
+      if (!fresh) { closeEditor(); toast("This entry was removed elsewhere; nothing was saved.", "err"); return false; }
+      if (JSON.stringify(fresh) !== JSON.stringify(d.original)) {
+        openEditor(d.scope, fresh, false, d.model);
+        editorError = "This entry changed while you were editing and now shows the saved version. Redo your change.";
+        editorStatus();
+        return false;
+      }
+    }
+    let conflict = false;
+    for (const item of [...d.items]) {
+      if (!item.stored || JSON.stringify(known.get(item.word.id) ?? null) === item.seen) continue;
+      conflict ||= edited(item);
+      const fresh = known.get(item.word.id);
+      if (fresh) Object.assign(item, draftItem(fresh, true, item.basis, item.evidence), { key: item.key });
+      else d.items = d.items.filter((x) => x !== item);
+    }
+    d.version = dictVersion;
+    if (!conflict) return true;
+    editorError = "A word here changed elsewhere and now shows the saved version. Redo your change to it, then save.";
+    drawEditor();
     return false;
   }
 
@@ -928,49 +949,48 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   async function saveEditor() {
     const d = draft;
     if (!d || editorProblems().count || building || saving || !rebase(d)) return;
-    const known = meanings(dict, d.model?.id);
-    const meaningOf = (mid) => d.meanings.find((m) => m.id === mid) ?? known.get(mid);
-    const group = {
-      id: d.id,
-      meanings: d.meanings.map((m) => ({ id: m.id, spelling: words(m.spelling), meaning: m.meaning.trim(), personal_context: m.personal_context.trim() || null, casing: m.casing })),
-      recognized_forms: d.forms.map((f) => {
-        const text = words(f.text);
-        return {
-          text,
-          associations: f.links.map((mid) => {
-            // A changed form loses the evidence that located the old text in transcripts.
-            const old = text === f.origText ? f.basis[mid] : null;
-            const basis = literalLink(f, mid, meaningOf(mid)) ? "literal" : old && old.basis !== "literal" ? old.basis : "user";
-            return { meaning_id: mid, basis, evidence: old && old.basis === basis ? old.evidence : [] };
-          }),
-          direct: f.direct || null,
-          direct_reason: f.direct ? f.direct_reason.trim() : "",
-        };
-      }),
-    };
-    group.needs_review = group.meanings.some((m) => !m.meaning);
+    const text = words(d.text);
+    const sameText = !d.created && text === d.origText;
     const next = clone();
-    const list = d.scope === "pinned" ? next.pinned : (next.learned[d.model.id] ??= []);
-    const at = list.findIndex((g) => g.id === d.id);
-    if (d.created || at < 0) list.push(group); else list[at] = group;
-    const changedOutputs = new Set(group.meanings.filter((m) => {
-      const old = d.original.meanings.find((before) => before.id === m.id);
-      return old && (old.spelling !== m.spelling || old.casing !== m.casing);
-    }).map((m) => m.id));
-    // Shared identity remains one definition, even when another section holds a copy.
-    for (const g of [...next.pinned, ...Object.values(next.learned).flat()]) {
-      if (g === group) continue;
-      g.meanings = g.meanings.map((m) => group.meanings.find((edited) => edited.id === m.id) ?? m);
-      for (const f of g.recognized_forms) {
-        if (changedOutputs.has(f.direct)) { f.direct = null; f.direct_reason = ""; }
-        // The old canonical form becomes a user-maintained association when
-        // its output spelling changes; it no longer asserts literal identity.
-        f.associations = f.associations.map((a) => a.basis === "literal" && changedOutputs.has(a.meaning_id)
-          ? { meaning_id: a.meaning_id, basis: "user", evidence: [] } : a);
+    // Words: an edited one replaces its stored copy everywhere; a new one is added.
+    const changedOutputs = new Set();
+    // Saving also confirms a word flagged for review once it has a description.
+    const confirmed = (item) => item.stored && JSON.parse(item.seen).needs_review && Boolean(words(item.word.meaning));
+    for (const item of d.items.filter((item) => edited(item) || confirmed(item))) {
+      const meaning = item.word.meaning.trim();
+      const word = { id: item.word.id, spelling: words(item.word.spelling), meaning, personal_context: item.word.personal_context.trim() || null,
+        casing: item.word.casing, needs_review: !meaning };
+      const at = next.words.findIndex((w) => w.id === word.id);
+      if (at < 0) { next.words.push(word); continue; }
+      const old = next.words[at];
+      if (old.spelling !== word.spelling || old.casing !== word.casing) changedOutputs.add(word.id);
+      next.words[at] = word;
+    }
+    const spelling = (wid) => next.words.find((w) => w.id === wid)?.spelling ?? "";
+    // Other entries naming a word whose output changed: an approval naming it is cleared, and a
+    // candidate no longer spelled like its heard text is the person's own, not as written.
+    for (const list of [next.pinned, ...Object.values(next.learned)]) {
+      for (const h of list) {
+        if (changedOutputs.has(h.direct)) { h.direct = null; h.direct_reason = ""; }
+        h.candidates = h.candidates.map((c) => c.basis === "literal" && changedOutputs.has(c.word) && textKey(spelling(c.word)) !== textKey(h.text)
+          ? { word: c.word, basis: "user", evidence: [] } : c);
       }
     }
-    const removed = new Set(d.original.meanings.map((m) => m.id).filter((mid) => !group.meanings.some((m) => m.id === mid)));
-    if (removed.size) withoutMeanings(next, removed);
+    const entry = {
+      text,
+      candidates: d.items.map((item) => {
+        // A changed heard text loses the evidence that located the old one in transcripts.
+        const old = sameText ? d.original.candidates.find((c) => c.word === item.word.id) : null;
+        const literal = textKey(spelling(item.word.id)) === textKey(text) && literalItem(item);
+        const basis = literal ? "literal" : old && old.basis !== "literal" ? old.basis : "user";
+        return { word: item.word.id, basis, evidence: old && old.basis === basis ? old.evidence : [] };
+      }),
+      direct: d.direct || null,
+      direct_reason: d.direct ? d.direct_reason.trim() : "",
+    };
+    const list = d.scope === "pinned" ? next.pinned : (next.learned[d.model.id] ??= []);
+    const at = d.created ? -1 : list.findIndex((h) => textKey(h.text) === textKey(d.origText));
+    if (at < 0) list.push(entry); else list[at] = entry;
     const version = dictVersion;
     saving = true;
     editorStatus();
@@ -989,8 +1009,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     }
     if (current) closeEditor();
     if (current && d.created) { clearAdd(); showAdd(false); }
-    reveal(d.scope, group.id);
-    toast(`${d.created ? "Added" : "Saved"} ${title(group) || "entry"}`);
+    reveal(d.scope, text);
+    toast(`${d.created ? "Added" : "Saved"} “${text}”`);
   }
 
   // ---- List and JSON: two views of the same dictionary.json ----
@@ -1012,7 +1032,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("revert-dictionary").disabled = building || !dirty;
     el("dictionary-status").textContent = building ? "Read-only while suggestions are open."
       : dirty ? "Unsaved changes."
-        : "dictionary.json in Entune's data folder, the same content as the list. Forms match whole words regardless of case.";
+        : "dictionary.json in Entune's data folder, the same content as the list. Heard texts match whole words regardless of case.";
     return dirty;
   }
   // Text started before the dictionary loaded names no revision it could have seen:
@@ -1293,7 +1313,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     items.push({ title: "You review", cls: now === "review" ? "active" : "pending",
       body: "Edit any suggestion or leave it out, then apply. Nothing in your dictionary changes until you do.",
       status: now !== "review" ? "" : !proposalChanges.length ? "No changes suggested."
-        : `${plural(proposalChanges.length, "suggestion")} ready: ${[plural(kinds("add"), "new entry", "new entries"), plural(kinds("update"), "change"), ...(kinds("remove") ? [plural(kinds("remove"), "removal")] : [])].join(", ")}` });
+        : `${plural(proposalChanges.length, "suggestion")} ready: ${[plural(kinds("add"), "new entry", "new entries"), plural(kinds("update"), "change"),
+          ...(kinds("remove") ? [plural(kinds("remove"), "removal")] : []), ...(kinds("word") ? [plural(kinds("word"), "clearer meaning")] : [])].join(", ")}` });
     steps(el("run-steps"), items);
   }
 
@@ -1363,8 +1384,21 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     lockEditors();
   }
 
-  const label = (g) => g ? `${g.meanings.map(m => m.spelling).join(" · ")}` : "";
-  const describe = g => g ? [...g.meanings.map(m => `${m.spelling}: ${m.meaning}${m.personal_context ? ` (${m.personal_context})` : ""}`), ...g.recognized_forms.map(f => `Heard as: ${f.text}`)].join("\n") : "";
+  // A suggestion names words by ID: a new one as the review edits it, a stored one as its
+  // included clearer meaning leaves it, else as saved.
+  const isNewWord = (wid) => !dict.words.some((w) => w.id === wid);
+  const proposalWord = (wid) => isNewWord(wid) ? proposalWords.get(wid)
+    : proposalChanges.find((c) => c.kind === "word" && c.included && c.after.id === wid)?.after ?? wordMap().get(wid);
+  const savedWord = (wid) => wordMap().get(wid);
+  const label = (h) => h ? h.candidates.map((c) => proposalWord(c.word)?.spelling ?? c.word).join(" · ") : "";
+  const describe = (h, look = proposalWord) => h ? [`Heard as: ${h.text}`, ...h.candidates.map((c) => {
+    const w = look(c.word);
+    return `${w?.spelling ?? c.word}${c.basis === "literal" ? " (as written)" : ""}: ${w?.meaning || "no description yet"}`;
+  })].join("\n") : "";
+  const descriptions = (h) => h.candidates.map((c) => {
+    const w = proposalWord(c.word);
+    return `${w?.spelling ?? c.word}${isNewWord(c.word) ? " (new)" : ""}: ${w?.meaning || "no description yet"}`;
+  }).join(" · ");
   // Suggestions belong to the speech model they were made for; say so when the toolbar
   // shows another one, since applying still updates that model's dictionary.
   let proposalLabel = "";
@@ -1377,124 +1411,122 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   function renderProposal(p) {
     proposalLabel = modelName(p.model, []);
     proposalModel = p.model;
-    proposalChanges = p.changes.map(c => ({...structuredClone(c), included: true, editing: false}));
+    proposalWords = new Map(p.words.map((w) => [w.id, structuredClone(w)]));
+    // An entry's words as suggested, so one left out while editing can be taken back.
+    proposalChanges = p.changes.map(c => ({...structuredClone(c), included: true, editing: false,
+      choices: c.kind !== "word" && c.after ? structuredClone(c.after.candidates) : []}));
     drawProposal();
   }
   // Each suggestion's summary shows what Apply submits, so it follows every edit, including
-  // edits to a meaning shared with other suggestions.
+  // edits to a new word that other suggestions name too.
   function refreshSummaries() {
-    const known = proposalMeanings();
     for (const change of proposalChanges) {
       if (!change.after) continue;
       const set = (part, text) => { const e = proposalBody.querySelector(`[data-summary="${CSS.escape(`${part}:${change.id}`)}"]`); if (e) e.textContent = text; };
-      set("heard", change.after.recognized_forms.map(f => f.text).join(", "));
-      set("to", label(change.after) || title(change.after, known));
+      if (change.kind === "word") { set("after", change.after.meaning || "No description yet."); continue; }
+      set("to", label(change.after));
       set("after", describe(change.after));
-      set("desc", change.after.meanings.map(m => m.meaning).filter(Boolean).join(" · ") || "No description yet.");
+      set("desc", descriptions(change.after));
     }
   }
-  function field(parent, text, value, update) {
+  function field(parent, text, value, update, tag = "input") {
     const wrap = node("label", text, "group-field");
-    const control = document.createElement("input");
+    const control = document.createElement(tag);
     control.className = "input";
+    if (tag === "textarea") control.rows = 2;
     control.value = value ?? ""; control.addEventListener("change", () => { update(control.value); refreshSummaries(); });
     wrap.append(control); parent.append(wrap); return control;
   }
-  // Meanings a suggestion may name: the saved ones for its model, and those other suggestions add.
-  const proposalMeanings = () => new Map([...dict.pinned, ...(dict.learned[proposalModel] ?? []), ...proposalChanges.flatMap(c => c.after ? [c.after] : [])].flatMap(g => g.meanings).map(m => [m.id, m]));
   function drawProposal() {
     proposalBody.replaceChildren();
-    const known = proposalMeanings();
-    const pinned = pinnedIds();
-    for (const [kind, heading] of [["add", "New entries"], ["update", "Changes"], ["remove", "Remove"]]) {
+    for (const [kind, heading] of [["add", "New entries"], ["update", "Changes"], ["remove", "Remove"], ["word", "Clearer meanings"]]) {
       const items = proposalChanges.filter(c => c.kind === kind);
       if (!items.length) continue;
       proposalBody.append(node("h3", `${heading} · ${items.length}`));
       for (const change of items) {
-        const g = change.after || change.before;
         const box = node("section", "", "proposal-change");
         box.classList.toggle("dismissed", !change.included);
         const head = node("div", "", "change-head");
         const struck = kind === "remove" && change.included ? " struck" : "";
         const summary = (element, part) => { element.dataset.summary = `${part}:${change.id}`; return element; };
-        head.append(summary(node("code", g.recognized_forms.map(f => f.text).join(", "), `heard${struck}`), "heard"), node("span", "→", "arrow"),
-          summary(node("b", label(g) || title(g, known), struck.trim()), "to"), node("span", "", "spacer"));
+        const name = kind === "word" ? change.after.spelling : (change.after || change.before).text;
+        if (kind === "word") head.append(node("b", name), node("span", "", "spacer"));
+        else {
+          const h = change.after || change.before;
+          head.append(node("code", h.text, `heard${struck}`), node("span", "→", "arrow"),
+            summary(node("b", label(h), struck.trim()), "to"), node("span", "", "spacer"));
+        }
         const toggle = change.included
           ? button("×", () => { change.included = false; drawProposal(); }, "btn-icon remove")
           : button("Include", () => { change.included = true; drawProposal(); }, "btn link");
-        toggle.setAttribute("aria-label", `${change.included ? "Leave out" : "Include"} ${kind} ${label(g)}`);
+        toggle.setAttribute("aria-label", `${change.included ? "Leave out" : "Include"} ${kind === "word" ? "the clearer meaning of" : kind} ${name}`);
         toggle.title = change.included ? "Leave this suggestion out; your current dictionary is kept as it is" : "Include this suggestion again";
         head.append(toggle);
         box.append(head);
-        if (kind === "update" && change.before) {
+        if (kind === "word" || kind === "update") {
           const compare = node("div", "", "compare");
-          compare.append(node("span", "Now", "caption"), node("pre", describe(change.before), "before"),
-            node("span", "Suggested", "suggested"), summary(node("pre", describe(change.after), "after"), "after"));
+          const shown = (value, look) => kind === "word" ? value.meaning || "No description yet." : describe(value, look);
+          compare.append(node("span", "Now", "caption"), node("pre", shown(change.before, savedWord), "before"),
+            node("span", "Suggested", "suggested"), summary(node("pre", shown(change.after), "after"), "after"));
           box.append(compare);
         } else if (kind === "add") {
-          box.append(summary(node("p", g.meanings.map(m => m.meaning).filter(Boolean).join(" · ") || "No description yet.", "change-desc"), "desc"));
+          box.append(summary(node("p", descriptions(change.after), "change-desc"), "desc"));
         } else {
-          box.append(node("p", "Removed only if you keep this suggestion when applying.", "caption"));
+          box.append(node("p", "Removed only if you keep this suggestion when applying. Its words stay in your dictionary.", "caption"));
         }
         if (change.after && change.included) {
           const editor = node("details", "", "proposal-editor");
           editor.append(node("summary", "Edit this suggestion"));
           editor.open = change.editing;
           editor.addEventListener("toggle", () => { change.editing = editor.open; });
-          // A shared meaning can be proposed in several groups; its copies stay one definition.
-          // Update every copy and its visible input in place, so each editor shows what
-          // Apply submits without replacing the control the user moves to next.
-          const shared = (mid, part, value) => {
-            for (const copy of proposalChanges.flatMap(c => c.after?.meanings ?? [])) if (copy.id === mid) copy[part] = value;
-            for (const control of proposalBody.querySelectorAll("input[data-meaning]")) {
-              if (control.dataset.meaning === mid && control.dataset.part === part) control.value = value ?? "";
-            }
-          };
-          const tag = (control, mid, part) => { control.dataset.meaning = mid; control.dataset.part = part; return control; };
-          for (const meaning of change.after.meanings) {
+          if (kind === "word") {
             const row = node("div", "", "meaning-editor");
-            const spelling = field(row, "Write it as", meaning.spelling, value => {
-              for (const form of proposalChanges.flatMap(c => c.after?.recognized_forms ?? [])) {
-                if (form.direct === meaning.id) { form.direct = null; form.direct_reason = ""; }
-                form.associations = form.associations.map(a => a.basis === "literal" && a.meaning_id === meaning.id
-                  ? {meaning_id: a.meaning_id, basis: "user", evidence: []} : a);
-              }
-              shared(meaning.id, "spelling", value);
-            });
-            spelling.readOnly = pinned.has(meaning.id);
-            tag(spelling, meaning.id, "spelling");
-            tag(field(row, "What it is", meaning.meaning, value => shared(meaning.id, "meaning", value)), meaning.id, "meaning");
-            tag(field(row, "How you use it (optional)", meaning.personal_context, value => shared(meaning.id, "personal_context", value || null)), meaning.id, "personal_context");
+            field(row, "What it is", change.after.meaning, value => { change.after.meaning = value.trim(); change.after.needs_review = !change.after.meaning; }, "textarea");
             editor.append(row);
-          }
-          for (const form of change.after.recognized_forms) {
-            const row = node("div", "", "meaning-editor");
-            const protectedForm = change.before?.recognized_forms.some(old => old.text.toLowerCase() === form.text.toLowerCase() && old.associations.some(a => pinned.has(a.meaning_id)));
-            const text = field(row, "Heard as", form.text, value => { form.text = value; form.direct = null; form.direct_reason = ""; form.associations = form.associations.map(a => ({meaning_id: a.meaning_id, basis: "user", evidence: []})); });
-            text.readOnly = Boolean(protectedForm);
+          } else {
+            // The words it can stand for: one left out stays offered here; at least one stays.
             const choices = node("div", "", "proposal-associations");
-            for (const [mid, meaning] of known) {
-              if (!change.after.meanings.some(m => m.id === mid) && !form.associations.some(a => a.meaning_id === mid)) continue;
+            for (const choice of change.choices) {
+              const w = proposalWord(choice.word);
               const wrap = node("label", "", "caption check");
               const check = document.createElement("input"); check.type = "checkbox";
-              check.checked = form.associations.some(a => a.meaning_id === mid);
-              check.disabled = Boolean(protectedForm && pinned.has(mid) && check.checked);
+              check.checked = change.after.candidates.some(c => c.word === choice.word);
+              check.disabled = check.checked && change.after.candidates.length === 1;
               check.addEventListener("change", () => {
-                if (check.checked) form.associations.push({meaning_id: mid, basis: "user", evidence: []});
-                else form.associations = form.associations.filter(a => a.meaning_id !== mid);
-                form.direct = null; form.direct_reason = "";
-                refreshSummaries();
+                change.after.candidates = change.choices.filter(c => c.word === choice.word ? check.checked : change.after.candidates.some(x => x.word === c.word));
+                if (!change.after.candidates.some(c => c.word === change.after.direct)) { change.after.direct = null; change.after.direct_reason = ""; }
+                drawProposal();
               });
-              wrap.append(check, `${meaning.spelling} — ${meaning.meaning}`); choices.append(wrap);
+              wrap.append(check, `${w?.spelling ?? choice.word}${choice.basis === "literal" ? " (as written)" : ""} — ${w?.meaning || "no description yet"}`);
+              choices.append(wrap);
             }
-            const remove = button("Remove this heard form", () => { change.after.recognized_forms = change.after.recognized_forms.filter(f => f !== form); drawProposal(); });
-            remove.disabled = Boolean(protectedForm);
-            row.append(choices, remove); editor.append(row);
+            editor.append(choices);
+            // A new word is defined here, once, for every suggestion that names it.
+            for (const choice of change.choices.filter(c => isNewWord(c.word) && proposalWords.has(c.word))) {
+              const word = proposalWords.get(choice.word);
+              const row = node("div", "", "meaning-editor");
+              // Every suggestion naming the word shows its fields; an edit updates them all.
+              const sync = (name, value) => {
+                for (const control of proposalBody.querySelectorAll(`[data-word="${CSS.escape(word.id)}"][data-field="${name}"]`)) control.value = value ?? "";
+              };
+              const tag = (control, name) => { control.dataset.word = word.id; control.dataset.field = name; };
+              tag(field(row, "Write it as", word.spelling, value => {
+                word.spelling = value.trim();
+                // An "as written" candidate stays one only while it is spelled like its heard text.
+                const kept = (h, list) => list.map(x => x.word === word.id && x.basis === "literal" && textKey(word.spelling) !== textKey(h.text)
+                  ? {word: x.word, basis: "user", evidence: []} : x);
+                for (const c of proposalChanges) {
+                  if (c.kind === "word" || !c.after) continue;
+                  c.after.candidates = kept(c.after, c.after.candidates);
+                  c.choices = kept(c.after, c.choices);
+                }
+                sync("spelling", word.spelling);
+              }), "spelling");
+              tag(field(row, "What it is", word.meaning, value => { word.meaning = value.trim(); word.needs_review = !word.meaning; sync("meaning", word.meaning); }), "meaning");
+              tag(field(row, "How you use it (optional)", word.personal_context, value => { word.personal_context = value.trim() || null; sync("personal_context", word.personal_context); }), "personal_context");
+              editor.append(row);
+            }
           }
-          editor.append(button("Add another heard form", () => {
-            const first = change.after.meanings[0]?.id || change.after.recognized_forms[0]?.associations[0]?.meaning_id;
-            change.after.recognized_forms.push({text: "", associations: first ? [{meaning_id: first, basis: "user", evidence: []}] : []}); drawProposal();
-          }));
           box.append(editor);
         }
         proposalBody.append(box);

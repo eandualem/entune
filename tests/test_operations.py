@@ -16,11 +16,10 @@ from entune.audio.formats import wav_bytes
 from entune.desktop.app import CLIPBOARD_RESTORE_SECONDS, EntuneApp
 from entune.desktop.platform import Delivery
 from entune.dictionary import document as dictionary_document
-from entune.dictionary import entries as dictionary_entries
 from entune.processing import jev_client
 from entune.providers.contracts import Clip, Transcript
 from entune.server import create_app
-from tests.dictionary_samples import JEV
+from tests.dictionary_samples import JEV, dictionary
 from tests.test_app import FakeActions, FakePlatform, make, wait_for
 
 
@@ -76,7 +75,7 @@ def test_cancel_inflight_jev_closes_requests_and_keeps_raw(
     monkeypatch.setattr(
         service.providers[0], "transcribe", lambda *args: Transcript("Use Jeff to classify this.")
     )
-    dictionary_document.save(service.store.data_dir, dictionary_entries.Dictionary((JEV,)))
+    dictionary_document.save(service.store.data_dir, dictionary((JEV,)))
     service.store.set_setting("jev_dictionary", "1")
     service.store.set_setting("jev_formatting", "1")
     service.settings.set_key("typesafe", "synthetic")

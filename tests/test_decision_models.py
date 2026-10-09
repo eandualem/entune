@@ -17,7 +17,7 @@ from entune.processing.laya import Laya
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
-from tests.dictionary_samples import group
+from tests.dictionary_samples import dictionary, group
 from tests.test_server import StubProvider
 
 # Stands in for the `laya` package's server: the same environment, health check and
@@ -243,7 +243,6 @@ def test_steps_that_ran_at_once_add_only_the_longest(
 def test_meaning_questions_go_to_the_chosen_endpoint(
     tmp_path: Path, fake_engine: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from entune.dictionary import entries
     from entune.processing import jev_client
     from entune.processing.pipeline import process_text
 
@@ -255,7 +254,7 @@ def test_meaning_questions_go_to_the_chosen_endpoint(
     try:
         wait_until(lambda: laya.status()[0] == "ready")
         found = (group("Entune", "victim"), group("Jev", "Jeff"))
-        groups = entries.Dictionary(learned={"s/m": found}).effective("s/m")
+        groups = dictionary(learned={"s/m": found}).active("s/m")
         with closing(jev_client.Client()) as client:
             result = process_text(
                 "Open victim now. Then ask Jeff.",
@@ -354,7 +353,7 @@ def test_more_questions_than_laya_takes_are_asked_in_batches(
         with closing(jev_client.Client()) as client:
             result = process_text(
                 " ".join(["Do it."] * 70),
-                entries.Dictionary().effective("s/m"),
+                entries.Dictionary().active("s/m"),
                 contextual=False,
                 formatting=True,
                 key=None,
@@ -375,7 +374,6 @@ def test_openai_is_asked_the_same_questions_in_its_own_shape_on_the_openai_key(
 ) -> None:
     import httpx
 
-    from entune.dictionary import entries
     from entune.processing import jev_client
     from entune.processing.pipeline import process_text
 
@@ -403,7 +401,7 @@ def test_openai_is_asked_the_same_questions_in_its_own_shape_on_the_openai_key(
 
     jev = group("Jev", "Jeff", literal="Jeff: a person's first name.")
     one = group("Entune", "in tune")  # a single meaning: OpenAI refuses one-option questions
-    groups = entries.Dictionary(learned={"s/m": (jev, one)}).effective("s/m")
+    groups = dictionary(learned={"s/m": (jev, one)}).active("s/m")
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
             "Then ask Jeff about in tune.",
@@ -450,7 +448,6 @@ def test_openai_is_chosen_with_the_openai_key_the_suggestion_model_uses(tmp_path
 def test_perplexity_is_asked_in_typesafes_shape_with_text_instructions(tmp_path: Path) -> None:
     import httpx
 
-    from entune.dictionary import entries
     from entune.processing import jev_client
     from entune.processing.pipeline import process_text
 
@@ -473,7 +470,7 @@ def test_perplexity_is_asked_in_typesafes_shape_with_text_instructions(tmp_path:
         return httpx.Response(200, json={"answers": answers, "usage": {"input_tokens": 1}})
 
     jev = group("Jev", "Jeff", literal="Jeff: a person's first name.")
-    groups = entries.Dictionary(learned={"s/m": (jev,)}).effective("s/m")
+    groups = dictionary(learned={"s/m": (jev,)}).active("s/m")
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
             "Then ask Jeff.",

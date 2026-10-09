@@ -25,11 +25,13 @@ curl -s -X POST localhost:4187/api/dictionary/corrections \
 
 This confirmed-correction boundary still accepts `spelling`, optional `description`,
 and `heard`, or `replacements`/`terms`, and returns the same `added` shape. A definition
-is needed for contextual selection; otherwise the retained meaning is marked for review.
-Corrections create pinned knowledge shared across models. Pinning protects that knowledge
-from generation but grants neither semantic precedence nor direct-replacement approval.
-A uniquely identified pinned meaning gains new forms; spelling alone never merges two
-existing senses. Repeated submissions are idempotent. The reply lists what was new:
+is needed for contextual selection; otherwise the word is marked for review. Each heard
+phrase becomes a pinned heard entry shared across models, used instead of a learned entry
+with the same text. Pinning protects that knowledge from generation but grants neither
+semantic precedence nor direct-replacement approval. A correction names the word already
+spelled so (and described so, when a description is given); when several match, the one
+pinned entries already name. Repeated submissions are idempotent. The reply lists what was
+new:
 
 ```json
 {"added": [{"spelling": "Claude Code", "description": "Anthropic's coding agent", "heard": ["cloud code"]}]}
@@ -55,8 +57,8 @@ silently if Entune is not running.
 | `POST /api/recordings` | multipart `audio` (+ optional `model`): store and transcribe |
 | `POST /api/recordings/{id}/transcriptions` | `{"model": "provider/model"}`: transcribe again |
 | `GET /api/recordings/{id}/audio` | the clip |
-| `GET /api/dictionary`, `PUT /api/dictionary` | the whole version-2 confusion-group dictionary as JSON; the `ETag` names its version, and a `PUT` with `If-Match` set to a stale one gets 409 instead of overwriting what was added meanwhile |
-| `POST /api/dictionary/pin` | `{"model", "group", "meaning"}` IDs plus `If-Match`: share one meaning and its associations; `{"model"}` explicitly pins all learned knowledge for that model |
+| `GET /api/dictionary`, `PUT /api/dictionary` | the whole version-3 dictionary (words, pinned and learned heard entries) as JSON; the `ETag` names its version, and a `PUT` with `If-Match` set to a stale one gets 409 instead of overwriting what was added meanwhile |
+| `POST /api/dictionary/pin` | `{"model", "text"}` plus `If-Match`: move that model's learned heard entry to pinned, adding its words to a pinned entry with the same text; `{"model"}` explicitly pins all of the model's learned entries |
 | `POST /api/recordings/{id}/transcriptions/{attempt}/safe-copy` | derive text from original using only approved direct mappings for the original speech model; returns text, replacements and unresolved count, without saving or pasting |
 | `GET /api/dictionary/corrections` | what agents sent and Entune pinned, newest first, with the `source` each gave |
 | `GET /api/dictionary/history` | the default speech model (`model`) and its transcripts suggestions can read, oldest first (`items`: `id`, `created_at`, `characters`, `used` by suggestions applied before) |
@@ -65,7 +67,7 @@ silently if Entune is not running.
 | `GET /api/dictionary/build` | lightweight current job progress (no transcript or proposal contents) |
 | `GET /api/dictionary/build/{id}` | named job status, including its proposal when ready; 409 if no longer current |
 | `POST /api/dictionary/build/{id}/cancel` | request cancellation; in-flight synchronous speech may finish before cleanup; no new clips/chunks; validated completed proposals remain reviewable |
-| `POST /api/dictionary/build/{id}/accept` | `{"selected": [{"id": groupID, "after": editedGroupOrNull}]}` applies included proposals once; omitted IDs are dismissed, null is an explicit proposed removal, an empty list changes nothing. Omitted body includes all. Validates pinned protections and the original revision; 409 on stale revision or wrong state |
+| `POST /api/dictionary/build/{id}/accept` | `{"selected": [{"id": changeID, "after": editedEntryWordOrNull}]}` applies included proposals once: `heard:<text>` changes carry the edited heard entry (null for a proposed removal), `word:<id>` changes the edited word, and a `word:<id>` of a new word its edited definition. Omitted IDs are dismissed and an empty list changes nothing; a new word comes with the entries that name it. Omitted body includes all. Validates the original revision; 409 on stale revision or wrong state |
 | `DELETE /api/dictionary/build/{id}` | discard a finished job/proposal; 409 during work/cleanup; actions on a replaced job ID also return 409 |
 | `POST /api/capture`, `GET`, `DELETE` | record a shortcut by pressing it (needs the menu-bar app) |
 

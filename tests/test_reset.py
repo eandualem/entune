@@ -62,7 +62,7 @@ def fill(client: TestClient, data: Path, local: LocalStub) -> None:
     client.put("/api/settings", json={"keys": {"stub": "secret-key"}, "defaultModel": "stub/good"})
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
     assert client.get(f"/api/recordings/{rec['id']}/audio").status_code == 200
-    client.put("/api/dictionary", json={"version": 2, "pinned": [], "learned": {}})
+    client.put("/api/dictionary", json={"version": 3, "words": [], "pinned": [], "learned": {}})
     client.post(
         "/api/dictionary/corrections",
         json={"entries": [{"spelling": "Entune", "heard": ["in tune"]}], "source": "test"},
@@ -137,7 +137,9 @@ def test_reset_deletes_every_entune_item_and_nothing_else(
     assert rec["transcriptions"][0]["text"] == "hello there"
     assert client.get(f"/api/recordings/{rec['id']}/audio").status_code == 200
     assert (
-        client.put("/api/dictionary", json={"version": 2, "pinned": [], "learned": {}}).status_code
+        client.put(
+            "/api/dictionary", json={"version": 3, "words": [], "pinned": [], "learned": {}}
+        ).status_code
         == 200
     )
 
