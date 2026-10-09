@@ -352,16 +352,17 @@ def test_more_questions_than_laya_takes_are_asked_in_batches(
         wait_until(lambda: laya.status()[0] == "ready")
         with closing(jev_client.Client()) as client:
             result = process_text(
-                " ".join(["Do it."] * 70),
+                " ".join(["Um, do it."] * 70),
                 entries.Dictionary().active("s/m"),
                 contextual=False,
-                formatting=True,
+                formatting=False,
+                cleanup=True,
                 key=None,
                 client=client,
                 policy=jev_client.Policy(),
                 endpoint=laya.endpoint(),
             )
-        stage = result.formatting
+        stage = result.cleanup
         assert stage.status == "succeeded" and stage.decisions == 70 and stage.attempts == 1
         lines = (tmp_path / "models" / "laya" / "seen.json.requests").read_text().splitlines()
         assert [len(json.loads(line)["questions"]) for line in lines[1:]] == [64, 6]

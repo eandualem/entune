@@ -23,14 +23,163 @@ from tests.test_server import StubProvider
 
 
 def test_first_list_item_including_unicode_offsets_keeps_all_source_words() -> None:
-    raw = "  😀 First, tea. Second, coffee."
+    raw = "  😀 Green tea. Black coffee."
     requests, handler = answering(lambda *_: {"list_item": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = jev.format_edits(raw, call(client))
-    assert text_edits.apply(raw, result.changes) == "  - 😀 First, tea.\n- Second, coffee."
+    assert text_edits.apply(raw, result.changes) == "  - 😀 Green tea.\n- Black coffee."
     assert set(requests[0]["questions"]) == {"S00", "S01"}
     assert all(not change.before.strip() for change in result.changes)
     assert raw == requests[0]["state"]["transcript"]
+
+
+def test_a_numbered_list_numbers_its_items_without_the_spoken_ordinals() -> None:
+    raw = "Two things. One, the key. Two, the model. Then other news."
+    plan = {"S01": {"list_item": 1.0}, "S02": {"list_item": 0.35, "continues": 0.65}}
+    _, handler = answering(lambda name, _: plan.get(name, {"new_paragraph": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = jev.format_edits(raw, call(client))
+    # Code numbers what opens with a spoken ordinal, which needs less of the list vote.
+    assert text_edits.apply(raw, result.changes) == (
+        "Two things.\n\n1. The key.\n2. The model.\n\nThen other news."
+    )
+
+
+def test_a_spoken_ordinal_goes_even_when_a_filler_follows_it() -> None:
+    raw = "One, um, open the settings. Two, uh, choose a model."
+    _, handler = answering(
+        lambda _, q: {"hesitation": 1.0} if "hesitation" in q["criteria"] else {"list_item": 1.0}
+    )
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = process_text(
+            raw,
+            Active(),
+            contextual=False,
+            formatting=True,
+            cleanup=True,
+            key="ts-key",
+            client=client,
+            policy=jev_client.Policy(),
+        )
+    # The capital would overlap the filler's edit, so only it is left out.
+    assert result.text == "1. open the settings.\n2. choose a model."
+
+
+def test_a_number_another_stage_keeps_out_leaves_its_ordinal_as_said() -> None:
+    raw = "First, open settings. Um. Second, save."
+    plan = {
+        "S00": {"list_item": 0.9, "continues": 0.1},
+        "S02": {"list_item": 0.9, "continues": 0.1},
+    }
+    _, handler = answering(
+        lambda name, q: (
+            {"hesitation": 1.0}
+            if "hesitation" in q["criteria"]
+            else plan.get(name, {"continues": 1.0})
+        )
+    )
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = process_text(
+            raw,
+            Active(),
+            contextual=False,
+            formatting=True,
+            cleanup=True,
+            key="ts-key",
+            client=client,
+            policy=jev_client.Policy(),
+        )
+    # Removing "Um. " takes the space where "2." would go; "Second," stays with it.
+    assert result.text == "1. Open settings. Second, save."
+
+
+def test_numbering_continues_an_existing_list_and_restarts_after_an_empty_line() -> None:
+    _, handler = answering(lambda *_: {"list_item": 1.0})
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        raw = "1. Open settings.\nSecond, choose the model."
+        result = jev.format_edits(raw, call(client))
+        assert text_edits.apply(raw, result.changes) == "1. Open settings.\n2. Choose the model."
+        # Across an empty line it is not part of that list, and alone it is no list.
+        assert (
+            jev.format_edits("1. Open settings.\n\nSecond, choose the model.", call(client)).changes
+            == ()
+        )
+    plan = {"S00": {"list_item": 1.0}, "S01": {"list_item": 1.0}}
+    _, handler = answering(lambda name, _: plan.get(name, {"list_item": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        raw = "Alpha is first here. Beta comes next.\n\nOne, gamma. Two, delta."
+        result = jev.format_edits(raw, call(client))
+        assert text_edits.apply(raw, result.changes) == (
+            "- Alpha is first here.\n- Beta comes next.\n\n1. Gamma.\n2. Delta."
+        )
+
+
+def test_paragraph_length_is_measured_from_an_existing_break() -> None:
+    first = ("one two three four five " * 4).strip() + "."
+    rest = [
+        ("six seven eight nine ten " * 5).strip() + ".",
+        ("eleven twelve thirteen " * 5).strip() + ".",
+        ("fourteen fifteen sixteen " * 4).strip() + ".",
+    ]
+    raw = first + "\n\n" + " ".join(rest)
+    plan = {"S01": {"new_paragraph": 1.0}, "S02": {"new_paragraph": 1.0}}
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        # S02 would leave only S01's 125 characters before it in its paragraph.
+        assert jev.format_edits(raw, call(client)).changes == ()
+
+
+def test_a_short_last_paragraph_is_measured_within_its_paragraph() -> None:
+    raw = (
+        "This opening sentence runs on for quite a while. " * 5
+        + "Short end.\n\n"
+        + ("Another paragraph follows here with more words. " * 4).strip()
+    )
+    plan = {"S05": {"new_paragraph": 1.0}}
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        assert jev.format_edits(raw, call(client)).changes == ()
+
+
+def test_a_single_list_item_starts_a_paragraph_and_a_short_note_stays_whole() -> None:
+    context = "Some context that runs long enough to stand as its own paragraph. " * 4
+    rest = "One, alone. " + ("More text that runs on for a while after it. " * 3).strip()
+    raw = context + rest
+    plan = {"S04": {"list_item": 1.0}}
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = jev.format_edits(raw, call(client))
+        assert text_edits.apply(raw, result.changes) == context.strip() + "\n\n" + rest
+        short = "Some context. One, alone. More text."
+        plan["S01"] = plan.pop("S04")
+        assert jev.format_edits(short, call(client)).changes == ()
+
+
+def test_a_long_paragraph_breaks_at_its_most_likely_sentence() -> None:
+    sentence = "This sentence keeps talking about the same subject at some length. "
+    raw = (sentence * 12).strip()  # 815 characters
+    likely = {"S06": 0.4, "S03": 0.2}
+    _, handler = answering(
+        lambda name, _: {
+            "new_paragraph": likely.get(name, 0.0),
+            "continues": 1 - likely.get(name, 0.0),
+        }
+    )
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        formatted = text_edits.apply(raw, jev.format_edits(raw, call(client)).changes)
+    assert formatted == (sentence * 6).strip() + "\n\n" + (sentence * 6).strip()
+
+
+def test_a_long_dictation_is_asked_in_sections_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(jev, "SECTION_SENTENCES", 2)
+    raw = "One. Two. Three. Four. Five."
+    requests, handler = answering(lambda *_: {"continues": 1.0})
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        context = call(client)
+        assert jev.format_edits(raw, context).changes == ()
+    assert sorted(len(r["questions"]) for r in requests) == [1, 2, 2]
+    assert all(len(r["state"]["sentences"]) == 5 for r in requests)
+    assert context.attempts == 1 and context.decisions == 5
 
 
 @pytest.mark.parametrize(
@@ -395,3 +544,152 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
         everything = saved.correction.changes + saved.cleanup.changes + saved.formatting.changes
         assert text_edits.apply(raw, everything) == saved.text
         assert reopened.get_setting("jev_cleanup") == "1"
+
+
+def test_a_numbered_entry_keeps_its_follow_up_sentences() -> None:
+    raw = (
+        "I want to compare a couple of points. One, the speed, which one is faster? Is it Entune"
+        " or Wispr Flow? Second, the formatting, which one is better? Is it Entune or Wispr"
+        " Flow? Third, can it clean fillers? Like for example, yeah. So overall, that's my goal."
+    )
+    # The model rates a follow-up question as continuing (0.05 to 0.09 for a list entry
+    # on the dictation this comes from), and code keeps it in its entry.
+    plan = {
+        "S01": {"list_item": 0.9, "continues": 0.1},
+        "S02": {"list_item": 0.1, "continues": 0.9},
+        "S03": {"list_item": 0.9, "continues": 0.1},
+        "S04": {"list_item": 0.1, "continues": 0.9},
+        "S05": {"list_item": 0.9, "continues": 0.1},
+        "S07": {"new_paragraph": 1.0},
+    }
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = jev.format_edits(raw, call(client))
+    assert text_edits.apply(raw, result.changes) == (
+        "I want to compare a couple of points.\n\n"
+        "1. The speed, which one is faster? Is it Entune or Wispr Flow?\n"
+        "2. The formatting, which one is better? Is it Entune or Wispr Flow?\n"
+        "3. Can it clean fillers? Like for example, yeah.\n\n"
+        "So overall, that's my goal."
+    )
+
+
+@pytest.mark.parametrize(
+    "raw,items,expected",
+    [
+        # A spoken ordinal numbers the whole list.
+        (
+            "Tea for the morning. Second, coffee for lunch. Water for the evening.",
+            ("S00", "S01", "S02"),
+            "1. Tea for the morning.\n2. Coffee for lunch.\n3. Water for the evening.",
+        ),
+        # Counting later in a sentence numbers it too, and its words stay.
+        (
+            "First, is it correct? And it breaks things down. And then my third point is, does"
+            " it look good? Does it look amazing?",
+            ("S00", "S02"),
+            "1. Is it correct? And it breaks things down.\n2. And then my third point is, does"
+            " it look good? Does it look amazing?",
+        ),
+        # Without counting, the entries are bullets.
+        (
+            "Green tea for the morning. Black coffee for lunch.",
+            ("S00", "S01"),
+            "- Green tea for the morning.\n- Black coffee for lunch.",
+        ),
+        # Numbering goes on from an existing line across a follow-up sentence.
+        (
+            "1. Open settings.\nThis lets you set things up. Second, choose the model. Third, save"
+            " it.",
+            ("S02", "S03"),
+            "1. Open settings.\nThis lets you set things up.\n2. Choose the model.\n3. Save it.",
+        ),
+        (
+            "1. Open settings.\nThis lets you set things up. Second, choose the model.",
+            ("S02",),
+            "1. Open settings.\nThis lets you set things up.\n2. Choose the model.",
+        ),
+        # A numbered example in a code block is not a list to continue.
+        (
+            "```\n9. Example item.\n```\nFirst, open settings. Second, choose the model.",
+            ("S03", "S04"),
+            "```\n9. Example item.\n```\n1. Open settings.\n2. Choose the model.",
+        ),
+        (
+            "    9. Example item.\nFirst, open settings. Second, choose the model.",
+            ("S01", "S02"),
+            "    9. Example item.\n1. Open settings.\n2. Choose the model.",
+        ),
+        # An existing list line holding a quote is still part of the list.
+        (
+            'First, select Groq.\n2. Select "Parakeet".\nThird, save.',
+            ("S00", "S02"),
+            '1. Select Groq.\n2. Select "Parakeet".\n3. Save.',
+        ),
+        # Entries that run into an existing numbered line count up to it.
+        (
+            "Third, open settings.\n4. Choose a model.",
+            ("S00",),
+            "3. Open settings.\n4. Choose a model.",
+        ),
+        # An entry that runs into an existing list takes its kind.
+        (
+            "First, open settings.\n- Choose a model.",
+            ("S00",),
+            "- First, open settings.\n- Choose a model.",
+        ),
+        # An entry with a follow-up still counts the existing list line after it.
+        (
+            "One, open settings. This is necessary.\n2. Choose the model.",
+            ("S00",),
+            "1. Open settings. This is necessary.\n2. Choose the model.",
+        ),
+    ],
+)
+def test_a_list_keeps_its_kind_and_numbering_across_follow_ups(
+    raw: str, items: tuple[str, ...], expected: str
+) -> None:
+    plan = {name: {"list_item": 0.9, "continues": 0.1} for name in items}
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = jev.format_edits(raw, call(client))
+    assert text_edits.apply(raw, result.changes) == expected
+
+
+def test_a_weaker_paragraph_vote_ends_a_list_than_prose() -> None:
+    raw = (
+        "I'm gonna test a couple of things. One, the speed. That's very important for me."
+        " Two, the formatting. Does it have lists? Yeah, hopefully this shows a good result."
+    )
+    # As voted on the dictation this comes from: a follow-up gets almost no paragraph
+    # vote, the remark after the list a third of one.
+    plan = {
+        "S01": {"list_item": 0.95, "continues": 0.05},
+        "S02": {"continues": 1.0, "new_paragraph": 0.0},
+        "S03": {"list_item": 0.97, "new_paragraph": 0.03},
+        "S04": {"continues": 0.97, "list_item": 0.03},
+        "S05": {"continues": 0.64, "new_paragraph": 0.36},
+    }
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 1.0}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = jev.format_edits(raw, call(client))
+    assert text_edits.apply(raw, result.changes) == (
+        "I'm gonna test a couple of things.\n\n1. The speed. That's very important for me.\n"
+        "2. The formatting. Does it have lists?\n\nYeah, hopefully this shows a good result."
+    )
+
+
+def test_a_long_follow_up_on_the_next_line_stays_in_its_entry() -> None:
+    follow_up = ("This lets you set up the app before anything else happens here. " * 12).strip()
+    raw = f"1. Open settings.\n{follow_up} Second, choose the model. Third, save it."
+    spans = formatting.sentences(raw)
+    last = len(spans) - 1
+    plan = {f"S{last - 1:02d}": {"list_item": 0.9, "continues": 0.1}}
+    plan[f"S{last:02d}"] = plan[f"S{last - 1:02d}"]
+    # Every follow-up would be a likely enough place for a paragraph outside a list.
+    _, handler = answering(lambda name, _: plan.get(name, {"continues": 0.8, "new_paragraph": 0.2}))
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = jev.format_edits(raw, call(client))
+    assert text_edits.apply(raw, result.changes) == (
+        f"1. Open settings.\n{follow_up}\n2. Choose the model.\n3. Save it."
+    )

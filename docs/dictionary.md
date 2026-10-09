@@ -218,14 +218,32 @@ filler removal below.
 ## Formatting and fillers
 
 Both are independently opt-in and keep the input words unless the user enables filler
-removal. Each applicable stage makes one request with all its questions. The dictionary,
-filler and formatting stages run at the same time, each on the original transcript.
+removal. Each applicable stage makes one request with all its questions, except that
+formatting asks at most 24 sentences per request: a longer dictation is asked in sections
+at the same time, each with the whole transcript. The dictionary, filler and formatting
+stages run at the same time, each on the original transcript.
 
-Formatting classifies all eligible spans, including the first, as running prose,
-new paragraph or list item. The winning probability must reach 0.6. A middle item can
-join two list items at 0.3 only within an originally flat paragraph. Code inserts bullets
-and changes only horizontal whitespace between spans; original line endings, paragraphs,
-indentation and recognized list markers are retained. Existing bullet/numeric/`A)` lists,
+Formatting classifies all eligible spans, including the first, as running prose (which
+includes a follow-up to a list entry), a new paragraph (a new point, even within one
+topic), or the start of a list entry. The winning probability must reach 0.6. The
+decision model only says whether a sentence starts an entry; code says what kind. A
+sentence that opens with a spoken ordinal ("One,", "Second,", "Number three:") starts an
+entry once its list probability reaches 0.3. A list is numbered when one of its entries
+counts: such an ordinal, which the number replaces, or the speaker counting among its
+first words ("my third point is", "secondly", "number two"), whose words stay. A list
+without one is bulleted. Every other sentence continues where it is, a list entry
+included, so an entry keeps its follow-up question, reason or example; a new paragraph
+or an empty line ends the list, and inside a list a paragraph probability of 0.25 is
+enough, since a follow-up gets almost none. A list needs two entries; a single one starts a
+paragraph instead, and numbering continues an existing numbered line. A new paragraph
+needs 200 characters of its paragraph before it and leaves 100 in its paragraph after
+it, so a short note stays whole. A paragraph still longer than 700 characters is split at its
+sentence most likely to start one (at least 0.1), leaving both parts at least 200
+characters. Code numbers or bullets
+the items and changes only horizontal whitespace between spans, except that a numbered
+item drops its spoken ordinal ("One,", "Secondly,", "First of all,") and capitalises the
+next word; original line endings, paragraphs, indentation and recognized list markers
+are retained. Existing bullet/numeric/`A)` lists,
 indented code and lines containing protected quotes/code are not classified internally.
 Single unpunctuated lines remain whole; fewer than two spans need no request.
 

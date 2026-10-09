@@ -452,8 +452,11 @@ the dictionary step does not run at all: nothing is replaced, direct mappings in
 and it adds no time. The previous binary classifier's cached accuracy and timings
 are documented separately; they do not establish the new classifier's quality or latency.
 History and Settings report work performed, including direct changes and abstentions,
-rather than an accuracy score. Optional formatting inserts paragraph breaks and bullets,
-including the first list item, while retaining existing structure and words. Lines without
+rather than an accuracy score. Optional formatting inserts paragraph breaks, numbered
+lists and bullets, including the first list item, while retaining existing structure and
+words. What you count out loud ("One… Second… Third…") becomes a numbered list, each
+number taking the place of its spoken ordinal, and a point's follow-up sentences stay in
+its entry. Lines without
 sentence punctuation stay whole; a single unpunctuated note needs no formatting request.
 
 **Remove fillers** is a separate opt-in. Code proposes English hesitation sounds (`um`,
