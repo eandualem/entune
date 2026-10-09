@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from entune.processing import cleanup
 from entune.processing.text_edits import Change, overlaps, protected
 
 _LIST = re.compile(r"(?:[-*+•‣◦]|\d+[.)]|[A-Za-z]\))[ \t]+")
@@ -79,11 +80,13 @@ def sentences(text: str) -> list[Sentence]:
             continue
         start = line.start() + len(line.group()) - len(line.group().lstrip())
         end = start + len(content)
-        listed = bool(_LIST.match(content))
+        # A line inside a code block, or other protected text over several lines, is no
+        # list line even when it looks like one; a list line holding a quote still is.
+        enclosed = any(a <= start and end <= b and "\n" in text[a:b] for a, b in excluded)
+        listed = bool(_LIST.match(content)) and not enclosed
         locked = line.group().startswith(("    ", "\t")) or overlaps(start, end, excluded)
         if listed or locked:
-            # A code line that looks like a list entry is code, never part of a list.
-            spans.append(Sentence(start, end, listed and not locked, locked))
+            spans.append(Sentence(start, end, listed, locked))
             continue
         offset = 0
         for boundary in _BOUNDARY.finditer(content):
@@ -115,6 +118,7 @@ def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Chang
     for i, (span, action) in enumerate(zip(spans, actions, strict=True)):
         gap = text[end : span.start]
         replacement = gap
+        replaced = gap  # what the replacement stands for: the gap, and a spoken ordinal
         item = action in LIST_ITEMS
         if blank_line(gap) or action == "new_paragraph":
             listing, number = None, 0
@@ -131,25 +135,27 @@ def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Chang
                 number = number + 1 if listing else 1
                 replacement += f"{number}. "
                 if spoken := _ORDINAL.match(text, span.start, span.end):
-                    result.extend(_unsaid(text, span.start, spoken.end()))
+                    # The number, the ordinal it replaces and the next word's capital are
+                    # one edit: where another stage's edit keeps it out, all stay as said.
+                    # A hesitation sound after the ordinal takes its capital as an edit of
+                    # its own, so the sound's removal does not take the number with it.
+                    stop = spoken.end()
+                    following = text[stop : stop + 1]
+                    if cleanup.sound_at(text, stop):
+                        replaced = text[end:stop]
+                        if following.islower():
+                            result.append(Change(stop, stop + 1, following, following.upper()))
+                    else:
+                        replaced = text[end : stop + 1]
+                        replacement += following.upper()
             elif action == "bullet_item" and not span.listed:
                 replacement += "- "
-        if replacement != gap:
+        if replacement != replaced:
             assert not gap.strip()
-            result.append(Change(end, span.start, gap, replacement))
+            result.append(Change(end, end + len(replaced), replaced, replacement))
         end = span.end
         if span.listed and (existing := _NUMBERED.match(text, span.start, span.end)):
             number = int(existing.group(1))
         if item:
             listing = action
     return tuple(sorted(result, key=lambda c: (c.start, c.end)))
-
-
-def _unsaid(text: str, start: int, stop: int) -> tuple[Change, ...]:
-    """The spoken ordinal goes, with its comma and space, and the next word takes the
-    capital: two edits, so a filler removed after the ordinal does not keep it."""
-    deletion = Change(start, stop, text[start:stop], "")
-    following = text[stop : stop + 1]
-    if following.islower():
-        return deletion, Change(stop, stop + 1, following, following.upper())
-    return (deletion,)

@@ -65,6 +65,34 @@ def test_a_spoken_ordinal_goes_even_when_a_filler_follows_it() -> None:
     assert result.text == "1. open the settings.\n2. choose a model."
 
 
+def test_a_number_another_stage_keeps_out_leaves_its_ordinal_as_said() -> None:
+    raw = "First, open settings. Um. Second, save."
+    plan = {
+        "S00": {"list_item": 0.9, "continues": 0.1},
+        "S02": {"list_item": 0.9, "continues": 0.1},
+    }
+    _, handler = answering(
+        lambda name, q: (
+            {"hesitation": 1.0}
+            if "hesitation" in q["criteria"]
+            else plan.get(name, {"continues": 1.0})
+        )
+    )
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = process_text(
+            raw,
+            (),
+            contextual=False,
+            formatting=True,
+            cleanup=True,
+            key="ts-key",
+            client=client,
+            policy=jev_client.Policy(),
+        )
+    # Removing "Um. " takes the space where "2." would go; "Second," stays with it.
+    assert result.text == "1. Open settings. Second, save."
+
+
 def test_numbering_continues_an_existing_list_and_restarts_after_an_empty_line() -> None:
     _, handler = answering(lambda *_: {"list_item": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
@@ -586,6 +614,12 @@ def test_a_numbered_entry_keeps_its_follow_up_sentences() -> None:
             "```\n9. Example item.\n```\nFirst, open settings. Second, choose the model.",
             ("S03", "S04"),
             "```\n9. Example item.\n```\n1. Open settings.\n2. Choose the model.",
+        ),
+        # An existing list line holding a quote is still part of the list.
+        (
+            'First, select Groq.\n2. Select "Parakeet".\nThird, save.',
+            ("S00", "S02"),
+            '1. Select Groq.\n2. Select "Parakeet".\n3. Save.',
         ),
         # An entry that runs into an existing list takes its kind.
         (
