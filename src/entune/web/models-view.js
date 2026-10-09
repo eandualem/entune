@@ -254,7 +254,7 @@ export function createModels({ getDefault, reloadSettings, onModelsChanged, onEr
       const lowest = Math.min(99.5, ...plotted.map((u) => Math.floor(u.kept * 2) / 2));
       const x = (wait) => Math.log(slowest / wait) / Math.log(slowest / 0.08);
       const y = (kept) => (kept - lowest) / ((100 - lowest) * 1.1);
-      const still = plotted.some((u) => u.id === selected) ? selected : null; // gone after new data
+      const still = used.some((u) => u.id === selected) ? selected : null; // gone after new data
       // The model in use: its plain runs, or its fast ones when it has only those.
       const current = used.find((u) => u.base === inUse && !u.fast) ?? used.find((u) => u.base === inUse);
       const pick = still ?? (current ?? used[0])?.id ?? inUse ?? all[0]?.id;
@@ -337,11 +337,23 @@ export function createModels({ getDefault, reloadSettings, onModelsChanged, onEr
 
     renderPanel(view);
     el("perf-sub").textContent = mode === "you" ? "How each model has done on your dictations." : "Every model, local and cloud, on public benchmarks.";
-    const unplotted = [...new Set(view.used.filter((u) => !view.plotted.includes(u)).map((u) => u.label))];
-    const names = unplotted.length < 2 ? unplotted.join("") : `${unplotted.slice(0, -1).join(", ")} and ${unplotted.at(-1)}`;
-    el("perf-note").textContent = mode === "you"
-      ? `Accuracy for you: the share of words your dictionary didn't need to correct. Faded dots have fewer than ${FEW} dictations${names ? `; ${names} ${unplotted.length === 1 ? "has" : "have"} too few to plot` : ""}.`
-      : "Local: FLEURS English (Handy models), reference laptop. Cloud: Artificial Analysis; speed excludes upload. The two benchmarks differ, so treat close calls as ties.";
+    const note = el("perf-note");
+    if (mode === "you") {
+      // A model without a word count has no dot; its name in the note shows it in the panel.
+      const unplotted = view.used.filter((u) => !view.plotted.includes(u));
+      const parts = [`Accuracy for you: the share of words your dictionary didn't need to correct. Faded dots have fewer than ${FEW} dictations`];
+      unplotted.forEach((u, i) => {
+        parts.push(i === 0 ? "; " : i === unplotted.length - 1 ? " and " : ", ");
+        const name = node("button", "btn link", u.label);
+        name.type = "button";
+        name.addEventListener("click", () => { selected = u.id; renderPerformance(); });
+        parts.push(name);
+      });
+      parts.push(unplotted.length ? ` ${unplotted.length === 1 ? "has" : "have"} too few to plot.` : ".");
+      note.replaceChildren(...parts);
+    } else {
+      note.textContent = "Local: FLEURS English (Handy models), reference laptop. Cloud: Artificial Analysis; speed excludes upload. The two benchmarks differ, so treat close calls as ties.";
+    }
   }
 
   function renderPanel(view) {
