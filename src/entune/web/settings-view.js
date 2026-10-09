@@ -420,17 +420,11 @@ export function createSettings({ onLoaded, onModelsChanged, onShortcutsChanged, 
       head.className = "scard-head";
       const isParakeet = provider.id === "parakeet";
       head.innerHTML = isParakeet
-        ? `<div class="name strong">Parakeet <span class="caption">· NVIDIA on Apple MLX</span></div><div class="caption">The most accurate offline model. Its engine is installed outside Entune, once; Entune then finds it.</div>`
+        ? `<div class="name strong">Parakeet <span class="caption">· NVIDIA on Apple MLX</span></div><div class="caption">The most accurate offline model. Download installs its engine (about 480 MB) the first time, then the model.</div>`
         : `<div class="name strong">Whisper <span class="caption">· whisper.cpp</span></div><div class="caption">Downloaded inside Entune with one click. Speech recognition runs on ${THIS_DEVICE}.</div>`;
       card.append(head, ...mine.map((m) => localRow(m, isParakeet)));
       const missing = mine.find((m) => m.state === "unavailable");
       if (isParakeet && missing) card.append(engineNote(missing));
-      else if (isParakeet && mine.some((m) => m.state !== "unavailable")) {
-        const found = document.createElement("div");
-        found.className = "engine";
-        found.innerHTML = `<span class="dot ok"></span>Engine found.`;
-        card.append(found);
-      }
       cards.push(card);
     }
     el("local-cards").replaceChildren(...cards);
