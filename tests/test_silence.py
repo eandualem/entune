@@ -51,6 +51,33 @@ def test_long_silences_keep_300_ms_beside_speech() -> None:
     assert shorten(quiet(3), RATE) == quiet(3)
 
 
+def test_a_pause_longer_than_the_window_in_a_room_with_a_hum_is_shortened() -> None:
+    # A room tone near -40 dBFS, above the absolute -55, in the dips and the pause:
+    # once the speech has left the 10 s window, the pause is still quiet.
+    rng = np.random.default_rng(2)
+
+    def talk(amplitude: float, seconds: float) -> bytes:
+        bursts = [
+            np.concatenate([rng.normal(0, amplitude, 2560), rng.normal(0, 330, 640)])
+            for _ in range(int(seconds * 5))
+        ]
+        return np.concatenate(bursts).astype(np.int16).tobytes()
+
+    room = rng.normal(0, 330, 15 * RATE).astype(np.int16).tobytes()
+    assert seconds(shorten(talk(6000, 2) + room + talk(6000, 2), RATE)) == pytest.approx(
+        4.6, abs=0.1
+    )
+    # Quieter speech after the pause, 7 dB over the room, is kept whole.
+    assert seconds(shorten(talk(6000, 2) + room + talk(750, 4), RATE)) == pytest.approx(
+        6.6, abs=0.1
+    )
+    # So is speech that varies little, well over the room's floor.
+    t = np.arange(15 * RATE) / RATE
+    tone = 3000 * np.sin(2 * np.pi * 220 * t) * (1 + 0.15 * np.sin(2 * np.pi * 3 * t))
+    steady = talk(6000, 2) + tone.astype(np.int16).tobytes()
+    assert shorten(steady, RATE) == steady
+
+
 def test_only_a_16_bit_mono_wav_is_shortened() -> None:
     clip = wav_bytes(quiet(2) + speech(1) + quiet(2), RATE)
     with wave.open(io.BytesIO(shorten_wav(clip))) as short:

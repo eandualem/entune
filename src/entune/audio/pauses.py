@@ -2,7 +2,9 @@
 
 The audio is read in 20 ms frames. A frame is quiet when it is 10 dB or less above the
 recent noise floor, the 10th percentile of the last 10 s, and at least 10 dB under the
-recent loud end, the 90th percentile; or when it is below -55 dBFS. A pause of
+recent loud end, the 90th percentile; or when it is below -55 dBFS. When the last 10 s
+hold nothing but a steady sound no louder than the floor last heard 20 dB under speech,
+the room alone, a frame is quiet unless it is more than 3 dB over that sound. A pause of
 at least 0.4 s becomes a cut, in its middle, once speech resumes after it and the piece
 since the previous cut is long enough for the model. Without a pause there is no cut.
 """
@@ -18,6 +20,7 @@ FLOOR_MS = 10_000
 FLOOR_PERCENTILE = 10
 LOUD_PERCENTILE = 90
 MARGIN_DB = 10.0
+STEADY_DB = 3.0
 QUIET_DB = -55.0
 PAUSE_MS = 400
 
@@ -27,12 +30,22 @@ class Quiet:
 
     def __init__(self) -> None:
         self._levels: deque[np.float32] = deque(maxlen=FLOOR_MS // FRAME_MS + 1)
+        self._room: float | None = None  # the floor when speech last stood 20 dB over it
 
     def __call__(self, level: np.float32) -> bool:
         self._levels.append(level)
         floor, loud = np.percentile(np.array(self._levels), (FLOOR_PERCENTILE, LOUD_PERCENTILE))
-        # Also 10 dB under the loud end, or steady speech would raise the floor to itself.
-        return bool(level < max(min(floor, loud - 2 * MARGIN_DB) + MARGIN_DB, QUIET_DB))
+        if loud - floor >= 2 * MARGIN_DB:
+            self._room = float(floor)
+        steady = len(self._levels) == self._levels.maxlen and loud - floor < STEADY_DB
+        if steady and self._room is not None and floor <= self._room + STEADY_DB:
+            # 10 s of the room alone, no speech left in it: 10 dB under its loud end would
+            # call the room speech. Steady speech stands well over the room's floor.
+            threshold = loud + STEADY_DB
+        else:
+            # Also 10 dB under the loud end, or steady speech would raise the floor to itself.
+            threshold = min(floor, loud - 2 * MARGIN_DB) + MARGIN_DB
+        return bool(level < max(threshold, QUIET_DB))
 
 
 def levels(frames: np.ndarray) -> np.ndarray:

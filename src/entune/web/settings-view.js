@@ -288,8 +288,11 @@ export function createSettings({ onLoaded, onShortcutsChanged, onError }) {
     const choice = picked === "openai" ? { decisionModel: "openai" } : {};
     if (await saveSetting({ keys: { openai: key }, ...choice }, el("openai-key-status"))) { picked = null; await loadSettings(); }
   });
+  // One save at a time, as for fast mode: a refused save is undone exactly.
   el("remove-silence").addEventListener("change", async (e) => {
+    e.target.disabled = true;
     if (!(await saveSetting({ removeSilence: e.target.checked }, null))) e.target.checked = !e.target.checked;
+    e.target.disabled = false;
   });
   for (const name of ["dictionary", "formatting", "cleanup"]) {
     jev[name].addEventListener("change", async () => {
