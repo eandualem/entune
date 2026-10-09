@@ -24,6 +24,14 @@ _ORDINAL = re.compile(
     r"[,:][ \t]+(?=\S)",
     re.IGNORECASE,
 )
+# The speaker counting among a sentence's first words: "And then my third point is ...",
+# "And secondly, ...", "Number two is ..."; not "at first" or "the second row".
+_COUNTED = re.compile(
+    r"(?:\S+\s+){0,5}?(?:(?:my|our)\s+(?:first|second|third|fourth|fifth|sixth"
+    r"|seventh|eighth|ninth|tenth)|firstly|secondly|thirdly|fourthly|fifthly"
+    rf"|number (?:\d{{1,2}}|{_NUMBERS}))\b",
+    re.IGNORECASE,
+)
 _NUMBERED = re.compile(r"(\d+)[.)][ \t]")  # an existing numbered list line
 _BLANK_LINE = re.compile(r"\n[ \t]*\n")
 
@@ -31,6 +39,12 @@ _BLANK_LINE = re.compile(r"\n[ \t]*\n")
 def ordinal(text: str, span: Sentence) -> bool:
     """Whether the sentence opens with a spoken ordinal: "Second, ...", "Number three: ..."."""
     return _ORDINAL.match(text, span.start, span.end) is not None
+
+
+def counted(text: str, span: Sentence) -> bool:
+    """Whether the sentence counts: a spoken ordinal opens it, or a counting word is among
+    its first words ("my second point is ...")."""
+    return ordinal(text, span) or _COUNTED.match(text, span.start, span.end) is not None
 
 
 def numbered_line(text: str, span: Sentence) -> bool:

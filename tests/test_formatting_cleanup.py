@@ -524,13 +524,13 @@ def test_a_numbered_entry_keeps_its_follow_up_sentences() -> None:
         " or Wispr Flow? Second, the formatting, which one is better? Is it Entune or Wispr"
         " Flow? Third, can it clean fillers? Like for example, yeah. So overall, that's my goal."
     )
-    # Even where the model takes a follow-up question for a list entry, only a spoken
-    # ordinal starts the next numbered one.
+    # The model rates a follow-up question as continuing (0.05 to 0.09 for a list entry
+    # on the dictation this comes from), and code keeps it in its entry.
     plan = {
         "S01": {"list_item": 0.9, "continues": 0.1},
-        "S02": {"list_item": 0.7, "continues": 0.3},
+        "S02": {"list_item": 0.1, "continues": 0.9},
         "S03": {"list_item": 0.9, "continues": 0.1},
-        "S04": {"list_item": 0.7, "continues": 0.3},
+        "S04": {"list_item": 0.1, "continues": 0.9},
         "S05": {"list_item": 0.9, "continues": 0.1},
         "S07": {"new_paragraph": 1.0},
     }
@@ -549,11 +549,25 @@ def test_a_numbered_entry_keeps_its_follow_up_sentences() -> None:
 @pytest.mark.parametrize(
     "raw,items,expected",
     [
-        # A spoken ordinal numbers the whole list; after it only an ordinal starts an entry.
+        # A spoken ordinal numbers the whole list.
         (
             "Tea for the morning. Second, coffee for lunch. Water for the evening.",
             ("S00", "S01", "S02"),
-            "1. Tea for the morning.\n2. Coffee for lunch. Water for the evening.",
+            "1. Tea for the morning.\n2. Coffee for lunch.\n3. Water for the evening.",
+        ),
+        # Counting later in a sentence numbers it too, and its words stay.
+        (
+            "First, is it correct? And it breaks things down. And then my third point is, does"
+            " it look good? Does it look amazing?",
+            ("S00", "S02"),
+            "1. Is it correct? And it breaks things down.\n2. And then my third point is, does"
+            " it look good? Does it look amazing?",
+        ),
+        # Without counting, the entries are bullets.
+        (
+            "Green tea for the morning. Black coffee for lunch.",
+            ("S00", "S01"),
+            "- Green tea for the morning.\n- Black coffee for lunch.",
         ),
         # Numbering goes on from an existing line across a follow-up sentence.
         (

@@ -228,12 +228,13 @@ includes a follow-up to a list entry), a new paragraph (a new point, even within
 topic), or the start of a list entry. The winning probability must reach 0.6. The
 decision model only says whether a sentence starts an entry; code says what kind. A
 sentence that opens with a spoken ordinal ("One,", "Second,", "Number three:") starts an
-entry once its list probability reaches 0.3 and makes its list numbered; from then on
-only an ordinal starts the next entry. A list without one is bulleted. Every other
-sentence continues where it is, a list entry included, so an entry keeps its follow-up
-question, reason or example; a new paragraph or an empty line ends the list. A list
-needs two entries; a single one starts a paragraph instead, and numbering continues an
-existing numbered line. A new paragraph
+entry once its list probability reaches 0.3. A list is numbered when one of its entries
+counts: such an ordinal, which the number replaces, or the speaker counting among its
+first words ("my third point is", "secondly", "number two"), whose words stay. A list
+without one is bulleted. Every other sentence continues where it is, a list entry
+included, so an entry keeps its follow-up question, reason or example; a new paragraph
+or an empty line ends the list. A list needs two entries; a single one starts a
+paragraph instead, and numbering continues an existing numbered line. A new paragraph
 needs 200 characters of its paragraph before it and leaves 100 in its paragraph after
 it, so a short note stays whole. A paragraph still longer than 700 characters is split at its
 sentence most likely to start one (at least 0.1), leaving both parts at least 200

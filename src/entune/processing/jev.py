@@ -302,21 +302,19 @@ def _actions(
     text: str, spans: list[formatting.Sentence], answers: list[dict[str, float] | None]
 ) -> list[str]:
     """Each sentence's action. The decision model says whether a sentence starts a list
-    entry; code says what kind: a list is numbered when one of its entries opens with a
-    spoken ordinal, and from then on only an ordinal starts the next entry. Every other
-    sentence continues where it is, a list entry included, until a new paragraph or an
-    empty line ends the list."""
+    entry, and a spoken ordinal opening it ("Second, ...") lowers the bar; code says what
+    kind: a list is numbered when one of its entries counts ("First, ...", "my third
+    point is ..."), else bulleted. Every other sentence continues where it is, a list
+    entry included, until a new paragraph or an empty line ends the list."""
     actions = []
-    kind: str | None = None  # the kind of the list going on
-    fixed = False  # the kind comes from an existing list line
+    existing: str | None = None  # the kind of an existing list going on
     for i, (span, answer) in enumerate(zip(spans, answers, strict=True)):
         gap = text[spans[i - 1].end : span.start] if i else ""
         if formatting.blank_line(gap):
-            kind, fixed = None, False
+            existing = None
         if span.listed:
             actions.append("list_item")
-            kind = "numbered_item" if formatting.numbered_line(text, span) else "bullet_item"
-            fixed = True
+            existing = "numbered_item" if formatting.numbered_line(text, span) else "bullet_item"
             continue
         role = "continues" if answer is None else _role(answer)
         cued = (
@@ -324,15 +322,13 @@ def _actions(
             and answer["list_item"] >= ORDINAL_PROBABILITY
             and formatting.ordinal(text, span)
         )
-        if cued or (role == "list" and kind != "numbered_item"):
-            action = kind if fixed and kind else "numbered_item" if cued else "bullet_item"
-            kind = action
-        elif role == "list":
-            action = "continues"  # inside a numbered list only an ordinal starts an entry
+        if cued or role == "list":
+            counted = "numbered_item" if formatting.counted(text, span) else "bullet_item"
+            action = existing or counted
         else:
             action = role
             if action == "new_paragraph":
-                kind, fixed = None, False
+                existing = None
         actions.append(action)
     return actions
 
