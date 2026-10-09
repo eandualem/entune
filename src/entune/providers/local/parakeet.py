@@ -1,10 +1,11 @@
 """Parakeet: NVIDIA's Parakeet TDT 0.6B v3 on Apple's MLX, on this machine.
 
-The engine is not part of Entune: it is the `parakeet-mlx` package and MLX, about
-480 MB of libraries that only run on Apple Silicon, installed once with
-`uv tool install parakeet-mlx`. Entune finds that installation and runs the model
-in a helper process inside it, so nothing is bundled and Python versions need not
-match. The weights (2.5 GB) are fetched from the Models page like the Whisper models.
+The engine is the `parakeet-mlx` package and MLX, about 480 MB of libraries that only
+run on Apple Silicon, so it is not part of Entune's install. The Download button on the
+Models page installs it, pinned, into its own environment in the models folder, then
+fetches the weights (2.5 GB); removing the model removes that environment too. An
+engine installed by the person with `uv tool install parakeet-mlx` is used when there
+is none of Entune's. The model runs in a helper process inside the engine's Python.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import os
 import select
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -31,16 +33,82 @@ from entune.providers.local.downloads import DOWNLOAD_TIMEOUT, Download
 MODEL = "parakeet-tdt-0.6b-v3"
 REPO = "https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3/resolve/main"
 FILES = (("config.json", 244_093), ("model.safetensors", 2_508_288_736))  # sizes on 2026-09-18
-INSTALL_COMMAND = "uv tool install parakeet-mlx"
+ENGINE = ("parakeet-mlx==0.5.3", "mlx==0.32.3")  # what the Download button installs
+ENGINE_DIR = Path("engines") / "parakeet-mlx"  # in the models folder
+ENGINE_SIZE = "480 MB"
+INSTALLED = "entune-engine.txt"  # written last, naming ENGINE: the install is complete
+UV_PLACES = (".local/bin/uv", ".cargo/bin/uv", "/opt/homebrew/bin/uv", "/usr/local/bin/uv")
 HELPER = Path(__file__).with_name("parakeet_helper.py")
 HELPER_TIMEOUT_SECONDS = 300.0
 
 
-def engine_python() -> Path | None:
-    """The Python of the `parakeet-mlx` tool installation, or None when there is none.
+def _installed(engine: Path) -> bool:
+    """Complete, of the pinned version, and with its Python still there: an upgrade or a
+    cleanup can remove the interpreter an environment points to, and Download repairs it."""
+    marker = engine / INSTALLED
+    python = engine / "bin" / "python"
+    return marker.exists() and marker.read_text().split() == list(ENGINE) and python.exists()
+
+
+def install_engine(engine: Path, cancel: threading.Event) -> None:
+    """Install ENGINE into a new environment at `engine` with uv, from Entune's own
+    Python (a packaged app has none; uv provides one). It counts as installed only once
+    complete; a failed or cancelled install leaves nothing behind."""
+    uv = _uv()
+    if uv is None:
+        raise OSError("Installing Parakeet's engine needs uv, which installs Entune")
+    shutil.rmtree(engine, ignore_errors=True)
+    # A packaged app's executable is not a Python; uv then provides one.
+    python = "3.12" if getattr(sys, "frozen", False) else sys.executable
+    steps = (
+        [uv, "venv", "--quiet", "--python", python, str(engine)],
+        [uv, "pip", "install", "--quiet", "--python", str(engine / "bin" / "python"), *ENGINE],
+    )
+    try:
+        for step in steps:
+            process = subprocess.Popen(
+                step, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE, text=True,
+            )  # fmt: skip
+            while True:
+                try:
+                    _, err = process.communicate(timeout=0.25)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancel.is_set():
+                        process.kill()
+                        process.communicate()
+                        raise OSError("Cancelled") from None
+            if process.returncode:
+                detail = (err.strip().splitlines() or [f"exit status {process.returncode}"])[-1]
+                raise OSError(f"Could not install Parakeet's engine: {detail}")
+        (engine / INSTALLED).write_text(" ".join(ENGINE) + "\n")
+    except BaseException:
+        shutil.rmtree(engine, ignore_errors=True)
+        raise
+
+
+def _uv() -> str | None:
+    """uv, which installs Entune: on the PATH, or where its installers put it."""
+    found = shutil.which("uv")
+    if found:
+        return found
+    for place in UV_PLACES:
+        path = Path.home() / place if not place.startswith("/") else Path(place)
+        if path.exists():
+            return str(path)
+    return None
+
+
+def engine_python(models_dir: Path) -> Path | None:
+    """The Python of the engine Entune installed, else of a `parakeet-mlx` tool
+    installation, or None when there is neither.
 
     Looked up directly, because a Dock-launched app has almost no PATH.
     """
+    own = models_dir / ENGINE_DIR
+    if _installed(own):
+        return own / "bin" / "python"
     roots = [Path(os.environ["UV_TOOL_DIR"])] if os.environ.get("UV_TOOL_DIR") else []
     roots.append(Path.home() / ".local" / "share" / "uv" / "tools")
     for root in roots:
@@ -64,13 +132,15 @@ class Parakeet:
         models_dir: Path,
         client: httpx.Client | None = None,
         engine: Path | None = None,
-        find_engine: Any = engine_python,
+        find_engine: Any = None,
+        install: Any = install_engine,
     ) -> None:
         self.models_dir = models_dir
         self._owns_client = client is None
         self._client = client or httpx.Client(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True)
         self._engine = engine
-        self._find_engine = find_engine
+        self._find_engine = find_engine or (lambda: engine_python(models_dir))
+        self._install = install
         self._download: Download | None = None
         self._helper: subprocess.Popen[str] | None = None
         self._loaded = False
@@ -84,9 +154,9 @@ class Parakeet:
         size = sum(bytes_ for _, bytes_ in FILES)
         note = "most accurate offline, English and 24 more; Apple Silicon"
         download = self._download
-        if self.engine() is None:
-            state, progress, error = "unavailable", 0.0, None
-        elif self._ready():
+        if download is not None and download.running and download.preparing:
+            note = f"installing its engine first ({ENGINE_SIZE})"
+        if self._ready() and self.engine() is not None:
             state, progress, error = "ready", 1.0, None
         elif download is not None and download.running:
             state, progress, error = "downloading", download.progress, None
@@ -100,13 +170,22 @@ class Parakeet:
         return [status]
 
     def download(self, name: str) -> None:
+        """The model's files and, when there is none yet, its engine first."""
         _check(name)
         with self._lock:
-            if self._ready() or (self._download is not None and self._download.running):
+            busy = self._download is not None and self._download.running
+            if busy or (self._ready() and self.engine() is not None):
                 return
             self._dir().mkdir(parents=True, exist_ok=True)
             files = [(f"{REPO}/{file}", self._dir() / file) for file, _ in FILES]
-            self._download = Download(self._client, files, sum(b for _, b in FILES))
+            prepare = None
+            if self.engine() is None:
+
+                def prepare(cancel: threading.Event) -> None:
+                    self._install(self.models_dir / ENGINE_DIR, cancel)
+                    self._engine = None  # found again: the engine just installed
+
+            self._download = Download(self._client, files, sum(b for _, b in FILES), prepare)
             self._download.start()
 
     def remove(self, name: str) -> None:
@@ -117,6 +196,9 @@ class Parakeet:
             self._stop_helper()
             self._download = None
             shutil.rmtree(self._dir(), ignore_errors=True)
+            if self._engine is not None and self._engine.is_relative_to(self.models_dir):
+                self._engine = None  # the engine Entune installed goes with its model
+            shutil.rmtree(self.models_dir / ENGINE_DIR, ignore_errors=True)
 
     def close(self) -> None:
         if self._download is not None:
@@ -141,7 +223,7 @@ class Parakeet:
 
     def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         if self.engine() is None:
-            return Failure(f"Parakeet's engine is not installed. Run: {INSTALL_COMMAND}")
+            return Failure("Parakeet's engine is not installed. Models > Local models installs it.")
         if not self._ready():
             return Failure(f"{MODEL} is not downloaded. Models > Local models has the button.")
         # The engine resamples properly itself; a WAV goes over as recorded.
@@ -175,7 +257,9 @@ class Parakeet:
     # ---- the helper process
 
     def engine(self) -> Path | None:
-        if self._engine is None:
+        """The engine's Python, looked up again when the one found before is gone (the
+        model removed, or Entune's data deleted)."""
+        if self._engine is None or not self._engine.exists():
             self._engine = self._find_engine()
         return self._engine
 

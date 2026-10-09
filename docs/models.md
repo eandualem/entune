@@ -12,14 +12,9 @@ or **AssemblyAI** if you prefer a cloud service. These are practical starting
 points, not a claim that one speech model is best for every accent or language.
 Compare them on your own recordings using History's retry action and timing table.
 
-For Parakeet, install the engine once:
-
-```sh
-uv tool install parakeet-mlx
-```
-
-Then open **Models**, download `parakeet-tdt-0.6b-v3`, and select it. The engine
-is separate from Entune; the weights are about 2.5 GB. Whisper.cpp models can
+For Parakeet, open **Models**, download `parakeet-tdt-0.6b-v3`, and select it. The
+first download installs its engine (about 480 MB) before the weights (about
+2.5 GB). Whisper.cpp models can
 be downloaded directly from the same page. Local engines occupy memory while
 selected. Parakeet requires Apple Silicon.
 

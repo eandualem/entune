@@ -105,8 +105,8 @@ uv run --group build python packaging/build_app.py
 microphone usage string, the web page and assets, the Parakeet helper
 script, and the whisper.cpp libraries (collected with the bindings) inside,
 `Entune.icns` as the icon. The bundle is about 110 MB. The Parakeet engine
-itself (MLX, about 480 MB) is deliberately not bundled; it is installed
-with `uv tool install parakeet-mlx` and found at run time. The build writes
+itself (MLX, about 480 MB) is deliberately not bundled; the model's Download
+button installs it into the models folder at run time. The build writes
 `dist/Entune.app`; `entune install-app --from dist/Entune.app` copies and
 signs it.
 
@@ -172,8 +172,8 @@ interaction; record which native interactions were actually exercised.
 
 Check that the installed bundle contains the web assets, all prompt resources,
 and `entune/providers/local/parakeet_helper.py`. Verify the helper path resolves
-inside the bundle while `engine_python()` resolves outside it to the separately
-installed engine. Test its protocol without downloading weights or transcribing
+inside the bundle while `engine_python(models_dir)` resolves outside it: to the engine
+Download installed in the models folder, else to a `uv tool install parakeet-mlx` one. Test its protocol without downloading weights or transcribing
 private audio; run real engine/inference tests only with an explicit test corpus.
 
 Windows has its own shortcut, paste, indicator and permission code under

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -12,10 +13,20 @@ DOWNLOAD_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 
 
 class Download:
-    """A model's files, fetched in turn on a thread; each resumes from its `.part`."""
+    """A model's files, fetched in turn on a thread; each resumes from its `.part`.
+    `prepare`, when given, runs first on the same thread (an engine to install); it is
+    handed the cancel event, and what it raises is the download's error."""
 
-    def __init__(self, client: httpx.Client, files: list[tuple[str, Path]], size: int) -> None:
+    def __init__(
+        self,
+        client: httpx.Client,
+        files: list[tuple[str, Path]],
+        size: int,
+        prepare: Callable[[threading.Event], None] | None = None,
+    ) -> None:
         self._client, self._files, self._size = client, files, size
+        self._prepare = prepare
+        self.preparing = False
         self.received = sum(_have(target) for _, target in files)
         self.error: str | None = None
         self._cancel = threading.Event()
@@ -38,6 +49,18 @@ class Download:
         self._thread.join()
 
     def _run(self) -> None:
+        if self._prepare is not None:
+            self.preparing = True
+            try:
+                self._prepare(self._cancel)
+            except OSError as exc:
+                self.error = str(exc)
+                return
+            except Exception as exc:  # unexpected, and still shown rather than lost with the thread
+                self.error = f"{type(exc).__name__}: {exc}"
+                return
+            finally:
+                self.preparing = False
         for url, target in self._files:
             if self._cancel.is_set():
                 return

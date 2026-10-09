@@ -43,7 +43,7 @@ first two; add the rest only when an issue asks.
 | OpenAI | gpt-4o-transcribe | ubiquitous |
 | Mistral | Voxtral Transcribe 2 | open weights |
 | Local | whisper.cpp (large-v3-turbo and smaller) | offline, no key; models downloaded from Settings (added 2026-09-18) |
-| Parakeet (local) | parakeet-tdt-0.6b-v3 on MLX | most accurate offline in tests; engine installed by the user with `uv tool install parakeet-mlx`, never bundled (owner's decision 2026-09-18); Apple Silicon only |
+| Parakeet (local) | parakeet-tdt-0.6b-v3 on MLX | most accurate offline in tests; engine installed by Entune, pinned, when the model is downloaded (owner's decision 2026-10-09, replacing "installed by the user, never bundled" of 2026-09-18); Apple Silicon only |
 
 Dictation is push-to-talk: a clip of seconds to a minute, transcribed once
 after release. Use each provider's synchronous or file endpoint, never its
@@ -120,8 +120,8 @@ and the numbers that show the improvement, measured with Jev, are kept
 
 In scope since 2026-09-18 (issue #20): fast mode as an opt-in setting that
 streams the recording to the provider while it is made, never changing the
-plain path; local models (whisper.cpp, and Parakeet through a user-installed
-engine) with a Download button, taking memory only while selected; and the
+plain path; local models (whisper.cpp, and Parakeet, whose engine its Download
+installs since 2026-10-09) with a Download button, taking memory only while selected; and the
 performance table built from every transcription's timing.
 
 In scope since 2026-10-01 (issue #36): the same desktop experience on Windows,

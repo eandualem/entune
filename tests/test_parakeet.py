@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -10,7 +12,8 @@ import pytest
 
 from entune.audio.formats import wav_bytes
 from entune.providers.contracts import Clip, Failure
-from entune.providers.local.parakeet import FILES, MODEL, Parakeet
+from entune.providers.local import parakeet as parakeet_module
+from entune.providers.local.parakeet import ENGINE, ENGINE_DIR, FILES, INSTALLED, MODEL, Parakeet
 from tests.conftest import mock_client
 
 # Parakeet runs on Apple Silicon only; its helper's pipe is read with select(), which
@@ -25,15 +28,86 @@ def wait_until(condition: Any, seconds: float = 3.0) -> None:
     assert condition()
 
 
-def test_without_the_engine_the_model_is_unavailable_and_says_how_to_install(
-    tmp_path: Path,
+@pytest.fixture
+def no_tool_engine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """No `uv tool install parakeet-mlx` on this machine, whatever the test runner has."""
+    monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+
+
+def test_without_the_engine_the_model_can_still_be_downloaded(
+    tmp_path: Path, no_tool_engine: None
 ) -> None:
-    parakeet = Parakeet(tmp_path, find_engine=lambda: None)
+    parakeet = Parakeet(tmp_path)
     (status,) = parakeet.catalogue()
-    assert (status.state, status.provider, status.name) == ("unavailable", "parakeet", MODEL)
+    assert (status.state, status.provider, status.name) == ("absent", "parakeet", MODEL)
     assert not parakeet.models
     result = parakeet.transcribe(Clip(wav_bytes(b"\x00\x00" * 16_000), "audio/wav"), MODEL, "")
-    assert isinstance(result, Failure) and "uv tool install parakeet-mlx" in result.error
+    assert isinstance(result, Failure) and "Models > Local models installs it" in result.error
+
+
+def test_download_installs_the_engine_first_and_remove_deletes_it(
+    tmp_path: Path, no_tool_engine: None
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 10)
+
+    entered, installed = threading.Event(), threading.Event()
+
+    def install(engine: Path, cancel: threading.Event) -> None:
+        entered.set()
+        assert installed.wait(3)  # held, so the status while installing can be read
+        (engine / "bin").mkdir(parents=True)
+        (engine / "bin" / "python").write_text("")
+        (engine / INSTALLED).write_text(" ".join(ENGINE))
+
+    parakeet = Parakeet(tmp_path, client=mock_client(handler), install=install)
+    parakeet.download(MODEL)
+    try:
+        assert entered.wait(3)
+        (status,) = parakeet.catalogue()
+        assert status.state == "downloading" and "installing its engine" in status.note
+    finally:
+        installed.set()
+    wait_until(lambda: parakeet.models == (MODEL,))
+    # An engine whose Python is gone (Entune's data deleted) is not installed, even for
+    # the provider that used it: Download can repair it.
+    (tmp_path / ENGINE_DIR / "bin" / "python").unlink()
+    assert parakeet.engine() is None and parakeet.catalogue()[0].state != "ready"
+    (tmp_path / ENGINE_DIR / "bin" / "python").write_text("")
+    assert parakeet.engine() == tmp_path / ENGINE_DIR / "bin" / "python"
+    parakeet.remove(MODEL)
+    assert not (tmp_path / ENGINE_DIR).exists() and parakeet.engine() is None
+
+
+@posix_helper
+def test_a_failed_engine_install_is_the_download_error_and_leaves_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_tool_engine: None
+) -> None:
+    uv = tmp_path / "uv"
+    uv.write_text("#!/bin/sh\necho 'No solution found for mlx==0.32.3' >&2\nexit 1\n")
+    uv.chmod(0o755)
+    monkeypatch.setattr(parakeet_module, "_uv", lambda: str(uv))
+    parakeet = Parakeet(tmp_path, client=mock_client(lambda r: httpx.Response(200)))
+    parakeet.download(MODEL)
+    wait_until(lambda: parakeet.catalogue()[0].state == "error")
+    assert "No solution found for mlx==0.32.3" in (parakeet.catalogue()[0].error or "")
+    assert not (tmp_path / ENGINE_DIR).exists()
+
+
+def test_an_unexpected_install_failure_is_still_the_download_error(
+    tmp_path: Path, no_tool_engine: None
+) -> None:
+    def install(engine: Path, cancel: threading.Event) -> None:
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    parakeet = Parakeet(
+        tmp_path, client=mock_client(lambda r: httpx.Response(200)), install=install
+    )
+    parakeet.download(MODEL)
+    wait_until(lambda: parakeet.catalogue()[0].state == "error")
+    assert (parakeet.catalogue()[0].error or "").startswith("UnicodeDecodeError: ")
 
 
 def test_download_fetches_both_files_and_remove_deletes_them(tmp_path: Path) -> None:

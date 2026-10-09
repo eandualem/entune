@@ -29,8 +29,8 @@ Entune opens on **Get started**, three steps in order:
 
 1. **Set up a speech model.** Open **Models**, enter a speech provider's API key,
    or download a local model. The first model you set up becomes your default,
-   and Entune returns to Get started. Parakeet additionally needs its separately
-   installed engine; see [Speech models and cost](#speech-models-and-cost).
+   and Entune returns to Get started. Parakeet's Download also installs its
+   engine; see [Speech models and cost](#speech-models-and-cost).
 2. **Allow permissions.** On macOS: Microphone, Accessibility and Input
    Monitoring, each with its own button; see [Permissions (macOS)](#permissions-macos).
    On Windows only the microphone matters; see [Windows](#windows). On Linux,
@@ -248,7 +248,7 @@ A speech model turns a recording into text. These are the ones Entune can use:
 | ElevenLabs | scribe_v2 | synchronous speech-to-text endpoint |
 | xAI Grok | grok-voice-transcribe-2.0 | synchronous speech-to-text endpoint |
 | Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
-| Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
+| Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed by its Download button |
 
 Enter a provider's API key on the Models page (**Get a key** beside each provider opens
 its API key page in your browser) and its model appears in the
@@ -286,18 +286,14 @@ single retry is freed right after.
 Measured on 2026-09-18 on an M5: base.en transcribes 25 s of speech in
 under a second.
 
-**Parakeet** was the most accurate offline model in our tests, but its
-engine (Apple's MLX and the `parakeet-mlx` package, about 480 MB, Apple
-Silicon only) is not bundled, so the app stays small for everyone who does
-not want it. Install the engine once, from a terminal:
-
-```sh
-uv tool install parakeet-mlx
-```
-
-Entune finds it on its own, and Parakeet appears under Local models with
-the same Download and Remove buttons; the weights are 2.5 GB. The model
-runs in a helper process inside that installation, loaded once.
+**Parakeet** was the most accurate offline model in our tests. Its engine
+(Apple's MLX and the `parakeet-mlx` package, about 480 MB, Apple Silicon
+only) is not part of Entune's install, so the app stays small for everyone
+who does not want it: under Local models, Download installs the engine
+first, into Entune's models folder, then fetches the 2.5 GB of weights, and
+Remove deletes both. The model runs in a helper process inside that engine,
+loaded once. An engine you installed yourself with
+`uv tool install parakeet-mlx` is used when Entune has none of its own.
 
 ## History
 
@@ -571,8 +567,8 @@ Enabled features determine what is sent out:
   recognition is local. With OpenAI, it goes to OpenAI, and with Perplexity, to Perplexity. With Laya, it stays on your
   computer.
 - **Optional model downloads:** Hugging Face serves local model weights, Laya's
-  included; no dictation audio or text is included. The separately installed engines
-  of Parakeet and Laya have their own package downloads. Export files are generated locally and saved through the
+  included; no dictation audio or text is included. Parakeet's engine, installed by
+  its Download button, and Laya's separately installed engine have their own package downloads. Export files are generated locally and saved through the
   system's Save panel.
 
 There is no Entune account, telemetry or hosted history storage. Local speech alone
