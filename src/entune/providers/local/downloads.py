@@ -15,7 +15,7 @@ DOWNLOAD_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 class Download:
     """A model's files, fetched in turn on a thread; each resumes from its `.part`.
     `prepare`, when given, runs first on the same thread (an engine to install); it is
-    handed the cancel event, and an OSError it raises is the download's error."""
+    handed the cancel event, and what it raises is the download's error."""
 
     def __init__(
         self,
@@ -55,6 +55,9 @@ class Download:
                 self._prepare(self._cancel)
             except OSError as exc:
                 self.error = str(exc)
+                return
+            except Exception as exc:  # unexpected, and still shown rather than lost with the thread
+                self.error = f"{type(exc).__name__}: {exc}"
                 return
             finally:
                 self.preparing = False

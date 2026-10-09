@@ -96,6 +96,20 @@ def test_a_failed_engine_install_is_the_download_error_and_leaves_nothing(
     assert not (tmp_path / ENGINE_DIR).exists()
 
 
+def test_an_unexpected_install_failure_is_still_the_download_error(
+    tmp_path: Path, no_tool_engine: None
+) -> None:
+    def install(engine: Path, cancel: threading.Event) -> None:
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    parakeet = Parakeet(
+        tmp_path, client=mock_client(lambda r: httpx.Response(200)), install=install
+    )
+    parakeet.download(MODEL)
+    wait_until(lambda: parakeet.catalogue()[0].state == "error")
+    assert (parakeet.catalogue()[0].error or "").startswith("UnicodeDecodeError: ")
+
+
 def test_download_fetches_both_files_and_remove_deletes_them(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         name = request.url.path.rsplit("/", 1)[-1]
