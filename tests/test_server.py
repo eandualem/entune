@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 from dataclasses import replace
+from datetime import date, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -19,12 +20,15 @@ from starlette.testclient import TestClient
 
 from entune.api import data as data_api
 from entune.app.entune import Entune
-from entune.app.metrics import model_metrics
+from entune.app.metrics import model_metrics, usage
 from entune.app.shortcuts import DEFAULT_CANCEL
 from entune.audio.formats import wav_bytes
 from entune.learning.suggestion_model import Request, chatgpt
+from entune.processing.results import Stage
+from entune.processing.text_edits import Change
 from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from entune.server import create_app
+from entune.storage.records import Transcription
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, mock_client, wait_for_build
 from tests.dictionary_samples import JEV, document, group, proposed
@@ -222,6 +226,16 @@ def test_permissions_require_a_desktop_and_validate_before_dispatch(
     assert len(requested) == 2
 
 
+def test_waveform_is_one_level_per_bar_against_the_loudest(client: TestClient) -> None:
+    client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+    quiet, loud = b"\x00\x00" * 800, (b"\x00\x40" + b"\x00\xc0") * 400
+    rec = client.post("/api/recordings", files={"audio": ("a.wav", wav_bytes(quiet + loud))}).json()
+    levels = client.get(f"/api/recordings/{rec['id']}/waveform?bars=2").json()
+    assert levels == {"levels": [0.0, 1.0]}
+    assert client.get(f"/api/recordings/{rec['id']}/waveform?bars=0").status_code == 400
+    assert client.get("/api/recordings/999/waveform?bars=2").status_code == 404
+
+
 def test_audio_download_has_a_filename(client: TestClient) -> None:
     client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
     rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
@@ -346,16 +360,20 @@ CLAUDE_CODE = {"spelling": "Claude Code", "description": "the agent", "heard": [
 def test_dictionary_direct_mappings_are_explicit_and_scope_is_preserved(
     client: TestClient, stub: StubProvider
 ) -> None:
-    assert client.get("/api/dictionary").json() == {"version": 2, "pinned": [], "learned": {}}
+    assert client.get("/api/dictionary").json() == {
+        "version": 3,
+        "words": [],
+        "pinned": [],
+        "learned": {},
+    }
     bad = client.put("/api/dictionary", content='{"pinned":[]}')
     assert bad.status_code == 400 and 'needs "version"' in bad.text
     saved = client.put(
         "/api/dictionary",
-        json={
-            "version": 2,
-            "pinned": [group("Claude Code", "cloud code", direct=True).as_json()],
-            "learned": {"stub/bad": [group("Hello", "hello", direct=True).as_json()]},
-        },
+        json=document(
+            group("Claude Code", "cloud code", direct=True),
+            learned={"stub/bad": (group("Hello", "hello", direct=True),)},
+        ),
     )
     assert saved.status_code == 200, saved.text
     client.put(
@@ -615,7 +633,8 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     assert calls == [("openai:gpt-6-astra", "sk-1")]
     assert proposal["model"] == "stub/good"
     assert len(proposal["changes"]) == 1
-    assert proposal["changes"][0]["after"]["meanings"][0]["spelling"] == "Claude Code"
+    assert proposal["changes"][0]["after"]["text"] == "cloud code"
+    assert [w["spelling"] for w in proposal["words"]] == ["Claude Code"]
     assert proposal["version"] == client.get("/api/dictionary").headers["etag"]
     assert proposal["changes"][0]["kind"] == "add" and proposal["changes"][0]["before"] is None
     # Nothing is saved until the page accepts.
@@ -689,13 +708,15 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
         ]
     }
     stored = client.get("/api/dictionary").json()
-    assert [g["meanings"][0]["spelling"] for g in stored["pinned"]] == ["Claude Code", "Wispr Flow"]
-    assert {f["text"] for f in stored["pinned"][0]["recognized_forms"]} == {
-        "Claude Code",
+    assert [w["spelling"] for w in stored["words"]] == ["Claude Code", "Wispr Flow"]
+    assert [h["text"] for h in stored["pinned"]] == [
         "cloud code",
+        "Claude Code",
+        "whisper flow",
+        "Wispr Flow",
         "claud code",
-    }
-    assert all(not f["direct"] for g in stored["pinned"] for f in g["recognized_forms"])
+    ]
+    assert all(not h["direct"] for h in stored["pinned"])
     # The earlier shape, terms and replacements, is still taken.
     again = client.post(
         "/api/dictionary/corrections", json={"terms": ["Soniox"], "replacements": {"a": "b"}}
@@ -907,6 +928,51 @@ def test_metrics_are_computed_from_timed_attempts(client: TestClient) -> None:
     assert "median_wait" not in row and "speed" not in row
 
 
+def test_words_kept_counts_the_words_a_replacement_took_out() -> None:
+    fixed = Stage("succeeded", "contextual", changes=(Change(0, 7, "in tune", "Entune"),))
+    attempt = Transcription(
+        1, 1, "stub", "good", "ok", "Entune", None, "", raw_text="in tune",
+        audio_seconds=1.0, elapsed_seconds=0.1, correction=fixed,
+    )  # fmt: skip
+
+    class History:
+        def timed_transcriptions(self) -> list[Transcription]:
+            return [attempt]
+
+    (row,) = model_metrics(History(), [])  # type: ignore[arg-type]
+    assert (row.replacements, row.replaced_words, row.words) == (1, 2, 2)
+    # Two corrections inside one word take out one word.
+    halves = (Change(0, 4, "Jeff", "Jev"), Change(5, 9, "Jeff", "Jev"))
+    attempt = replace(attempt, raw_text="Jeff-Jeff", correction=replace(fixed, changes=halves))
+    (row,) = model_metrics(History(), [])  # type: ignore[arg-type]
+    assert (row.replacements, row.replaced_words, row.words) == (2, 1, 1)
+
+
+def test_usage_counts_each_dictation_once_by_its_newest_transcript(
+    tmp_path: Path, stub: StubProvider
+) -> None:
+    store = Store(tmp_path)
+    with TestClient(create_app(Entune(store, [stub])), base_url="http://localhost") as client:
+        client.put("/api/settings", json={"keys": {"stub": "k"}, "defaultModel": "stub/good"})
+        clip = ("a.wav", wav_bytes(b"\x00\x00" * 16_000 * 3))
+        client.post("/api/recordings", files={"audio": clip}, data={"model": "stub/bad"})
+        retried = client.post(
+            "/api/recordings", files={"audio": clip}, data={"model": "stub/bad"}
+        ).json()
+        client.post(f"/api/recordings/{retried['id']}/transcriptions", json={"model": "stub/good"})
+        client.post("/api/recordings", files={"audio": clip})
+        client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})  # no length
+        summary = client.get("/api/usage").json()
+    assert (summary["dictations"], summary["transcribed"], summary["words"]) == (4, 3, 18)
+    assert summary["audio_seconds"] == 6.0 and summary["timed_words"] == 12
+    assert [w["words"] for w in summary["weeks"]] == [0] * 7 + [18]
+    assert summary["previous_best_week"] == 0
+    assert [summary[s]["count"] for s in ("dictionary", "fillers", "layout")] == [0, 0, 0]
+    later = usage(store, today=date.today() + timedelta(weeks=8))
+    assert later.words == 18 and all(w.words == 0 for w in later.weeks)
+    assert later.previous_best_week == 18  # a week before the eight shown still counts
+
+
 def test_local_models_are_listed_downloaded_and_removed(tmp_path: Path, stub: StubProvider) -> None:
     from entune.providers.local.whisper import WhisperCpp
     from tests.test_whisper import FakeEngine
@@ -968,20 +1034,22 @@ def test_a_stale_dictionary_save_is_refused_and_a_fresh_one_accepted(client: Tes
         headers={"if-match": version},
     )
     assert stale.status_code == 409 and "changed" in stale.text
-    assert client.get("/api/dictionary").json()["pinned"][0]["meanings"][0]["spelling"] == "Soniox"
+    assert client.get("/api/dictionary").json()["words"][0]["spelling"] == "Soniox"
     fresh = client.get("/api/dictionary")
     current, fresh_version = fresh.json(), fresh.headers["etag"]
     assert fresh_version != version
+    entune = document(group("Entune", "in tune"))
     ok = client.put(
         "/api/dictionary",
-        json={**current, "pinned": [*current["pinned"], group("Entune", "in tune").as_json()]},
+        json={
+            **current,
+            "words": [*current["words"], *entune["words"]],
+            "pinned": [*current["pinned"], *entune["pinned"]],
+        },
         headers={"if-match": fresh_version},
     )
     assert ok.status_code == 200 and ok.headers["etag"] != fresh_version
-    assert {m["spelling"] for g in ok.json()["pinned"] for m in g["meanings"]} == {
-        "Soniox",
-        "Entune",
-    }
+    assert {w["spelling"] for w in ok.json()["words"]} == {"Soniox", "Entune"}
     # Without a version header (curl, or a page repairing a broken file) the write goes through.
     assert client.put("/api/dictionary", json=document()).status_code == 200
 
@@ -1045,25 +1113,19 @@ def test_slow_settings_catalogue_does_not_block_other_requests(
         assert waiting.result(timeout=1).status_code == 200
 
 
-def test_pin_endpoint_needs_revision_and_preserves_competing_meanings(client: TestClient) -> None:
-    response = client.put(
-        "/api/dictionary",
-        json={"version": 2, "pinned": [], "learned": {"stub/good": [JEV.as_json()]}},
-    )
-    body = {"model": "stub/good", "group": "g_jev", "meaning": "a_jev"}
+def test_pin_endpoint_needs_revision_and_moves_heard_entries(client: TestClient) -> None:
+    response = client.put("/api/dictionary", json=document(learned={"stub/good": (JEV,)}))
+    body = {"model": "stub/good", "text": "jeff"}
     assert client.post("/api/dictionary/pin", json=body).status_code == 400
     result = client.post(
         "/api/dictionary/pin", json=body, headers={"If-Match": response.headers["etag"]}
     )
     assert result.status_code == 200, result.text
-    assert result.json()["pinned"][0]["meanings"][0]["spelling"] == "Jev"
-    assert {m["spelling"] for m in result.json()["learned"]["stub/good"][0]["meanings"]} == {
-        "Jeff",
-        "GIF",
-    }
+    assert [h["text"] for h in result.json()["pinned"]] == ["Jeff"]
+    assert [h["text"] for h in result.json()["learned"]["stub/good"]] == ["GIF", "Jif", "Jev"]
     stale = client.post(
         "/api/dictionary/pin",
-        json={**body, "meaning": "b_jeff"},
+        json={**body, "text": "GIF"},
         headers={"If-Match": response.headers["etag"]},
     )
     assert stale.status_code == 409
@@ -1074,11 +1136,8 @@ def test_pin_endpoint_needs_revision_and_preserves_competing_meanings(client: Te
         headers={"If-Match": result.headers["etag"]},
     )
     assert shared.status_code == 200 and not shared.json()["learned"]
-    assert {m["spelling"] for g in shared.json()["pinned"] for m in g["meanings"]} == {
-        "Jev",
-        "Jeff",
-        "GIF",
-    }
+    assert [h["text"] for h in shared.json()["pinned"]] == ["Jeff", "GIF", "Jif", "Jev"]
+    assert shared.json()["words"] == response.json()["words"]
 
 
 def test_safe_recovery_is_derived_and_copies_only_approved_nonambiguous_mappings(
@@ -1100,13 +1159,7 @@ def test_safe_recovery_is_derived_and_copies_only_approved_nonambiguous_mappings
             raw, Stage("failed", "contextual", error="unavailable"), Stage("disabled", "formatting")
         ),
     )
-    client.put(
-        "/api/dictionary",
-        json={
-            "version": 2,
-            "pinned": [group("Entune", "dictim", direct=True).as_json(), JEV.as_json()],
-        },
-    )
+    client.put("/api/dictionary", json=document(group("Entune", "dictim", direct=True), JEV))
     before = client.get("/api/recordings").json()
     result = client.post(f"/api/recordings/{rec.id}/transcriptions/{attempt}/safe-copy")
     assert result.status_code == 200, result.text

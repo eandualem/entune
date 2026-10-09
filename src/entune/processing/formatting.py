@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from entune.processing import cleanup
 from entune.processing.text_edits import Change, overlaps, protected
 
 _LIST = re.compile(r"(?:[-*+•‣◦]|\d+[.)]|[A-Za-z]\))[ \t]+")
@@ -13,6 +14,48 @@ _ABBREVIATION = re.compile(
     r"\b(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|e\.g|i\.e|a\.m|p\.m)\.$|\b(?:[a-z]\.)+$",
     re.IGNORECASE,
 )
+
+
+LIST_ITEMS = ("list_item", "numbered_item", "bullet_item")
+_NUMBERS = "one|two|three|four|five|six|seven|eight|nine|ten"
+# A spoken ordinal starting a numbered item, with its comma and the space after it.
+_ORDINAL = re.compile(
+    rf"(?:first of all|number (?:\d{{1,2}}|{_NUMBERS})|firstly|secondly|thirdly|fourthly|fifthly"
+    rf"|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|{_NUMBERS}|\d{{1,2}})"
+    r"[,:][ \t]+(?=\S)",
+    re.IGNORECASE,
+)
+# The speaker counting among a sentence's first words: "And then my third point is ...",
+# "And secondly, ...", "Number two is ..."; not "at first" or "the second row".
+_COUNTED = re.compile(
+    r"(?:\S+\s+){0,5}?(?:(?:my|our)\s+(?:first|second|third|fourth|fifth|sixth"
+    r"|seventh|eighth|ninth|tenth)|firstly|secondly|thirdly|fourthly|fifthly"
+    rf"|number (?:\d{{1,2}}|{_NUMBERS}))\b",
+    re.IGNORECASE,
+)
+_NUMBERED = re.compile(r"(\d+)[.)][ \t]")  # an existing numbered list line
+_BLANK_LINE = re.compile(r"\n[ \t]*\n")
+
+
+def ordinal(text: str, span: Sentence) -> bool:
+    """Whether the sentence opens with a spoken ordinal: "Second, ...", "Number three: ..."."""
+    return _ORDINAL.match(text, span.start, span.end) is not None
+
+
+def counted(text: str, span: Sentence) -> bool:
+    """Whether the sentence counts: a spoken ordinal opens it, or a counting word is among
+    its first words ("my second point is ...")."""
+    return ordinal(text, span) or _COUNTED.match(text, span.start, span.end) is not None
+
+
+def numbered_line(text: str, span: Sentence) -> bool:
+    """Whether the sentence is a line of an existing numbered list: "2. ..." or "2) ..."."""
+    return _NUMBERED.match(text, span.start, span.end) is not None
+
+
+def blank_line(gap: str) -> bool:
+    """Whether the text between two spans keeps an empty line: a paragraph boundary."""
+    return bool(_BLANK_LINE.search(gap.replace("\r\n", "\n")))
 
 
 @dataclass(frozen=True)
@@ -37,8 +80,13 @@ def sentences(text: str) -> list[Sentence]:
             continue
         start = line.start() + len(line.group()) - len(line.group().lstrip())
         end = start + len(content)
-        listed = bool(_LIST.match(content))
-        locked = line.group().startswith(("    ", "\t")) or overlaps(start, end, excluded)
+        # Indented code, or a line inside a code block or other protected text over
+        # several lines, is no list line even when it looks like one; a list line holding
+        # a quote still is.
+        indented = line.group().startswith(("    ", "\t"))
+        enclosed = any(a <= start and end <= b and "\n" in text[a:b] for a, b in excluded)
+        listed = bool(_LIST.match(content)) and not indented and not enclosed
+        locked = indented or overlaps(start, end, excluded)
         if listed or locked:
             spans.append(Sentence(start, end, listed, locked))
             continue
@@ -60,24 +108,73 @@ def sentences(text: str) -> list[Sentence]:
 
 
 def changes(text: str, spans: list[Sentence], actions: list[str]) -> tuple[Change, ...]:
-    """Only alter inter-span horizontal whitespace or insert a bullet; never a source word."""
-    result = []
+    """Only alter inter-span horizontal whitespace, insert a list marker, or remove the
+    spoken ordinal a number replaces; never another source word.
+
+    Actions: continues, new_paragraph, numbered_item, bullet_item, or list_item for a line
+    that is already a list entry."""
+    result: list[Change] = []
     end = 0
-    previous = "continues"
+    listing: str | None = None  # the kind of the list entry being written, while it lasts
+    number = 0  # the last number of the numbered list going on
     for i, (span, action) in enumerate(zip(spans, actions, strict=True)):
         gap = text[end : span.start]
         replacement = gap
+        replaced = gap  # what the replacement stands for: the gap, and a spoken ordinal
+        item = action in LIST_ITEMS
+        if blank_line(gap) or action == "new_paragraph":
+            listing, number = None, 0
         if not span.protected:
-            # Keep original line endings, blank paragraphs and indentation exactly.
+            # Keep original line endings, blank paragraphs and indentation exactly. A
+            # sentence that continues stays on its line, a list entry's included.
             if i and "\n" not in gap and "\r" not in gap:
-                if action == "new_paragraph" or (previous == "list_item" and action != "list_item"):
+                if action == "new_paragraph":
                     replacement = "\n\n"
-                elif action == "list_item":
-                    replacement = "\n" if previous == "list_item" else "\n\n"
-            if action == "list_item" and not span.listed:
+                elif item:
+                    replacement = "\n" if listing else "\n\n"
+            if action == "numbered_item" and not span.listed:
+                # Numbering goes on across an entry's follow-up sentences; a new list
+                # counts up to an existing numbered line it runs into.
+                number = number + 1 if listing else _first_number(text, spans, actions, i)
+                replacement += f"{number}. "
+                if spoken := _ORDINAL.match(text, span.start, span.end):
+                    # The number, the ordinal it replaces and the next word's capital are
+                    # one edit: where another stage's edit keeps it out, all stay as said.
+                    # A hesitation sound after the ordinal takes its capital as an edit of
+                    # its own, so the sound's removal does not take the number with it.
+                    stop = spoken.end()
+                    following = text[stop : stop + 1]
+                    if cleanup.sound_at(text, stop):
+                        replaced = text[end:stop]
+                        if following.islower():
+                            result.append(Change(stop, stop + 1, following, following.upper()))
+                    else:
+                        replaced = text[end : stop + 1]
+                        replacement += following.upper()
+            elif action == "bullet_item" and not span.listed:
                 replacement += "- "
-        if replacement != gap:
+        if replacement != replaced:
             assert not gap.strip()
-            result.append(Change(end, span.start, gap, replacement))
-        end, previous = span.end, action
-    return tuple(result)
+            result.append(Change(end, end + len(replaced), replaced, replacement))
+        end = span.end
+        if span.listed and (existing := _NUMBERED.match(text, span.start, span.end)):
+            number = int(existing.group(1))
+        if item:
+            listing = action
+    return tuple(sorted(result, key=lambda c: (c.start, c.end)))
+
+
+def _first_number(text: str, spans: list[Sentence], actions: list[str], first: int) -> int:
+    """1, or, for new entries that run into an existing numbered line ("Third, ...\n4.
+    ..."), the number that leads up to it."""
+    count = 0
+    for i in range(first, len(spans)):
+        if i > first and (
+            blank_line(text[spans[i - 1].end : spans[i].start]) or actions[i] == "new_paragraph"
+        ):
+            return 1
+        if spans[i].listed:
+            existing = _NUMBERED.match(text, spans[i].start, spans[i].end)
+            return max(1, int(existing.group(1)) - count) if existing else 1
+        count += actions[i] == "numbered_item"
+    return 1

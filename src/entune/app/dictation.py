@@ -21,8 +21,10 @@ from entune.app.operations import Operation, Operations
 from entune.app.pieces import Pieces
 from entune.app.settings import JevStatus, Settings
 from entune.audio.formats import sniff_mime
-from entune.dictionary.entries import Groups
+from entune.audio.silence import shorten_wav
+from entune.dictionary.entries import Active
 from entune.processing import results
+from entune.processing.jev_client import SECTION_CONNECTIONS
 from entune.processing.jev_client import Client as JevClient
 from entune.processing.pipeline import process_text
 from entune.processing.results import Processed
@@ -72,7 +74,14 @@ class Dictation:
         )
         if api_key is None:
             return None
-        return Pieces(ref, api_key, sample_rate, self._speech, cancel)
+        return Pieces(
+            ref,
+            api_key,
+            sample_rate,
+            self._speech,
+            cancel,
+            remove_silence=self._settings.remove_silence(),
+        )
 
     def prepare(self) -> None:
         """While the user speaks, open the connections this dictation will use: the default
@@ -89,7 +98,8 @@ class Dictation:
             if stages:
                 endpoint, key = self._decisions.chosen()
                 if key:  # Jev, OpenAI or Perplexity with its key; Laya is on this Mac
-                    self._jev.preconnect(endpoint.url, stages)
+                    extra = SECTION_CONNECTIONS if status.formatting else 0
+                    self._jev.preconnect(endpoint.url, stages + extra)
             ref = self._models.choose_model(None)
             if isinstance(ref.provider, Preconnects) and self._settings.key(ref.provider.id):
                 with self._speech.use(ref):
@@ -207,7 +217,7 @@ class Dictation:
                     result = Failure(f"No API key set for {ref.provider.name}")
                 else:
                     started = time.monotonic()
-                    clip: Clip | None = None
+                    seconds: float | None = None  # the recording's own length
                     joined: str | None = None
                     try:
                         # Before this dictation's own lease: the pieces hold theirs while
@@ -226,6 +236,14 @@ class Dictation:
                         if not mime.startswith("audio/"):
                             mime = sniff_mime(data) or mime
                         clip = Clip(data, mime)
+                        seconds = clip.seconds
+                        # Fast mode's pieces were shortened as they were sent.
+                        if (
+                            joined is None
+                            and self._settings.remove_silence()
+                            and mime == "audio/wav"
+                        ):
+                            clip = Clip(shorten_wav(data), mime)
                         result = (
                             Transcript(joined)
                             if joined is not None
@@ -236,7 +254,7 @@ class Dictation:
                     except Exception as exc:
                         result = Failure(f"{type(exc).__name__}: {exc}")
                     timing = Timing(
-                        clip.seconds if clip else None,
+                        seconds,
                         time.monotonic() - started,
                         joined is not None,
                     )
@@ -272,21 +290,38 @@ class Dictation:
             if raw is not None and initial is not None:
                 started = time.monotonic()
                 latest = initial
+                unreadable: str | None = None  # why the dictionary could not be read
+
+                def damaged(result: Processed) -> Processed:
+                    """The result with the dictionary step failed, when the dictionary was
+                    unreadable: every saved state says so, not only the final one."""
+                    if unreadable is None:
+                        return result
+                    correction = replace(result.correction, status="failed", error=unreadable)
+                    return replace(result, correction=correction)
 
                 def checkpoint(result: Processed) -> None:
                     nonlocal latest
+                    result = damaged(result)
                     self._store.finish_processing(attempt_id, result, final=False)
                     latest = result
 
                 try:
                     if operation:
                         operation.check()
-                    # A damaged dictionary must not stop speech transcription or its persistence.
-                    entries = (
-                        self._dictionary.dictionary().effective(ref.id) if status.dictionary else ()
-                    )
-                    processed = self.correct(
-                        raw, entries, status, checkpoint=checkpoint, operation=operation
+                    # A damaged dictionary must not stop speech transcription or its persistence,
+                    # nor the steps that do not read it: only the dictionary step fails.
+                    active = Active()
+                    if status.dictionary:
+                        try:
+                            active = self._dictionary.dictionary().active(ref.id)
+                        except (ValueError, OSError) as exc:
+                            unreadable = f"Could not read dictionary.json: {exc}"
+                            checkpoint(latest)  # a cancel from here on keeps the reason
+                    processed = damaged(
+                        self.correct(
+                            raw, active, status, checkpoint=checkpoint, operation=operation
+                        )
                     )
                 except CancelledError:
                     self._store.finish_processing(
@@ -341,7 +376,7 @@ class Dictation:
     def correct(
         self,
         raw: str,
-        groups: Groups,
+        active: Active,
         status: JevStatus,
         *,
         checkpoint: Callable[[Processed], None] | None = None,
@@ -350,7 +385,7 @@ class Dictation:
         endpoint, key = self._decisions.chosen()
         return process_text(
             raw,
-            groups,
+            active,
             contextual=status.dictionary,
             formatting=status.formatting,
             cleanup=status.cleanup,
@@ -379,7 +414,7 @@ class Dictation:
             raise ValueError("No original successful transcription for that attempt")
         result = process_text(
             attempt.raw_text,
-            self._dictionary.dictionary().effective(f"{attempt.provider}/{attempt.model}"),
+            self._dictionary.dictionary().active(f"{attempt.provider}/{attempt.model}"),
             contextual=False,
             formatting=False,
             direct=True,

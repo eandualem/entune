@@ -129,8 +129,8 @@ class Prepared:
     questions: dict[str, Any]
 
 
-def prepare(case: Case, groups: dictionary_entries.Groups, variant: jev.Variant | None) -> Prepared:
-    found = matching.components(matching.matches(groups, case.text))
+def prepare(case: Case, active: dictionary_entries.Active, variant: jev.Variant | None) -> Prepared:
+    found = matching.components(matching.matches(active, case.text))
     component = next((c for c in found if c.start <= case.start and case.end <= c.end), None)
     if component is None:
         raise ValueError(f"{case.id}: no dictionary match covers the labelled span")
@@ -148,15 +148,16 @@ def prepare(case: Case, groups: dictionary_entries.Groups, variant: jev.Variant 
             f"{case.id}: the labelled span and meanings match {len(matching_plans)} options"
         )
     intended = matching_plans[0]
-    outputs = {f"i{n}": component.output(case.text, p) for n, p in enumerate(eligible)}
     if variant is None:
         state, questions = previous_request(case.text, component, eligible)
+        outputs = {f"i{n}": component.output(case.text, p) for n, p in enumerate(eligible)}
     else:
         # Ask about this occurrence alone, so every variant sees the same decision.
         request = jev.meaning_request(case.text, [component], variant)
         if not request.questions:
             raise ValueError(f"{case.id}: code settles this occurrence without asking")
         state, questions = request.state, request.questions
+        outputs = request.outputs[0]  # readings that write the same text are one option
     return Prepared(case, raw, component.output(case.text, intended), outputs, state, questions)
 
 
@@ -179,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--variants", default=",".join(VARIANTS))
     parser.add_argument("--run", action="store_true", help="make paid TypeSafe requests")
     args = parser.parse_args(argv)
-    groups = dictionary_document.parse(args.dictionary.read_text(encoding="utf-8")).effective(
+    active = dictionary_document.parse(args.dictionary.read_text(encoding="utf-8")).active(
         args.model
     )
     cases = load_cases(args.cases)
@@ -190,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     report: dict[str, Any] = {}
     try:
         for name in args.variants.split(","):
-            prepared = [prepare(case, groups, VARIANTS[name]) for case in cases]
+            prepared = [prepare(case, active, VARIANTS[name]) for case in cases]
             sizes = [len(json.dumps([p.state, p.questions], ensure_ascii=False)) for p in prepared]
             summary: dict[str, Any] = {
                 "cases": len(prepared),

@@ -404,7 +404,7 @@ def test_fast_mode_transcribes_the_pieces_and_delivers_their_joined_text(tmp_pat
     app.start_recording()
     app.stop_recording()
     wait_for(lambda: platform.actions.pasted == 2)
-    assert [round(c.seconds or 0) for c in stub.clips[1:]] == [21, 2]
+    assert sorted(round(c.seconds or 0) for c in stub.clips[1:]) == [2, 21]  # in parallel
     assert platform.actions.clipboard == "hello from the fake hello from the fake"
     attempt = entune.store.list_recordings()[0].transcriptions[0]
     assert attempt.fast and attempt.audio_seconds == pytest.approx(23.6, abs=0.1)

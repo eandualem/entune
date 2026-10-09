@@ -29,8 +29,8 @@ Entune opens on **Get started**, three steps in order:
 
 1. **Set up a speech model.** Open **Models**, enter a speech provider's API key,
    or download a local model. The first model you set up becomes your default,
-   and Entune returns to Get started. Parakeet additionally needs its separately
-   installed engine; see [Speech models and cost](#speech-models-and-cost).
+   and Entune returns to Get started. Parakeet's Download also installs its
+   engine; see [Speech models and cost](#speech-models-and-cost).
 2. **Allow permissions.** On macOS: Microphone, Accessibility and Input
    Monitoring, each with its own button; see [Permissions (macOS)](#permissions-macos).
    On Windows only the microphone matters; see [Windows](#windows). On Linux,
@@ -207,21 +207,37 @@ the saved clip goes to that model whole.
 **Fast mode** (the lightning switch at the top of the window, off by default) cuts
 a dictation at natural pauses while you speak, and your speech model, cloud or local,
 transcribes each finished part in the background, the same way it transcribes a whole
-clip. When you stop, only the last part is left; the parts' text is joined and
-processed once. A part ends in the middle of a pause of at least 0.4 s, and only once
+clip. Parts are transcribed in parallel, each as soon as it is cut, so a slow one does
+not hold up the next (a local model takes one at a time). When you stop, the last part
+is sent at once; the parts' text is joined in order and processed once. Each part's
+timing is written to `entune.log`. A part ends in the middle of a pause of at least 0.4 s, and only once
 it is long enough for the model: 30 s for Parakeet, 25 s for Whisper.cpp, 20 s for a
 cloud model. A shorter dictation is transcribed whole, as without fast mode, and so is
 any dictation in which a part fails. Fast mode applies to dictations made with the
 shortcut.
 
+**Silence left out.** Long pauses are left out of what goes to the speech model: a
+pause longer than 0.6 s is shortened to 0.6 s (0.3 s next to the speech on each side),
+and the quiet before and after the dictation to 0.3 s, so a cloud service bills less and
+a model on your computer finishes sooner. Quiet is judged as for fast mode's pauses,
+against the room's own noise. Your recording in History keeps every second, and
+Performance and Usage count its full length. Measured on 904 dictations (15.8 hours,
+October 2026), a quarter of the audio is left out, 29% of dictations over three minutes;
+on 20 of them checked against a cloud transcript, no words were lost. It applies to the
+WAV Entune records; dropped files in other formats are sent as they are. Turn it off
+under **Settings › General › Leave out long silences**.
+
 **Performance.** Every transcription records how long the clip was, how long
-the provider took, and whether fast mode was used. The chart button next
-to the model picker opens the table by model and mode. **Speed** is the transcription
-wait for one minute of audio, from successful runs whose length and wait were both
-measured (it covers the speech step, not later processing). **Corrections** counts
-dictionary replacements per 100 words in dictations where the dictionary step ran; it
-reflects the confusions the dictionary knows, not overall accuracy. **Used** combines the
-number of runs, failures and total audio. Simulated on dictations from October 2026,
+the provider took, and whether fast mode was used. Models › Performance plots each
+model you have used, with fast mode apart. Across is the wait after you stop for one
+minute of audio, from successful runs whose length and wait were both measured (it
+covers the speech step, not later processing). Up is the share of words your
+dictionary did not need to correct, in dictations where the dictionary step ran; it
+reflects the confusions the dictionary knows, not overall accuracy. **Reported** plots
+every model on published benchmarks instead, the same figures Cloud providers and
+Local models show beside each model, with their sources. Models › Usage adds up your
+dictations: how many were transcribed, the hours of audio, words per week, and what
+each processing step changed. Simulated on dictations from October 2026,
 cut where fast mode would cut them: the median wait after stopping fell from 3.7 s to
 1.1 s with AssemblyAI Universal-3.5 Pro (59 dictations of 30 s to 4 min) and from
 1.0 s to 0.4 s with Parakeet (146 dictations of 30 s to 23 min). The text is not
@@ -246,10 +262,10 @@ A speech model turns a recording into text. These are the ones Entune can use:
 | ElevenLabs | scribe_v2 | synchronous speech-to-text endpoint |
 | xAI Grok | grok-voice-transcribe-2.0 | synchronous speech-to-text endpoint |
 | Whisper.cpp (local) | Whisper large-v3-turbo, its compact build, small.en, base.en | speech recognition on this machine; no speech API key |
-| Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed once from a terminal |
+| Parakeet (local) | parakeet-tdt-0.6b-v3 | NVIDIA's Parakeet on MLX, Apple Silicon only; engine installed by its Download button |
 
-Enter a provider's API key on the Models page (**Get a key** beside each provider opens
-its API key page in your browser) and its model appears in the
+Enter a provider's API key on the Models page (**Add key** on its row opens a field,
+and **Get a key** there opens its API key page in your browser) and its model appears in the
 model list; pick one as the default. You pay each provider directly, per minute
 of audio, at its own published rate:
 [AssemblyAI](https://www.assemblyai.com/pricing),
@@ -284,18 +300,14 @@ single retry is freed right after.
 Measured on 2026-09-18 on an M5: base.en transcribes 25 s of speech in
 under a second.
 
-**Parakeet** was the most accurate offline model in our tests, but its
-engine (Apple's MLX and the `parakeet-mlx` package, about 480 MB, Apple
-Silicon only) is not bundled, so the app stays small for everyone who does
-not want it. Install the engine once, from a terminal:
-
-```sh
-uv tool install parakeet-mlx
-```
-
-Entune finds it on its own, and Parakeet appears under Local models with
-the same Download and Remove buttons; the weights are 2.5 GB. The model
-runs in a helper process inside that installation, loaded once.
+**Parakeet** was the most accurate offline model in our tests. Its engine
+(Apple's MLX and the `parakeet-mlx` package, about 480 MB, Apple Silicon
+only) is not part of Entune's install, so the app stays small for everyone
+who does not want it: under Local models, Download installs the engine
+first, into Entune's models folder, then fetches the 2.5 GB of weights, and
+Remove deletes both. The model runs in a helper process inside that engine,
+loaded once. An engine you installed yourself with
+`uv tool install parakeet-mlx` is used when Entune has none of its own.
 
 ## History
 
@@ -311,18 +323,26 @@ in this window.
 
 ## Personal dictionary
 
-Speech models mishear names, products and everyday words. The Dictionary tab groups
-recognized forms with their possible meanings, definitions and exact output spellings.
-Explicit associations decide which meanings can compete for a form; context decides
-which one applies. Edit entries directly, or ask the configured language model to
+Speech models mishear names, products and everyday words. The Dictionary tab lists
+heard entries: what a speech model writes, and the words it can stand for. A word is
+defined once, with its exact spelling and a description, and shared by every entry and
+every speech model that uses it. An entry's words compete for it; context decides which
+one applies. Edit entries directly, or ask the configured language model to
 suggest them: **Get suggestions** reads this speech model's raw history, finds the
 words it gets wrong, and can also improve or remove the entries those transcripts show,
 judging what the dictionary step made of each one. **Help**, next to **Add**, opens a short guide.
 Additions, before/after updates, and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
 then apply the remainder once. Dismissing a proposal does not delete active knowledge.
 
-Learned associations stay specific to the speech model. Pinning shares and protects a
-meaning and its associations across models, without giving it priority over competitors.
+Your coding agent can review the dictionary with you: connect it over MCP (**Settings ›
+Integrations** has the endpoint and the Claude Code command) and ask it to check your
+entries. It reads a guide to how the dictionary works, looks at how a heard text is used
+in your transcripts, and changes what you agree to; see
+[your agent and your dictionary](agents-api.md#your-agent-and-your-dictionary-mcp).
+
+Learned entries stay specific to the speech model. Pinning moves one heard entry to
+every speech model and protects it from suggestions, without giving a word priority over
+its competitors; a pinned entry is used instead of a learned one with the same text.
 Confirmed agent corrections still use the existing local API. The dictionary model is chosen on
 the Dictionary page and serves every learning run; keys are added in Settings.
 The dictionary model can come from Anthropic, OpenAI, Google Gemini, Groq or Mistral;
@@ -331,9 +351,9 @@ Groq uses the same key as Groq speech. ChatGPT sign-in can stand in for an API k
 **Sign in with ChatGPT** and approve Entune on the OpenAI page your browser opens. The plan decides
 which models it allows. For our current recommendation and what the model selector accepts, see
 [Choosing models](models.md#dictionary-generation). The built-in suggested-model list
-may contain older models; it also accepts a custom model ID. **Add an entry** creates a group by
-hand: meanings with output spellings and definitions, recognized forms, and which
-meanings each form may stand for.
+may contain older models; it also accepts a custom model ID. **Add word** creates entries by hand: a
+word with its spelling and description, and each heard text it stands for. **Delete
+word** removes a word from every entry that uses it; removing an entry keeps its words.
 
 **Learn from audio**, in the Dictionary tab, opens a dialog. Choose Entune recordings,
 import recordings from another dictation app on this Mac, or import an audio folder;
@@ -433,8 +453,8 @@ same questions; History names the decision model each step asked.
 
 A literal Jeff or GIF is a meaning in its own right. Every valid response selects the
 highest-scoring eligible meaning, even when scores are close. Exact ties use the decision
-model's declared choice. Invalid responses fail the stage; scores are never invented or
-pooled by output spelling.
+model's declared choice. Invalid responses fail the stage; scores are never invented.
+Meanings that write the same text are offered as one option.
 
 Only explicitly approved, unambiguous direct mappings bypass classification. Pinning or
 having a single recorded candidate is not enough. With **Apply your dictionary** off,
@@ -442,8 +462,11 @@ the dictionary step does not run at all: nothing is replaced, direct mappings in
 and it adds no time. The previous binary classifier's cached accuracy and timings
 are documented separately; they do not establish the new classifier's quality or latency.
 History and Settings report work performed, including direct changes and abstentions,
-rather than an accuracy score. Optional formatting inserts paragraph breaks and bullets,
-including the first list item, while retaining existing structure and words. Lines without
+rather than an accuracy score. Optional formatting inserts paragraph breaks, numbered
+lists and bullets, including the first list item, while retaining existing structure and
+words. What you count out loud ("One… Second… Third…") becomes a numbered list, each
+number taking the place of its spoken ordinal, and a point's follow-up sentences stay in
+its entry. Lines without
 sentence punctuation stay whole; a single unpunctuated note needs no formatting request.
 
 **Remove fillers** is a separate opt-in. Code proposes English hesitation sounds (`um`,
@@ -549,16 +572,17 @@ Enabled features determine what is sent out:
 - **Tracing (off by default):** with Langfuse keys saved under **Settings →
   Integrations**, each dictionary-suggestion request and reply, including its
   transcripts and dictionary, also goes to the Langfuse host you set.
-- **Decision model:** for contextual correction it receives up to 160 characters of the
-  original transcript either side of each matched occurrence, and each eligible
+- **Decision model:** for contextual correction it receives about 160 characters of the
+  original transcript either side of each matched occurrence, cut at a sentence or word
+  boundary, and each eligible
   meaning's spelling, definition and personal context. Filler removal sends the transcript
   and code-proposed deletion spans; formatting sends the transcript and its sentence
   spans. With Jev, all of this goes to TypeSafe, even when speech
   recognition is local. With OpenAI, it goes to OpenAI, and with Perplexity, to Perplexity. With Laya, it stays on your
   computer.
 - **Optional model downloads:** Hugging Face serves local model weights, Laya's
-  included; no dictation audio or text is included. The separately installed engines
-  of Parakeet and Laya have their own package downloads. Export files are generated locally and saved through the
+  included; no dictation audio or text is included. Parakeet's engine, installed by
+  its Download button, and Laya's separately installed engine have their own package downloads. Export files are generated locally and saved through the
   system's Save panel.
 
 There is no Entune account, telemetry or hosted history storage. Local speech alone

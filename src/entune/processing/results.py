@@ -44,6 +44,8 @@ class Selection:
     end: int
     meaning_ids: tuple[str, ...]
     method: str
+    # Several readings that write the same text, any one of them meant (jev.Decision).
+    readings: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)

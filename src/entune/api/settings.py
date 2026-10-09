@@ -6,6 +6,7 @@ import threading
 import time
 import webbrowser
 from dataclasses import asdict
+from typing import Any
 
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
@@ -25,6 +26,19 @@ from entune.processing import jev_client, laya
 
 
 def routes(app: Entune) -> list[Route]:
+    # The processing summary reads every transcription; it changes only with the store
+    # (any write, or a data reset) or the chosen decision model, so it is kept until then.
+    summaries: dict[tuple[str, str | None], dict[str, Any]] = {}
+
+    def summary() -> dict[str, Any]:
+        key = (app.store.history_version(), app.settings.decision_model())
+        found = summaries.get(key)
+        if found is None:  # requests run side by side: each keeps the summary it made
+            found = asdict(processing_summary(app.store, key[1]))
+            summaries.clear()
+            summaries[key] = found
+        return found
+
     def get_settings(_: Request) -> Response:
         return JSONResponse(
             {
@@ -51,10 +65,11 @@ def routes(app: Entune) -> list[Route]:
                 ],
                 "dictionaryModel": app.settings.dictionary_model(),
                 "fastMode": app.settings.fast_mode(),
+                "removeSilence": app.settings.remove_silence(),
                 "jev": {
                     **asdict(app.settings.jev_status()),
                     "policy": asdict(app.settings.jev_policy()),
-                    "summary": asdict(processing_summary(app.store, app.settings.decision_model())),
+                    "summary": summary(),
                 },
                 "decisionModel": {
                     "selected": app.settings.decision_model(),
@@ -110,6 +125,8 @@ def routes(app: Entune) -> list[Route]:
                     )
             if "fastMode" in body and not isinstance(body["fastMode"], bool):
                 raise ValueError("fastMode must be a boolean")
+            if "removeSilence" in body and not isinstance(body["removeSilence"], bool):
+                raise ValueError("removeSilence must be a boolean")
             if "decisionModel" in body and body["decisionModel"] not in DECISION_MODELS:
                 raise ValueError("decisionModel must be jev, laya, openai or perplexity")
             jev_settings = body.get("jev", {})
@@ -169,6 +186,8 @@ def routes(app: Entune) -> list[Route]:
                 app.settings.set_dictionary_model(dictionary_model or None)
             if "fastMode" in body:
                 app.settings.set_fast_mode(body["fastMode"])
+            if "removeSilence" in body:
+                app.settings.set_remove_silence(body["removeSilence"])
 
             if any(value is not None for value in processing):
                 app.settings.set_processing(*processing)

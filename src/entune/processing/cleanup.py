@@ -27,6 +27,11 @@ MAX_REPEATS = 6
 MAX_SPAN = 80
 
 
+def sound_at(text: str, start: int) -> bool:
+    """Whether a hesitation sound ("um", "uh, er") starts at `start`."""
+    return _SOUNDS.match(text, start) is not None
+
+
 @dataclass(frozen=True)
 class Filler:
     start: int

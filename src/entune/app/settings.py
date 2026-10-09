@@ -24,6 +24,7 @@ CHATGPT_SIGN_IN_KEY = "chatgpt_sign_in"  # the sign-in waiting for the browser, 
 CHATGPT_CLIENT_KEY = "chatgpt_client_id"  # the ID OpenAI issued Entune; kept after sign-out
 CHATGPT_MODELS_KEY = "chatgpt_models"  # the signed-in account's catalog: [[slug, name]]
 FAST_MODE_KEY = "fast_mode"
+REMOVE_SILENCE_KEY = "remove_silence"
 JEV_PROVIDER = "typesafe"  # the key is stored like a speech provider's
 DECISION_MODEL_KEY = "decision_model"
 DECISION_MODELS = ("jev", "laya", "openai", "perplexity")
@@ -100,6 +101,14 @@ class Settings:
 
     def set_fast_mode(self, on: bool) -> None:
         self._store.set_setting(FAST_MODE_KEY, "1" if on else None)
+        self._changed()
+
+    def remove_silence(self) -> bool:
+        """Leave long silences out of what a speech model is sent (on unless turned off)."""
+        return self._store.get_setting(REMOVE_SILENCE_KEY) != "0"
+
+    def set_remove_silence(self, on: bool) -> None:
+        self._store.set_setting(REMOVE_SILENCE_KEY, None if on else "0")
         self._changed()
 
     # The decision model and the independently controlled, opt-in steps that ask it.

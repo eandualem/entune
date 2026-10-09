@@ -1,8 +1,11 @@
 """Windows: the recording pill, a small always-on-top window that never takes focus.
 
-Drawn with plain Win32 calls on its own thread, as on the Mac: level bars while
-recording, a pulsing dot while working, and a card for what happened, with Retry and
-Dismiss for an error. Showing it or pressing its buttons must not move the keyboard focus
+Drawn with plain Win32 calls on its own thread, as on the Mac: a tape of the voice while
+recording (fifteen bars, each one moment's level, a new one every 90 ms) beside a red
+dot; the tape held still with a light passing over it while working; a check or a
+clipboard when the text is pasted or copied; and a card for anything else, with Retry and
+Dismiss for an error. Routine states have no words on screen; the window's title carries
+them for screen readers. Showing it or pressing its buttons must not move the keyboard focus
 away from the text field the transcript is going to, so it is a no-activate tool window,
 shown without activation and refusing activation on a click; clicks pass through it
 unless a card has buttons. It sits in the bottom-left corner of the screen.
@@ -15,9 +18,12 @@ import math
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from ctypes import wintypes
 from typing import Any
+
+from entune.desktop import pill
 
 assert sys.platform == "win32"  # imported only there; type checkers skip the rest elsewhere
 
@@ -46,17 +52,35 @@ DT_CENTER, DT_WORDBREAK, DT_CALCRECT = 0x1, 0x10, 0x400
 BK_TRANSPARENT = 1
 NULL_PEN = 8
 CLEARTYPE_QUALITY = 5
-# COLORREF is 0x00BBGGRR. The same colours as the Mac pill.
-BACKGROUND = 0x2B2626  # rgb(38, 38, 43)
-CORAL = 0x5F65E5  # rgb(229, 101, 95): recording
-QUIET = 0xA39999  # rgb(153, 153, 163): no sound
-ACCENT = 0xF29CA9  # rgb(169, 156, 242): working, and the Retry button
-OK = 0x9AD38F  # rgb(143, 211, 154)
-ERROR = 0x7F85E5  # rgb(229, 133, 127)
-MUTED = 0xCFC9C9  # rgb(201, 201, 207)
-BUTTON = 0x4E4646  # rgb(70, 70, 78)
-DARK = 0x1C1818  # rgb(24, 24, 28): text on the accent
+PS_SOLID = 0
+NULL_BRUSH = 5
+# COLORREF is 0x00BBGGRR. The Mac pill's dark colours (tokens.css, --pill-*); GDI draws
+# no transparency, so the half-strength tape and the Retry wash are mixed with the ground.
+BACKGROUND = 0x222426  # rgb(38, 36, 34)
+BARS = 0xF29CA9  # rgb(169, 156, 242)
+BARS_DIM = 0x94666E  # rgb(110, 102, 148): the tape at 55% while working
+SWEEP = 0xFFB9C4  # rgb(196, 185, 255): the light passing over it
+QUIET = 0x666E73  # rgb(115, 110, 102)
+RED = 0x4542FF  # rgb(255, 66, 69): recording, and an error's mark
+TEXT = 0xE6EDF1  # rgb(241, 237, 230)
+MUTED = 0x919BA1  # rgb(161, 155, 145)
+WASH = 0x473A3E  # rgb(62, 58, 71): the accent wash on the ground
+LINK = 0xFFB2BD  # rgb(189, 178, 255)
 WHITE = 0xFFFFFF
+BARS_N, SAMPLE_SECONDS = 15, 0.09
+
+
+def _mix(color: int, ground: int, amount: float) -> int:
+    """`color` at `amount` strength over `ground`, as one COLORREF (GDI has no alpha)."""
+    channels = (
+        round(((color >> shift) & 0xFF) * amount + ((ground >> shift) & 0xFF) * (1 - amount))
+        for shift in (0, 8, 16)
+    )
+    red, green, blue = channels
+    return red | green << 8 | blue << 16
+
+
+LIVE, QUIET_STATES = pill.LIVE, pill.QUIET_STATES
 
 LRESULT = wintypes.LPARAM
 WNDPROC = ctypes.WINFUNCTYPE(
@@ -139,6 +163,10 @@ _sign(_gdi32, "SetBkMode", INT, HDC, INT)
 _sign(_gdi32, "SetTextColor", wintypes.COLORREF, HDC, wintypes.COLORREF)
 _sign(_gdi32, "Ellipse", BOOL, HDC, INT, INT, INT, INT)
 _sign(_gdi32, "RoundRect", BOOL, HDC, INT, INT, INT, INT, INT, INT)
+_sign(_gdi32, "CreatePen", wintypes.HPEN, INT, INT, wintypes.COLORREF)
+_sign(_gdi32, "MoveToEx", BOOL, HDC, INT, INT, ctypes.c_void_p)
+_sign(_gdi32, "LineTo", BOOL, HDC, INT, INT)
+_sign(_user32, "SetWindowTextW", BOOL, HWND, wintypes.LPCWSTR)
 _sign(_user32, "SetTimer", ctypes.c_size_t, HWND, ctypes.c_size_t, UINT, ctypes.c_void_p)
 _sign(_user32, "KillTimer", BOOL, HWND, ctypes.c_size_t)
 _sign(_user32, "GetWindowLongW", ctypes.c_long, HWND, INT)
@@ -160,7 +188,9 @@ class Indicator:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._mode = "status"  # recording, status or message
+        self._mode = "status"  # status (the tape), glyph or message
+        self._state = "recording"
+        self._glyph = ""
         self._text = self._title = self._body = ""
         self._error = False
         self._actions: list[tuple[str, Callable[[], None], bool]] = []
@@ -168,8 +198,11 @@ class Indicator:
         self._visible = False
         self._hwnd: Any = None
         self._fonts: dict[tuple[float, int, int], Any] = {}
-        self._smoothed = [0.0] * 5
+        self._level = 0.0  # the microphone level, eased every frame
+        self._smoothed: deque[float] = deque([0.0] * BARS_N, maxlen=BARS_N)  # the tape
+        self._sampled = 0.0
         self._ticks = 0  # animation frames drawn; tests read it
+        self._motion = pill.Motion()
         self._layout = (0, 0, 0, 0)  # a card's text x, text width, title and body heights
         self.level: Callable[[], float] = lambda: 0.0
         self._proc = WNDPROC(self._window_proc)  # kept: Windows calls it for the window's life
@@ -177,9 +210,13 @@ class Indicator:
         threading.Thread(target=self._run, args=(ready,), daemon=True, name="entune-pill").start()
         ready.wait(5)
 
-    def show(self, text: str, recording: bool = False) -> None:
+    def show(self, text: str, recording: bool = False, state: str | None = None) -> None:
+        state = state or ("recording" if recording else "transcribing")
         with self._lock:
-            self._mode = "recording" if recording else "status"
+            if state in LIVE and self._state not in LIVE | QUIET_STATES:
+                self._smoothed.extend([0.0] * BARS_N)  # a new recording, an empty tape
+            self._motion.change(state, time.monotonic())
+            self._mode, self._state = "status", state
             self._text, self._actions, self._visible = text, [], True
         self._post()
 
@@ -191,14 +228,20 @@ class Indicator:
         error: bool,
         retry: Callable[[], None] | None,
         dismiss: Callable[[], None],
+        glyph: str | None = None,
     ) -> None:
+        """A result: a glyph in the tape's place for a routine one ("check", "clipboard"),
+        otherwise a card with the title and detail."""
         actions: list[tuple[str, Callable[[], None], bool]] = []
         if error:
             if retry is not None:
                 actions.append(("Retry", retry, True))
             actions.append(("Dismiss", dismiss, False))
+        shown = glyph in ("check", "clipboard") and not error
         with self._lock:
-            self._mode, self._title, self._body, self._error = "message", title, body, error
+            self._mode = "glyph" if shown else "message"
+            self._glyph, self._title, self._body, self._error = glyph or "", title, body, error
+            self._text = f"{title}. {body}" if body else title
             self._actions, self._visible = actions, True
         self._post()
 
@@ -286,11 +329,12 @@ class Indicator:
     def _apply(self, hwnd: Any) -> None:
         with self._lock:
             mode, text, title, body = self._mode, self._text, self._title, self._body
-            actions, visible = list(self._actions), self._visible
+            actions, visible, error = list(self._actions), self._visible, self._error
         if not visible:
             _user32.KillTimer(hwnd, 1)
             _user32.ShowWindow(hwnd, SW_HIDE)
             return
+        _user32.SetWindowTextW(hwnd, text)  # what the pill says, for screen readers
         scale = _scale()
 
         def unit(value: float) -> int:
@@ -298,24 +342,27 @@ class Indicator:
 
         pad, margin = unit(14), unit(16)
         if mode == "message":
-            text_x = pad + unit(10 + 8)
+            # An error takes the full width for its mark and buttons; a notice its words'.
+            text_x = pad + (unit(22 + 12) if error else 0)
             natural = max(
-                self._measure(hwnd, title, self._font(scale), None)[0],
-                self._measure(hwnd, body, self._font(scale, 13, 400), None)[0] if body else 0,
+                self._measure(hwnd, title, self._font(scale, 13, 600), None)[0],
+                self._measure(hwnd, body, self._font(scale, 12, 400), None)[0] if body else 0,
             )
-            width = min(unit(340), max(unit(220), text_x + natural + pad + 2))
+            width = unit(300) if error else min(unit(300), text_x + natural + pad + 2)
             text_width = width - text_x - pad
-            title_height = self._measure(hwnd, title, self._font(scale), text_width)[1]
+            title_height = self._measure(hwnd, title, self._font(scale, 13, 600), text_width)[1]
             body_height = (
-                self._measure(hwnd, body, self._font(scale, 13, 400), text_width)[1] if body else 0
+                self._measure(hwnd, body, self._font(scale, 12, 400), text_width)[1] if body else 0
             )
-            row = unit(24 + 10) if actions else 0
-            height = pad + title_height + (unit(4) + body_height if body else 0) + row + pad
+            row = unit(8 + 24) if actions else 0
+            height = pad + title_height + (unit(3) + body_height if body else 0) + row + unit(12)
             buttons: list[tuple[tuple[int, int, int, int], Callable[[], None]]] = []
             x = text_x
-            for label, call, _primary in actions:
-                label_width = self._measure(hwnd, label, self._font(scale, 13, 400), None)[0]
-                rect = (x, height - pad - unit(24), x + label_width + unit(24), height - pad)
+            for label, call, primary in actions:
+                font = self._font(scale, 12, 600 if primary else 400)
+                label_width = self._measure(hwnd, label, font, None)[0]
+                bottom = height - unit(12)
+                rect = (x, bottom - unit(24), x + label_width + unit(24 if primary else 20), bottom)
                 buttons.append((rect, call))
                 x = rect[2] + unit(8)
             self._layout = (text_x, text_width, title_height, body_height)
@@ -324,9 +371,12 @@ class Indicator:
             _user32.KillTimer(hwnd, 1)
         else:
             height = unit(32)
-            width = pad + unit(22 + 8) + self._measure(hwnd, text, self._font(scale), None)[0] + pad
+            width = unit(12 + 7 + 10 + 66 + 14)
             self._buttons, radius = [], height
-            _user32.SetTimer(hwnd, 1, FRAME_MS, None)
+            if mode == "status":
+                _user32.SetTimer(hwnd, 1, FRAME_MS, None)
+            else:
+                _user32.KillTimer(hwnd, 1)
         # Clicks reach the pill only while it has buttons to press.
         style = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         style = style & ~WS_EX_TRANSPARENT if self._buttons else style | WS_EX_TRANSPARENT
@@ -342,14 +392,16 @@ class Indicator:
         _user32.InvalidateRect(hwnd, None, True)
 
     def _tick(self) -> None:
+        """The level eases every frame and enters the tape every 90 ms."""
         self._ticks += 1
+        if self._state not in LIVE | QUIET_STATES:
+            return
         now = time.monotonic()
-        level = max(0.0, min(1.0, self.level()))
-        for index in range(5):
-            # Each bar has its own sway, scaled by the voice; the middle one leads.
-            sway = 0.55 + 0.45 * math.sin(now * (6.0 + index * 1.7) + index * 1.3)
-            target = level * (1.0 - abs(index - 2) * 0.18) * sway
-            self._smoothed[index] += (target - self._smoothed[index]) * 0.35
+        raw = max(0.0, min(1.0, self.level())) if self._state in LIVE else 0.0
+        self._level += (raw - self._level) * 0.4
+        if now - self._sampled >= SAMPLE_SECONDS:
+            self._smoothed.append(self._level)
+            self._sampled = now
 
     def _shape(self, dc: Any, color: int, rect: tuple[int, int, int, int], round: int) -> None:
         """A filled rounded rectangle; `round` 0 makes it an ellipse."""
@@ -364,6 +416,24 @@ class Indicator:
         _gdi32.SelectObject(dc, old_brush)
         _gdi32.DeleteObject(brush)
 
+    def _line(self, dc: Any, color: int, width: int, points: list[tuple[int, int]]) -> None:
+        pen = _gdi32.CreatePen(PS_SOLID, width, color)
+        old_pen = _gdi32.SelectObject(dc, pen)
+        _gdi32.MoveToEx(dc, *points[0], None)
+        for point in points[1:]:
+            _gdi32.LineTo(dc, *point)
+        _gdi32.SelectObject(dc, old_pen)
+        _gdi32.DeleteObject(pen)
+
+    def _outline(self, dc: Any, color: int, width: int, rect: tuple[int, ...], round: int) -> None:
+        pen = _gdi32.CreatePen(PS_SOLID, width, color)
+        old_pen = _gdi32.SelectObject(dc, pen)
+        old_brush = _gdi32.SelectObject(dc, _gdi32.GetStockObject(NULL_BRUSH))
+        _gdi32.RoundRect(dc, *rect, round, round)
+        _gdi32.SelectObject(dc, old_brush)
+        _gdi32.SelectObject(dc, old_pen)
+        _gdi32.DeleteObject(pen)
+
     def _text_at(
         self, dc: Any, text: str, font: Any, color: int, rect: tuple[int, ...], flags: int
     ) -> None:
@@ -375,16 +445,18 @@ class Indicator:
 
     def _paint(self, hwnd: Any) -> None:
         with self._lock:
-            mode, text, title, body, error = (
-                self._mode, self._text, self._title, self._body, self._error,
+            mode, state, glyph, title, body, error = (
+                self._mode, self._state, self._glyph, self._title, self._body, self._error,
             )  # fmt: skip
-            actions = list(self._actions)
+            actions, samples = list(self._actions), list(self._smoothed)
+            now = time.monotonic()
+            left, dot = self._motion.tape_x(now), self._motion.dot(now)
+            frame, quiet_dot = self._motion.frame(now, samples), self._motion.quiet_dot
         scale = _scale()
 
         def unit(value: float) -> int:
             return round(value * scale)
 
-        pad = unit(14)
         paint = PAINTSTRUCT()
         dc = _user32.BeginPaint(hwnd, ctypes.byref(paint))
         try:
@@ -395,38 +467,96 @@ class Indicator:
             _gdi32.DeleteObject(background)
             _gdi32.SetBkMode(dc, BK_TRANSPARENT)
             middle = client.bottom // 2
-            if mode == "recording":
-                quiet = text.startswith("No sound")
-                left = pad + unit(22 - (5 * 3 + 4 * 2)) // 2
-                for index, value in enumerate(self._smoothed):
-                    half, x = unit(2 + 7 * value), left + unit(index * 5)
-                    bar = (x, middle - half, x + unit(3), middle + half)
-                    self._shape(dc, QUIET if quiet else CORAL, bar, unit(3))
-            elif mode == "status":
-                pulse = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(time.monotonic() * 4.0))
-                radius = unit(2 + 2.5 * pulse)
-                centre = pad + unit(11)
-                dot = (centre - radius, middle - radius, centre + radius + 1, middle + radius + 1)
-                self._shape(dc, ACCENT, dot, 0)
-            if mode != "message":
-                rect = (pad + unit(22 + 8), 0, client.right, client.bottom)
-                flags = DT_LEFT | DT_VCENTER | DT_SINGLELINE
-                self._text_at(dc, text, self._font(scale), WHITE, rect, flags)
+            if mode == "status":
+                self._paint_dot(dc, state, dot, quiet_dot, middle, unit)
+                if frame is not None:
+                    self._paint_text(dc, frame, unit(left), middle - unit(9), unit)
+                else:
+                    self._paint_tape(dc, state, samples, unit(left), middle, unit)
+                return
+            if mode == "glyph":
+                x, y = unit(pill.GLYPH_X), middle - unit(8)
+
+                def at(points: list[tuple[float, float]]) -> list[tuple[int, int]]:
+                    return [(x + unit(a), y + unit(b)) for a, b in points]
+
+                if glyph == "check":
+                    self._line(dc, BARS, unit(2), at([(3.0, 8.5), (6.2, 11.7), (13.0, 4.8)]))
+                else:
+                    thin = max(1, unit(1.6))
+                    front = (x + unit(5.5), y + unit(5.5), x + unit(13.5), y + unit(13.5))
+                    self._outline(dc, BARS, thin, front, unit(3))
+                    back = [(10.5, 5.5), (10.5, 2.5), (2.5, 2.5), (2.5, 10.5), (5.5, 10.5)]
+                    self._line(dc, BARS, thin, at(back))
                 return
             text_x, text_width, title_height, body_height = self._layout
-            dot_y = pad + title_height // 2
-            dot = (pad, dot_y - unit(5), pad + unit(10) + 1, dot_y + unit(5) + 1)
-            self._shape(dc, ERROR if error else OK, dot, 0)
-            rect = (text_x, pad, text_x + text_width, pad + title_height)
-            self._text_at(dc, title, self._font(scale), WHITE, rect, DT_WORDBREAK)
-            if body:
-                top = pad + title_height + unit(4)
-                rect = (text_x, top, text_x + text_width, top + body_height)
-                self._text_at(dc, body, self._font(scale, 13, 400), MUTED, rect, DT_WORDBREAK)
-            for (rect, _call), (label, _c, primary) in zip(self._buttons, actions, strict=False):
-                self._shape(dc, ACCENT if primary else BUTTON, rect, unit(12))
+            pad = unit(14)
+            if error:
+                badge = (pad, pad - unit(1), pad + unit(22), pad + unit(21))
+                self._shape(dc, RED, badge, 0)
                 flags = DT_CENTER | DT_VCENTER | DT_SINGLELINE
-                color = DARK if primary else WHITE
-                self._text_at(dc, label, self._font(scale, 13, 400), color, rect, flags)
+                self._text_at(dc, "!", self._font(scale, 14, 800), WHITE, badge, flags)
+            rect = (text_x, pad, text_x + text_width, pad + title_height)
+            self._text_at(dc, title, self._font(scale, 13, 600), TEXT, rect, DT_WORDBREAK)
+            if body:
+                top = pad + title_height + unit(3)
+                rect = (text_x, top, text_x + text_width, top + body_height)
+                self._text_at(dc, body, self._font(scale, 12, 400), MUTED, rect, DT_WORDBREAK)
+            for (rect, _call), (label, _c, primary) in zip(self._buttons, actions, strict=False):
+                if primary:
+                    self._shape(dc, WASH, rect, unit(12))
+                flags = DT_CENTER | DT_VCENTER | DT_SINGLELINE
+                font = self._font(scale, 12, 600 if primary else 400)
+                self._text_at(dc, label, font, LINK if primary else MUTED, rect, flags)
         finally:
             _user32.EndPaint(hwnd, ctypes.byref(paint))
+
+    def _paint_dot(
+        self, dc: Any, state: str, strength: float, quiet: bool, middle: int,
+        unit: Callable[[float], int],
+    ) -> None:  # fmt: skip
+        """Red with about a 1.3-second breath while recording, steady grey when quiet,
+        fading out once the work starts."""
+        if strength <= 0:
+            return
+        if state in LIVE:
+            strength *= 0.8 + 0.2 * math.sin(2 * math.pi * time.monotonic() / 1.3)
+        size = unit(7)
+        dot = (unit(12), middle - size // 2, unit(12) + size, middle - size // 2 + size)
+        self._shape(dc, _mix(QUIET if quiet else RED, BACKGROUND, strength), dot, 0)
+
+    def _paint_tape(
+        self, dc: Any, state: str, samples: list[float], left: int, middle: int,
+        unit: Callable[[float], int],
+    ) -> None:  # fmt: skip
+        """The tape: live, flat and grey when quiet, or held still at half strength with
+        a light passing over it while the text is made."""
+        now = time.monotonic()
+        quiet, live = state in QUIET_STATES, state in LIVE
+        sweep = -22 + ((now % 1.1) / 1.1) * (66 + 22)  # the light's left edge, in the tape
+        for index in range(BARS_N):
+            bar = pill.tape_bar(index, 0.0 if quiet else samples[index], 1.0)
+            half = unit(bar.height / 2)
+            x = left + unit(bar.x)
+            color = QUIET if quiet else BARS
+            if not (live or quiet):
+                color = SWEEP if sweep <= bar.x + bar.width / 2 <= sweep + 22 else BARS_DIM
+            rect = (x, middle - max(half, 1), x + max(unit(bar.width), 1), middle + max(half, 1))
+            self._shape(dc, color, rect, unit(2))
+
+    def _paint_text(
+        self, dc: Any, frame: pill.Frame, left: int, top: int, unit: Callable[[float], int]
+    ) -> None:
+        """Formatting: the tape as lines of words, then the list items' bullets."""
+        for bar in frame.bars:
+            if unit(bar.width) < 1 or bar.opacity <= 0:
+                continue
+            color = _mix(_mix(QUIET, BARS, bar.quiet), BACKGROUND, bar.opacity)
+            x, y = left + unit(bar.x), top + unit(bar.y)
+            self._shape(dc, color, (x, y, x + unit(bar.width), y + unit(bar.height)), unit(2))
+        if frame.bullets > 0:
+            for line in pill.LINES[1:]:
+                x, y, size = left, top + unit(line), unit(pill.BULLET)
+                self._shape(
+                    dc, _mix(BARS, BACKGROUND, frame.bullets), (x, y, x + size, y + size), 0
+                )

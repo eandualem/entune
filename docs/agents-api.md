@@ -12,6 +12,48 @@ request must be addressed to `localhost` (or `127.0.0.1`), and a state
 change carrying a browser `Origin` other than Entune's own is refused, so a
 web page in a browser cannot use it.
 
+## Your agent and your dictionary (MCP)
+
+Connect a coding agent to your dictionary and ask it to review and improve it with
+you. Entune serves an MCP endpoint at `http://localhost:4187/mcp` while it runs. In
+Claude Code:
+
+```sh
+claude mcp add --transport http entune http://localhost:4187/mcp
+```
+
+Any agent that speaks MCP over HTTP takes the same endpoint; **Settings ›
+Integrations** shows it with the command. The agent gets a guide to how the
+dictionary works and these tools:
+
+| Tool | What it does |
+|---|---|
+| `dictionary_guide` | How the dictionary works, why it is structured so, and what makes an entry right. The server's instructions point the agent to it first. |
+| `read_dictionary` | The dictionary with its `version`: every section (format 3: words, pinned entries, each speech model's learned entries), the speech models and the default one, the entries one speech model applies (`entries_in_use`, the default model's unless `speech_model` names another), and the words no entry uses any more. |
+| `find_in_transcripts` | Excerpts of your transcripts where a heard text occurs, newest first, for one speech model (the default one when omitted). |
+| `set_word` | Add a word, or edit one by `word_id`; the edit reaches every entry naming it. |
+| `set_heard_entry` | Add a heard entry in `pinned` or a speech model, or replace the words it can stand for; optionally approve one as Always, with a reason. |
+| `remove_heard_entry` | Remove a heard entry; its words stay. |
+| `pin_heard_entry` | Move a learned heard entry to pinned. |
+| `delete_word` | Delete a word from the dictionary and from every entry naming it. |
+
+Each speech model has its own dictionary: the pinned entries, shared by every model,
+and its own learned entries, because every model mishears differently. Transcript
+lookups and learned entries are per speech model; the guide tells the agent to work on
+the model the person dictates with unless they name another, and to pin an entry only
+when the person wants it for every model.
+
+Every change names the `version` the agent read and returns the new one. A change on
+an older version is refused, so nothing you or Entune added meanwhile is overwritten,
+and changes are validated like edits on the Dictionary page. Editing waits while
+suggestions are open for review. How the agent works with you, for example asking
+before each change, is up to the agent; the guide asks it to change only what you
+agree to.
+
+What the agent reads, transcript excerpts included, goes to your agent's model
+provider. The endpoint has the same boundary as the rest of this API: this machine
+only, no authentication.
+
 ## Corrections
 
 If you dictate to AI agents, they can add to the dictionary once you have
@@ -25,11 +67,13 @@ curl -s -X POST localhost:4187/api/dictionary/corrections \
 
 This confirmed-correction boundary still accepts `spelling`, optional `description`,
 and `heard`, or `replacements`/`terms`, and returns the same `added` shape. A definition
-is needed for contextual selection; otherwise the retained meaning is marked for review.
-Corrections create pinned knowledge shared across models. Pinning protects that knowledge
-from generation but grants neither semantic precedence nor direct-replacement approval.
-A uniquely identified pinned meaning gains new forms; spelling alone never merges two
-existing senses. Repeated submissions are idempotent. The reply lists what was new:
+is needed for contextual selection; otherwise the word is marked for review. Each heard
+phrase becomes a pinned heard entry shared across models, used instead of a learned entry
+with the same text. Pinning protects that knowledge from generation but grants neither
+semantic precedence nor direct-replacement approval. A correction names the word already
+spelled so (and described so, when a description is given); when several match, the one
+pinned entries already name. Repeated submissions are idempotent. The reply lists what was
+new:
 
 ```json
 {"added": [{"spelling": "Claude Code", "description": "Anthropic's coding agent", "heard": ["cloud code"]}]}
@@ -45,9 +89,10 @@ silently if Entune is not running.
 
 | Method and path | What |
 |---|---|
-| `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode, `decisionModel` (`jev` or `laya`; on read, also Laya's state on this Mac), `jev` (the processing steps: TypeSafe key hint, `dictionary`, `cleanup` and `formatting` on or off, shared retry policy and the chosen decision model's stage summaries); each provider says whether it `streams` (fast mode) or is `local` |
+| `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode, `removeSilence` (on unless turned off), `decisionModel` (`jev` or `laya`; on read, also Laya's state on this Mac), `jev` (the processing steps: TypeSafe key hint, `dictionary`, `cleanup` and `formatting` on or off, shared retry policy and the chosen decision model's stage summaries); each provider says whether it `streams` (fast mode) or is `local` |
 | `GET /api/models` | the models of every provider that has a key, plus the downloaded local ones |
-| `GET /api/metrics` | the performance table: per model and mode, runs and successes, audio seconds, seconds of wait per minute of audio (with the number of timed runs), and dictionary replacements, words, corrected and checked dictations |
+| `GET /api/metrics` | the performance table: per model and mode, runs and successes, audio seconds, seconds of wait per minute of audio (with the number of timed runs), and dictionary replacements, the raw words they replaced, words, corrected and checked dictations |
+| `GET /api/usage` | what the dictations add up to: dictations and how many were transcribed, their audio seconds and words (and the words of those whose audio length is known), words in each of the last eight weeks (Monday to Sunday, local time) and the most in any earlier week, and the dictionary (raw words corrected), filler and layout steps' counts with their median time |
 | `GET /api/local/models` | the local models with size, state (absent, downloading with progress, ready, error, unavailable when the engine is not installed) |
 | `POST /api/local/models/{name}/download`, `DELETE /api/local/models/{name}` | fetch or remove one |
 | `GET /api/status` | version, shortcuts, default model, whether the desktop app runs and listens |
@@ -55,8 +100,9 @@ silently if Entune is not running.
 | `POST /api/recordings` | multipart `audio` (+ optional `model`): store and transcribe |
 | `POST /api/recordings/{id}/transcriptions` | `{"model": "provider/model"}`: transcribe again |
 | `GET /api/recordings/{id}/audio` | the clip |
-| `GET /api/dictionary`, `PUT /api/dictionary` | the whole version-2 confusion-group dictionary as JSON; the `ETag` names its version, and a `PUT` with `If-Match` set to a stale one gets 409 instead of overwriting what was added meanwhile |
-| `POST /api/dictionary/pin` | `{"model", "group", "meaning"}` IDs plus `If-Match`: share one meaning and its associations; `{"model"}` explicitly pins all learned knowledge for that model |
+| `POST /mcp` | the MCP endpoint above (streamable HTTP, stateless JSON replies) |
+| `GET /api/dictionary`, `PUT /api/dictionary` | the whole version-3 dictionary (words, pinned and learned heard entries) as JSON; the `ETag` names its version, and a `PUT` with `If-Match` set to a stale one gets 409 instead of overwriting what was added meanwhile |
+| `POST /api/dictionary/pin` | `{"model", "text"}` plus `If-Match`: move that model's learned heard entry to pinned, adding its words to a pinned entry with the same text; `{"model"}` explicitly pins all of the model's learned entries |
 | `POST /api/recordings/{id}/transcriptions/{attempt}/safe-copy` | derive text from original using only approved direct mappings for the original speech model; returns text, replacements and unresolved count, without saving or pasting |
 | `GET /api/dictionary/corrections` | what agents sent and Entune pinned, newest first, with the `source` each gave |
 | `GET /api/dictionary/history` | the default speech model (`model`) and its transcripts suggestions can read, oldest first (`items`: `id`, `created_at`, `characters`, `used` by suggestions applied before) |
@@ -65,7 +111,7 @@ silently if Entune is not running.
 | `GET /api/dictionary/build` | lightweight current job progress (no transcript or proposal contents) |
 | `GET /api/dictionary/build/{id}` | named job status, including its proposal when ready; 409 if no longer current |
 | `POST /api/dictionary/build/{id}/cancel` | request cancellation; in-flight synchronous speech may finish before cleanup; no new clips/chunks; validated completed proposals remain reviewable |
-| `POST /api/dictionary/build/{id}/accept` | `{"selected": [{"id": groupID, "after": editedGroupOrNull}]}` applies included proposals once; omitted IDs are dismissed, null is an explicit proposed removal, an empty list changes nothing. Omitted body includes all. Validates pinned protections and the original revision; 409 on stale revision or wrong state |
+| `POST /api/dictionary/build/{id}/accept` | `{"selected": [{"id": changeID, "after": editedEntryWordOrNull}]}` applies included proposals once: `heard:<text>` changes carry the edited heard entry (null for a proposed removal), `word:<id>` changes the edited word, and a `word:<id>` of a new word its edited definition. Omitted IDs are dismissed and an empty list changes nothing; a new word comes with the entries that name it. Omitted body includes all. Validates the original revision; 409 on stale revision or wrong state |
 | `DELETE /api/dictionary/build/{id}` | discard a finished job/proposal; 409 during work/cleanup; actions on a replaced job ID also return 409 |
 | `POST /api/capture`, `GET`, `DELETE` | record a shortcut by pressing it (needs the menu-bar app) |
 

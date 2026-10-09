@@ -1,22 +1,21 @@
 """Propose a speech model's dictionary, one bounded batch at a time.
 
-Each part shows the model its dictations and the entries that occur in them, compactly
-(learning/view.py). The model finds the confusions not covered yet, improves or removes
-the entries shown, and the reply is validated against the stored dictionary. Pinned
-knowledge is shared and protected; it does not take priority over competing meanings.
+Each part shows the model its dictations, the heard entries that occur in them and the
+words they name, compactly (learning/view.py). The model finds the confusions not covered
+yet, improves or removes the learned entries shown, and the reply is validated against
+the working dictionary. Pinned entries are the person's; suggestions leave them as they
+are.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
-from entune.dictionary import changes as dictionary_changes
-from entune.dictionary.entries import Dictionary, Groups
+from entune.dictionary.entries import Dictionary
 from entune.learning import view
-from entune.learning.batches import Batch, learning_batches, system_prompt, user_prompt
-from entune.learning.inputs import LearningText
+from entune.learning.batches import Batch, system_prompt, user_prompt
 from entune.learning.replies import Reply, parse_reply
 from entune.learning.suggestion_model import (
     MAX_FIXES,
@@ -82,8 +81,7 @@ async def propose_part(
     provider: str,
     api_key: str,
     model: str,
-    current: Dictionary,
-    proposed: Groups,
+    proposed: Dictionary,
     step: Batch,
     speech_model: str,
     label: str,
@@ -93,7 +91,7 @@ async def propose_part(
     started: Callable[[int], None] | None = None,
     retrying: Callable[[int, str], None] | None = None,
     retrying_part: Callable[[int, str, float], None] | None = None,
-) -> Groups:
+) -> Dictionary:
     """One part: the model reads `step` beside the working dictionary `proposed` and the
     validated result is returned. A reply that breaks a rule is sent back for a fix, and
     `retrying` hears (attempt, rule broken) first. A part that failed for a passing reason
@@ -103,13 +101,13 @@ async def propose_part(
     its time limit or reached the output limit is not tried again: the person is told to
     choose a lower reasoning effort or less audio. Raises StepFailed carrying the
     provider's or the model's own words."""
-    shown = view.build(proposed, current.pinned, step.snippets)
+    shown = view.build(proposed, speech_model, step.snippets)
     request_text = user_prompt(speech_model, shown)
     system = system_prompt()
     texts = [s.text for s in step.snippets]
 
-    def check(reply: str) -> Groups:
-        return parse_reply(reply, shown, proposed, transcripts=texts, pinned=current.pinned)
+    def check(reply: str) -> Dictionary:
+        return parse_reply(reply, shown, proposed, speech_model, transcripts=texts)
 
     request = Request(
         provider,
@@ -174,60 +172,3 @@ async def propose_part(
             " so nothing from it was kept.",
             f"{type(exc).__name__}: {exc}",
         ) from exc
-
-
-async def propose_learned(
-    provider: str,
-    api_key: str,
-    model: str,
-    current: Dictionary,
-    transcripts: Sequence[str],
-    speech_model: str,
-    call: Caller = call_model,
-    *,
-    effort: str = "high",
-    progress: Callable[[int, int, int], None] | None = None,
-    retrying: Callable[[int, str], None] | None = None,
-    retrying_part: Callable[[int, int, str, float], None] | None = None,
-    inputs: Sequence[LearningText] | None = None,
-    checkpoint: Callable[[Groups, int, int, tuple[str, ...]], None] | None = None,
-) -> Groups:
-    """Propose `speech_model`'s dictionary, one part after another.
-
-    Each part sees the working dictionary after the earlier parts' changes; see
-    `propose_part`. The checkpoint hears every validated part."""
-    current = dictionary_changes.share(current, set())
-    proposed = current.effective(speech_model)
-    steps = learning_batches(
-        inputs
-        if inputs is not None
-        else [LearningText(str(i), text) for i, text in enumerate(transcripts)],
-    )
-    for number, step in enumerate(steps, 1):
-
-        def started(size: int, number: int = number) -> None:
-            if progress:
-                progress(number, len(steps), size)
-
-        def again(attempt: int, why: str, seconds: float, number: int = number) -> None:
-            if retrying_part:
-                retrying_part(number, attempt, why, seconds)
-
-        proposed = await propose_part(
-            provider,
-            api_key,
-            model,
-            current,
-            proposed,
-            step,
-            speech_model,
-            f"Part {number} of {len(steps)}",
-            call,
-            effort=effort,
-            started=started,
-            retrying=retrying,
-            retrying_part=again,
-        )
-        if checkpoint:
-            checkpoint(proposed, number, len(steps), step.completed)
-    return proposed

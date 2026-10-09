@@ -269,7 +269,7 @@ def test_a_stopped_reply_keeps_what_it_sent_on_its_trace(
     from tests.test_suggestions import Finished, request
 
     async def runaway(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        yield '{"additions": [{"meanings": [{"id": "n_cloud", '
+        yield '{"words": [{"id": "n_cloud", '
         while True:
             yield " " * 100  # blank space, never the rest of the reply
 
@@ -309,8 +309,8 @@ def test_a_reply_sent_back_is_marked_as_a_warning_with_its_rule(
     from entune.learning import suggestion_model
     from tests.test_suggestions import request, scripted
 
-    empty = '{"additions": [], "revisions": [], "removals": []}'
-    answers = iter([ValueError("Evidence must reference the exact whole recognized form"), None])
+    empty = '{"words": [], "meanings": [], "heard": [], "removals": []}'
+    answers = iter([ValueError("Evidence must reference the exact whole heard text"), None])
 
     def check(reply: str) -> None:
         if (problem := next(answers)) is not None:
@@ -327,4 +327,4 @@ def test_a_reply_sent_back_is_marked_as_a_warning_with_its_rule(
         t._provider.force_flush()
         body = langfuse.sent()
         assert b"langfuse.observation.level" in body and b"WARNING" in body
-        assert b"Reply sent back: Evidence must reference the exact whole recognized form" in body
+        assert b"Reply sent back: Evidence must reference the exact whole heard text" in body

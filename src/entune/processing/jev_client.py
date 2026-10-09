@@ -21,6 +21,9 @@ from typing import Any
 import httpx
 
 MODEL = "jev-1.13.0"
+# Connections opened ahead for formatting's further sections: a long dictation asks up to
+# three at once (jev.SECTION_SENTENCES).
+SECTION_CONNECTIONS = 2
 URL = "https://api.typesafe.ai/v1/systemone"
 
 
@@ -169,8 +172,11 @@ class Client:
     def _pool(self) -> httpx.AsyncClient:
         """The HTTP pool, made on the client's loop the first time it is needed."""
         if self._http is None:
-            # One idle connection for each processing stage, since they ask at once.
-            limits = httpx.Limits(max_keepalive_connections=3, keepalive_expiry=60.0)
+            # One idle connection for each processing stage, since they ask at once, and
+            # the extra ones a long dictation's formatting sections use.
+            limits = httpx.Limits(
+                max_keepalive_connections=3 + SECTION_CONNECTIONS, keepalive_expiry=60.0
+            )
             self._http = httpx.AsyncClient(
                 transport=self._transport,
                 limits=limits,
@@ -328,6 +334,31 @@ class Call:
                 self.decisions += part.decisions
         return answers
 
+    def ask_together(
+        self, requests: list[tuple[object, dict[str, Any]]]
+    ) -> dict[str, dict[str, float]]:
+        """Several requests as one step, sent at once: each has its own attempts, all share
+        the deadline, and the attempts and decisions add up as ask_each counts them."""
+        if len(requests) == 1:
+            return self.ask(*requests[0])
+        parts = [replace(self, attempts=0, decisions=0) for _ in requests]
+        answers: dict[str, dict[str, float]] = {}
+        try:
+            with concurrent.futures.ThreadPoolExecutor(
+                len(requests), thread_name_prefix="entune-section"
+            ) as pool:
+                asked = [
+                    pool.submit(part.ask, state, questions)
+                    for part, (state, questions) in zip(parts, requests, strict=True)
+                ]
+                for future in asked:
+                    answers |= future.result()
+        finally:
+            if any(part.attempts for part in parts):
+                self.attempts = 1 + sum(max(0, part.attempts - 1) for part in parts)
+            self.decisions += sum(part.decisions for part in parts)
+        return answers
+
 
 def _authorization(call: Call) -> dict[str, str]:
     """The endpoint's own token, else the user's key when the endpoint needs one."""
@@ -433,7 +464,10 @@ def _probabilities(answer: Any, options: set[str]) -> dict[str, float]:
             type(p) in (int, float) and math.isfinite(p) and 0 <= p <= 1
             for p in probabilities.values()
         )
-        or not math.isclose(sum(probabilities.values()), 1.0, rel_tol=0.0, abs_tol=0.001)
+        # Jev rounds each probability to two decimals, so four options can sum to 0.99.
+        or not math.isclose(
+            sum(probabilities.values()), 1.0, rel_tol=0.0, abs_tol=0.005 * len(options)
+        )
     ):
         raise JevError("unusable answer: probabilities missing or malformed")
     choice = answer.get("choice")

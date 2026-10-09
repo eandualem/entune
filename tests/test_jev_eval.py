@@ -11,9 +11,8 @@ from types import ModuleType
 import pytest
 
 from entune.dictionary import document as dictionary_document
-from entune.dictionary import entries as dictionary_entries
 from entune.processing import jev, jev_client
-from tests.dictionary_samples import JEV, group
+from tests.dictionary_samples import JEV, dictionary, group
 
 
 def _harness() -> ModuleType:
@@ -34,7 +33,7 @@ def test_every_variant_renders_offline_and_outcomes_are_judged_by_written_text(
         jev_client.Client, "ask", lambda *_: pytest.fail("no request without --run")
     )
     (tmp_path / "dictionary.json").write_text(
-        dictionary_document.dumps(dictionary_entries.Dictionary(learned={"s/m": (JEV,)}))
+        dictionary_document.dumps(dictionary(learned={"s/m": (JEV,)}))
     )
     cases = [
         {
@@ -63,7 +62,7 @@ def test_every_variant_renders_offline_and_outcomes_are_judged_by_written_text(
     assert set(report) == set(harness.VARIANTS)
     assert all(v["cases"] == 2 and v["median_request_chars"] > 0 for v in report.values())
 
-    groups = (JEV,)
+    groups = JEV
     term = harness.prepare(harness.load_cases(tmp_path / "cases.jsonl")[0], groups, jev.Variant())
     written = {v: k for k, v in term.outputs.items()}
     assert harness.outcome(term, written["Jev"]) == "correct"
@@ -74,7 +73,7 @@ def test_every_variant_renders_offline_and_outcomes_are_judged_by_written_text(
 
 def test_labels_resolve_overlapping_interpretations_by_span() -> None:
     harness = _harness()
-    groups = (group("GoGo", "go go"),)
+    groups = group("GoGo", "go go")
     text = "Use go go go."
     second = harness.Case("second", text, 7, 12, ("a_gogo",))
     prepared = harness.prepare(second, groups, jev.Variant())
@@ -83,3 +82,30 @@ def test_labels_resolve_overlapping_interpretations_by_span() -> None:
     assert harness.outcome(prepared, chosen) == "correct"
     with pytest.raises(ValueError, match="match 0 options"):
         harness.prepare(harness.Case("off", text, 5, 12, ("a_gogo",)), groups, jev.Variant())
+
+
+def test_options_are_read_as_the_request_numbers_them() -> None:
+    from entune.dictionary.entries import Active, Candidate, Heard, Word
+
+    harness = _harness()
+    cloud = Active(
+        (
+            Word("a_cloud", "cloud", "Remote computing.", casing="ordinary"),
+            Word("b_cloud", "cloud", "Weather.", casing="ordinary"),
+            Word("c_claude", "Claude", "An AI assistant."),
+        ),
+        (
+            Heard(
+                "cloud",
+                (
+                    Candidate("a_cloud", basis="literal"),
+                    Candidate("b_cloud", basis="literal"),
+                    Candidate("c_claude"),
+                ),
+            ),
+        ),
+    )
+    case = harness.Case("claude", "Ask cloud here.", 4, 9, ("c_claude",))
+    prepared = harness.prepare(case, cloud, jev.Variant())
+    assert prepared.outputs == {"i0": "cloud", "i1": "Claude"}
+    assert harness.outcome(prepared, "i1") == "correct"

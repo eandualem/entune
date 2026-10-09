@@ -1,10 +1,12 @@
-/* Entune design tokens: the one place a colour, size or depth is defined. Everything in
-   style.css references these; nothing else carries a raw value. Values from the design
-   (Claude Design project "Dictation app design prototypes", direction 3, 2026-09-18).
+/* Entune design tokens — "Paper" theme with Entune lavender (design handoff, 2026-10-09).
+   The one place a colour, size or depth is defined. Everything in style.css references these;
+   nothing else carries a raw value.
 
-   Colours: dark is the default, light overrides it, and the Theme setting pins either
-   with data-theme; with no setting the system's preference decides. Sizes are rem off
-   one root size so the Text size setting scales every component together. */
+   Colour direction: warm "paper and ink" neutrals instead of macOS cool greys, and Entune's
+   brand lavender (#a99cf2, from docs/brand) as the only accent instead of system blue.
+   Dark is the default, light overrides it, and the Theme setting pins either with
+   data-theme; with no setting the system's preference decides. Sizes are rem off one root
+   size so the Text size setting scales every component together. */
 
 :root {
   font-size: 16px;
@@ -33,18 +35,6 @@
   --rail: 12.5rem;         /* 200: the settings side rail */
   --content-max: 51.25rem; /* 820: settings content */
 
-  /* The first launch's introduction: the window's own ground, lit in the macOS accent
-     (system blue, with the system indigo and teal for the light around the mark). */
-  --intro-bg: #1e1e1e;
-  --intro-text: #f2f2f2;
-  --intro-muted: #9a9a9a;
-  --intro-line: rgba(255, 255, 255, 0.14);
-  --intro-accent: #0a84ff;
-  --intro-accent-text: #64b2ff;
-  --intro-wash: rgba(10, 132, 255, 0.16);
-  --intro-glow-a: rgba(10, 132, 255, 0.40);
-  --intro-glow-b: rgba(94, 92, 230, 0.28);
-  --intro-glow-c: rgba(100, 210, 255, 0.20);
 }
 :root[data-scale="small"] { font-size: 14px; }
 :root[data-scale="large"] { font-size: 18px; }
@@ -52,159 +42,228 @@
 
 :root {
   color-scheme: dark;
-  /* Ground and layers: the neutral greys macOS uses in dark mode (content #1e1e1e, separators
-     at 10% white, labels at 85% and 55%), each layer one small step above the last. */
-  --surface: #1e1e1e;          /* window ground */
-  --surface-raised: #282828;   /* toolbar, settings cards, dictionary table */
-  --surface-sunken: #262626;   /* settings side rail */
-  --card: #2a2a2a;             /* history recording card */
-  --well: #1a1a1a;             /* inputs, segmented-control track: sits below its parent */
-  --field: #1a1a1a;           /* text inputs */
-  --well-deep: #161616;        /* JSON editor */
-  --control: #323232;          /* select, popover, kbd */
-  --control-hover: #3a3a3a;    /* secondary button ground; icon-button hover */
-  --control-active: #464646;   /* secondary button hover */
-  --segment-on: #505050;       /* active segment in a segmented control */
-  --track: #464646;            /* empty progress track */
-  /* Lines: alpha over the layer beneath, so they read on every surface. */
-  --line: rgba(255, 255, 255, 0.1);
-  --line-soft: rgba(255, 255, 255, 0.08);
-  --line-faint: rgba(255, 255, 255, 0.05);
-  --line-strong: rgba(255, 255, 255, 0.15);   /* outlined buttons */
-  --hover-wash: rgba(255, 255, 255, 0.05);   /* hover on a transcript or list row */
-  /* Text */
-  --text: #dddddd;
-  --text-secondary: #c6c6c6;   /* code, JSON */
-  --text-soft: #b0b0b0;        /* earlier attempts, the "heard" half of a replacement */
-  --text-muted: #9a9a9a;       /* secondary labels, outlined-button text */
-  --text-dim: #8a8a8a;         /* captions, status */
-  --text-faint: #6b6b6b;       /* kind labels, idle icons, hints */
-  /* Accent: the macOS default accent (system blue); a wash, or solid on primary buttons. */
-  --accent: #007aff;
-  --accent-text: #419cff;                    /* text on an accent wash */
-  --accent-wash: rgba(0, 122, 255, 0.18);  /* primary button ground */
-  --accent-wash-hover: rgba(0, 122, 255, 0.28);
-  /* Semantic */
-  --ok: #30d158;                             /* ready dot */
-  --error: #ff4245;                          /* FAILED label */
-  --error-body: #d9c9c8;                     /* verbatim provider error text */
+  --surface: #1c1b19; /* window ground */
+  --surface-raised: #262422; /* toolbar, settings cards, dictionary table */
+  --surface-sunken: #23211f; /* settings side rail */
+  --card: #282624; /* history card, panels */
+  --well: #171614; /* inputs, segmented-control track: sits below its parent */
+  --field: #171614; /* text inputs */
+  --well-deep: #131211; /* JSON editor */
+  --control: #2f2d2a; /* select, popover, kbd */
+  --control-hover: #383532; /* secondary button ground; icon-button hover */
+  --control-active: #44413d; /* secondary button hover */
+  --segment-on: #4b4844; /* active segment */
+  --track: #44413d; /* empty progress track */
+  --line: rgba(255, 248, 235, 0.1); /* lines: alpha over the layer beneath */
+  --line-soft: rgba(255, 248, 235, 0.08);
+  --line-faint: rgba(255, 248, 235, 0.05);
+  --line-strong: rgba(255, 248, 235, 0.15);
+  --hover-wash: rgba(255, 248, 235, 0.05); /* hover on a row or transcript */
+  --chip: rgba(255, 248, 235, 0.06); /* quiet pill ground (model, counts) */
+  --text: #e6e2db;
+  --text-strong: #f1ede6; /* headings and transcript text */
+  --text-secondary: #cfcac1; /* code, JSON */
+  --text-soft: #b5afa5; /* the "heard" half of a replacement */
+  --text-muted: #a19b91; /* secondary labels */
+  --text-dim: #8f897f; /* captions, status */
+  --text-faint: #736e66; /* kind labels, hints */
+  --brand: #a99cf2; /* logo lavender, same in both themes */
+  --accent: #a99cf2; /* selected states, primary buttons, played audio */
+  --accent-text: #bdb2ff; /* accent text and links on the ground */
+  --accent-wash: rgba(169, 156, 242, 0.18); /* accent pill / primary-soft button ground */
+  --accent-wash-hover: rgba(169, 156, 242, 0.28);
+  --accent-ring: rgba(169, 156, 242, 0.5); /* selected option ring */
+  --accent-tint: rgba(169, 156, 242, 0.1); /* a highlighted tile */
+  --halo: rgba(169, 156, 242, 0.22); /* around a selected chart dot */
+  --cloud: #6cc2b4; /* cloud models in charts; local ones take the accent */
+  --on-accent: #1c1b19; /* text on a solid accent ground */
+  --wave: #4a4641; /* waveform bars */
+  --wave-played: #a99cf2; /* played part of a waveform */
+  --ok: #30d158;
+  --ok-wash: rgba(48, 209, 88, 0.16);
+  --warning: #ffb340; /* "Transcribes again" / extra-step hints */
+  --warning-wash: rgba(255, 159, 10, 0.15);
+  --error: #ff4245;
+  --error-body: #dccbc8; /* verbatim provider error text */
   --error-wash: rgba(255, 66, 69, 0.08);
-  --recording: #ff4245;                      /* pulsing dot while recording */
-  --recording-wash: rgba(255, 66, 69, 0.16);/* Stop button ground */
-  /* Depth */
-  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.045) inset, 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.03);
-  --shadow-popover: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 16px 40px rgba(0, 0, 0, 0.5);
+  --recording: #ff4245; /* recording dot */
+  --recording-wash: rgba(255, 66, 69, 0.16);
+  --shadow-card: 0 1px 0 rgba(255, 248, 235, 0.04) inset, 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 248, 235, 0.03);
+  --shadow-popover: 0 0 0 1px rgba(255, 248, 235, 0.08), 0 16px 40px rgba(0, 0, 0, 0.5);
   --shadow-segment: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-key: inset 0 -1px 0 rgba(0, 0, 0, 0.4);
-  --on-accent: #ffffff;                     /* text on a solid accent button */
-  /* The Mac window's translucent material shows through these (style.css, .native-mac). */
-  --glass-bar: rgba(40, 40, 40, 0.45);      /* toolbar: a light veil over the material */
-  --glass-ground: rgba(30, 30, 30, 0.82);   /* content: nearly solid, a hint of the material */
-  --focus: 0 0 0 3px rgba(26, 169, 255, 0.5); /* the macOS keyboard focus ring */
+  --glass-bar: rgba(38, 36, 34, 0.45); /* Mac window material: toolbar veil */
+  --glass-ground: rgba(28, 27, 25, 0.82);
+  --focus: 0 0 0 3px rgba(169, 156, 242, 0.5); /* keyboard focus ring */
+  --pill-ground: rgba(38, 36, 34, 0.94); /* the dictation pill (desktop overlay) */
+  --pill-edge: rgba(255, 248, 235, 0.14);
+  --pill-shadow: 0 0 0 0.5px rgba(255, 248, 235, 0.14), 0 10px 28px rgba(0, 0, 0, 0.5);
+  --pill-bars: #a99cf2;
+  --pill-quiet: #736e66;
+  --pill-sweep: rgba(196, 185, 255, 0.9);
+  --pill-dot: #ff4245;
+  --pill-text: #f1ede6;
+  --pill-muted: #a19b91;
+  --intro-bg: #1c1b19; /* first-launch introduction */
+  --intro-text: #f1ede6;
+  --intro-muted: #a19b91;
+  --intro-line: rgba(255, 248, 235, 0.14);
+  --intro-accent: #a99cf2;
+  --intro-accent-text: #bdb2ff;
+  --intro-wash: rgba(169, 156, 242, 0.16);
+  --intro-glow-a: rgba(169, 156, 242, 0.40);
+  --intro-glow-b: rgba(124, 108, 232, 0.28);
+  --intro-glow-c: rgba(214, 196, 255, 0.20);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     color-scheme: light;
-    --surface: #fafafa;
-    --surface-raised: #f0f0f0;
-    --surface-sunken: #ececec;
-    --card: #f0f0f0;
-    --well: #e4e4e4;
-    --field: #ffffff;
-    --well-deep: #ffffff;
-    --control: #ffffff;
-    --control-hover: #e9e9e9;
-    --control-active: #dedede;
-    --segment-on: #ffffff;
-    --track: #d0d0d0;
-    --line: rgba(0, 0, 0, 0.1);
-    --line-soft: rgba(0, 0, 0, 0.08);
-    --line-faint: rgba(0, 0, 0, 0.05);
-    --line-strong: rgba(0, 0, 0, 0.15);
-    --hover-wash: rgba(0, 0, 0, 0.04);
-    --text: #262626;
-    --text-secondary: #3d3d3d;
-    --text-soft: #555555;
-    --text-muted: #6e6e6e;
-    --text-dim: #808080;
-    --text-faint: #a0a0a0;
-    --accent: #007aff;
-    --accent-text: #0068da;
-    --accent-wash: rgba(0, 122, 255, 0.12);
-    --accent-wash-hover: rgba(0, 122, 255, 0.2);
-    --ok: #28a745;
+    --surface: #f7f5f1; /* window ground */
+    --surface-raised: #efece6; /* toolbar, settings cards, dictionary table */
+    --surface-sunken: #ebe7e0; /* settings side rail */
+    --card: #fffdfa; /* history card, panels */
+    --well: #e6e2da; /* inputs, segmented-control track: sits below its parent */
+    --field: #fffdfa; /* text inputs */
+    --well-deep: #fffdfa; /* JSON editor */
+    --control: #fffdfa; /* select, popover, kbd */
+    --control-hover: #ebe7e0; /* secondary button ground; icon-button hover */
+    --control-active: #e0dbd2; /* secondary button hover */
+    --segment-on: #fffdfa; /* active segment */
+    --track: #d6d0c6; /* empty progress track */
+    --line: rgba(60, 45, 20, 0.1); /* lines: alpha over the layer beneath */
+    --line-soft: rgba(60, 45, 20, 0.08);
+    --line-faint: rgba(60, 45, 20, 0.05);
+    --line-strong: rgba(60, 45, 20, 0.16);
+    --hover-wash: rgba(60, 45, 20, 0.04); /* hover on a row or transcript */
+    --chip: rgba(60, 45, 20, 0.06); /* quiet pill ground (model, counts) */
+    --text: #2a2724;
+    --text-strong: #1f1c19; /* headings and transcript text */
+    --text-secondary: #423e39; /* code, JSON */
+    --text-soft: #5a554e; /* the "heard" half of a replacement */
+    --text-muted: #736d64; /* secondary labels */
+    --text-dim: #847e74; /* captions, status */
+    --text-faint: #a59e93; /* kind labels, hints */
+    --brand: #a99cf2; /* logo lavender, same in both themes */
+    --accent: #6f5fd8; /* selected states, primary buttons, played audio */
+    --accent-text: #5847c2; /* accent text and links on the ground */
+    --accent-wash: rgba(111, 95, 216, 0.12); /* accent pill / primary-soft button ground */
+    --accent-wash-hover: rgba(111, 95, 216, 0.2);
+    --accent-ring: rgba(111, 95, 216, 0.45); /* selected option ring */
+    --accent-tint: rgba(111, 95, 216, 0.08); /* a highlighted tile */
+    --halo: rgba(111, 95, 216, 0.18); /* around a selected chart dot */
+    --cloud: #2f8578; /* cloud models in charts; local ones take the accent */
+    --on-accent: #ffffff; /* text on a solid accent ground */
+    --wave: #dcd6cc; /* waveform bars */
+    --wave-played: #7d6de0; /* played part of a waveform */
+    --ok: #248a3d;
+    --ok-wash: rgba(36, 138, 61, 0.12);
+    --warning: #b25e00; /* "Transcribes again" / extra-step hints */
+    --warning-wash: rgba(255, 149, 0, 0.14);
     --error: #d70015;
-    --error-body: #6b3a38;
-    --error-wash: rgba(255, 56, 60, 0.08);
-    --recording: #ff383c;
+    --error-body: #6b3a38; /* verbatim provider error text */
+    --error-wash: rgba(215, 0, 21, 0.07);
+    --recording: #ff383c; /* recording dot */
     --recording-wash: rgba(255, 56, 60, 0.14);
-    --glass-bar: rgba(250, 250, 250, 0.5);
-    --glass-ground: rgba(250, 250, 250, 0.85);
-    --intro-bg: #fafafa;
-    --intro-text: #1d1d1f;
-    --intro-muted: #6e6e6e;
-    --intro-line: rgba(0, 0, 0, 0.14);
-    --intro-accent: #007aff;
-    --intro-accent-text: #0068da;
-    --intro-wash: rgba(0, 122, 255, 0.12);
-    --intro-glow-a: rgba(0, 122, 255, 0.28);
-    --intro-glow-b: rgba(88, 86, 214, 0.20);
-    --intro-glow-c: rgba(50, 173, 230, 0.16);
-    --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
-    --shadow-popover: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.16);
-    --shadow-segment: 0 1px 2px rgba(0, 0, 0, 0.08);
-    --shadow-key: inset 0 -1px 0 rgba(0, 0, 0, 0.12);
+    --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 1px 3px rgba(60, 45, 20, 0.07), 0 0 0 1px rgba(60, 45, 20, 0.06);
+    --shadow-popover: 0 0 0 1px rgba(60, 45, 20, 0.08), 0 16px 40px rgba(60, 45, 20, 0.16);
+    --shadow-segment: 0 1px 2px rgba(60, 45, 20, 0.1);
+    --shadow-key: inset 0 -1px 0 rgba(60, 45, 20, 0.12);
+    --glass-bar: rgba(247, 245, 241, 0.5); /* Mac window material: toolbar veil */
+    --glass-ground: rgba(247, 245, 241, 0.85);
+    --focus: 0 0 0 3px rgba(111, 95, 216, 0.4); /* keyboard focus ring */
+    --pill-ground: rgba(255, 253, 250, 0.95); /* the dictation pill (desktop overlay) */
+    --pill-edge: rgba(60, 45, 20, 0.14);
+    --pill-shadow: 0 0 0 0.5px rgba(60, 45, 20, 0.14), 0 10px 28px rgba(60, 45, 20, 0.16);
+    --pill-bars: #7d6de0;
+    --pill-quiet: #a59e93;
+    --pill-sweep: rgba(111, 95, 216, 0.55);
+    --pill-dot: #ff383c;
+    --pill-text: #1f1c19;
+    --pill-muted: #736d64;
+    --intro-bg: #f7f5f1; /* first-launch introduction */
+    --intro-text: #1f1c19;
+    --intro-muted: #736d64;
+    --intro-line: rgba(60, 45, 20, 0.14);
+    --intro-accent: #6f5fd8;
+    --intro-accent-text: #5847c2;
+    --intro-wash: rgba(111, 95, 216, 0.12);
+    --intro-glow-a: rgba(111, 95, 216, 0.28);
+    --intro-glow-b: rgba(169, 156, 242, 0.24);
+    --intro-glow-c: rgba(214, 196, 255, 0.22);
   }
 }
 :root[data-theme="light"] {
   color-scheme: light;
-  --surface: #fafafa;
-  --surface-raised: #f0f0f0;
-  --surface-sunken: #ececec;
-  --card: #f0f0f0;
-  --well: #e4e4e4;
-  --field: #ffffff;
-  --well-deep: #ffffff;
-  --control: #ffffff;
-  --control-hover: #e9e9e9;
-  --control-active: #dedede;
-  --segment-on: #ffffff;
-  --track: #d0d0d0;
-  --line: rgba(0, 0, 0, 0.1);
-  --line-soft: rgba(0, 0, 0, 0.08);
-  --line-faint: rgba(0, 0, 0, 0.05);
-  --line-strong: rgba(0, 0, 0, 0.15);
-  --hover-wash: rgba(0, 0, 0, 0.04);
-  --text: #262626;
-  --text-secondary: #3d3d3d;
-  --text-soft: #555555;
-  --text-muted: #6e6e6e;
-  --text-dim: #808080;
-  --text-faint: #a0a0a0;
-  --accent: #007aff;
-  --accent-text: #0068da;
-  --accent-wash: rgba(0, 122, 255, 0.12);
-  --accent-wash-hover: rgba(0, 122, 255, 0.2);
-  --ok: #28a745;
+  --surface: #f7f5f1; /* window ground */
+  --surface-raised: #efece6; /* toolbar, settings cards, dictionary table */
+  --surface-sunken: #ebe7e0; /* settings side rail */
+  --card: #fffdfa; /* history card, panels */
+  --well: #e6e2da; /* inputs, segmented-control track: sits below its parent */
+  --field: #fffdfa; /* text inputs */
+  --well-deep: #fffdfa; /* JSON editor */
+  --control: #fffdfa; /* select, popover, kbd */
+  --control-hover: #ebe7e0; /* secondary button ground; icon-button hover */
+  --control-active: #e0dbd2; /* secondary button hover */
+  --segment-on: #fffdfa; /* active segment */
+  --track: #d6d0c6; /* empty progress track */
+  --line: rgba(60, 45, 20, 0.1); /* lines: alpha over the layer beneath */
+  --line-soft: rgba(60, 45, 20, 0.08);
+  --line-faint: rgba(60, 45, 20, 0.05);
+  --line-strong: rgba(60, 45, 20, 0.16);
+  --hover-wash: rgba(60, 45, 20, 0.04); /* hover on a row or transcript */
+  --chip: rgba(60, 45, 20, 0.06); /* quiet pill ground (model, counts) */
+  --text: #2a2724;
+  --text-strong: #1f1c19; /* headings and transcript text */
+  --text-secondary: #423e39; /* code, JSON */
+  --text-soft: #5a554e; /* the "heard" half of a replacement */
+  --text-muted: #736d64; /* secondary labels */
+  --text-dim: #847e74; /* captions, status */
+  --text-faint: #a59e93; /* kind labels, hints */
+  --brand: #a99cf2; /* logo lavender, same in both themes */
+  --accent: #6f5fd8; /* selected states, primary buttons, played audio */
+  --accent-text: #5847c2; /* accent text and links on the ground */
+  --accent-wash: rgba(111, 95, 216, 0.12); /* accent pill / primary-soft button ground */
+  --accent-wash-hover: rgba(111, 95, 216, 0.2);
+  --accent-ring: rgba(111, 95, 216, 0.45); /* selected option ring */
+  --accent-tint: rgba(111, 95, 216, 0.08); /* a highlighted tile */
+  --halo: rgba(111, 95, 216, 0.18); /* around a selected chart dot */
+  --cloud: #2f8578; /* cloud models in charts; local ones take the accent */
+  --on-accent: #ffffff; /* text on a solid accent ground */
+  --wave: #dcd6cc; /* waveform bars */
+  --wave-played: #7d6de0; /* played part of a waveform */
+  --ok: #248a3d;
+  --ok-wash: rgba(36, 138, 61, 0.12);
+  --warning: #b25e00; /* "Transcribes again" / extra-step hints */
+  --warning-wash: rgba(255, 149, 0, 0.14);
   --error: #d70015;
-  --error-body: #6b3a38;
-  --error-wash: rgba(255, 56, 60, 0.08);
-  --recording: #ff383c;
+  --error-body: #6b3a38; /* verbatim provider error text */
+  --error-wash: rgba(215, 0, 21, 0.07);
+  --recording: #ff383c; /* recording dot */
   --recording-wash: rgba(255, 56, 60, 0.14);
-  --glass-bar: rgba(250, 250, 250, 0.5);
-  --glass-ground: rgba(250, 250, 250, 0.85);
-  --intro-bg: #fafafa;
-  --intro-text: #1d1d1f;
-  --intro-muted: #6e6e6e;
-  --intro-line: rgba(0, 0, 0, 0.14);
-  --intro-accent: #007aff;
-  --intro-accent-text: #0068da;
-  --intro-wash: rgba(0, 122, 255, 0.12);
-  --intro-glow-a: rgba(0, 122, 255, 0.28);
-  --intro-glow-b: rgba(88, 86, 214, 0.20);
-  --intro-glow-c: rgba(50, 173, 230, 0.16);
-  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
-  --shadow-popover: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.16);
-  --shadow-segment: 0 1px 2px rgba(0, 0, 0, 0.08);
-  --shadow-key: inset 0 -1px 0 rgba(0, 0, 0, 0.12);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 1px 3px rgba(60, 45, 20, 0.07), 0 0 0 1px rgba(60, 45, 20, 0.06);
+  --shadow-popover: 0 0 0 1px rgba(60, 45, 20, 0.08), 0 16px 40px rgba(60, 45, 20, 0.16);
+  --shadow-segment: 0 1px 2px rgba(60, 45, 20, 0.1);
+  --shadow-key: inset 0 -1px 0 rgba(60, 45, 20, 0.12);
+  --glass-bar: rgba(247, 245, 241, 0.5); /* Mac window material: toolbar veil */
+  --glass-ground: rgba(247, 245, 241, 0.85);
+  --focus: 0 0 0 3px rgba(111, 95, 216, 0.4); /* keyboard focus ring */
+  --pill-ground: rgba(255, 253, 250, 0.95); /* the dictation pill (desktop overlay) */
+  --pill-edge: rgba(60, 45, 20, 0.14);
+  --pill-shadow: 0 0 0 0.5px rgba(60, 45, 20, 0.14), 0 10px 28px rgba(60, 45, 20, 0.16);
+  --pill-bars: #7d6de0;
+  --pill-quiet: #a59e93;
+  --pill-sweep: rgba(111, 95, 216, 0.55);
+  --pill-dot: #ff383c;
+  --pill-text: #1f1c19;
+  --pill-muted: #736d64;
+  --intro-bg: #f7f5f1; /* first-launch introduction */
+  --intro-text: #1f1c19;
+  --intro-muted: #736d64;
+  --intro-line: rgba(60, 45, 20, 0.14);
+  --intro-accent: #6f5fd8;
+  --intro-accent-text: #5847c2;
+  --intro-wash: rgba(111, 95, 216, 0.12);
+  --intro-glow-a: rgba(111, 95, 216, 0.28);
+  --intro-glow-b: rgba(169, 156, 242, 0.24);
+  --intro-glow-c: rgba(214, 196, 255, 0.22);
 }

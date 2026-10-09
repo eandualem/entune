@@ -24,7 +24,8 @@ speech, and the dictionary is applied to what comes back (see
 [the dictionary file](dictionary.md)).
 
 Fast mode needs nothing from an adapter: it cuts a dictation at pauses
-and sends each piece through `transcribe` as a WAV clip of its own.
+and sends each piece through `transcribe` as a WAV clip of its own, up to four at
+once, so an adapter may be called from several threads.
 
 Two optional capabilities, without an adapter inheritance hierarchy:
 
@@ -34,7 +35,7 @@ Two optional capabilities, without an adapter inheritance hierarchy:
   `warm(name)`, `unload(keep)`. A provider whose models are files on this
   machine, fetched with a button, no key. local/whisper.py (WhisperCpp,
   through pywhispercpp in-process) and local/parakeet.py (a helper process inside the
-  `parakeet-mlx` tool installation, Apple Silicon) implement it. `models`
+  `parakeet-mlx` engine its download installs, Apple Silicon) implement it. `models`
   lists only the downloaded ones.
 
 Shared cloud response helpers live in cloud/http.py. Local engines share
@@ -48,9 +49,10 @@ paths are unchanged. These IDs scope saved settings, history and learned
 dictionaries and must not follow Python module or display-name changes.
 
 Whisper imports its engine only when loading a model. Parakeet is available
-on Apple Silicon macOS and requires the separately installed parakeet-mlx
-engine; Settings downloads its weights, not the engine. The packaged
-local/parakeet_helper.py is executed by that installation's Python and must
+on Apple Silicon macOS; its download installs the pinned parakeet-mlx engine
+into the models folder before the weights, and a `uv tool install parakeet-mlx`
+is used when there is none. The packaged
+local/parakeet_helper.py is executed by that engine's Python and must
 remain a real script in both the wheel and desktop bundle.
 
 The contract, from AGENTS.md: audio in, either a transcript or the

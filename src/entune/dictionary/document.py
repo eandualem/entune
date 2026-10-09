@@ -5,24 +5,23 @@ from __future__ import annotations
 import json
 import os
 import re
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from entune.dictionary.entries import (
     EMPTY,
-    Association,
+    Candidate,
     Dictionary,
+    Entries,
     Evidence,
-    Form,
-    Group,
-    Groups,
-    Meaning,
-    _forms,
+    Heard,
+    Word,
     key,
 )
 
 FILENAME = "dictionary.json"
-VERSION = 2
+VERSION = 3
 
 
 def _object(value: object, where: str, fields: set[str]) -> dict[str, Any]:
@@ -52,111 +51,97 @@ def _id(value: object, where: str) -> str:
     return result
 
 
-def parse_groups(value: object, where: str) -> Groups:
-    groups = []
+def parse_words(value: object, where: str) -> tuple[Word, ...]:
+    words = []
     ids: set[str] = set()
     for i, item in enumerate(_list(value, where)):
         loc = f"{where}[{i}]"
-        obj = _object(item, loc, {"id", "meanings", "recognized_forms", "needs_review"})
-        group_id = _id(obj.get("id"), f"{loc}.id")
-        if group_id in ids:
-            raise ValueError(f"{loc}: duplicate group ID {group_id}")
-        ids.add(group_id)
-        review = obj.get("needs_review", False)
+        w = _object(
+            item, loc, {"id", "spelling", "meaning", "personal_context", "casing", "needs_review"}
+        )
+        word_id = _id(w.get("id"), f"{loc}.id")
+        if word_id in ids:
+            raise ValueError(f"{loc}: duplicate word ID {word_id}")
+        ids.add(word_id)
+        review = w.get("needs_review", False)
         if type(review) is not bool:
             raise ValueError(f"{loc}.needs_review must be a boolean")
-        meanings = []
-        meaning_ids: set[str] = set()
-        for m in _list(obj.get("meanings"), f"{loc}.meanings"):
-            m = _object(m, loc, {"id", "spelling", "meaning", "personal_context", "casing"})
-            mid = _id(m.get("id"), f"{loc}.meaning.id")
-            if mid in meaning_ids:
-                raise ValueError(f"{loc}: duplicate meaning ID {mid}")
-            meaning_ids.add(mid)
-            context = m.get("personal_context")
-            casing = m.get("casing", "fixed")
-            if casing not in ("fixed", "ordinary"):
-                raise ValueError(f"{loc}: casing must be fixed or ordinary")
-            meanings.append(
-                Meaning(
-                    mid,
-                    _string(m.get("spelling"), f"{loc}.spelling"),
-                    _string(m.get("meaning"), f"{loc}.meaning", empty=review),
-                    _string(context, f"{loc}.personal_context") if context is not None else None,
-                    casing,
-                )
+        context = w.get("personal_context")
+        casing = w.get("casing", "fixed")
+        if casing not in ("fixed", "ordinary"):
+            raise ValueError(f"{loc}: casing must be fixed or ordinary")
+        words.append(
+            Word(
+                word_id,
+                _string(w.get("spelling"), f"{loc}.spelling"),
+                _string(w.get("meaning"), f"{loc}.meaning", empty=review),
+                _string(context, f"{loc}.personal_context") if context is not None else None,
+                casing,
+                review,
             )
-        forms = []
-        for f in _list(obj.get("recognized_forms"), f"{loc}.recognized_forms"):
-            f = _object(f, loc, {"text", "associations", "direct", "direct_reason"})
-            text = " ".join(_string(f.get("text"), f"{loc}.form.text").split())
-            if not re.match(r"\w", text):
-                raise ValueError(f"{loc}: a recognized form must start with a letter or digit")
-            links = []
-            for a in _list(f.get("associations"), f"{loc}.associations"):
-                a = _object(a, loc, {"meaning_id", "basis", "evidence"})
-                mid = _id(a.get("meaning_id"), f"{loc}.meaning_id")
-                basis = a.get("basis", "user")
-                if basis not in ("text", "literal", "user"):
-                    raise ValueError(f"{loc}: invalid association basis")
-                evidence = []
-                for e in _list(a.get("evidence", []), f"{loc}.evidence"):
-                    e = _object(e, loc, {"source", "start", "end"})
-                    start, end = e.get("start"), e.get("end")
-                    if type(start) is not int or type(end) is not int or not 0 <= start < end:
-                        raise ValueError(f"{loc}: evidence needs valid character offsets")
-                    evidence.append(Evidence(_string(e.get("source"), loc), start, end))
-                # A literal link is the spelling written as it is and never carries
-                # evidence; evidence an older version stored there is dropped, so a
-                # suggestion that keeps the link is not refused for it.
-                links.append(Association(mid, () if basis == "literal" else tuple(evidence), basis))
-            if not links or len({a.meaning_id for a in links}) != len(links):
-                raise ValueError(f"{loc}: associations must be nonempty with unique meaning IDs")
-            direct = f.get("direct")
-            note = _string(f.get("direct_reason", ""), f"{loc}.direct_reason", empty=True)
-            if direct is not None:
-                direct = _id(direct, f"{loc}.direct")
-                if not note or direct not in {a.meaning_id for a in links}:
-                    raise ValueError(
-                        f"{loc}: direct mapping needs an eligible meaning and approval reason"
-                    )
-            elif note:
-                raise ValueError(f"{loc}: direct_reason needs a direct meaning")
-            forms.append(Form(text, tuple(links), direct, note))
-        if not meanings and not forms:
-            raise ValueError(f"{loc}: an empty group has no knowledge")
-        groups.append(Group(group_id, tuple(meanings), _forms(tuple(forms)), review))
-    return tuple(groups)
+        )
+    return tuple(words)
+
+
+def parse_entries(value: object, where: str) -> Entries:
+    entries = []
+    texts: set[str] = set()
+    for i, item in enumerate(_list(value, where)):
+        loc = f"{where}[{i}]"
+        h = _object(item, loc, {"text", "candidates", "direct", "direct_reason"})
+        text = " ".join(_string(h.get("text"), f"{loc}.text").split())
+        if not re.match(r"\w", text):
+            raise ValueError(f"{loc}: a heard text must start with a letter or digit")
+        if key(text) in texts:
+            raise ValueError(f"{loc}: {text!r} is listed twice here")
+        texts.add(key(text))
+        candidates = []
+        for c in _list(h.get("candidates"), f"{loc}.candidates"):
+            c = _object(c, loc, {"word", "basis", "evidence"})
+            word = _id(c.get("word"), f"{loc}.word")
+            basis = c.get("basis", "user")
+            if basis not in ("text", "literal", "user"):
+                raise ValueError(f"{loc}: invalid candidate basis")
+            evidence = []
+            for e in _list(c.get("evidence", []), f"{loc}.evidence"):
+                e = _object(e, loc, {"source", "start", "end"})
+                start, end = e.get("start"), e.get("end")
+                if type(start) is not int or type(end) is not int or not 0 <= start < end:
+                    raise ValueError(f"{loc}: evidence needs valid character offsets")
+                evidence.append(Evidence(_string(e.get("source"), loc), start, end))
+            # A literal candidate is the word written as heard and never carries evidence.
+            candidates.append(Candidate(word, () if basis == "literal" else tuple(evidence), basis))
+        if not candidates or len({c.word for c in candidates}) != len(candidates):
+            raise ValueError(f"{loc}: candidates must be nonempty with unique words")
+        direct = h.get("direct")
+        note = _string(h.get("direct_reason", ""), f"{loc}.direct_reason", empty=True)
+        if direct is not None:
+            direct = _id(direct, f"{loc}.direct")
+            if not note or direct not in {c.word for c in candidates}:
+                raise ValueError(
+                    f"{loc}: direct mapping needs a candidate word and approval reason"
+                )
+        elif note:
+            raise ValueError(f"{loc}: direct_reason needs a direct word")
+        entries.append(Heard(text, tuple(candidates), direct, note))
+    return tuple(entries)
 
 
 def validate(dictionary: Dictionary) -> Dictionary:
-    # A meaning can be referenced from another group or a model-local extension.
-    global_meanings: dict[str, Meaning] = {}
-    for section in (dictionary.pinned, *dictionary.learned.values()):
-        for group in section:
-            for m in group.meanings:
-                if m.id in global_meanings and global_meanings[m.id] != m:
-                    raise ValueError(
-                        f"Meaning {m.id} has conflicting definitions; preserve its identity"
-                    )
-                global_meanings[m.id] = m
-    for model in (None, *dictionary.learned):
-        groups = dictionary.pinned if model is None else dictionary.effective(model)
-        meanings = {m.id: m for g in groups for m in g.meanings}
-        for group in groups:
-            for form in group.recognized_forms:
-                for link in form.associations:
-                    if link.meaning_id not in meanings:
-                        raise ValueError(
-                            f"Form {form.text!r} references an unavailable meaning "
-                            f"{link.meaning_id}"
-                        )
-                    if link.basis == "literal" and key(form.text) != key(
-                        meanings[link.meaning_id].spelling
-                    ):
-                        raise ValueError(
-                            "A literal association must have the same recognized/output spelling"
-                        )
+    words = {w.id: w for w in dictionary.words}
+    if len(words) != len(dictionary.words):
+        raise ValueError("Each word needs its own ID")
+    for entries in (dictionary.pinned, *dictionary.learned.values()):
+        texts = [key(h.text) for h in entries]
+        if len(set(texts)) != len(texts):
+            raise ValueError("A heard text is listed once per section")
+        for heard in entries:
+            for candidate in heard.candidates:
+                word = words.get(candidate.word)
+                if word is None:
+                    raise ValueError(f"{heard.text!r} names a missing word {candidate.word}")
+                if candidate.basis == "literal" and key(heard.text) != key(word.spelling):
+                    raise ValueError("A literal candidate must be spelled like its heard text")
     return dictionary
 
 
@@ -167,7 +152,7 @@ def parse(text: str) -> Dictionary:
         raise ValueError(f"Not valid JSON: {exc.msg} (line {exc.lineno})") from None
     if not isinstance(data, dict):
         raise ValueError("The dictionary must be a JSON object")
-    obj = _object(data, "dictionary", {"version", "pinned", "learned"})
+    obj = _object(data, "dictionary", {"version", "words", "pinned", "learned"})
     if type(obj.get("version")) is not int or obj["version"] != VERSION:
         raise ValueError(f'The dictionary needs "version": {VERSION}')
     learned = obj.get("learned", {})
@@ -175,8 +160,9 @@ def parse(text: str) -> Dictionary:
         raise ValueError("learned must be an object keyed by speech model")
     return validate(
         Dictionary(
-            parse_groups(obj.get("pinned", []), "pinned"),
-            {m: parse_groups(v, f"learned.{m}") for m, v in learned.items()},
+            parse_words(obj.get("words", []), "words"),
+            parse_entries(obj.get("pinned", []), "pinned"),
+            {m: parse_entries(v, f"learned.{m}") for m, v in learned.items()},
         )
     )
 
@@ -185,8 +171,9 @@ def dumps(dictionary: Dictionary) -> str:
     return json.dumps(
         {
             "version": VERSION,
-            "pinned": [g.as_json() for g in dictionary.pinned],
-            "learned": {m: [g.as_json() for g in gs] for m, gs in dictionary.learned.items()},
+            "words": [asdict(w) for w in dictionary.words],
+            "pinned": [h.as_json() for h in dictionary.pinned],
+            "learned": {m: [h.as_json() for h in es] for m, es in dictionary.learned.items()},
         },
         indent=2,
         ensure_ascii=False,

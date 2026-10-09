@@ -15,12 +15,16 @@ from entune.app.operations import Operations
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
 from entune.dictionary.corrections import Correction, add_corrections, read_entries
-from entune.dictionary.entries import Dictionary
+from entune.dictionary.entries import EMPTY, Dictionary
 from entune.storage.store import Store
 
 
 class DictionaryChanged(Exception):
     """A dictionary write named a version that is no longer the one on disk."""
+
+
+def _revision(raw: bytes) -> str:
+    return str(hashlib.sha256(raw).hexdigest()[:16])
 
 
 class DictionaryFile:
@@ -37,15 +41,22 @@ class DictionaryFile:
         return dictionary_document.dumps(self.dictionary())
 
     def dictionary_snapshot(self) -> tuple[str, str]:
-        """The editor's document and revision from the same locked read."""
+        """The editor's document and revision from one read of the file, so an edit made
+        outside Entune between two reads can never pair old contents with a new revision."""
         with self.lock:
-            return self.dictionary_text(), self.dictionary_version()
+            raw = self._read()
+            document = EMPTY if raw is None else dictionary_document.parse(raw.decode("utf-8"))
+            return dictionary_document.dumps(document), _revision(raw or b"")
 
     def dictionary_version(self) -> str:
         """A hash of the file as it is on disk; a writer names the version it edited."""
-        path = self._store.data_dir / dictionary_document.FILENAME
-        raw = path.read_bytes() if path.exists() else b""
-        return str(hashlib.sha256(raw).hexdigest()[:16])
+        return _revision(self._read() or b"")
+
+    def _read(self) -> bytes | None:
+        try:
+            return (self._store.data_dir / dictionary_document.FILENAME).read_bytes()
+        except FileNotFoundError:
+            return None
 
     def set_dictionary(self, text: str, expected_version: str | None = None) -> Dictionary:
         """Validate and save the JSON form. Raises ValueError with the reason, and
@@ -61,15 +72,27 @@ class DictionaryFile:
         self._changed()
         return parsed
 
-    def pin_meaning(self, model: str, group: str | None, meaning: str | None, version: str) -> None:
+    def change(self, update: Callable[[Dictionary], Dictionary], version: str) -> str:
+        """Apply one edit to the dictionary as it is on disk, if it is still `version`, and
+        return the new version. Raises DictionaryChanged on a stale version, ValueError
+        with the reason on an edit the dictionary refuses."""
         with self._operations.dictionary_edit(), self.lock:
-            current = self.dictionary()
-            if group is None or meaning is None:
-                updated = dictionary_changes.share(
-                    current, {m.id for g in current.learned_for(model) for m in g.meanings}
+            if version.strip('"') != self.dictionary_version():
+                raise DictionaryChanged(
+                    "The dictionary changed since that version was read; read it again and"
+                    " redo the change on the current one."
                 )
-            else:
-                updated = dictionary_changes.pin(current, model, group, meaning)
+            # Read back as the file will be, so an edit can never leave it unreadable.
+            text = dictionary_document.dumps(update(self.dictionary()))
+            dictionary_document.save(self._store.data_dir, dictionary_document.parse(text))
+            changed = self.dictionary_version()
+        self._changed()
+        return changed
+
+    def pin(self, model: str, text: str | None, version: str) -> None:
+        """Pin one learned heard entry of `model`, or all of them when `text` is None."""
+        with self._operations.dictionary_edit(), self.lock:
+            updated = dictionary_changes.pin(self.dictionary(), model, text)
             self.set_dictionary(dictionary_document.dumps(updated), version)
 
     def add_agent_corrections(self, data: object) -> tuple[Correction, ...]:

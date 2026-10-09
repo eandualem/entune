@@ -1,6 +1,6 @@
 [project]
 name = "entune"
-version = "0.4.4"
+version = "0.5.0"
 description = "Dictation with your choice of speech model and a personal dictionary that selects corrections in context."
 readme = "README.md"
 license = "MIT"
@@ -10,6 +10,7 @@ dependencies = [
   "cryptography>=42",  # checks the signature of OpenAI's sign-in ID token (chatgpt.py)
   "httpx>=0.27",
   "httpx2",
+  "mcp>=2.3",  # agents improve the dictionary over MCP (api/mcp.py); loaded on first use
   "numpy",
   "opentelemetry-api>=1.28",  # an interrupted reply's text goes on its trace (call.py)
   "pillow",

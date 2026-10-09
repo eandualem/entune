@@ -9,7 +9,7 @@ from typing import Any
 
 import ApplicationServices as AX
 import Quartz
-from AppKit import NSPasteboard, NSPasteboardItem, NSWorkspace
+from AppKit import NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSWorkspace
 
 from entune.desktop.platform import Delivery
 
@@ -17,9 +17,13 @@ _copied_count: int | None = None  # the pasteboard's change count right after ou
 
 
 def copy_to_clipboard(text: str) -> None:
+    """Straight onto the pasteboard, in this process: no pbcopy to start on each delivery."""
     global _copied_count
-    subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
-    _copied_count = int(NSPasteboard.generalPasteboard().changeCount())
+    board = NSPasteboard.generalPasteboard()
+    board.clearContents()
+    if not board.setString_forType_(text, NSPasteboardTypeString):
+        raise RuntimeError("macOS did not accept the text on the clipboard")
+    _copied_count = int(board.changeCount())
 
 
 def save_clipboard() -> list[dict[str, Any]]:

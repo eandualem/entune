@@ -23,7 +23,7 @@ from typing import Any, Literal
 from entune.app.operations import Operation, Operations
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary.changes import Proposal
-from entune.dictionary.entries import Dictionary, Groups
+from entune.dictionary.entries import Dictionary
 from entune.learning import batches, generate, suggestion_model
 from entune.learning import inputs as learning_inputs
 from entune.providers.contracts import Clip, Failure
@@ -79,7 +79,7 @@ class DictionaryBuilds:
         self._proposal: Proposal | None = None
         self._spec: BuildInput | None = None
         self._texts: dict[str, learning_inputs.LearningText] = {}
-        self._working: Groups | None = None
+        self._working: Dictionary | None = None
         self._covered: set[str] = set()
         self._completed_batches = 0
         self._skipped: list[tuple[str, str]] = []  # recordings that would not transcribe
@@ -92,7 +92,7 @@ class DictionaryBuilds:
         self._halt = threading.Event()  # suggestions ended: stop starting transcriptions
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._task: asyncio.Task[Groups] | None = None
+        self._task: asyncio.Task[Dictionary] | None = None
         self._closed = False
 
     def status(self, job_id: str | None = None) -> dict[str, Any]:
@@ -318,7 +318,6 @@ class DictionaryBuilds:
             self._loop = asyncio.get_running_loop()
             self._task = asyncio.current_task()
             working = self._working
-        current = dictionary_changes.share(spec.dictionary, set())
         began = time.monotonic()
         try:
             self._checkpoint()
@@ -330,10 +329,9 @@ class DictionaryBuilds:
                 suggestion_model=spec.builder[2],
                 effort=spec.effort,
             ):
-                groups = await generate.propose_part(
+                proposed = await generate.propose_part(
                     *spec.builder,
-                    current,
-                    current.effective(spec.speech.id) if working is None else working,
+                    spec.dictionary if working is None else working,
                     step,
                     spec.speech.id,
                     f"Part {number}",
@@ -358,10 +356,10 @@ class DictionaryBuilds:
                 self._loop = self._task = None
         # Validate against the full scoped dictionary before advancing coverage.
         proposal = dictionary_changes.propose(
-            spec.dictionary, groups, spec.speech.id, f'"{spec.revision}"'
+            spec.dictionary, proposed, spec.speech.id, f'"{spec.revision}"'
         )
         with self._lock:
-            self._working, self._proposal = groups, proposal
+            self._working, self._proposal = proposed, proposal
             self._completed_batches = number
             for done in step.completed:
                 if done not in self._segments:

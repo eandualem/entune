@@ -14,7 +14,8 @@ own app: hold a shortcut in any app, speak, and the text is pasted where you are
 Choose a cloud or local speech model, and keep your recordings on your computer.
 Its personal dictionary learns from your dictation; a decision model chooses
 when a dictionary replacement actually fits the sentence, and where paragraphs and
-bullets belong. Learn more at **[entune.app](https://entune.app)**.
+bullets belong. Connect your coding agent over **MCP**, and it builds and refines
+that dictionary with you. Learn more at **[entune.app](https://entune.app)**.
 
 A 42-second tour of Entune on a Mac:
 
@@ -82,7 +83,28 @@ The full setup and dictation have been tested on macOS and Windows; see
 [Windows](https://github.com/eandualem/entune/blob/develop/docs/guide.md#windows)
 for what differs there. Linux is new: see
 [Linux](https://github.com/eandualem/entune/blob/develop/docs/guide.md#linux) for
-the two system libraries it needs and how shortcuts work on X11 and Wayland.
+the system libraries it needs and how shortcuts work on X11 and Wayland.
+
+## Your agent builds and refines your dictionary
+
+Entune is an MCP server too. Connect the coding agent you already work with, and
+ask it to check your dictionary: it reads a guide to how the dictionary works, looks
+at how each heard text is used in your transcripts, and adds, fixes or removes words
+and entries with you. In Claude Code, once:
+
+```sh
+claude mcp add --transport http entune http://localhost:4187/mcp
+```
+
+Any agent that speaks MCP over HTTP takes the same endpoint, `http://localhost:4187/mcp`,
+while Entune runs; **Settings › Integrations** shows it. Each speech model has its own
+learned entries, and the agent works on the model you dictate with unless you name
+another; words and pinned entries are shared by every model, so a word the agent edits
+changes for all of them.
+Every change it makes is checked against the version it read, so nothing you changed
+meanwhile is lost. What it reads, transcript excerpts included, goes to your agent's
+model provider. [The agents' API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md#your-agent-and-your-dictionary-mcp)
+lists the tools.
 
 ## A dictionary match should not always become a replacement
 
@@ -206,10 +228,14 @@ guarantee a better dictionary.
 - **Fast mode:** while you speak, each part of a dictation is transcribed at a
   natural pause, so only the last part is left when you stop, with any speech
   model; the **Performance** chart shows each model's measured wait.
+- **Silence left out:** long pauses are shortened before the audio goes to the speech
+  model, about a quarter less audio to pay for or to compute; your recording keeps
+  every second.
 - **Drop audio to transcribe it:** drop files anywhere on the window, such as a
   recording another app could not transcribe.
 - **Anonymous mode:** the eye switch blurs transcripts for screen recordings.
-- **For agents and tools:** a [local API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md)
+- **For agents and tools:** besides [MCP](#your-agent-builds-and-refines-your-dictionary), a
+  [local API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md)
   accepts corrections you have confirmed, and optional
   [Langfuse tracing](https://github.com/eandualem/entune/blob/develop/docs/guide.md#tracing-dictionary-suggestions)
   shows every dictionary-suggestion request.
