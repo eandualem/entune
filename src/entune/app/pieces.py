@@ -15,7 +15,7 @@ import logging
 import queue
 import threading
 import time
-from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
+from concurrent.futures import CancelledError
 
 from entune.audio.formats import wav_bytes
 from entune.audio.pauses import Pauses
@@ -52,8 +52,9 @@ class Pieces:
         self._texts: dict[int, str] = {}  # by piece number, joined in recording order
         self._error: str | None = None
         self._lock = threading.Lock()
-        self._pool = ThreadPoolExecutor(PARALLEL, thread_name_prefix="entune-piece")
-        self._sent: list[Future[float]] = []  # each piece's moment of completion
+        # Daemon threads, as the worker: a request under way never holds up quitting.
+        self._slots = threading.BoundedSemaphore(PARALLEL)
+        self._sent: list[_Sent] = []
         self._aborted = _Halt(cancel)
         self._worker = threading.Thread(target=self._run, daemon=True, name="entune-pieces")
         self._worker.start()
@@ -73,13 +74,13 @@ class Pieces:
         if self._start == 0 or self._aborted.is_set() or self._cancel.is_set():
             if self._start == 0 and not self._aborted.is_set():
                 print("fast mode: no pause to cut at; the whole clip is transcribed", flush=True)
-            self._pool.shutdown(wait=False, cancel_futures=True)
             return None
         earlier = list(self._sent)
         if self._error is None:
             self._send(self._start + len(self._pcm) // 2)
-        done = [future.result() for future in self._sent]
-        self._pool.shutdown()
+        for sent in self._sent:
+            sent.done.wait()
+        done = [sent.finished for sent in self._sent]
         if done:
             # Earlier pieces still under way at release finish after it; 0 when none was.
             others = max((0.0, *(end - released for end in done[: len(earlier)])))
@@ -98,7 +99,6 @@ class Pieces:
     def abort(self) -> None:
         self._aborted.set()
         self._chunks.put(None)
-        self._pool.shutdown(wait=False, cancel_futures=True)
 
     def _stopped(self) -> bool:
         return self._aborted.is_set() or self._cancel.is_set() or self._error is not None
@@ -113,33 +113,43 @@ class Pieces:
 
     def _send(self, end: int) -> None:
         """Cut the piece ending at `end` (on this thread, in recording order) and transcribe
-        it on the pool."""
+        it on a thread of its own."""
         size = (end - self._start) * 2
         pcm, start, self._start = bytes(self._pcm[:size]), self._start, end
         del self._pcm[:size]
         if self._stopped():
             return
-        number = len(self._sent) + 1
-        try:
-            self._sent.append(self._pool.submit(self._transcribe, number, pcm, start, end))
-        except RuntimeError:  # the pool was shut down: the pieces were dropped
-            return
+        sent = _Sent()
+        self._sent.append(sent)
+        threading.Thread(
+            target=self._transcribe,
+            args=(sent, len(self._sent), pcm, start, end),
+            daemon=True,
+            name=f"entune-piece-{len(self._sent)}",
+        ).start()
 
-    def _transcribe(self, number: int, pcm: bytes, start: int, end: int) -> float:
-        """One piece; returns the moment it finished."""
+    def _transcribe(self, sent: _Sent, number: int, pcm: bytes, start: int, end: int) -> None:
+        try:
+            with self._slots:
+                self._piece(number, pcm, start, end)
+        finally:
+            sent.finished = time.monotonic()
+            sent.done.set()
+
+    def _piece(self, number: int, pcm: bytes, start: int, end: int) -> None:
         began = time.monotonic()
         if self._stopped():
-            return began
+            return
         result: TranscribeResult
         try:
             # Waiting for a local model's slot ends when the pieces are dropped, too.
             with self._speech.use(self.ref, cancel=self._aborted):
                 if self._stopped():
-                    return time.monotonic()
+                    return
                 clip = Clip(wav_bytes(pcm, self._rate), "audio/wav")
                 result = self.ref.provider.transcribe(clip, self.ref.model, self._api_key)
         except CancelledError:
-            return time.monotonic()
+            return
         except Exception as exc:
             result = Failure(f"{type(exc).__name__}: {exc}")
         finished = time.monotonic()
@@ -154,7 +164,14 @@ class Pieces:
             f" audio, transcribed in {finished - began:.1f} s ({status})",
             flush=True,
         )
-        return finished
+
+
+class _Sent:
+    """One piece sent: set once it is done, with the moment it finished."""
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.finished = 0.0
 
 
 class _Halt(threading.Event):

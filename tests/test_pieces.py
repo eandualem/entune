@@ -193,3 +193,25 @@ def test_dropped_pieces_waiting_for_the_local_slot_never_reach_the_model() -> No
         recording.abort()
     assert recording.finish() is None
     assert provider.seconds == []
+
+
+def test_a_piece_under_way_never_holds_up_quitting() -> None:
+    import subprocess
+    import sys
+
+    code = """
+import threading, time
+from tests.test_pieces import RATE, Counting, pieces, silence, speech
+class Stuck(Counting):
+    def transcribe(self, clip, model, api_key):
+        self.seconds.append(1.0)
+        threading.Event().wait()  # a provider that never answers
+provider = Stuck()
+recording = pieces(provider)
+recording.feed(speech(21) + silence(0.6) + speech(1))
+while not provider.seconds:
+    time.sleep(0.01)
+"""
+    started = time.monotonic()
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=30)
+    assert time.monotonic() - started < 20
