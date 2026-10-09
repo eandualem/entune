@@ -290,23 +290,37 @@ class Dictation:
             if raw is not None and initial is not None:
                 started = time.monotonic()
                 latest = initial
+                unreadable: str | None = None  # why the dictionary could not be read
+
+                def damaged(result: Processed) -> Processed:
+                    """The result with the dictionary step failed, when the dictionary was
+                    unreadable: every saved state says so, not only the final one."""
+                    if unreadable is None:
+                        return result
+                    correction = replace(result.correction, status="failed", error=unreadable)
+                    return replace(result, correction=correction)
 
                 def checkpoint(result: Processed) -> None:
                     nonlocal latest
+                    result = damaged(result)
                     self._store.finish_processing(attempt_id, result, final=False)
                     latest = result
 
                 try:
                     if operation:
                         operation.check()
-                    # A damaged dictionary must not stop speech transcription or its persistence.
-                    active = (
-                        self._dictionary.dictionary().active(ref.id)
-                        if status.dictionary
-                        else Active()
-                    )
-                    processed = self.correct(
-                        raw, active, status, checkpoint=checkpoint, operation=operation
+                    # A damaged dictionary must not stop speech transcription or its persistence,
+                    # nor the steps that do not read it: only the dictionary step fails.
+                    active = Active()
+                    if status.dictionary:
+                        try:
+                            active = self._dictionary.dictionary().active(ref.id)
+                        except ValueError as exc:
+                            unreadable = f"Could not read dictionary.json: {exc}"
+                    processed = damaged(
+                        self.correct(
+                            raw, active, status, checkpoint=checkpoint, operation=operation
+                        )
                     )
                 except CancelledError:
                     self._store.finish_processing(

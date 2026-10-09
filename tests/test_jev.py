@@ -767,6 +767,34 @@ def test_disabled_dictionary_does_not_read_broken_file_or_run_approved_mappings(
         service.close()
 
 
+def test_an_unreadable_dictionary_fails_only_its_own_step(tmp_path: Path) -> None:
+    # A 0.4 dictionary (format 2) after upgrading: formatting still runs.
+    with closing(Store(tmp_path)) as store:
+        client = jev_client.Client(httpx.MockTransport(lambda _: httpx.Response(500)))
+        service = Entune(store, [StubProvider()], jev_client=client)
+        service.settings.set_key("stub", "k")
+        service.models.set_default_model("stub/good")
+        service.settings.set_key("typesafe", "k")
+        service.settings.set_processing(model="jev", dictionary=True, formatting=True)
+        (tmp_path / "dictionary.json").write_text('{"version": 2, "entries": []}')
+        saved: list[Processed] = []
+        finish = store.finish_processing
+
+        def keep(attempt_id: int, result: Processed, *, final: bool = True) -> None:
+            saved.append(result)
+            finish(attempt_id, result, final=final)
+
+        store.finish_processing = keep  # type: ignore[method-assign]
+        result = service.dictation.record_and_transcribe(WEBM_HEADER, None, None)
+        attempt = result.transcriptions[0]
+        assert attempt.correction is not None and attempt.correction.status == "failed"
+        assert "dictionary.json" in (attempt.correction.error or "")
+        assert attempt.formatting is not None and attempt.formatting.status != "failed"
+        # Every saved state, a checkpoint as well as the end, says the dictionary failed.
+        assert len(saved) > 1 and all(r.correction.status == "failed" for r in saved)
+        service.close()
+
+
 def test_meaning_request_variants_add_only_the_compared_context() -> None:
     text = "Parse the jif. " + "Unrelated words. " * 20 + "Done."
     found = matches(JEV, text)
