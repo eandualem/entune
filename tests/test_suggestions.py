@@ -459,6 +459,21 @@ def test_an_entry_whose_corrections_a_revision_took_away_is_removed() -> None:
     assert result.words == working.words  # the words stay
 
 
+def test_a_capitals_correction_the_person_added_stays_when_a_reply_keeps_it() -> None:
+    from entune.dictionary.entries import Active, Candidate, Heard, Word
+
+    added = Active(
+        (Word("a_anthropic", "Anthropic", "The AI company."),),
+        (Heard("anthropic", (Candidate("a_anthropic", basis="user"),)),),
+    )
+    working = dictionary(learned={"s/m": (added,)})
+    text = "I asked anthropic today."
+    shown = json.loads(view.build(working, "s/m", snippets(text)).words)
+    kept = {"text": "anthropic", "candidates": [candidate(shown[0]["id"], "existing")]}
+    (entry,) = parse(reply(heard=[kept]), (text,), working).learned_for("s/m")
+    assert entry.candidates == (Candidate("a_anthropic", basis="user"),)
+
+
 def test_a_heard_text_given_twice_is_one_entry_whatever_the_order() -> None:
     text = "Keep it in camel. The Camel sleeps."
     words = [

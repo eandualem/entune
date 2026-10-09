@@ -194,6 +194,16 @@ def parse_reply(
                     f"{word.spelling} has no meaning yet, so it cannot be chosen; give it one"
                     " in meanings"
                 )
+            # A candidate kept as it was comes first: one the person added that changes
+            # capitals alone ("anthropic" -> Anthropic) is theirs, not written as heard.
+            if link["basis"] == "existing" or (identity in kept and kept[identity].basis == "user"):
+                if identity not in kept:
+                    raise ValueError(
+                        f'"{text}" did not name {link["word"]} before; a new candidate needs'
+                        " basis text with evidence"
+                    )
+                candidates[identity] = kept[identity]
+                continue
             if key(text) == key(word.spelling):
                 # Matching ignores case: "LangFuse" is Langfuse written as it is, not a
                 # confusion, so it is the literal candidate and needs no evidence.
@@ -204,14 +214,6 @@ def parse_reply(
                     f'"{text}" is not spelled {word.spelling}; a literal candidate is the'
                     " word written as heard"
                 )
-            if link["basis"] == "existing" or (identity in kept and kept[identity].basis == "user"):
-                if identity not in kept:
-                    raise ValueError(
-                        f'"{text}" did not name {link["word"]} before; a new candidate needs'
-                        " basis text with evidence"
-                    )
-                candidates[identity] = kept[identity]
-                continue
             evidence = [_locate(_evidence(e, shown), text, supplied) for e in link["evidence"]]
             if not evidence:
                 raise ValueError(
