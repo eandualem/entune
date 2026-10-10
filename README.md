@@ -15,7 +15,7 @@ Choose a cloud or local speech model, and keep your recordings on your computer.
 Its personal dictionary learns from your dictation; a decision model chooses
 when a dictionary replacement actually fits the sentence, and where paragraphs and
 bullets belong. Connect your coding agent over **MCP**, and it builds and refines
-that dictionary with you. Learn more at **[entune.app](https://entune.app)**.
+that dictionary for you. Learn more at **[entune.app](https://entune.app)**.
 
 A 42-second tour of Entune on a Mac:
 
@@ -89,8 +89,8 @@ the system libraries it needs and how shortcuts work on X11 and Wayland.
 
 Entune is an MCP server too. Connect the coding agent you already work with, and
 ask it to check your dictionary: it reads a guide to how the dictionary works, looks
-at how each heard text is used in your transcripts, and adds, fixes or removes words
-and entries with you. In Claude Code, once:
+at how each heard text is used in your transcripts, adds, fixes or removes words and
+entries, and tells you what it did. In Claude Code, once:
 
 ```sh
 claude mcp add --transport http entune http://localhost:4187/mcp

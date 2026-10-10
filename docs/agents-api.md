@@ -14,8 +14,8 @@ web page in a browser cannot use it.
 
 ## Your agent and your dictionary (MCP)
 
-Connect a coding agent to your dictionary and ask it to review and improve it with
-you. Entune serves an MCP endpoint at `http://localhost:4187/mcp` while it runs. In
+Connect a coding agent to your dictionary and ask it to review and improve it.
+Entune serves an MCP endpoint at `http://localhost:4187/mcp` while it runs. In
 Claude Code:
 
 ```sh
@@ -46,9 +46,9 @@ when the person wants it for every model.
 Every change names the `version` the agent read and returns the new one. A change on
 an older version is refused, so nothing you or Entune added meanwhile is overwritten,
 and changes are validated like edits on the Dictionary page. Editing waits while
-suggestions are open for review. How the agent works with you, for example asking
-before each change, is up to the agent; the guide asks it to change only what you
-agree to.
+suggestions are open for review. The guide asks the agent to do what you ask and then
+report the result, asking only what it cannot know, such as how a private name is
+spelled.
 
 What the agent reads, transcript excerpts included, goes to your agent's model
 provider. The endpoint has the same boundary as the rest of this API: this machine
