@@ -313,6 +313,7 @@ def register(mcp: MCPServer, app: Entune) -> None:
             raise ToolError(f"Choose an effort: {', '.join(EFFORTS)}")
         audio_ids = None
         seconds = 0.0
+        unmeasured = 0
         if source == "audio":
             model = app.models.default_model() or ""
             learned = set() if reread else app.store.learning_covered(model, "audio")
@@ -330,6 +331,7 @@ def register(mcp: MCPServer, app: Entune) -> None:
                 )
             audio_ids = [a.id for a in chosen]
             seconds = sum(a.seconds or 0 for a in chosen)
+            unmeasured = sum(a.seconds is None for a in chosen)
         try:
             state = app.learning.start_dictionary_build(
                 source,
@@ -342,6 +344,10 @@ def register(mcp: MCPServer, app: Entune) -> None:
         summary = _summary(state)
         if source == "audio":
             summary["audio_minutes"] = round(seconds / 60)
+            if unmeasured:
+                # MP3, M4A, FLAC and OGG imports have no measured length: the minutes are
+                # a floor, not the total.
+                summary["recordings_without_length"] = unmeasured
         return summary
 
     @mcp.tool(annotations=READ)

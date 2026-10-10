@@ -173,7 +173,11 @@ def review(current: Dictionary, proposal: Proposal, selected: object = None) -> 
                 raise ValueError("Keep the suggestion's heard text while editing")
             entries[key(heard.text)] = heard
     named = {c.word for h in entries.values() for c in h.candidates}
-    words.update({i: w for i, w in new_words.items() if i in named})
+    # Applying a new word's description is the person's check of it, as for a clearer
+    # meaning: a build keeps its words revisable only until then.
+    words.update(
+        {i: replace(w, needs_review=not w.meaning) for i, w in new_words.items() if i in named}
+    )
     learned = dict(current.learned)
     if entries:
         learned[proposal.model] = tuple(entries.values())

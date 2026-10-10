@@ -482,6 +482,19 @@ def test_a_stored_word_without_a_meaning_takes_the_one_suggested_or_is_refused()
         parse(reply([word], [{"text": "cloud", "candidates": [claude, kept]}]), (text,), working)
 
 
+def test_a_new_word_stays_revisable_until_its_suggestions_are_applied() -> None:
+    result = parse(proposed(TEXT))
+    (word,) = result.words
+    assert word.needs_review  # a later part of the same run may still refine it
+    better = [{"word": "w1", "meaning": "Anthropic's coding agent"}]
+    revised = parse(reply(meanings=better), (TEXT,), result)
+    assert revised.words[0].meaning == "Anthropic's coding agent"
+    applied = dictionary_changes.review(
+        Dictionary(), dictionary_changes.propose(Dictionary(), revised, "s/m")
+    )
+    assert not applied.words[0].needs_review  # applying confirms it
+
+
 def test_a_clearer_meaning_changes_the_shared_word_for_review() -> None:
     confirmed = dictionary(learned={"s/m": (CLOUD,)})
     text = "ask cloud"
