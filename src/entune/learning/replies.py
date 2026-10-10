@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any, Literal
@@ -14,7 +15,7 @@ from pydantic import BaseModel, ConfigDict
 from entune.dictionary import document as dictionary_document
 from entune.dictionary.entries import Candidate, Dictionary, Evidence, Heard, Word, key
 from entune.learning import view
-from entune.learning.batches import sources
+from entune.learning.batches import source_id, sources
 
 # A new heard entry whose text stands as written in a part's dictations at least this
 # many times, and this many times as often as it is cited as misheard, is sent back: the
@@ -266,7 +267,7 @@ def parse_reply(
         if before is not None and any(c.basis != "literal" for c in before.candidates):
             emptied.add(text)
 
-    _accounted(replied, learned, supplied)
+    _accounted(replied, learned, supplied, Counter(source_id(t) for t in transcripts))
 
     result = dict(learned)
     for text in data["removals"]:
@@ -297,13 +298,17 @@ def parse_reply(
 
 
 def _accounted(
-    replied: dict[str, Heard], learned: dict[str, Heard], supplied: dict[str, str]
+    replied: dict[str, Heard],
+    learned: dict[str, Heard],
+    supplied: dict[str, str],
+    copies: Counter[str],
 ) -> None:
     """Every occurrence of a new entry's text in these dictations is cited as misheard or
     kept by the word written as heard; otherwise the app would replace uses the model never
     judged. A text that stands as written far more often than it is misheard is sent back
-    too (AS_WRITTEN_MIN, AS_WRITTEN_RATIO). All such entries are named at once, so one fix
-    can settle them."""
+    too (AS_WRITTEN_MIN, AS_WRITTEN_RATIO). Dictations with the same text share a source,
+    so each use counts once per `copies` of its source. All such entries are named at once,
+    so one fix can settle them."""
     problems = []
     for text, entry in replied.items():
         if text in learned:
@@ -317,10 +322,12 @@ def _accounted(
             if c.basis == "text"
             for e in c.evidence
         }
-        misheard, written = len(found & cited), len(found - cited)
+        misheard = sum(copies[s] for s, _, _ in found & cited)
+        written = sum(copies[s] for s, _, _ in found - cited)
         if not written:
             continue
-        counts = f'"{entry.text}" occurs {len(found)} times here and {misheard} cited as misheard'
+        uses = misheard + written
+        counts = f'"{entry.text}" occurs {uses} times here, {misheard} cited as misheard'
         if not any(c.basis == "literal" for c in entry.candidates):
             problems.append(
                 f"{counts}: cite every occurrence that was misheard; if any is the text as"

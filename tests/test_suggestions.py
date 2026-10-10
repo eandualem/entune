@@ -373,7 +373,7 @@ def test_another_speech_models_entries_in_these_dictations_are_shown_for_their_w
 def test_every_occurrence_of_a_new_heard_text_is_cited_or_kept_as_written() -> None:
     text = "use cloud code daily; cloud code helps"
     payload = proposed(text)
-    with pytest.raises(ValueError, match="occurs 2 times here and 1 cited as misheard"):
+    with pytest.raises(ValueError, match="occurs 2 times here, 1 cited as misheard"):
         parse(payload, (text,))
     second = text.rindex("cloud code")
     evidence = payload["heard"][0]["candidates"][0]["evidence"]
@@ -407,6 +407,13 @@ def test_a_heard_text_written_as_itself_far_more_often_than_misheard_is_sent_bac
             assert entries(parse(reply([fast, first], [heard]), (text,))) == {
                 "first": ["fast", "first"]
             }
+    # Dictations with the same text are counted each time: four misheard, four as written.
+    texts = ("first mode is on",) * 4 + ("first", "the first one", "first things", "at first")
+    heard = {
+        "text": "first",
+        "candidates": [candidate("n1", "text", (0, 5)), candidate("n2", "literal")],
+    }
+    assert entries(parse(reply([fast, first], [heard]), texts)) == {"first": ["fast", "first"]}
     # The longer heard text around the misrecognition is the safe entry.
     mode = {"id": "n1", "spelling": "fast mode", "meaning": "transcribes while you speak"}
     heard = {"text": "first mode", "candidates": [candidate("n1", "text", (start, start + 10))]}
