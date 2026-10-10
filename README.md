@@ -71,7 +71,8 @@ With pip, use `python -m pip install "git+https://github.com/eandualem/entune.gi
    with no text field active, the text is copied instead. Or click **Record** in Entune's window. Your audio and
    transcript are saved in **History**.
 
-You can start without a dictionary or decision model and add them later.
+You can start without a dictionary or decision model and add them later, or let your
+coding agent do all of it: [your agent sets Entune up for you](#your-agent-sets-entune-up-for-you).
 
 **macOS permissions** belong to the Entune app, which is signed on your Mac
 without any certificate and stays the same across versions, so they remain
@@ -85,25 +86,27 @@ for what differs there. Linux is new: see
 [Linux](https://github.com/eandualem/entune/blob/develop/docs/guide.md#linux) for
 the system libraries it needs and how shortcuts work on X11 and Wayland.
 
-## Your agent builds and refines your dictionary
+## Your agent sets Entune up for you
 
-Entune is an MCP server too. Connect the coding agent you already work with, and
-ask it to check your dictionary: it reads a guide to how the dictionary works, looks
-at how each heard text is used in your transcripts, adds, fixes or removes words and
-entries, and tells you what it did. In Claude Code, once:
+Entune is an MCP server too, so the coding agent you already work with can run it for
+you. Connect it once; in Claude Code:
 
 ```sh
 claude mcp add --transport http entune http://localhost:4187/mcp
 ```
 
+Then ask it to set up your Entune dictionary. It chooses and downloads a speech model,
+picks the decision model and turns its steps on, finds the recordings other dictation
+apps keep on your Mac, builds your dictionary from them, refines the result, and tells
+you when it's ready. You don't review anything. It leaves you only what has to be yours:
+saving an API key in Settings, signing in, granting a permission. Later, ask it how
+Entune is doing: it reads your recent dictations and fixes what they show.
+
 Any agent that speaks MCP over HTTP takes the same endpoint, `http://localhost:4187/mcp`,
-while Entune runs; **Settings › Integrations** shows it. Each speech model has its own
-learned entries, and the agent works on the model you dictate with unless you name
-another; words and pinned entries are shared by every model, so a word the agent edits
-changes for all of them.
-Every change it makes is checked against the version it read, so nothing you changed
-meanwhile is lost. What it reads, transcript excerpts included, goes to your agent's
-model provider. [The agents' API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md#your-agent-and-your-dictionary-mcp)
+while Entune runs; **Settings › Integrations** shows it. Every change it makes to the
+dictionary is checked against the version it read, so nothing you changed meanwhile is
+lost. What it reads, transcript excerpts included, goes to your agent's model provider.
+[The agents' API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md#your-agent-runs-entune-for-you-mcp)
 lists the tools.
 
 ## A dictionary match should not always become a replacement

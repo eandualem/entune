@@ -7,13 +7,16 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
+import pytest
 from starlette.testclient import TestClient
 
 from entune.app.entune import Entune
+from entune.audio.formats import wav_bytes
+from entune.learning.suggestion_model import Request
 from entune.server import create_app
 from entune.storage.store import Store
-from tests.conftest import WEBM_HEADER
-from tests.dictionary_samples import CLOUD, document
+from tests.conftest import WEBM_HEADER, wait_for_build
+from tests.dictionary_samples import CLOUD, document, proposed
 from tests.test_server import StubProvider
 
 HEADERS = {"accept": "application/json, text/event-stream", "content-type": "application/json"}
@@ -54,6 +57,20 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
             "remove_heard_entry",
             "pin_heard_entry",
             "delete_word",
+            # Running the rest of Entune for the person (api/mcp_setup.py).
+            "entune_setup",
+            "download_speech_model",
+            "set_speech_model",
+            "set_processing",
+            "set_preferences",
+            "find_audio",
+            "import_audio",
+            "start_dictionary_build",
+            "dictionary_build_status",
+            "control_dictionary_build",
+            "read_suggestions",
+            "apply_suggestions",
+            "recent_dictations",
         }
         assert "Candidates come from real usage" in call(client, "dictionary_guide")
         read = call(client, "read_dictionary")
@@ -151,3 +168,81 @@ def test_edits_keep_the_file_readable_and_reach_a_removed_speech_models_entries(
         view = call(client, "read_dictionary", speech_model="gone/model")
         assert [e["text"] for e in view["entries_in_use"]] == ["cloud"]
         assert removed["version"] == call(client, "read_dictionary")["version"]
+
+
+def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The flow the guide gives: setup, models, steps, audio, build, apply, recent dictations."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")  # no real dictation apps
+    heard = "hello there, I use cloud code"  # what StubProvider writes
+
+    async def suggest(_: Request) -> str:
+        return json.dumps(proposed(heard))
+
+    store = Store(tmp_path / "data")
+    app = Entune(store, [StubProvider()], llm_call=suggest)
+    with closing(store), TestClient(create_app(app), base_url="http://localhost") as client:
+        setup = call(client, "entune_setup")
+        assert setup["default_speech_model"] is None and setup["speech_models"] == []
+        assert len(setup["needs_person"]) == 3  # a speech, a suggestion and a decision model
+        # Keys stay with the person: they save them in Settings.
+        app.settings.set_key("stub", "speech-key")
+        app.settings.set_key("openai", "suggestion-key")
+        app.settings.set_key("typesafe", "decision-key")
+        assert "not ready" in call(client, "set_speech_model", model="stub/nope")["error"]
+        assert call(client, "set_speech_model", model="stub/good") == {
+            "default_speech_model": "stub/good"
+        }
+        processing = call(
+            client, "set_processing", decision_model="jev", dictionary=True, formatting=True
+        )
+        assert processing["steps"] == {"dictionary": True, "formatting": True, "cleanup": False}
+        assert call(client, "set_preferences", fast_mode=True)["fast_mode"] is True
+        assert "provider:model" in call(client, "set_preferences", suggestion_model="x")["error"]
+        assert call(client, "entune_setup")["needs_person"] == []
+        assert "Unknown local model" in call(client, "download_speech_model", name="x")["error"]
+        assert (
+            "no dictionary build"
+            in call(client, "control_dictionary_build", action="stop")["error"]
+        )
+
+        found = call(client, "find_audio")
+        assert {a["id"] for a in found["apps"]} >= {"wispr", "superwhisper"}
+        assert not any(a["has_audio"] for a in found["apps"])
+        folder = tmp_path / "recordings"
+        folder.mkdir()
+        for i in range(2):
+            (folder / f"{i}.wav").write_bytes(wav_bytes(bytes([i, 7]) * 16))
+        (folder / "notes.txt").write_text("not audio")
+        assert call(client, "import_audio", paths=[str(folder)]) == {
+            "added": 2,
+            "duplicates": 0,
+            "skipped": 0,
+            "first_skipped": None,
+        }
+        assert "app_id or paths" in call(client, "import_audio")["error"]
+        assert call(client, "find_audio")["imported"]["count"] == 2
+
+        assert call(client, "start_dictionary_build")["phase"] in ("queued", "transcribing")
+        assert wait_for_build(client)["phase"] == "ready"
+        status = call(client, "dictionary_build_status")
+        assert status["phase"] == "ready" and status["next"]
+        suggestions = call(client, "read_suggestions")
+        (change,) = suggestions["changes"]
+        assert change["kind"] == "add" and change["text"] == "cloud code"
+        assert change["after"] == [
+            {"spelling": "Claude Code", "meaning": "The named tool Claude Code.", "new": True}
+        ]
+        assert (
+            "no suggestion" in call(client, "apply_suggestions", leave_out=["x"])["error"].lower()
+        )
+        applied = call(client, "apply_suggestions")
+        assert applied["applied"] == 1 and applied["learned"] == {"stub/good": 1}
+        assert call(client, "dictionary_build_status")["phase"] == "accepted"
+        assert "No suggestions are waiting" in call(client, "read_suggestions")["error"]
+
+        recording = store.create_recording(WEBM_HEADER)
+        store.add_transcription(recording.id, "stub", "good", "ok", heard, None, raw_text=heard)
+        (latest,) = call(client, "recent_dictations", limit=5)
+        assert latest["speech_model"] == "stub/good" and latest["raw_text"] == heard

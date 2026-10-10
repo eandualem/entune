@@ -1,12 +1,63 @@
-# Entune's dictionary: a guide for agents
+# Entune: a guide for agents
 
 Entune is a dictation app. A speech model (the recognizer) turns the person's speech into
 text, and sometimes writes words they did not say: "cloud" for Claude, "gray fauna" for
 Grafana. The dictionary records these mistakes so Entune can fix them in every new
-dictation, before the text reaches the person. You are here to keep that dictionary
-accurate for them. Do what they ask with confidence: how the recognizer mishears them and
-what was hard to fix are yours to solve, not theirs to hear about. Ask only what you
-cannot know, such as how a private name is spelled.
+dictation, before the text reaches the person.
+
+## The person should not have to think about any of this
+
+You run Entune for the person. Setting it up, choosing its models, building the
+dictionary and keeping it accurate are your work, not theirs: they should never have to
+manage a dictionary, review a list or learn how any of it works. So:
+
+- **Act.** Don't ask the person to choose, review, approve or check anything. Decide with
+  these tools and the rules below, and do it.
+- **Ask only for what only they can give:** an API key, which they save in Entune's
+  Settings themselves (never ask them to send one to you), a sign-in, a system
+  permission, or how a private name is spelled when no transcript shows it.
+- **Keep the workings to yourself.** How the recognizer mishears them and what was hard
+  to fix are yours to solve, not theirs to hear about.
+- **Finish with one line that it is done and ready**, for example: "Done. Entune is set up
+  with Parakeet and your dictionary has 240 entries; you can start dictating." After a
+  refinement: "Done. I fixed 12 entries; your dictionary has 240 entries and is high
+  quality now. Keep dictating; it keeps learning."
+
+## Setting Entune up
+
+When the person asks you to set Entune up, or to build or improve their dictionary, go
+through these steps without stopping to ask.
+
+1. `entune_setup` shows what is there. Its `needs_person` names what only the person can
+   do. If one of those blocks the next step, tell them that one thing in a line, and do
+   everything else.
+2. **Speech model.** A local model is free and private. On a Mac with Apple Silicon choose
+   Parakeet (`parakeet-tdt-0.6b-v3`), the most accurate here; elsewhere the largest
+   Whisper.cpp model, or a cloud model whose key is saved. `download_speech_model`, wait
+   until `entune_setup` shows it ready, then `set_speech_model`.
+3. **Decision model and steps.** `set_processing` with a decision model that is ready (see
+   `decision_models` in `entune_setup`), with the dictionary, formatting and cleanup steps
+   on. Laya runs on this Mac: if it needs its engine, run the install command it names
+   yourself.
+4. **Audio to learn from.** `find_audio`, then `import_audio` for every dictation app that
+   has recordings, and for any folder of the person's recordings you know of. The more
+   audio, the better the dictionary.
+5. **Build.** `start_dictionary_build` with source "audio" (`include_recordings` true when
+   the person has dictated with Entune). It runs in the background: check
+   `dictionary_build_status` every minute or two, and if it stops or fails, continue it
+   with `control_dictionary_build`. A cloud speech model is billed per minute of audio:
+   if the build would transcribe hours with one, say so in a line as it starts, without
+   waiting for an answer.
+6. **Apply.** `read_suggestions`, then `apply_suggestions`, leaving out only suggestions
+   that break the rules below.
+7. **Refine** the result with the dictionary tools, as you would any entries: common
+   words learned from one case, a real phrase without its own word, a name spelled
+   wrong, a word defined twice.
+8. **Tell the person it is ready**, in one line.
+
+Later, when asked how Entune is doing, `recent_dictations` shows what each dictation
+wrote and what the dictionary did with it. Fix what it shows, then say in a line that it
+is done.
 
 ## How a dictation is corrected
 
@@ -33,8 +84,8 @@ one. Before changing anything, know which speech model you are working on:
 - `find_in_transcripts` reads one model's transcripts, the default one's unless you name
   another. A mistake seen there belongs to that model's learned entries.
 - A learned entry is added or changed for one model (`scope` is its ID). Pin an entry
-  only when the person wants it for every speech model; the same mistake by another model
-  needs no pin, just its own learned entry.
+  only when it should hold for every speech model, such as the person's own name or
+  product; the same mistake by another model otherwise needs its own learned entry.
 
 ## The structure, and why
 
@@ -87,8 +138,8 @@ words are capitalised only at the start of a sentence.
 - A name has the wrong spelling or capitals, or a description is wrong or vague.
 - A word is defined twice for the same thing.
 - An entry offers only the heard text's own word: it changes nothing but capitals.
-- A word is flagged `needs_review`: it has no description, or suggestions wrote its
-  description and the person has not confirmed it.
+- A word is flagged `needs_review`: it has no description, or suggestions wrote it and
+  no one has confirmed it. Confirm or improve it yourself with `set_word`.
 
 ## Working with the tools
 
@@ -101,7 +152,7 @@ words are capitalised only at the start of a sentence.
    transcripts, newest first, so you can judge an entry by real usage.
 3. Each change tool takes the `version` you read and returns the new one. If the person or
    Entune changed the dictionary meanwhile, the change is refused: read it again. Editing
-   also waits while a suggestion run is open on the Dictionary page.
+   also waits while a dictionary build runs or its suggestions wait to be applied.
 4. Add a word with `set_word` before naming it in an entry. Editing a word changes it for
    every entry that names it.
 5. Removing an entry never removes its words; `delete_word` removes a word from every

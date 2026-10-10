@@ -383,6 +383,6 @@ its boundary; internally it names a word and adds pinned heard entries without g
 direct replacement or priority. Whole-document editing uses version-3 JSON with ETag/If-Match.
 An agent connected over MCP edits one word or heard entry at a time, each change naming
 the version it read and validated like the page's
-([agents' API](agents-api.md#your-agent-and-your-dictionary-mcp)).
+([agents' API](agents-api.md#your-agent-runs-entune-for-you-mcp)).
 The file is read on each dictation and writes are atomic under the service lock. A broken
 dictionary is a correction failure, not a lost speech transcription.

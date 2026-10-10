@@ -1,5 +1,6 @@
-"""The MCP endpoint at /mcp: a person's agent reads the dictionary, looks up how its heard
-texts are used, and improves it with them.
+"""The MCP endpoint at /mcp: a person's agent runs Entune for them. These are the dictionary
+tools: read it, look up how its heard texts are used, and improve it; api/mcp_setup.py
+has the rest (models, settings, audio, building the dictionary, recent dictations).
 
 Every change names the version it was made on and goes through the same validation and
 lock as the dictionary page, so nothing added meanwhile is overwritten.
@@ -20,6 +21,7 @@ from starlette.routing import Route
 from starlette.types import ASGIApp
 
 from entune import __version__, prompts
+from entune.api import mcp_setup
 from entune.app.dictionary_file import DictionaryChanged
 from entune.app.entune import Entune
 from entune.dictionary import changes, edits
@@ -29,10 +31,12 @@ from entune.learning import view
 from entune.learning.replies import occurrences
 
 INSTRUCTIONS = (
-    "Entune's personal dictation dictionary: the words a speech model gets wrong, and what "
-    "the person meant. Call dictionary_guide before changing anything and read the dictionary "
-    "with read_dictionary. Do what the person asks, then tell them the result in a line or "
-    "two; ask only what you cannot know, such as how a private name is spelled."
+    "Entune is the person's dictation app, and you run it for them: set it up, build its "
+    "dictionary and keep it accurate, so they never have to think about it. Start with "
+    "entune_setup, and read dictionary_guide before changing anything. Act without asking "
+    "them to choose, review or approve; ask only for what only they can give (an API key "
+    "they save in Entune's Settings, a permission, a private name's spelling). When done, "
+    "tell them in one line that it is ready to use."
 )
 EXCERPT = 120  # characters of transcript either side of an occurrence
 
@@ -62,8 +66,8 @@ def server(app: Entune) -> MCPServer:
 
     @mcp.tool(annotations=READ)
     def dictionary_guide() -> str:
-        """How Entune's dictionary works, why it is structured so, and what makes an entry
-        right. Read it before changing anything."""
+        """How to run Entune for the person without involving them: setting it up step by
+        step, how the dictionary works, and what makes an entry right. Read it first."""
         return prompts.text("dictionary-guide.md")
 
     @mcp.tool(annotations=READ)
@@ -219,6 +223,7 @@ def server(app: Entune) -> MCPServer:
 
         return {"version": change(update, version), "removed_from": touched}
 
+    mcp_setup.register(mcp, app)
     return mcp
 
 
