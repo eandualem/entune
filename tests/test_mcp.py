@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from contextlib import closing
 from pathlib import Path
@@ -308,6 +309,8 @@ def test_a_dictation_app_folder_macos_will_not_let_entune_read_says_so(
     folder.mkdir()
     (folder / "a.wav").write_bytes(wav_bytes(bytes([1, 2]) * 16))
     assert audio_import.present(app) is True
+    if sys.platform == "win32":
+        return  # a folder's mode does not refuse reading on Windows
     folder.chmod(0)
     try:
         with pytest.raises(ValueError, match="may not read"):
