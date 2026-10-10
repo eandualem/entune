@@ -368,6 +368,23 @@ def test_another_speech_models_entries_in_these_dictations_are_shown_for_their_w
     assert entries(result, "other/model") == entries(working, "other/model")
     with pytest.raises(ValueError, match="Removals name a learned entry shown here"):
         parse(reply(removals=["claw code"]), (text,), working)
+    # Shown also when this model has its own entry for the text, unless the text is pinned.
+    both = dictionary(
+        learned={
+            "s/m": (group("Claw", "claw code"),),
+            "other/model": (group("Claude Code", "claw code"),),
+        }
+    )
+
+    def other(current: Dictionary) -> list[str]:
+        shown = json.loads(view.build(current, "s/m", snippets(text)).entries)
+        return [e["text"] for e in shown if e.get("other")]
+
+    assert other(both) == ["claw code"]
+    pinned = dictionary(
+        (group("Claw", "claw code"),), {"other/model": (group("Claude Code", "claw code"),)}
+    )
+    assert other(pinned) == []
 
 
 def test_every_occurrence_of_a_new_heard_text_is_cited_or_kept_as_written() -> None:
@@ -386,6 +403,14 @@ def test_every_occurrence_of_a_new_heard_text_is_cited_or_kept_as_written() -> N
     payload["heard"].append(again)
     (found,) = parse(payload, (text,)).learned_for("s/m")
     assert len(found.candidates[0].evidence) == 2
+
+
+def test_overlapping_occurrences_count_as_the_dictionary_step_finds_them() -> None:
+    assert replies.occurrences("go go go", "go go") == [(0, 5), (3, 8)]
+    word = {"id": "n1", "spelling": "Gogo", "meaning": "a named tool", "casing": "fixed"}
+    heard = {"text": "go go", "candidates": [candidate("n1", "text", (0, 5))]}
+    with pytest.raises(ValueError, match="occurs 2 times here, 1 cited as misheard"):
+        parse(reply([word], [heard]), ("go go go",))
 
 
 def test_a_heard_text_written_as_itself_far_more_often_than_misheard_is_sent_back() -> None:

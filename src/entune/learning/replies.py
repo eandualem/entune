@@ -364,16 +364,21 @@ def _check(evidence: Evidence, text: str, supplied: dict[str, str]) -> None:
 
 
 def occurrences(source: str, text: str) -> list[tuple[int, int]]:
-    """Every whole-word occurrence of `text` in `source`, compared as validation compares."""
+    """Every whole-word occurrence of `text` in `source`, compared as validation compares.
+    Overlapping ones count too ("go go" twice in "go go go"), since the dictionary step
+    finds a match at every word (dictionary/matching.py)."""
     words = text.split()
     if not words:
         return []
-    pattern = r"(?<!\w)" + r"\s+".join(re.escape(w) for w in words) + r"(?!\w)"
-    return [
-        (m.start(), m.end())
-        for m in re.finditer(pattern, source, re.IGNORECASE)
-        if key(m.group()) == key(text)
-    ]
+    pattern = re.compile(
+        r"(?<!\w)" + r"\s+".join(re.escape(w) for w in words) + r"(?!\w)", re.IGNORECASE
+    )
+    spans = []
+    for word in re.finditer(r"\w+", source):
+        match = pattern.match(source, word.start())
+        if match and key(match.group()) == key(text):
+            spans.append((match.start(), match.end()))
+    return spans
 
 
 def _locate(evidence: Evidence, text: str, supplied: dict[str, str]) -> Evidence:

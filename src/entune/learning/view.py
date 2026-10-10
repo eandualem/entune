@@ -60,12 +60,12 @@ def build(working: Dictionary, model: str, snippets: Sequence[Any]) -> View:
     entries = [h for h in working.effective(model) if any(occurs(t, h.text) for t in texts)]
     # Another speech model's entry for a text these dictations hold names the word the
     # person meant, which this model may never write correctly: shown, it is reused
-    # rather than defined again with the spelling this model hears.
-    own = {key(h.text) for h in working.effective(model)}
+    # rather than defined again with the spelling this model hears. One whose text is
+    # pinned is not in use anywhere: the pinned entry supersedes it.
     others: dict[str, tuple[str, list[str]]] = {}  # key -> (text, word IDs)
     for section, learned in working.learned.items():
         for h in learned:
-            if section == model or key(h.text) in own:
+            if section == model or key(h.text) in pinned:
                 continue
             if key(h.text) not in others and not any(occurs(t, h.text) for t in texts):
                 continue
