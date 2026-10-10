@@ -65,6 +65,37 @@ def test_dragged_indicator_position_survives_a_status_change(
     assert (frame.origin.x, frame.origin.y) == (350.0, 450.0)
 
 
+def test_a_pill_missing_from_this_space_is_built_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("AppKit", reason="macOS only")
+    from entune.desktop.macos.indicator import Indicator
+
+    closed: list[bool] = []
+
+    def panel(on_this_space: bool) -> SimpleNamespace:
+        return SimpleNamespace(
+            isOnActiveSpace=lambda: on_this_space,
+            frame=lambda: SimpleNamespace(origin=SimpleNamespace(x=16.0, y=16.0)),
+            orderOut_=lambda sender: None,
+            setReleasedWhenClosed_=lambda released: None,
+            close=lambda: closed.append(True),
+        )
+
+    pill = Indicator()
+    built: list[bool] = []
+
+    def build() -> None:
+        built.append(True)
+        pill._panel = panel(True)
+        pill._bars.append("bar")
+
+    monkeypatch.setattr(pill, "_build", build)
+    pill._panel, pill._placed, pill._bars = panel(False), (16.0, 16.0), ["old bar"]
+    pill._prepare()  # pinned to another Space: closed, and a new one with fresh bars
+    assert closed == built == [True] and pill._bars == ["bar"]
+    pill._prepare()  # on this Space: kept
+    assert built == [True]
+
+
 @pytest.fixture
 def cocoa(monkeypatch: pytest.MonkeyPatch) -> Any:
     pytest.importorskip("AppKit", reason="macOS only")
