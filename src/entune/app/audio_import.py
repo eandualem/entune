@@ -157,6 +157,31 @@ APPS = (
 )
 
 
+def present(app: DictationApp) -> bool:
+    """Whether `app` keeps any audio on this Mac, without reading it. A folder macOS will
+    not let Entune read raises ValueError saying which permission to grant."""
+    if app.id == "wispr":
+        root = wispr_directory()
+        return any(
+            _has_data(p) for p in [root / "flow.sqlite", *(root / "backups").glob("*.sqlite")]
+        )
+    for folder in app.folders:
+        root = Path.home() / folder
+        try:
+            # Read the folder itself: glob() hides a refused read as an empty folder.
+            next(root.iterdir(), None)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except PermissionError as exc:
+            raise ValueError(
+                f"Entune may not read {root}. Allow it in System Settings > Privacy & Security"
+                " > Files and Folders."
+            ) from exc
+        if next(root.glob(app.pattern), None) is not None:
+            return True
+    return False
+
+
 def import_app(store: Store, app_id: str) -> dict[str, int]:
     """Copy the audio another dictation app keeps, dated by when each file was written."""
     app = next((a for a in APPS if a.id == app_id), None)
