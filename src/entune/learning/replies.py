@@ -195,6 +195,14 @@ def parse_reply(
             identity = word_id(link["word"])
             word = words[identity]
             if identity in candidates:
+                # Named again by the same text in another case: its evidence counts too.
+                listed = candidates[identity]
+                if listed.basis == "text" and link["basis"] == "text":
+                    more = [_locate(_evidence(e, shown), text, supplied) for e in link["evidence"]]
+                    for e in more:
+                        _check(e, text, supplied)
+                    merged = tuple(dict.fromkeys((*listed.evidence, *more)))
+                    candidates[identity] = replace(listed, evidence=merged)
                 continue
             if identity not in kept and not word.meaning:
                 raise ValueError(

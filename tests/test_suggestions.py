@@ -379,6 +379,13 @@ def test_every_occurrence_of_a_new_heard_text_is_cited_or_kept_as_written() -> N
     evidence = payload["heard"][0]["candidates"][0]["evidence"]
     evidence.append({"dictation": "d1", "start": second, "end": second + 10})
     assert entries(parse(payload, (text,))) == {"cloud code": ["Claude Code"]}
+    # The same text listed twice, in another case, citing one occurrence each.
+    again = {**payload["heard"][0], "text": "Cloud Code"}
+    again["candidates"] = [{**again["candidates"][0], "evidence": evidence[1:]}]
+    payload["heard"][0]["candidates"][0]["evidence"] = evidence[:1]
+    payload["heard"].append(again)
+    (found,) = parse(payload, (text,)).learned_for("s/m")
+    assert len(found.candidates[0].evidence) == 2
 
 
 def test_a_heard_text_written_as_itself_far_more_often_than_misheard_is_sent_back() -> None:
