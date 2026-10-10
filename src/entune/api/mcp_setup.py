@@ -26,6 +26,7 @@ from entune.app.models import UnknownModel
 from entune.app.operations import Busy
 from entune.app.settings import DECISION_MODELS
 from entune.app.suggestion_runs import DEFAULT_EFFORT, EFFORTS, JobConflict
+from entune.dictionary.changes import Proposal
 from entune.learning import suggestion_model
 
 READ = ToolAnnotations(read_only_hint=True)
@@ -409,8 +410,12 @@ def register(mcp: MCPServer, app: Entune) -> None:
             for w in named
             if w in set(proposal.get("newWords", [])) and w in words
         ]
+
+        def unchanged(current: Proposal) -> bool:
+            return _fingerprint(current.as_json()) == build.partition(":")[2]
+
         try:
-            app.learning.accept_dictionary_build(str(state["id"]), selected)
+            app.learning.accept_dictionary_build(str(state["id"]), selected, unchanged)
         except (JobConflict, DictionaryChanged, Busy, ValueError) as exc:
             raise failed(exc) from exc
         dictionary = app.dictionary.dictionary()
@@ -544,10 +549,13 @@ def _import_paths(app: Entune, paths: list[str]) -> dict[str, Any]:
 def _token(app: Entune, proposal: dict[str, Any]) -> str:
     """The build and exactly these suggestions: a build continued after they were read
     keeps its ID but not its suggestions."""
-    # Everything applying writes: the entries and the new words' definitions.
-    changes = json.dumps([proposal["changes"], proposal["words"]], sort_keys=True).encode()
-    build = app.learning.dictionary_build_status()["id"]
-    return f"{build}:{hashlib.sha256(changes).hexdigest()[:16]}"
+    return f"{app.learning.dictionary_build_status()['id']}:{_fingerprint(proposal)}"
+
+
+def _fingerprint(proposal: dict[str, Any]) -> str:
+    """Everything applying writes: the entries and the new words' definitions."""
+    content = json.dumps([proposal["changes"], proposal["words"]], sort_keys=True).encode()
+    return hashlib.sha256(content).hexdigest()[:16]
 
 
 def _local(status: dict[str, Any], failures: dict[str, str]) -> dict[str, Any]:

@@ -18,6 +18,7 @@ from entune.app.suggestion_runs import (
     EFFORTS,
     BuildInput,
     DictionaryBuilds,
+    JobConflict,
     Source,
 )
 from entune.dictionary import changes as dictionary_changes
@@ -166,8 +167,18 @@ class Learning:
             for key, values in seconds.items()
         }
 
-    def accept_dictionary_build(self, job_id: str, selected: object = None) -> None:
+    def accept_dictionary_build(
+        self,
+        job_id: str,
+        selected: object = None,
+        expected: Callable[[Proposal], bool] | None = None,
+    ) -> None:
+        """Apply the job's proposal as `selected`. `expected` checks the proposal under the
+        same lock, so one continued since the caller read it is refused, not applied."""
+
         def save(proposal: Proposal, spec: BuildInput, covered: tuple[str, ...]) -> bool:
+            if expected is not None and not expected(proposal):
+                raise JobConflict("The suggestions changed since they were read; read them again")
             with self._dictionary.lock:
                 if proposal.version.strip('"') != self._dictionary.dictionary_version():
                     raise DictionaryChanged(

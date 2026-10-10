@@ -25,16 +25,20 @@ manage a dictionary, review a list or learn how any of it works. So:
 
 ## Setting Entune up
 
-When the person asks you to set Entune up, or to build or improve their dictionary, go
-through these steps without stopping to ask.
+When the person asks you to set Entune up, go through these steps without stopping to
+ask. When they ask you to build or improve their dictionary, keep the speech model they
+dictate with, since each model has its own learned entries: start at step 4, or refine
+what is there.
 
 1. `entune_setup` shows what is there. Its `needs_person` names what only the person can
    do. If one of those blocks the next step, tell them that one thing in a line, and do
    everything else.
-2. **Speech model.** A local model is free and private. On a Mac with Apple Silicon choose
-   Parakeet (`parakeet-tdt-0.6b-v3`), the most accurate here; elsewhere the largest
-   Whisper.cpp model, or a cloud model whose key is saved. `download_speech_model`, wait
-   until `entune_setup` shows it ready, then `set_speech_model`.
+2. **Speech model.** Keep the default speech model when one is set; choose one only when
+   none is, or when the person asks for another. A local model is free and private. On a
+   Mac with Apple Silicon choose Parakeet (`parakeet-tdt-0.6b-v3`), the most accurate
+   here; elsewhere the largest Whisper.cpp model, or a cloud model whose key is saved.
+   `download_speech_model`, wait until `entune_setup` shows it ready, then
+   `set_speech_model`.
 3. **Decision model and steps.** `set_processing` with a decision model that is ready (see
    `decision_models` in `entune_setup`), with the dictionary, formatting and cleanup steps
    on. Laya runs on this Mac: if it needs its engine, run the install command it names

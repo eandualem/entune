@@ -14,6 +14,7 @@ from starlette.testclient import TestClient
 from entune.api import mcp_setup
 from entune.app import audio_import
 from entune.app.entune import Entune
+from entune.app.suggestion_runs import JobConflict
 from entune.audio.formats import wav_bytes
 from entune.learning.suggestion_model import Request
 from entune.providers.local.contracts import LocalModelStatus
@@ -280,6 +281,10 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         assert "changed since" in call(client, "apply_suggestions", build="other")["error"]
         refused = call(client, "apply_suggestions", build=build, leave_out=["x"])
         assert "no suggestion" in refused["error"].lower()
+        # The check runs inside the apply step's lock: changed suggestions are refused there.
+        with pytest.raises(JobConflict, match="changed since"):
+            app.learning.accept_dictionary_build(build.partition(":")[0], None, lambda _: False)
+        assert call(client, "dictionary_build_status")["phase"] == "ready"
         applied = call(client, "apply_suggestions", build=build)
         assert applied["applied"] == 1 and applied["learned"] == {"stub/good": 1}
         assert call(client, "dictionary_build_status")["phase"] == "accepted"
