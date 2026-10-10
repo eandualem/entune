@@ -311,8 +311,10 @@ history is marked as final text. Filler reduction, formatting and delivered text
 never sent. Machine corrections are evidence of what the system did, not ground truth.
 
 The reply has four lists: new words (`n1`, spelling, meaning of at most 120 characters,
-casing), clearer meanings for shown words, heard entries (new ones, and shown learned ones
-in full) and removals of shown learned entries by text. A candidate names a shown or new
+casing), clearer meanings for shown words whose meaning is empty or not yet confirmed
+(the view marks them `review`; a meaning a person or their agent confirmed is refused),
+heard entries (new ones, and shown learned ones in full) and removals of shown learned
+entries by text. A false start the speaker corrects at once is not evidence. A candidate names a shown or new
 word and its basis: `text` with evidence (dictation label and character span), `literal`
 for the heard text's own word, or `existing` for a candidate the entry already had, whose
 stored evidence is restored. Pinned entries cannot be changed or removed, and a learned

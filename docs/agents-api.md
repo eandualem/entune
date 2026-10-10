@@ -49,7 +49,7 @@ ready.
 | `set_preferences` | Fast mode, leaving out long silences, and the suggestion model that builds the dictionary. |
 | `find_audio` | Which dictation apps keep recordings on this Mac, and what is already imported. |
 | `import_audio` | Import every recording a dictation app keeps, or audio files and folders. Only audio is copied, never another app's text. |
-| `start_dictionary_build` | Build the dictionary for the default speech model from imported audio (and your Entune recordings) or from your transcripts, in the background. |
+| `start_dictionary_build` | Build the dictionary for the default speech model, in the background, from imported audio (and your Entune recordings) or your transcripts that model has not learned from yet; the reply says how much it reads. |
 | `dictionary_build_status` | Where the build stands. |
 | `control_dictionary_build` | Stop a build, continue a stopped or failed one, or discard its suggestions. |
 | `read_suggestions` | A finished build's suggestions, each with its ID. |

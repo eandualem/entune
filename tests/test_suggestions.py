@@ -483,9 +483,16 @@ def test_a_stored_word_without_a_meaning_takes_the_one_suggested_or_is_refused()
 
 
 def test_a_clearer_meaning_changes_the_shared_word_for_review() -> None:
-    working = dictionary(learned={"s/m": (CLOUD,)})
+    confirmed = dictionary(learned={"s/m": (CLOUD,)})
     text = "ask cloud"
     better = [{"word": "w1", "meaning": "Anthropic's AI model family"}]
+    # A meaning a person or their agent confirmed stays as they left it.
+    assert "review" not in json.loads(view.build(confirmed, "s/m", snippets(text)).words)[0]
+    with pytest.raises(ValueError, match="confirmed"):
+        parse(reply(meanings=better), (text,), confirmed)
+    words = (replace(confirmed.words[0], needs_review=True), *confirmed.words[1:])
+    working = replace(confirmed, words=words)
+    assert json.loads(view.build(working, "s/m", snippets(text)).words)[0]["review"] is True
     result = parse(reply(meanings=better), (text,), working)
     assert result.words[0].meaning == "Anthropic's AI model family"
     proposal = dictionary_changes.propose(working, result, "s/m")
