@@ -168,13 +168,17 @@ def present(app: DictationApp) -> bool:
     for folder in app.folders:
         root = Path.home() / folder
         try:
-            if next(root.glob(app.pattern), None) is not None:
-                return True
+            # Read the folder itself: glob() hides a refused read as an empty folder.
+            next(root.iterdir(), None)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
         except PermissionError as exc:
             raise ValueError(
                 f"Entune may not read {root}. Allow it in System Settings > Privacy & Security"
                 " > Files and Folders."
             ) from exc
+        if next(root.glob(app.pattern), None) is not None:
+            return True
     return False
 
 

@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from starlette.testclient import TestClient
 
+from entune.app import audio_import
 from entune.app.entune import Entune
 from entune.audio.formats import wav_bytes
 from entune.learning.suggestion_model import Request
@@ -234,15 +235,36 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         assert change["after"] == [
             {"spelling": "Claude Code", "meaning": "The named tool Claude Code.", "new": True}
         ]
-        assert (
-            "no suggestion" in call(client, "apply_suggestions", leave_out=["x"])["error"].lower()
-        )
-        applied = call(client, "apply_suggestions")
+        build = suggestions["build"]
+        assert "replaced" in call(client, "apply_suggestions", build="other")["error"]
+        refused = call(client, "apply_suggestions", build=build, leave_out=["x"])
+        assert "no suggestion" in refused["error"].lower()
+        applied = call(client, "apply_suggestions", build=build)
         assert applied["applied"] == 1 and applied["learned"] == {"stub/good": 1}
         assert call(client, "dictionary_build_status")["phase"] == "accepted"
         assert "No suggestions are waiting" in call(client, "read_suggestions")["error"]
 
+        # A retry after a failure: the newest attempt is the one reported.
         recording = store.create_recording(WEBM_HEADER)
+        store.add_transcription(recording.id, "stub", "bad", "error", None, "HTTP 401")
         store.add_transcription(recording.id, "stub", "good", "ok", heard, None, raw_text=heard)
         (latest,) = call(client, "recent_dictations", limit=5)
         assert latest["speech_model"] == "stub/good" and latest["raw_text"] == heard
+
+
+def test_a_dictation_app_folder_macos_will_not_let_entune_read_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    app = audio_import.DictationApp("demo", "Demo", "", ("recordings",), "*.wav")
+    assert audio_import.present(app) is False  # no folder: nothing to import
+    folder = tmp_path / "recordings"
+    folder.mkdir()
+    (folder / "a.wav").write_bytes(wav_bytes(bytes([1, 2]) * 16))
+    assert audio_import.present(app) is True
+    folder.chmod(0)
+    try:
+        with pytest.raises(ValueError, match="may not read"):
+            audio_import.present(app)
+    finally:
+        folder.chmod(0o755)

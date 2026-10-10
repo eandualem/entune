@@ -322,9 +322,10 @@ def register(mcp: MCPServer, app: Entune) -> None:
 
     @mcp.tool(annotations=READ)
     def read_suggestions() -> dict[str, Any]:
-        """The suggestions of a finished build, each with its `id`: new and changed heard
-        entries with the words they stand for (spelling and meaning, `new` when the build
-        defines it), entries to remove, and clearer meanings for existing words."""
+        """The suggestions of a finished build, with the `build` to name when applying
+        them, each with its `id`: new and changed heard entries with the words they stand
+        for (spelling and meaning, `new` when the build defines it), entries to remove, and
+        clearer meanings for existing words."""
         proposal = _proposal(app)
         words = {w["id"]: w for w in proposal["words"]}
         stored = {w.id: w for w in app.dictionary.dictionary().words}
@@ -354,14 +355,17 @@ def register(mcp: MCPServer, app: Entune) -> None:
                     if change[side] is not None:
                         item[side] = [word(c["word"]) for c in change[side]["candidates"]]
             changes.append(item)
-        return {"speech_model": proposal["model"], "changes": changes}
+        build = str(app.learning.dictionary_build_status()["id"])
+        return {"build": build, "speech_model": proposal["model"], "changes": changes}
 
     @mcp.tool(annotations=EDIT)
-    def apply_suggestions(leave_out: list[str] | None = None) -> dict[str, Any]:
-        """Apply a finished build's suggestions to the dictionary, all of them or all but
-        the `id`s in `leave_out`. Refine the result afterwards with the dictionary tools,
-        as you would any entry."""
+    def apply_suggestions(build: str, leave_out: list[str] | None = None) -> dict[str, Any]:
+        """Apply the suggestions of the `build` you read with read_suggestions, all of them
+        or all but the `id`s in `leave_out`. Refine the result afterwards with the
+        dictionary tools, as you would any entry."""
         state = app.learning.dictionary_build_status()
+        if state.get("id") != build:
+            raise ToolError("Those suggestions were replaced; read_suggestions again")
         proposal = _proposal(app)
         skipped = set(leave_out or [])
         unknown = skipped - {c["id"] for c in proposal["changes"]}
@@ -406,7 +410,7 @@ def register(mcp: MCPServer, app: Entune) -> None:
         for recording in recordings:
             if not recording.transcriptions:
                 continue
-            attempt = recording.transcriptions[-1]
+            attempt = recording.transcriptions[0]  # attempts come newest first
             item: dict[str, Any] = {
                 "recording": recording.id,
                 "at": attempt.created_at,
@@ -462,6 +466,8 @@ def _summary(state: dict[str, Any]) -> dict[str, Any]:
         "applied",
     )
     summary = {f: state[f] for f in fields if f in state}
+    if "id" in state:
+        summary["build"] = state["id"]
     if state.get("phase") == "ready":
         summary["next"] = "read_suggestions, then apply_suggestions"
     return summary
