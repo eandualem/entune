@@ -12,6 +12,7 @@ import json
 import os
 import threading
 import time
+from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
@@ -314,6 +315,7 @@ def register(mcp: MCPServer, app: Entune) -> None:
         audio_ids = None
         seconds = 0.0
         unmeasured = 0
+        by_source: Counter[str] = Counter()
         if source == "audio":
             model = app.models.default_model() or ""
             learned = set() if reread else app.store.learning_covered(model, "audio")
@@ -331,6 +333,14 @@ def register(mcp: MCPServer, app: Entune) -> None:
                 )
             audio_ids = [a.id for a in chosen]
             seconds = sum(a.seconds or 0 for a in chosen)
+            # Where the recordings come from, so a count larger than the latest import
+            # explains itself (recordings an earlier build did not cover are read too).
+            by_source = Counter(
+                "entune"
+                if a.id.startswith("recording:")
+                else a.source or ("wispr" if a.name.startswith("wispr-") else "folder")
+                for a in chosen
+            )
             unmeasured = sum(a.seconds is None for a in chosen)
         try:
             state = app.learning.start_dictionary_build(
@@ -344,6 +354,7 @@ def register(mcp: MCPServer, app: Entune) -> None:
         summary = _summary(state)
         if source == "audio":
             summary["audio_minutes"] = round(seconds / 60)
+            summary["recordings_by_source"] = dict(by_source)
             if unmeasured:
                 # MP3, M4A, FLAC and OGG imports have no measured length: the minutes are
                 # a floor, not the total.
@@ -498,7 +509,11 @@ def register(mcp: MCPServer, app: Entune) -> None:
                     continue
                 outcome: dict[str, Any] = {"status": stage.status, "error": stage.error}
                 if stage.status == "skipped" and not stage.error:
-                    outcome["why"] = "nothing to do: no match or nothing to ask about"
+                    outcome["why"] = {
+                        "dictionary": "nothing to do: no dictionary entry matched",
+                        "formatting": "nothing to do: nothing to format",
+                        "cleanup": "nothing to do: no hesitation to remove",
+                    }[name]
                 elif stage.status == "disabled":
                     outcome["why"] = "the step is off"
                 if name == "dictionary":
