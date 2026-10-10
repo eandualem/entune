@@ -189,6 +189,16 @@ def test_reply_has_persistent_ids_and_validated_source_occurrences(content: str)
 def test_a_miscounted_span_is_moved_to_the_occurrence_and_an_absent_text_is_rejected() -> None:
     text = 'He said "use cloud code" and later cloud code again.'
     payload = proposed(text)
+    # The occurrence not cited stands as written, so the entry keeps that word too.
+    payload["words"].append(
+        {
+            "id": "n2",
+            "spelling": "cloud code",
+            "meaning": "code run in the cloud",
+            "casing": "ordinary",
+        }
+    )
+    payload["heard"][0]["candidates"].append({"word": "n2", "basis": "literal", "evidence": []})
     evidence = payload["heard"][0]["candidates"][0]["evidence"][0]
     real = evidence["start"]
     for start in (real + 3, real - 2, real + 25):  # off-by-some counts, as a model makes them
@@ -325,15 +335,76 @@ def test_stored_words_are_reused_by_id_and_by_name_never_defined_again() -> None
         result = parse(payload, working=stored)
         assert result.words == stored.words
         assert entries(result) == {"cloud code": ["Claude Code"]}
-    # An ordinary word is the stored one only with the same meaning.
+    # An ordinary word is the stored one with the same meaning, or when it was not shown,
+    # so the model could not reuse it. Shown and given another meaning, it is another sense.
     cache = Word("m_cache", "cache", "stored copy of data", casing="ordinary")
     working = Dictionary((cache,))
-    text = "clear the catch now"
-    for meaning, reused in (("stored copy of data", True), ("money", False)):
+    for text, meaning, reused in (
+        ("clear the catch in the cache", "stored copy of data", True),
+        ("clear the catch now", "copy of data kept nearby", True),
+        ("clear the catch in the cache", "money", False),
+    ):
         word = {"id": "n1", "spelling": "cache", "meaning": meaning, "casing": "ordinary"}
         heard = {"text": "catch", "candidates": [candidate("n1", "text", (10, 15))]}
         result = parse(reply([word], [heard]), (text,), working)
         assert (result.words == (cache,)) is reused and len(result.words) == 2 - reused
+
+
+def test_another_speech_models_entries_in_these_dictations_are_shown_for_their_words() -> None:
+    working = dictionary(learned={"other/model": (group("Claude Code", "claw code"),)})
+    text = "ask claw code to fix it"
+    shown = view.build(working, "s/m", snippets(text))
+    assert json.loads(shown.words) == [
+        {"id": "w1", "spelling": "Claude Code", "meaning": "The named tool Claude Code."}
+    ]
+    assert json.loads(shown.entries) == [{"text": "claw code", "words": ["w1"], "other": True}]
+    assert json.loads(view.build(working, "s/m", snippets("nothing here")).entries) == []
+    # This recognizer's own entry reuses the word, with evidence here; the other model's
+    # entry is not this run's to change or remove.
+    heard = {"text": "claw code", "candidates": [candidate("w1", "text", (4, 13))]}
+    result = parse(reply(heard=[heard]), (text,), working)
+    assert result.words == working.words
+    assert entries(result) == {"claw code": ["Claude Code"]}
+    assert entries(result, "other/model") == entries(working, "other/model")
+    with pytest.raises(ValueError, match="Removals name a learned entry shown here"):
+        parse(reply(removals=["claw code"]), (text,), working)
+
+
+def test_every_occurrence_of_a_new_heard_text_is_cited_or_kept_as_written() -> None:
+    text = "use cloud code daily; cloud code helps"
+    payload = proposed(text)
+    with pytest.raises(ValueError, match="occurs 2 times here and 1 cited as misheard"):
+        parse(payload, (text,))
+    second = text.rindex("cloud code")
+    evidence = payload["heard"][0]["candidates"][0]["evidence"]
+    evidence.append({"dictation": "d1", "start": second, "end": second + 10})
+    assert entries(parse(payload, (text,))) == {"cloud code": ["Claude Code"]}
+
+
+def test_a_heard_text_written_as_itself_far_more_often_than_misheard_is_sent_back() -> None:
+    fast = {"id": "n1", "spelling": "fast", "meaning": "quick", "casing": "ordinary"}
+    first = {"id": "n2", "spelling": "first", "meaning": "before all others", "casing": "ordinary"}
+    for text, sent_back in (
+        ("first the first step, first thing first; then first mode is on", True),
+        ("first the first step, first thing; then first mode is on", False),
+    ):
+        start = text.index("first mode")
+        heard = {
+            "text": "first",
+            "candidates": [candidate("n1", "text", (start, start + 5)), candidate("n2", "literal")],
+        }
+        if sent_back:
+            with pytest.raises(ValueError, match='"first mode", not "first"'):
+                parse(reply([fast, first], [heard]), (text,))
+        else:
+            assert entries(parse(reply([fast, first], [heard]), (text,))) == {
+                "first": ["fast", "first"]
+            }
+    # The longer heard text around the misrecognition is the safe entry.
+    mode = {"id": "n1", "spelling": "fast mode", "meaning": "transcribes while you speak"}
+    heard = {"text": "first mode", "candidates": [candidate("n1", "text", (start, start + 10))]}
+    result = parse(reply([{**mode, "casing": "ordinary"}], [heard]), (text,))
+    assert entries(result) == {"first mode": ["fast mode"]}
 
 
 def test_a_stored_word_without_a_meaning_takes_the_one_suggested_or_is_refused() -> None:
