@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import threading
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
@@ -243,16 +244,28 @@ def register(mcp: MCPServer, app: Entune) -> None:
         recordings on this Mac (import one with import_audio), the audio already imported,
         and the person's own Entune recordings. More audio teaches the dictionary more;
         import every app that has recordings."""
+        with app.data.using_data("audio listing"):
+            stored = app.store.learning_audio()
+        imported = [a for a, _ in stored if not a.id.startswith("recording:")]
+        # Imports made before the source was kept fall back to Wispr Flow's file names.
+        sources = [
+            a.source or ("wispr" if a.name.startswith("wispr-") else "folder") for a in imported
+        ]
         apps = []
         for item in audio_import.APPS:
             try:
                 found, note = audio_import.present(item), None
             except ValueError as exc:
                 found, note = False, str(exc)
-            apps.append({"id": item.id, "name": item.name, "has_audio": found, "note": note})
-        with app.data.using_data("audio listing"):
-            stored = app.store.learning_audio()
-        imported = [a for a, _ in stored if not a.id.startswith("recording:")]
+            apps.append(
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "has_audio": found,
+                    "imported": sources.count(item.id),
+                    "note": note,
+                }
+            )
         return {
             "apps": apps,
             "imported": {
@@ -283,14 +296,15 @@ def register(mcp: MCPServer, app: Entune) -> None:
     def start_dictionary_build(
         source: Literal["audio", "history"] = "audio",
         include_recordings: bool = False,
-        reread_history: bool = False,
+        reread: bool = False,
         effort: str = DEFAULT_EFFORT,
     ) -> dict[str, Any]:
         """Build the dictionary for the default speech model. With source "audio", the
-        imported audio is transcribed again with that model (with `include_recordings`,
-        the person's own Entune recordings too) and the suggestion model proposes entries
-        while it runs; with "history", it reads the person's transcripts not learned from
-        yet (all of them with `reread_history`). It runs in the
+        imported audio this model has not learned from yet (all of it with `reread`) is
+        transcribed again with that model (with `include_recordings`, the person's own
+        Entune recordings too) and the suggestion model proposes entries while it runs;
+        with "history", it reads the person's transcripts not learned from yet (all of them
+        with `reread`). The reply says how many recordings or transcripts it reads. It runs in the
         background: check dictionary_build_status, then read_suggestions and
         apply_suggestions. A local speech model costs nothing; a cloud one is billed per
         minute of audio to the person's key. `effort` is the suggestion model's reasoning:
@@ -298,19 +312,43 @@ def register(mcp: MCPServer, app: Entune) -> None:
         if effort not in EFFORTS:
             raise ToolError(f"Choose an effort: {', '.join(EFFORTS)}")
         audio_ids = None
-        if source == "audio" and include_recordings:
+        seconds = 0.0
+        unmeasured = 0
+        if source == "audio":
+            model = app.models.default_model() or ""
+            learned = set() if reread else app.store.learning_covered(model, "audio")
             with app.data.using_data("audio listing"):
-                audio_ids = [a.id for a, _ in app.store.learning_audio()]
+                chosen = [
+                    a
+                    for a, _ in app.store.learning_audio()
+                    if (include_recordings or not a.id.startswith("recording:"))
+                    and a.id not in learned
+                ]
+            if not chosen:
+                raise ToolError(
+                    "No audio this speech model has not learned from: import more, or pass"
+                    " reread to read it all again"
+                )
+            audio_ids = [a.id for a in chosen]
+            seconds = sum(a.seconds or 0 for a in chosen)
+            unmeasured = sum(a.seconds is None for a in chosen)
         try:
             state = app.learning.start_dictionary_build(
                 source,
-                scope="all" if reread_history else "new",
+                scope="all" if reread else "new",
                 audio_ids=audio_ids,
                 effort=effort,
             )
         except (JobConflict, Busy, ValueError) as exc:
             raise failed(exc) from exc
-        return _summary(state)
+        summary = _summary(state)
+        if source == "audio":
+            summary["audio_minutes"] = round(seconds / 60)
+            if unmeasured:
+                # MP3, M4A, FLAC and OGG imports have no measured length: the minutes are
+                # a floor, not the total.
+                summary["recordings_without_length"] = unmeasured
+        return summary
 
     @mcp.tool(annotations=READ)
     def dictionary_build_status() -> dict[str, Any]:
@@ -376,6 +414,8 @@ def register(mcp: MCPServer, app: Entune) -> None:
                 for side in ("before", "after"):
                     if change[side] is not None:
                         item[side] = [word(c["word"]) for c in change[side]["candidates"]]
+                if change["kind"] == "update" and item["before"] == item["after"]:
+                    item["note"] = "same words; only the evidence behind them changes"
             changes.append(item)
         return {
             "build": _token(app, proposal),
@@ -474,29 +514,42 @@ LLM_PROVIDERS = suggestion_model.LLM_PROVIDERS
 
 
 def _summary(state: dict[str, Any]) -> dict[str, Any]:
-    """A build's state without its proposal or internal fields."""
-    fields = (
-        "phase",
-        "outcome",
-        "source",
-        "model",
-        "dictionaryModel",
-        "effort",
-        "completed",
-        "total",
-        "skipped",
-        "skippedReason",
-        "step",
-        "steps",
-        "completedBatches",
-        "coveredInputs",
-        "error",
-        "errorDetail",
-        "applied",
-    )
-    summary = {f: state[f] for f in fields if f in state}
-    if "id" in state:
-        summary["build"] = state["id"]
+    """A build's state as the tools name things: where it stands, how far it is, and what
+    is next, without its proposal or the page's internal fields."""
+    names = {
+        "phase": "phase",
+        "id": "build",
+        "outcome": "outcome",
+        "source": "source",
+        "model": "speech_model",
+        "dictionaryModel": "suggestion_model",
+        "effort": "effort",
+        "skipped": "skipped_recordings",
+        "skippedReason": "skipped_reason",
+        "error": "error",
+        "errorDetail": "error_detail",
+        "applied": "applied",
+    }
+    summary = {new: state[old] for old, new in names.items() if state.get(old) is not None}
+    if state.get("source") == "audio":
+        summary["recordings"] = {
+            "transcribed": state.get("completed", 0),
+            "of": state.get("total", 0),
+        }
+    elif state.get("source") == "history":
+        summary["transcripts"] = state.get("total", 0)
+    if "completedBatches" in state:
+        parts: dict[str, Any] = {
+            "done": state["completedBatches"],
+            "of": state.get("steps") or None,
+        }
+        if state.get("stepStartedAt"):
+            # A part takes minutes at high effort: this says it is still going.
+            parts["running"] = state.get("step")
+            parts["running_for_seconds"] = round(time.time() - float(state["stepStartedAt"]))
+        if (state.get("attempt") or 1) > 1 and state.get("brokenRule"):
+            parts["fixing"] = state["brokenRule"]
+        summary["parts"] = parts
     if state.get("phase") == "ready":
         summary["next"] = "read_suggestions, then apply_suggestions"
     return summary

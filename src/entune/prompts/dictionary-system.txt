@@ -36,6 +36,8 @@ which was meant.
   little sense as written and a term that sounds alike fits, or the context names the
   term plainly. A name or term is worth an entry from one occurrence; skip one-off
   garbles and one-off slips on everyday words that are usually right.
+- A false start the speaker corrects at once ("open the Fig, um, Figma file") is not
+  evidence: the first wording was a change of mind, not a mishearing.
 - Never invent a spelling. If the intended term is a private name whose spelling these
   dictations and words do not show, leave it out.
 - Never propose one name as a mishearing of another name the person uses for the same
@@ -76,7 +78,8 @@ which was meant.
 
 ## Input
 
-Words: {"id": "w1", "spelling", "meaning"}.
+Words: {"id": "w1", "spelling", "meaning", "review": true when its meaning may be revised; the
+others are confirmed and stay as they are}.
 Heard entries: {"text": "what the recognizer writes", "words": ["w1", ...], "pinned":
 true when the person's own, "other": true when another recognizer's}.
 Dictations: {"id": "d1", "text", optional "after_dictionary" and "decisions"}.
@@ -91,8 +94,8 @@ JSON only:
  "removals": ["heard text"]}
 
 - "words": only new words, with ids n1, n2, ...
-- "meanings": a clearer meaning for a shown word, only when a dictation shows the current
-  one misleads.
+- "meanings": a clearer meaning for a shown word marked "review", only when a dictation
+  shows the current one misleads.
 - "heard": each new heard entry, and each shown learned entry you change, in full: list
   every candidate it keeps. A candidate names a word, w1 or n1.
   basis "text": a dictation used the heard text for this word; evidence lists at least

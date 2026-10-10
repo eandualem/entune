@@ -268,7 +268,10 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         assert "app_id or paths" in call(client, "import_audio")["error"]
         assert call(client, "find_audio")["imported"]["count"] == 2
 
-        assert call(client, "start_dictionary_build")["phase"] in ("queued", "transcribing")
+        started = call(client, "start_dictionary_build")
+        assert started["phase"] in ("queued", "transcribing")
+        assert started["recordings"] == {"transcribed": 0, "of": 2} and "audio_minutes" in started
+        assert started["speech_model"] == "stub/good"  # the tools' own names, not the page's
         assert wait_for_build(client)["phase"] == "ready"
         status = call(client, "dictionary_build_status")
         assert status["phase"] == "ready" and status["next"]
@@ -290,6 +293,12 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         assert applied["applied"] == 1 and applied["learned"] == {"stub/good": 1}
         assert call(client, "dictionary_build_status")["phase"] == "accepted"
         assert "No suggestions are waiting" in call(client, "read_suggestions")["error"]
+        # Audio this model learned from is not read again unless asked.
+        assert "has not learned from" in call(client, "start_dictionary_build")["error"]
+        again = call(client, "start_dictionary_build", reread=True)
+        assert again["recordings"]["of"] == 2
+        assert wait_for_build(client)["phase"] == "ready"
+        assert call(client, "control_dictionary_build", action="discard")["phase"] == "discarded"
 
         # A retry after a failure: the newest attempt is the one reported.
         recording = store.create_recording(WEBM_HEADER)

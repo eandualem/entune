@@ -42,16 +42,17 @@ what is there.
 3. **Decision model and steps.** `set_processing` with a decision model that is ready (see
    `decision_models` in `entune_setup`), with the dictionary, formatting and cleanup steps
    on. Laya runs on this Mac: if it needs its engine, run the install command it names
-   yourself.
+   yourself; if you cannot run commands, tell the person that one command.
 4. **Audio to learn from.** `find_audio`, then `import_audio` for every dictation app that
    has recordings, and for any folder of the person's recordings you know of. The more
    audio, the better the dictionary.
-5. **Build.** `start_dictionary_build` with source "audio" (`include_recordings` true when
-   the person has dictated with Entune). It runs in the background: check
-   `dictionary_build_status` every minute or two, and if it stops or fails, continue it
-   with `control_dictionary_build`. A cloud speech model is billed per minute of audio:
-   if the build would transcribe hours with one, say so in a line as it starts, without
-   waiting for an answer.
+5. **Build.** `start_dictionary_build` with source "audio" (`include_recordings` true
+   when the person has dictated with Entune). It reads only audio this speech model has
+   not learned from yet, and says how many recordings and minutes. It runs in the
+   background: check `dictionary_build_status` every minute or two, and if it stops or
+   fails, continue it with `control_dictionary_build`. A cloud speech model is billed
+   per minute of audio: if the build would transcribe hours with one, say so in a line
+   as it starts, without waiting for an answer.
 6. **Apply.** `read_suggestions`, then `apply_suggestions`, leaving out only suggestions
    that break the rules below.
 7. **Refine** the result with the dictionary tools, as you would any entries: common
@@ -147,8 +148,10 @@ words are capitalised only at the start of a sentence.
 - A name has the wrong spelling or capitals, or a description is wrong or vague.
 - A word is defined twice for the same thing.
 - An entry offers only the heard text's own word: it changes nothing but capitals.
-- A word is flagged `needs_review`: it has no description, or suggestions wrote it and
-  no one has confirmed it. Confirm or improve it yourself with `set_word`.
+- A word is flagged `needs_review`: it has no description, or a build filled one in and
+  no one has confirmed it. Confirm or improve it yourself with `set_word`. Applying
+  suggestions confirms the words they define, so check new words as you refine. A build
+  revises only a meaning that is empty or flagged; one you set stays as you left it.
 
 ## Working with the tools
 

@@ -150,7 +150,14 @@ def parse_reply(
         meaning = _meaning(item["meaning"], spelling)
         same = _same(spelling, meaning, item["casing"], (*stored.values(), *new.values()), unseen)
         if same is None:
-            same = Word("w_" + uuid.uuid4().hex, spelling, meaning, casing=item["casing"])
+            # Not confirmed until applied, so a later part of the run can still refine it.
+            same = Word(
+                "w_" + uuid.uuid4().hex,
+                spelling,
+                meaning,
+                casing=item["casing"],
+                needs_review=True,
+            )
             new[same.id] = same
         elif not same.meaning:
             # A stored word without a description takes this one, for the person to review.
@@ -173,6 +180,10 @@ def parse_reply(
             raise ValueError(f"Describe each shown word at most once: {item['word']}")
         described.add(shown_id)
         word = words[shown_id]
+        if word.meaning and not word.needs_review:
+            raise ValueError(
+                f"{word.spelling}'s meaning is confirmed; revise only meanings marked review"
+            )
         words[shown_id] = replace(word, meaning=_meaning(item["meaning"], word.spelling))
 
     replied: dict[str, Heard] = {}

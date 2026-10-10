@@ -87,7 +87,13 @@ def build(working: Dictionary, model: str, snippets: Sequence[Any]) -> View:
         w for w in working.words if w.id in named or any(occurs(text, w.spelling) for text in texts)
     ]
     labels = {w.id: f"w{number}" for number, w in enumerate(shown, 1)}
-    words = [{"id": labels[w.id], "spelling": w.spelling, "meaning": w.meaning} for w in shown]
+    words = [
+        {"id": labels[w.id], "spelling": w.spelling, "meaning": w.meaning}
+        # A meaning may be revised only when it is missing or not yet confirmed: one a
+        # person or their agent confirmed stays as they left it.
+        | ({"review": True} if not w.meaning or w.needs_review else {})
+        for w in shown
+    ]
     heard = []
     for entry in entries:
         item: dict[str, object] = {
