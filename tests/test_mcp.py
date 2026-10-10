@@ -313,6 +313,7 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         assert latest["speech_model"] == "stub/good" and latest["raw_text"] == heard
         assert latest["dictionary"]["why"] == "nothing to do: no dictionary entry matched"
         assert latest["formatting"]["why"] == "the step is off"
+        assert latest["processing_state"] == "processing" and latest["notice"] is None
 
 
 def test_a_dictation_app_folder_macos_will_not_let_entune_read_says_so(
@@ -351,3 +352,28 @@ def test_the_build_token_covers_the_new_words_definitions_too() -> None:
     assert token.startswith("b1:") and token == mcp_setup._token(app, proposal)
     revised = {**proposal, "words": [{"id": "n1", "meaning": "revised"}]}
     assert mcp_setup._token(app, revised) != token
+
+
+def test_a_build_for_audio_chosen_for_another_speech_model_is_refused(tmp_path: Path) -> None:
+    async def suggest(_: Request) -> str:
+        return json.dumps(proposed("hello there, I use cloud code"))
+
+    store = Store(tmp_path / "data")
+    app = Entune(store, [StubProvider()], llm_call=suggest)
+    app.settings.set_key("stub", "speech-key")
+    app.settings.set_key("openai", "suggestion-key")
+    app.models.set_default_model("stub/good")
+    with closing(store), TestClient(create_app(app), base_url="http://localhost") as client:
+        folder = tmp_path / "audio"
+        folder.mkdir()
+        (folder / "a.wav").write_bytes(wav_bytes(bytes([5, 9]) * 16))
+        call(client, "import_audio", paths=[str(folder)])
+        covered = app.store.learning_covered
+
+        def switched(model: str, source: str) -> set[str]:
+            app.models.set_default_model("stub/bad")  # changed while the audio is chosen
+            return covered(model, source)
+
+        app.store.learning_covered = switched  # type: ignore[method-assign]
+        assert "changed as the build started" in call(client, "start_dictionary_build")["error"]
+        assert wait_for_build(client)["phase"] == "cancelled"

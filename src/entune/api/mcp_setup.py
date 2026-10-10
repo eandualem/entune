@@ -313,11 +313,12 @@ def register(mcp: MCPServer, app: Entune) -> None:
         if effort not in EFFORTS:
             raise ToolError(f"Choose an effort: {', '.join(EFFORTS)}")
         audio_ids = None
+        model = ""
         seconds = 0.0
         unmeasured = 0
         by_source: Counter[str] = Counter()
         if source == "audio":
-            model = app.models.default_model() or ""
+            model = app.models.default_model() or ""  # the build must be for this one
             learned = set() if reread else app.store.learning_covered(model, "audio")
             with app.data.using_data("audio listing"):
                 chosen = [
@@ -351,6 +352,11 @@ def register(mcp: MCPServer, app: Entune) -> None:
             )
         except (JobConflict, Busy, ValueError) as exc:
             raise failed(exc) from exc
+        if source == "audio" and state.get("model") != model:
+            # The default changed between choosing the audio and starting: the audio was
+            # chosen for another model's dictionary, so this build stops at once.
+            app.learning.cancel_dictionary_build(str(state["id"]))
+            raise ToolError("The default speech model changed as the build started; start it again")
         summary = _summary(state)
         if source == "audio":
             summary["audio_minutes"] = round(seconds / 60)
@@ -499,6 +505,9 @@ def register(mcp: MCPServer, app: Entune) -> None:
                 "error": attempt.error,
                 "raw_text": attempt.raw_text,
                 "text": attempt.text,
+                # "cancelled": the text was saved but never delivered; "complete": delivered.
+                "processing_state": attempt.processing_state,
+                "notice": recording.notice,
             }
             for name, stage in (
                 ("dictionary", attempt.correction),
