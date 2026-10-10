@@ -16,6 +16,23 @@ from entune.processing import jev, jev_client, text_edits
 from entune.processing.results import Processed, Selection, Stage, pending
 from entune.processing.text_edits import Change
 
+# A long text asks more and answers slower: past LONG_CHARS characters, the time limits
+# grow by half for every LONG_CHARS more, up to LONG_FACTOR times the settings. Measured
+# in October 2026, formatting's median grew from 0.4 s under 500 characters to 1.8 s at
+# 3,000 to 6,000, and the slowest successes reached 5 s, past the 3 s an attempt had.
+LONG_CHARS = 1000
+LONG_FACTOR = 3.0
+
+
+def scaled(policy: jev_client.Policy, characters: int) -> jev_client.Policy:
+    """The time limits for a text this long; a text up to LONG_CHARS keeps the settings."""
+    factor = min(LONG_FACTOR, 1 + max(0, characters - LONG_CHARS) / (2 * LONG_CHARS))
+    return replace(
+        policy,
+        total_seconds=min(30.0, policy.total_seconds * factor),
+        attempt_seconds=min(30.0, policy.attempt_seconds * factor),
+    )
+
 
 def process_text(
     raw: str,
@@ -37,6 +54,7 @@ def process_text(
     """Run the enabled stages at once on the speech model's text, within one wall-clock
     budget including retries and backoff, and apply their edits together. A stage that
     fails keeps its edits out; the others still apply theirs."""
+    policy = scaled(policy, len(raw))
     deadline = time.monotonic() + policy.total_seconds
     initial = pending(
         raw,

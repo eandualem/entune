@@ -18,6 +18,7 @@ from entune.app.entune import Entune
 from entune.app.suggestion_runs import JobConflict
 from entune.audio.formats import wav_bytes
 from entune.learning.suggestion_model import Request
+from entune.processing.results import Processed, Stage
 from entune.providers.local.contracts import LocalModelStatus
 from entune.server import create_app
 from entune.storage.store import Store
@@ -303,9 +304,14 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         # A retry after a failure: the newest attempt is the one reported.
         recording = store.create_recording(WEBM_HEADER)
         store.add_transcription(recording.id, "stub", "bad", "error", None, "HTTP 401")
-        store.add_transcription(recording.id, "stub", "good", "ok", heard, None, raw_text=heard)
+        steps = Processed(heard, Stage("skipped", "contextual"), Stage("disabled", "formatting"))
+        store.add_transcription(
+            recording.id, "stub", "good", "ok", heard, None, raw_text=heard, processing=steps
+        )
         (latest,) = call(client, "recent_dictations", limit=5)
         assert latest["speech_model"] == "stub/good" and latest["raw_text"] == heard
+        assert latest["dictionary"]["why"].startswith("nothing to do")
+        assert latest["formatting"]["why"] == "the step is off"
 
 
 def test_a_dictation_app_folder_macos_will_not_let_entune_read_says_so(

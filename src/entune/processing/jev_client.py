@@ -241,7 +241,9 @@ class Client:
                 httpx.NetworkError,
                 httpx.RemoteProtocolError,
             ) as exc:
-                error = f"{type(exc).__name__}: {exc}".replace(call.key, "")
+                # A timeout carries no message of its own: say how long it waited.
+                said = str(exc) or f"no answer within {budget:.1f} s"
+                error = f"{type(exc).__name__}: {said}".replace(call.key, "")
             except httpx.HTTPError as exc:
                 raise JevError(f"{type(exc).__name__}: {exc}".replace(call.key, "")) from exc
             if call.attempts >= call.policy.max_attempts:

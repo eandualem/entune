@@ -19,7 +19,7 @@ from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import entries as dictionary_entries
 from entune.dictionary import matching
 from entune.processing import jev, jev_client, text_edits
-from entune.processing.pipeline import process_text
+from entune.processing.pipeline import process_text, scaled
 from entune.processing.results import Processed
 from entune.server import create_app
 from entune.storage.store import Store
@@ -853,3 +853,29 @@ def test_probabilities_rounded_to_two_decimals_are_usable(total: float, usable: 
     else:
         with pytest.raises(jev_client.JevError, match="malformed"):
             jev_client._probabilities(answer, {"a", "b", "c", "d"})
+
+
+def test_a_long_text_gets_more_time_up_to_three_times_the_settings() -> None:
+    policy = jev_client.Policy(total_seconds=5.0, attempt_seconds=3.0)
+    assert scaled(policy, 800) == policy  # a short text keeps the settings
+    longer = scaled(policy, 3000)
+    assert (longer.total_seconds, longer.attempt_seconds) == (10.0, 6.0)
+    longest = scaled(policy, 50_000)
+    assert (longest.total_seconds, longest.attempt_seconds) == (15.0, 9.0)
+    near_cap = scaled(jev_client.Policy(total_seconds=20.0, attempt_seconds=3.0), 50_000)
+    assert near_cap.total_seconds == 30.0 and near_cap.max_attempts == 2
+
+
+def test_an_attempt_that_times_out_says_how_long_it_waited() -> None:
+    async def slow(_: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(1)
+        return httpx.Response(200, json={})
+
+    policy = jev_client.Policy(total_seconds=2.0, attempt_seconds=0.1, max_attempts=1)
+    # Python's own timeout carries no message: the error names the wait instead.
+    named = r"TimeoutError: no answer within 0\.1 s"
+    with (
+        closing(jev_client.Client(httpx.MockTransport(slow))) as client,
+        pytest.raises(jev_client.JevError, match=named),
+    ):
+        jev.decide("Jeff", matches(GROUPS, "Jeff"), call(client, policy))
