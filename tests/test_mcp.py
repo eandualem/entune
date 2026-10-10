@@ -235,10 +235,10 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         local = LocalModelStatus("tiny", "Tiny", 1, "", "absent", 0.0, None, "local")
         monkeypatch.setattr(app.models, "local_models", lambda: [local])
 
-        def refused(name: str) -> None:
+        def cannot_download(name: str) -> None:
             raise PermissionError("cannot create the models folder")
 
-        monkeypatch.setattr(app.models, "download_local_model", refused)
+        monkeypatch.setattr(app.models, "download_local_model", cannot_download)
         assert call(client, "download_speech_model", name="tiny")["state"] == "downloading"
         deadline = time.monotonic() + 2
         while (m := call(client, "entune_setup")["local_models"][0])["state"] != "error":
