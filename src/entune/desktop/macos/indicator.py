@@ -262,8 +262,19 @@ class Indicator:
     def _prepare(self) -> None:
         if self._panel is None:
             self._build()
-        else:
-            self._save_dragged_origin()
+            return
+        self._save_dragged_origin()
+        if not self._panel.isOnActiveSpace():
+            # macOS can pin the pill to one Space while Entune runs (seen on macOS 27):
+            # sticky, yet on that Space alone, and no collection behavior, set again or
+            # cleared first, brings it back. A new panel is on every Space.
+            self._panel.orderOut_(None)
+            self._panel.setReleasedWhenClosed_(False)
+            self._panel.close()
+            self._bars.clear()
+            self._bullets.clear()
+            self._build()
+            print("pill: was missing from this Space; a new one is on every Space", flush=True)
 
     def _describe(self, text: str) -> None:
         """What the pill says without words on it: VoiceOver's label, and the tooltip."""
@@ -304,14 +315,6 @@ class Indicator:
         self._panel.invalidateShadow()
         self._placed = origin
         self._panel.orderFrontRegardless()
-        if not self._panel.isOnActiveSpace():
-            # macOS can stop keeping the pill on every Space while Entune runs (seen on
-            # macOS 27), and a restart fixed it. The same behavior set again is ignored,
-            # so it is cleared first.
-            self._panel.setCollectionBehavior_(AppKit.NSWindowCollectionBehaviorDefault)
-            self._panel.setCollectionBehavior_(EVERY_SPACE)
-            self._panel.orderFrontRegardless()
-            print("pill: was missing from this Space; on every Space again", flush=True)
 
     def _button(
         self, label: str, call: Callable[[], None], primary: bool, x: float, dark: bool
