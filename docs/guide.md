@@ -487,7 +487,9 @@ stage output and occurrence-selection provenance is saved internally. History sh
 only the final result for each attempt; canceled attempts show an audio-saved notice.
 Settings › Corrections & formatting › Advanced controls the processing wait: initially five seconds
 total across correction, cleanup and formatting, three per attempt, and at most two
-attempts per request. Each applicable stage sends one request before retries. Transient
+attempts per request. A dictation longer than 1,000 characters asks more and gets more:
+both limits grow by half for every 1,000 characters beyond that, up to three times the
+setting (at 3,000 characters, ten seconds and six per attempt). Each applicable stage sends one request before retries. Transient
 failures can retry within that shared deadline. Explicit exhausted-credit, authentication
 and authorization errors return immediately, including explicit credit failures in HTTP 429.
 These are configurable defaults, not an accuracy or end-to-end latency guarantee. **Copy original** in history

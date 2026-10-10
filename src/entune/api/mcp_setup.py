@@ -497,6 +497,10 @@ def register(mcp: MCPServer, app: Entune) -> None:
                 if stage is None:
                     continue
                 outcome: dict[str, Any] = {"status": stage.status, "error": stage.error}
+                if stage.status == "skipped" and not stage.error:
+                    outcome["why"] = "nothing to do: no match or nothing to ask about"
+                elif stage.status == "disabled":
+                    outcome["why"] = "the step is off"
                 if name == "dictionary":
                     outcome.update(
                         replaced=[

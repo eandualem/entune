@@ -19,7 +19,7 @@ from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import entries as dictionary_entries
 from entune.dictionary import matching
 from entune.processing import jev, jev_client, text_edits
-from entune.processing.pipeline import process_text
+from entune.processing.pipeline import process_text, scaled
 from entune.processing.results import Processed
 from entune.server import create_app
 from entune.storage.store import Store
@@ -181,7 +181,8 @@ def test_total_deadline_cancels_a_dripping_body_and_releases_the_socket() -> Non
     ) as client:
         context = call(client, jev_client.Policy(total_seconds=0.15, attempt_seconds=1.0))
         started = time.monotonic()
-        with pytest.raises(jev_client.JevError):
+        # A timeout says how long it waited: Python's own carries no message.
+        with pytest.raises(jev_client.JevError, match=r"no answer within 0\.\d s"):
             jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
         elapsed = time.monotonic() - started
         assert 0.1 <= elapsed < 0.6
@@ -853,3 +854,14 @@ def test_probabilities_rounded_to_two_decimals_are_usable(total: float, usable: 
     else:
         with pytest.raises(jev_client.JevError, match="malformed"):
             jev_client._probabilities(answer, {"a", "b", "c", "d"})
+
+
+def test_a_long_text_gets_more_time_up_to_three_times_the_settings() -> None:
+    policy = jev_client.Policy(total_seconds=5.0, attempt_seconds=3.0)
+    assert scaled(policy, 800) == policy  # a short text keeps the settings
+    longer = scaled(policy, 3000)
+    assert (longer.total_seconds, longer.attempt_seconds) == (10.0, 6.0)
+    longest = scaled(policy, 50_000)
+    assert (longest.total_seconds, longest.attempt_seconds) == (15.0, 9.0)
+    near_cap = scaled(jev_client.Policy(total_seconds=20.0, attempt_seconds=3.0), 50_000)
+    assert near_cap.total_seconds == 30.0 and near_cap.max_attempts == 2
