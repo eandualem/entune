@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any, Literal
@@ -14,7 +15,14 @@ from pydantic import BaseModel, ConfigDict
 from entune.dictionary import document as dictionary_document
 from entune.dictionary.entries import Candidate, Dictionary, Evidence, Heard, Word, key
 from entune.learning import view
-from entune.learning.batches import sources
+from entune.learning.batches import source_id, sources
+
+# A new heard entry whose text stands as written in a part's dictations at least this
+# many times, and this many times as often as it is cited as misheard, is sent back: the
+# decision model would be asked at every use and would sometimes replace one wrongly. The
+# longer heard text around the misrecognition ("first mode", not "first") is safer.
+AS_WRITTEN_MIN = 4
+AS_WRITTEN_RATIO = 4
 
 # The reply's shape, the compact form the model sees the dictionary in (learning/view.py):
 # labels instead of IDs, and only what the model decides. Every field is required, so a
@@ -88,25 +96,24 @@ def _meaning(text: str, spelling: str) -> str:
     return text
 
 
-def _same(spelling: str, meaning: str, casing: str, words: Sequence[Word]) -> Word | None:
+def _same(
+    spelling: str, meaning: str, casing: str, words: Sequence[Word], unseen: set[str]
+) -> Word | None:
     """The stored word a new one is: a name is written one way, so a name spelled like a
     stored one is that word (exact spelling first, then one ignoring capitals); an
-    ordinary word is the stored one only when its meaning is the same too."""
+    ordinary word is the stored one when its meaning is the same too, or when the one
+    word of that spelling is `unseen` (an ID not shown to the model, which therefore
+    could not reuse it). A word shown and defined again is another sense."""
     if casing == "fixed":
         names = [w for w in words if w.casing == "fixed"]
         exact = [w for w in names if w.spelling == spelling]
         alike = [w for w in names if key(w.spelling) == key(spelling)]
         return exact[0] if exact else alike[0] if len(alike) == 1 else None
-    return next(
-        (
-            w
-            for w in words
-            if w.casing == "ordinary"
-            and key(w.spelling) == key(spelling)
-            and key(w.meaning) == key(meaning)
-        ),
-        None,
-    )
+    ordinary = [w for w in words if w.casing == "ordinary" and key(w.spelling) == key(spelling)]
+    meant = next((w for w in ordinary if key(w.meaning) == key(meaning)), None)
+    if meant is not None:
+        return meant
+    return ordinary[0] if len(ordinary) == 1 and ordinary[0].id in unseen else None
 
 
 def parse_reply(
@@ -127,6 +134,7 @@ def parse_reply(
     learned = {key(h.text): h for h in working.learned_for(model)}
     pinned = {key(h.text) for h in working.pinned}
     supplied = sources(transcripts)
+    unseen = {w.id for w in working.words} - set(shown.word_ids.values())
 
     # New words: a stored word when it is the same, else a new ID assigned once.
     labels: dict[str, str] = {}
@@ -140,7 +148,7 @@ def parse_reply(
         if not spelling:
             raise ValueError(f"Word {label} needs a spelling")
         meaning = _meaning(item["meaning"], spelling)
-        same = _same(spelling, meaning, item["casing"], (*stored.values(), *new.values()))
+        same = _same(spelling, meaning, item["casing"], (*stored.values(), *new.values()), unseen)
         if same is None:
             same = Word("w_" + uuid.uuid4().hex, spelling, meaning, casing=item["casing"])
             new[same.id] = same
@@ -188,6 +196,14 @@ def parse_reply(
             identity = word_id(link["word"])
             word = words[identity]
             if identity in candidates:
+                # Named again by the same text in another case: its evidence counts too.
+                listed = candidates[identity]
+                if listed.basis == "text" and link["basis"] == "text":
+                    more = [_locate(_evidence(e, shown), text, supplied) for e in link["evidence"]]
+                    for e in more:
+                        _check(e, text, supplied)
+                    merged = tuple(dict.fromkeys((*listed.evidence, *more)))
+                    candidates[identity] = replace(listed, evidence=merged)
                 continue
             if identity not in kept and not word.meaning:
                 raise ValueError(
@@ -251,6 +267,8 @@ def parse_reply(
         if before is not None and any(c.basis != "literal" for c in before.candidates):
             emptied.add(text)
 
+    _accounted(replied, learned, supplied, Counter(source_id(t) for t in transcripts))
+
     result = dict(learned)
     for text in data["removals"]:
         if key(text) in pinned:
@@ -279,6 +297,52 @@ def parse_reply(
     return dictionary_document.validate(Dictionary(kept_words, working.pinned, sections))
 
 
+def _accounted(
+    replied: dict[str, Heard],
+    learned: dict[str, Heard],
+    supplied: dict[str, str],
+    copies: Counter[str],
+) -> None:
+    """Every occurrence of a new entry's text in these dictations is cited as misheard or
+    kept by the word written as heard; otherwise the app would replace uses the model never
+    judged. A text that stands as written far more often than it is misheard is sent back
+    too (AS_WRITTEN_MIN, AS_WRITTEN_RATIO). Dictations with the same text share a source,
+    so each use counts once per `copies` of its source. All such entries are named at once,
+    so one fix can settle them."""
+    problems = []
+    for text, entry in replied.items():
+        if text in learned:
+            continue
+        found = {
+            (s, a, b) for s, body in supplied.items() for a, b in occurrences(body, entry.text)
+        }
+        cited = {
+            (e.source, e.start, e.end)
+            for c in entry.candidates
+            if c.basis == "text"
+            for e in c.evidence
+        }
+        misheard = sum(copies[s] for s, _, _ in found & cited)
+        written = sum(copies[s] for s, _, _ in found - cited)
+        if not written:
+            continue
+        uses = misheard + written
+        counts = f'"{entry.text}" occurs {uses} times here, {misheard} cited as misheard'
+        if not any(c.basis == "literal" for c in entry.candidates):
+            problems.append(
+                f"{counts}: cite every occurrence that was misheard; if any is the text as"
+                " written, also name the word spelled like it, with basis literal"
+            )
+        elif written >= AS_WRITTEN_MIN and written >= AS_WRITTEN_RATIO * misheard:
+            problems.append(
+                f"{counts}: the rest stand as written, far more often than misheard, so it"
+                " would be replaced wrongly too often. Use the longer heard text around the"
+                ' misrecognition ("first mode", not "first"), or cite any other misheard one'
+            )
+    if problems:
+        raise ValueError("; ".join(problems) + ". Or leave such an entry out.")
+
+
 def _evidence(item: dict[str, Any], shown: view.View) -> Evidence:
     source = shown.sources.get(item["dictation"])
     if source is None:
@@ -300,16 +364,19 @@ def _check(evidence: Evidence, text: str, supplied: dict[str, str]) -> None:
 
 
 def occurrences(source: str, text: str) -> list[tuple[int, int]]:
-    """Every whole-word occurrence of `text` in `source`, compared as validation compares."""
+    """Every whole-word occurrence of `text` in `source`, compared as validation compares.
+    Overlapping ones count too ("go go" twice in "go go go"), since the dictionary step
+    finds a match at every word (dictionary/matching.py); a lookahead tries every
+    position, so a text that starts with punctuation (".NET") is found as well."""
     words = text.split()
     if not words:
         return []
-    pattern = r"(?<!\w)" + r"\s+".join(re.escape(w) for w in words) + r"(?!\w)"
-    return [
-        (m.start(), m.end())
-        for m in re.finditer(pattern, source, re.IGNORECASE)
-        if key(m.group()) == key(text)
-    ]
+    body = r"\s+".join(re.escape(w) for w in words)
+    spans = []
+    for match in re.finditer(rf"(?=((?<!\w){body}(?!\w)))", source, re.IGNORECASE):
+        if key(match.group(1)) == key(text):
+            spans.append((match.start(1), match.end(1)))
+    return spans
 
 
 def _locate(evidence: Evidence, text: str, supplied: dict[str, str]) -> Evidence:

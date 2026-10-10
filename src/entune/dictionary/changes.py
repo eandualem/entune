@@ -79,6 +79,7 @@ class Proposal:
     working: Dictionary  # the dictionary as proposed
     changes: tuple[ProposalChange, ...]
     version: str = ""
+    new_words: frozenset[str] = frozenset()  # word IDs the proposal adds
 
     def as_json(self) -> dict[str, object]:
         # Every word a change names, as proposed, so a review can show and edit new ones.
@@ -93,6 +94,9 @@ class Proposal:
             "model": self.model,
             "version": self.version,
             "words": [asdict(w) for w in self.working.words if w.id in named],
+            # The review tells new words by this, not by a copy of the dictionary that
+            # may be older than the one the proposal was made from.
+            "newWords": sorted(self.new_words & named),
             "changes": [change.as_json() for change in self.changes],
         }
 
@@ -117,7 +121,8 @@ def propose(current: Dictionary, proposed: Dictionary, model: str, version: str 
         for w in proposed.words
         if w.id in words and words[w.id] != w
     ]
-    return Proposal(model, proposed, tuple(changes), version)
+    added = frozenset(w.id for w in proposed.words if w.id not in words)
+    return Proposal(model, proposed, tuple(changes), version, added)
 
 
 def review(current: Dictionary, proposal: Proposal, selected: object = None) -> Dictionary:

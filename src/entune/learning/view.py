@@ -52,12 +52,25 @@ def _lines(items: Sequence[object]) -> str:
 
 
 def build(working: Dictionary, model: str, snippets: Sequence[Any]) -> View:
-    """The heard entries for `model` that occur in `snippets` (pinned and learned), the
-    words they name or the dictations spell or a recorded decision chose, and the
-    dictations."""
+    """The heard entries for `model` that occur in `snippets` (pinned and learned), other
+    speech models' learned entries that occur there too, the words they name or the
+    dictations spell or a recorded decision chose, and the dictations."""
     texts = [s.text for s in snippets]
     pinned = {key(h.text) for h in working.pinned}
     entries = [h for h in working.effective(model) if any(occurs(t, h.text) for t in texts)]
+    # Another speech model's entry for a text these dictations hold names the word the
+    # person meant, which this model may never write correctly: shown, it is reused
+    # rather than defined again with the spelling this model hears. One whose text is
+    # pinned is not in use anywhere: the pinned entry supersedes it.
+    others: dict[str, tuple[str, list[str]]] = {}  # key -> (text, word IDs)
+    for section, learned in working.learned.items():
+        for h in learned:
+            if section == model or key(h.text) in pinned:
+                continue
+            if key(h.text) not in others and not any(occurs(t, h.text) for t in texts):
+                continue
+            text, ids = others.setdefault(key(h.text), (h.text, []))
+            ids.extend(c.word for c in h.candidates if c.word not in ids)
     chosen = {
         m
         for s in snippets
@@ -65,7 +78,11 @@ def build(working: Dictionary, model: str, snippets: Sequence[Any]) -> View:
         for selection in s.result.selections or ()
         for m in selection.meaning_ids
     }
-    named = {c.word for h in entries for c in h.candidates} | chosen
+    named = (
+        {c.word for h in entries for c in h.candidates}
+        | {i for _, ids in others.values() for i in ids}
+        | chosen
+    )
     shown = [
         w for w in working.words if w.id in named or any(occurs(text, w.spelling) for text in texts)
     ]
@@ -80,6 +97,8 @@ def build(working: Dictionary, model: str, snippets: Sequence[Any]) -> View:
         if key(entry.text) in pinned:
             item["pinned"] = True
         heard.append(item)
+    for text, ids in others.values():
+        heard.append({"text": text, "words": [labels[i] for i in ids], "other": True})
     sources: dict[str, str] = {}
     dictations = []
     for number, snippet in enumerate(snippets, 1):
