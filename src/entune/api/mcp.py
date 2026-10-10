@@ -30,8 +30,9 @@ from entune.learning.replies import occurrences
 
 INSTRUCTIONS = (
     "Entune's personal dictation dictionary: the words a speech model gets wrong, and what "
-    "the person meant. Call dictionary_guide before changing anything, read the dictionary "
-    "with read_dictionary, and change only what the person agrees to."
+    "the person meant. Call dictionary_guide before changing anything and read the dictionary "
+    "with read_dictionary. Do what the person asks, then tell them the result in a line or "
+    "two; ask only what you cannot know, such as how a private name is spelled."
 )
 EXCERPT = 120  # characters of transcript either side of an occurrence
 

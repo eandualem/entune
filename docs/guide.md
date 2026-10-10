@@ -334,10 +334,10 @@ judging what the dictionary step made of each one. **Help**, next to **Add**, op
 Additions, before/after updates, and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
 then apply the remainder once. Dismissing a proposal does not delete active knowledge.
 
-Your coding agent can review the dictionary with you: connect it over MCP (**Settings ›
+Your coding agent can review the dictionary for you: connect it over MCP (**Settings ›
 Integrations** has the endpoint and the Claude Code command) and ask it to check your
 entries. It reads a guide to how the dictionary works, looks at how a heard text is used
-in your transcripts, and changes what you agree to; see
+in your transcripts, fixes what needs fixing and tells you what it did; see
 [your agent and your dictionary](agents-api.md#your-agent-and-your-dictionary-mcp).
 
 Learned entries stay specific to the speech model. Pinning moves one heard entry to
