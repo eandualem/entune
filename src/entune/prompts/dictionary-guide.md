@@ -120,7 +120,8 @@ words are capitalised only at the start of a sentence.
   text with no meaning of its own ("gray fauna") names only what was meant.
 - **Heard text** is the words actually got wrong, as written. A text that differs from a
   word's spelling only in capitals needs no entry unless the capitals themselves are the
-  problem.
+  problem, as when a name is spoken in lowercase and the recognizer writes it so ("acme
+  cloud" for Acme Cloud): then add it.
 - **Spelling** is exactly what should be written: official spelling and capitals for
   names, the plural or tense the person uses. Never guess a private name's spelling: ask.
 - **A description** is a short phrase, at most 120 characters, that says what the word is
@@ -134,6 +135,10 @@ words are capitalised only at the start of a sentence.
 ## Signs an entry needs attention
 
 - It maps a word the person uses correctly (look at transcripts with `find_in_transcripts`).
+- Its heard text is a single letter or a common word the transcripts mostly use as
+  itself: use the longer heard text around the mistake ("first mode" for fast mode, not
+  "first"), or remove it.
+- It names two words with the same spelling: they write the same text, so keep one.
 - It lacks the heard text's own word although that text is a real word, name or acronym.
 - A name has the wrong spelling or capitals, or a description is wrong or vague.
 - A word is defined twice for the same thing.
@@ -145,13 +150,17 @@ words are capitalised only at the start of a sentence.
 
 1. `read_dictionary` returns everything with its `version`, the speech models, the
    default one (the one the person dictates with), the entries that model applies and
-   the words no entry uses any more. Delete those without asking, but keep a correctly
-   spelled name or term the person still uses: suggestion runs reuse it rather than
-   define it again.
-2. `find_in_transcripts` shows short excerpts where a heard text occurs in the person's
-   transcripts, newest first, so you can judge an entry by real usage.
-3. Each change tool takes the `version` you read and returns the new one. If the person or
-   Entune changed the dictionary meanwhile, the change is refused: read it again. Editing
+   the words no entry uses any more, with their spellings. Delete those without asking,
+   but keep a correctly spelled name or term the person uses (check with
+   `find_in_transcripts`): suggestion runs reuse it rather than define it again. A word
+   that was only a heard text's own word, kept as written, can go.
+2. `find_in_transcripts` says how often a text occurs (`total`, and in how many
+   `transcripts` of those `searched`) and shows short excerpts, newest first, so you can
+   judge an entry by real usage. Another speech model's transcripts often show best how
+   the person uses a word, since that model wrote it correctly: pass its ID.
+3. Each change tool takes the `version` you read and returns the new one: use it for your
+   next change instead of reading the dictionary again. If the person or Entune changed
+   the dictionary meanwhile, the change is refused: read it again. Editing
    also waits while a dictionary build runs or its suggestions wait to be applied.
 4. Add a word with `set_word` before naming it in an entry. Editing a word changes it for
    every entry that names it.

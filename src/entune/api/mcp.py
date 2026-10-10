@@ -104,32 +104,48 @@ def server(app: Entune) -> MCPServer:
                 }
                 for h in in_use
             ],
-            "unused_words": [w.id for w in dictionary.words if w.id not in named],
+            "unused_words": [
+                {"id": w.id, "spelling": w.spelling, "meaning": w.meaning, "casing": w.casing}
+                for w in dictionary.words
+                if w.id not in named
+            ],
             "dictionary": document,
         }
 
     @mcp.tool(annotations=READ)
     def find_in_transcripts(
         text: str, speech_model: str | None = None, limit: int = 10
-    ) -> list[dict[str, str]]:
-        """Excerpts of the person's transcripts where `text` occurs as whole words (ignoring
-        case), newest first, the occurrence marked ⟦like this⟧. Transcripts are what
-        `speech_model` wrote, the default speech model when omitted."""
+    ) -> dict[str, Any]:
+        """Where `text` occurs as whole words (ignoring case) in the person's transcripts:
+        `total` occurrences in how many `transcripts` of how many `searched`, and up to
+        `limit` (at most 50) `excerpts`, newest first, the occurrence marked ⟦like this⟧.
+        Transcripts are what `speech_model` wrote, the default speech model when omitted;
+        another model's transcripts often show best how the person uses a word."""
         model = speech_model or app.models.default_model()
         if model is None:
             raise ToolError("No default speech model is set; name one from read_dictionary")
         # Any speech model's transcripts, including one removed since.
         provider, _, name = model.partition("/")
-        found = []
+        found: list[dict[str, str]] = []
+        total = transcripts = searched = 0
         for item in app.store.learning_inputs(provider, name, scope="all"):
-            for start, end in occurrences(item.text, text):
+            searched += 1
+            spans = occurrences(item.text, text)
+            total += len(spans)
+            transcripts += bool(spans)
+            for start, end in spans:
+                if len(found) >= max(1, min(limit, 50)):
+                    break
                 before = item.text[max(0, start - EXCERPT) : start]
                 after = item.text[end : end + EXCERPT]
                 excerpt = f"{before}\u27e6{item.text[start:end]}\u27e7{after}"
                 found.append({"transcript": item.id, "excerpt": " ".join(excerpt.split())})
-                if len(found) >= max(1, min(limit, 50)):
-                    return found
-        return found
+        return {
+            "total": total,
+            "transcripts": transcripts,
+            "searched": searched,
+            "excerpts": found,
+        }
 
     @mcp.tool(annotations=EDIT)
     def set_word(

@@ -7,6 +7,9 @@ no tool reads, sets or asks for a key.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -33,6 +36,7 @@ AUDIO_SUFFIXES = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".webm"}
 
 def register(mcp: MCPServer, app: Entune) -> None:
     downloads: dict[str, threading.Thread] = {}
+    failures: dict[str, str] = {}  # a download that failed before the model kept its state
 
     def failed(exc: Exception) -> ToolError:
         return ToolError(f"Unknown model: {exc}" if isinstance(exc, UnknownModel) else str(exc))
@@ -81,7 +85,7 @@ def register(mcp: MCPServer, app: Entune) -> None:
         return {
             "default_speech_model": app.models.default_model(),
             "speech_models": [asdict(m) for m in speech],
-            "local_models": [asdict(m) for m in app.models.local_models()],
+            "local_models": [_local(asdict(m), failures) for m in app.models.local_models()],
             "speech_providers": [
                 {"id": p.id, "name": p.name, "local": p.local, "key_saved": p.key_hint is not None}
                 for p in app.models.provider_statuses()
@@ -130,9 +134,11 @@ def register(mcp: MCPServer, app: Entune) -> None:
         if running is None or not running.is_alive():
 
             def download() -> None:
+                failures.pop(name, None)
                 try:
                     app.models.download_local_model(name)
-                except Exception as exc:  # the model's state carries the error
+                except Exception as exc:  # also when it fails before the model keeps a state
+                    failures[name] = f"{type(exc).__name__}: {exc}"
                     print(f"MCP download of {name} failed: {exc}", flush=True)
 
             running = threading.Thread(
@@ -355,8 +361,11 @@ def register(mcp: MCPServer, app: Entune) -> None:
                     if change[side] is not None:
                         item[side] = [word(c["word"]) for c in change[side]["candidates"]]
             changes.append(item)
-        build = str(app.learning.dictionary_build_status()["id"])
-        return {"build": build, "speech_model": proposal["model"], "changes": changes}
+        return {
+            "build": _token(app, proposal),
+            "speech_model": proposal["model"],
+            "changes": changes,
+        }
 
     @mcp.tool(annotations=EDIT)
     def apply_suggestions(build: str, leave_out: list[str] | None = None) -> dict[str, Any]:
@@ -364,9 +373,9 @@ def register(mcp: MCPServer, app: Entune) -> None:
         or all but the `id`s in `leave_out`. Refine the result afterwards with the
         dictionary tools, as you would any entry."""
         state = app.learning.dictionary_build_status()
-        if state.get("id") != build:
-            raise ToolError("Those suggestions were replaced; read_suggestions again")
         proposal = _proposal(app)
+        if _token(app, proposal) != build:
+            raise ToolError("Those suggestions changed since you read them; read_suggestions again")
         skipped = set(leave_out or [])
         unknown = skipped - {c["id"] for c in proposal["changes"]}
         if unknown:
@@ -486,18 +495,20 @@ def _proposal(app: Entune) -> dict[str, Any]:
 
 def _import_paths(app: Entune, paths: list[str]) -> dict[str, Any]:
     files: list[Path] = []
+    skipped: list[str] = []  # an unreadable file or folder does not stop the others
     for value in paths:
         path = Path(value).expanduser()
         if path.is_dir():
-            files += sorted(
-                p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in AUDIO_SUFFIXES
-            )
+            # os.walk reports a folder it may not read; Path.rglob would hide it.
+            for folder, _, names in os.walk(path, onerror=lambda e: skipped.append(str(e))):
+                files += sorted(
+                    Path(folder) / n for n in names if Path(n).suffix.lower() in AUDIO_SUFFIXES
+                )
         elif path.is_file():
             files.append(path)
         else:
             raise ValueError(f"No such file or folder: {value}")
     added = duplicates = 0
-    skipped: list[str] = []  # one unreadable file does not stop the others
     for path in files:
         try:
             created = audio_import.recorded_at(path.stat().st_mtime)
@@ -513,3 +524,19 @@ def _import_paths(app: Entune, paths: list[str]) -> dict[str, Any]:
         "skipped": len(skipped),
         "first_skipped": skipped[0] if skipped else None,
     }
+
+
+def _token(app: Entune, proposal: dict[str, Any]) -> str:
+    """The build and exactly these suggestions: a build continued after they were read
+    keeps its ID but not its suggestions."""
+    changes = json.dumps(proposal["changes"], sort_keys=True).encode()
+    build = app.learning.dictionary_build_status()["id"]
+    return f"{build}:{hashlib.sha256(changes).hexdigest()[:16]}"
+
+
+def _local(status: dict[str, Any], failures: dict[str, str]) -> dict[str, Any]:
+    """A local model's state, with a download that failed before the model kept one."""
+    failure = failures.get(status["name"])
+    if failure and status["state"] in ("absent", "unavailable"):
+        return {**status, "state": "error", "error": failure}
+    return status

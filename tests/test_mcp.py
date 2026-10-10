@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -10,10 +11,12 @@ from typing import Any
 import pytest
 from starlette.testclient import TestClient
 
+from entune.api import mcp_setup
 from entune.app import audio_import
 from entune.app.entune import Entune
 from entune.audio.formats import wav_bytes
 from entune.learning.suggestion_model import Request
+from entune.providers.local.contracts import LocalModelStatus
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, wait_for_build
@@ -85,12 +88,16 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
             ("Claude", "stub/good"),
         ]
         found = call(client, "find_in_transcripts", text="cloud code")
-        assert found == [
+        assert (found["total"], found["transcripts"], found["searched"]) == (1, 1, 1)
+        assert found["excerpts"] == [
             {
-                "transcript": found[0]["transcript"],
+                "transcript": found["excerpts"][0]["transcript"],
                 "excerpt": said.replace("cloud code", "⟦cloud code⟧"),
             }
         ]
+        # Every occurrence counts toward the total, however few excerpts are asked for.
+        counted = call(client, "find_in_transcripts", text="the", limit=1)
+        assert counted["total"] == 2 and len(counted["excerpts"]) == 1
 
         added = call(
             client,
@@ -130,7 +137,12 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
             version = call(
                 client, "remove_heard_entry", version=version, scope="stub/good", text=text
             )["version"]
-        assert call(client, "read_dictionary")["unused_words"] == ["a_claude", "b_cloud", "c_cloud"]
+        unused = call(client, "read_dictionary")["unused_words"]
+        assert [(w["id"], w["spelling"]) for w in unused] == [
+            ("a_claude", "Claude"),
+            ("b_cloud", "cloud"),
+            ("c_cloud", "cloud"),
+        ]
         final = client.get("/api/dictionary").json()
         assert final["pinned"] == [] and added["word_id"] not in {w["id"] for w in final["words"]}
 
@@ -165,7 +177,8 @@ def test_edits_keep_the_file_readable_and_reach_a_removed_speech_models_entries(
         assert [
             h["text"] for h in client.get("/api/dictionary").json()["learned"]["gone/model"]
         ] == ["cloud"]
-        assert call(client, "find_in_transcripts", text="cloud", speech_model="gone/model") == []
+        gone = call(client, "find_in_transcripts", text="cloud", speech_model="gone/model")
+        assert gone == {"total": 0, "transcripts": 0, "searched": 0, "excerpts": []}
         view = call(client, "read_dictionary", speech_model="gone/model")
         assert [e["text"] for e in view["entries_in_use"]] == ["cloud"]
         assert removed["version"] == call(client, "read_dictionary")["version"]
@@ -203,6 +216,20 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         assert "provider:model" in call(client, "set_preferences", suggestion_model="x")["error"]
         assert call(client, "entune_setup")["needs_person"] == []
         assert "Unknown local model" in call(client, "download_speech_model", name="x")["error"]
+        # A download that fails before the model keeps any state is still shown.
+        local = LocalModelStatus("tiny", "Tiny", 1, "", "absent", 0.0, None, "local")
+        monkeypatch.setattr(app.models, "local_models", lambda: [local])
+
+        def refused(name: str) -> None:
+            raise PermissionError("cannot create the models folder")
+
+        monkeypatch.setattr(app.models, "download_local_model", refused)
+        assert call(client, "download_speech_model", name="tiny")["state"] == "downloading"
+        deadline = time.monotonic() + 2
+        while (m := call(client, "entune_setup")["local_models"][0])["state"] != "error":
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert "cannot create the models folder" in m["error"]
         assert (
             "no dictionary build"
             in call(client, "control_dictionary_build", action="stop")["error"]
@@ -236,7 +263,7 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
             {"spelling": "Claude Code", "meaning": "The named tool Claude Code.", "new": True}
         ]
         build = suggestions["build"]
-        assert "replaced" in call(client, "apply_suggestions", build="other")["error"]
+        assert "changed since" in call(client, "apply_suggestions", build="other")["error"]
         refused = call(client, "apply_suggestions", build=build, leave_out=["x"])
         assert "no suggestion" in refused["error"].lower()
         applied = call(client, "apply_suggestions", build=build)
@@ -266,5 +293,10 @@ def test_a_dictation_app_folder_macos_will_not_let_entune_read_says_so(
     try:
         with pytest.raises(ValueError, match="may not read"):
             audio_import.present(app)
+        # Importing a folder that holds one Entune may not read says so too.
+        store = Store(tmp_path / "data")
+        with closing(store):
+            result = mcp_setup._import_paths(Entune(store, [StubProvider()]), [str(tmp_path)])
+        assert result["skipped"] == 1 and "Permission" in result["first_skipped"]
     finally:
         folder.chmod(0o755)
