@@ -75,8 +75,9 @@ and changes are validated like edits on the Dictionary page. Editing waits while
 dictionary build runs or its suggestions wait to be applied.
 
 What the agent reads, transcript excerpts included, goes to your agent's model
-provider. A build with a cloud speech model is billed per minute of audio to your key;
-a local model costs nothing, so the guide prefers one. The endpoint has the same boundary as the rest of this API: this machine
+provider. A build's transcription is billed per minute of audio to your key with a cloud
+speech model and free with a local one, so the guide prefers a local one; the suggestion
+model that proposes the entries runs on your ChatGPT plan or API key. The endpoint has the same boundary as the rest of this API: this machine
 only, no authentication.
 
 ## Corrections
