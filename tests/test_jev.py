@@ -181,8 +181,7 @@ def test_total_deadline_cancels_a_dripping_body_and_releases_the_socket() -> Non
     ) as client:
         context = call(client, jev_client.Policy(total_seconds=0.15, attempt_seconds=1.0))
         started = time.monotonic()
-        # A timeout says how long it waited: Python's own carries no message.
-        with pytest.raises(jev_client.JevError, match=r"no answer within 0\.\d s"):
+        with pytest.raises(jev_client.JevError):
             jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
         elapsed = time.monotonic() - started
         assert 0.1 <= elapsed < 0.6
@@ -865,3 +864,18 @@ def test_a_long_text_gets_more_time_up_to_three_times_the_settings() -> None:
     assert (longest.total_seconds, longest.attempt_seconds) == (15.0, 9.0)
     near_cap = scaled(jev_client.Policy(total_seconds=20.0, attempt_seconds=3.0), 50_000)
     assert near_cap.total_seconds == 30.0 and near_cap.max_attempts == 2
+
+
+def test_an_attempt_that_times_out_says_how_long_it_waited() -> None:
+    async def slow(_: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(1)
+        return httpx.Response(200, json={})
+
+    policy = jev_client.Policy(total_seconds=2.0, attempt_seconds=0.1, max_attempts=1)
+    # Python's own timeout carries no message: the error names the wait instead.
+    named = r"TimeoutError: no answer within 0\.1 s"
+    with (
+        closing(jev_client.Client(httpx.MockTransport(slow))) as client,
+        pytest.raises(jev_client.JevError, match=named),
+    ):
+        jev.decide("Jeff", matches(GROUPS, "Jeff"), call(client, policy))
