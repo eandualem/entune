@@ -13,7 +13,7 @@ import queue
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Coroutine, Iterator
 from concurrent.futures import CancelledError
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, replace
@@ -606,22 +606,56 @@ class DictionaryBuilds:
             )
         return pieces
 
+    def _while_receiving(
+        self, part: Coroutine[Any, Any, None], receive: Callable[[float], None]
+    ) -> None:
+        """Run one part on its own thread and keep receiving texts until it ends; a stop
+        cancels the part's task (_request_cancel), and its error is raised here."""
+        failed: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                asyncio.run(part)
+            except BaseException as exc:
+                failed.append(exc)
+
+        worker = threading.Thread(target=run, daemon=True, name="entune-learning-part")
+        worker.start()
+        while worker.is_alive():
+            receive(0.2)
+        worker.join()
+        if failed:
+            raise failed[0]
+
     def _suggest(self, spec: BuildInput, ready: queue.Queue[object]) -> None:
         """Run parts while texts arrive: a part starts once a part's worth of text not
-        yet covered is waiting, or with what is left once everything has arrived."""
+        yet covered is waiting, or with what is left once everything has arrived. Texts
+        keep arriving while a part runs, so the number of parts is known, and shown, as
+        soon as transcription ends rather than when the next part starts."""
         waiting: list[learning_inputs.LearningText] = []
         finished = False
-        while True:
-            self._checkpoint()
+        failure: BaseException | None = None
+        current = 0  # the part under way, if any
+
+        def count_parts() -> None:
+            with self._lock:
+                # Everything has arrived: the number of parts is now known.
+                done = max(self._completed_batches, current)
+                self._state["steps"] = done + len(_split(waiting, batches.BATCH_CHARS))
+                if self._state["phase"] == "transcribing":
+                    self._state["phase"] = "building"
+
+        def receive(timeout: float) -> None:
+            nonlocal finished, failure
             try:
-                item = ready.get(timeout=0.2)
+                item = ready.get(timeout=timeout)
             except queue.Empty:
-                item = None
+                return
             while item is not None:
                 if item is DONE:
                     finished = True
                 elif isinstance(item, BaseException):
-                    raise item
+                    failure = failure or item
                 elif (
                     isinstance(item, learning_inputs.LearningText)
                     and item.id not in self._covered
@@ -632,19 +666,25 @@ class DictionaryBuilds:
                     item = ready.get_nowait()
                 except queue.Empty:
                     item = None
+            if finished:
+                count_parts()
+
+        while True:
+            self._checkpoint()
+            receive(0.2)
+            if failure is not None:
+                raise failure
             size = sum(len(text.text) for text in waiting)
             if waiting and (finished or size >= batches.BATCH_CHARS):
                 if finished:
-                    with self._lock:
-                        # Everything has arrived: the number of parts is now known.
-                        left = len(_split(waiting, batches.BATCH_CHARS))
-                        self._state["steps"] = self._completed_batches + left
+                    count_parts()
                 part, waiting = _take(waiting, batches.BATCH_CHARS)
                 with self._lock:
                     if self._state["phase"] == "queued":
                         self._state["phase"] = "building"
                 for step in batches.learning_batches(part, batches.BATCH_CHARS):
-                    asyncio.run(self._part(spec, step, self._completed_batches + 1))
+                    current = self._completed_batches + 1
+                    self._while_receiving(self._part(spec, step, current), receive)
                 if finished and not waiting:
                     break
                 continue
