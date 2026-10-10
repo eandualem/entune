@@ -23,6 +23,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   let saving = false; // one editor save at a time
   let proposalChanges = [];
   let proposalWords = new Map(); // the words a proposal names, new ones as the review edits them
+  let proposalNew = new Set(); // the IDs of the words the proposal adds, as the server says
   let proposalModel = null;
   let missingKey = false; // the saved dictionary model's provider has no key
   const modelSelect = el("dictionary-model");
@@ -51,7 +52,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const builds = createDictionaryBuild({
     onBusy(value) { building = value; gate(); onboarding.setBuildBusy(value); lockEditors(); },
     onState(value) { showRun(value); },
-    onProposal(value) { if (value) renderProposal(value); else { proposalChanges = []; el("proposal").hidden = true; } },
+    // A proposal is reviewed against the dictionary as it is now: an agent may have
+    // changed it since this page loaded it.
+    async onProposal(value) { if (value) { await loadDictionary(false); renderProposal(value); } else { proposalChanges = []; el("proposal").hidden = true; } },
     onAccepted: () => loadDictionary(false),
     getSelected: () => {
       // Included changes, and each new word the included entries name, as the review left it.
@@ -1386,9 +1389,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
 
   // A suggestion names words by ID: a new one as the review edits it, a stored one as its
   // included clearer meaning leaves it, else as saved.
-  const isNewWord = (wid) => !dict.words.some((w) => w.id === wid);
+  const isNewWord = (wid) => proposalNew.has(wid);
   const proposalWord = (wid) => isNewWord(wid) ? proposalWords.get(wid)
-    : proposalChanges.find((c) => c.kind === "word" && c.included && c.after.id === wid)?.after ?? wordMap().get(wid);
+    : proposalChanges.find((c) => c.kind === "word" && c.included && c.after.id === wid)?.after ?? wordMap().get(wid) ?? proposalWords.get(wid);
   const savedWord = (wid) => wordMap().get(wid);
   const label = (h) => h ? h.candidates.map((c) => proposalWord(c.word)?.spelling ?? c.word).join(" · ") : "";
   const describe = (h, look = proposalWord) => h ? [`Heard as: ${h.text}`, ...h.candidates.map((c) => {
@@ -1412,6 +1415,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     proposalLabel = modelName(p.model, []);
     proposalModel = p.model;
     proposalWords = new Map(p.words.map((w) => [w.id, structuredClone(w)]));
+    proposalNew = new Set(p.newWords ?? []);
     // An entry's words as suggested, so one left out while editing can be taken back.
     proposalChanges = p.changes.map(c => ({...structuredClone(c), included: true, editing: false,
       choices: c.kind !== "word" && c.after ? structuredClone(c.after.candidates) : []}));

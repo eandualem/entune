@@ -54,6 +54,8 @@ def test_review_edits_and_dismissal_apply_once_without_deleting_dismissed_entrie
         "model",
     )
     assert {c.kind for c in proposal.changes} == {"add", "remove", "word"}
+    # The review tells new words by the proposal, not by its own copy of the dictionary.
+    assert proposal.as_json()["newWords"] == [groq.words[0].id]
     edited = {**asdict(clearer), "meaning": "A reviewed assistant definition."}
     result = dictionary_changes.review(
         current,
