@@ -407,6 +407,7 @@ def test_every_occurrence_of_a_new_heard_text_is_cited_or_kept_as_written() -> N
 
 def test_overlapping_occurrences_count_as_the_dictionary_step_finds_them() -> None:
     assert replies.occurrences("go go go", "go go") == [(0, 5), (3, 8)]
+    assert replies.occurrences("We use .NET daily.", ".NET") == [(7, 11)]
     word = {"id": "n1", "spelling": "Gogo", "meaning": "a named tool", "casing": "fixed"}
     heard = {"text": "go go", "candidates": [candidate("n1", "text", (0, 5))]}
     with pytest.raises(ValueError, match="occurs 2 times here, 1 cited as misheard"):

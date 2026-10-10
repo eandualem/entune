@@ -366,18 +366,16 @@ def _check(evidence: Evidence, text: str, supplied: dict[str, str]) -> None:
 def occurrences(source: str, text: str) -> list[tuple[int, int]]:
     """Every whole-word occurrence of `text` in `source`, compared as validation compares.
     Overlapping ones count too ("go go" twice in "go go go"), since the dictionary step
-    finds a match at every word (dictionary/matching.py)."""
+    finds a match at every word (dictionary/matching.py); a lookahead tries every
+    position, so a text that starts with punctuation (".NET") is found as well."""
     words = text.split()
     if not words:
         return []
-    pattern = re.compile(
-        r"(?<!\w)" + r"\s+".join(re.escape(w) for w in words) + r"(?!\w)", re.IGNORECASE
-    )
+    body = r"\s+".join(re.escape(w) for w in words)
     spans = []
-    for word in re.finditer(r"\w+", source):
-        match = pattern.match(source, word.start())
-        if match and key(match.group()) == key(text):
-            spans.append((match.start(), match.end()))
+    for match in re.finditer(rf"(?=((?<!\w){body}(?!\w)))", source, re.IGNORECASE):
+        if key(match.group(1)) == key(text):
+            spans.append((match.start(1), match.end(1)))
     return spans
 
 
