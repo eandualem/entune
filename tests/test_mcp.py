@@ -272,6 +272,7 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         started = call(client, "start_dictionary_build")
         assert started["phase"] in ("queued", "transcribing")
         assert started["recordings"] == {"transcribed": 0, "of": 2} and "audio_minutes" in started
+        assert started["recordings_by_source"] == {"folder": 2}
         assert started["speech_model"] == "stub/good"  # the tools' own names, not the page's
         assert wait_for_build(client)["phase"] == "ready"
         status = call(client, "dictionary_build_status")
