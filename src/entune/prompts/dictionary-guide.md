@@ -94,7 +94,9 @@ words are capitalised only at the start of a sentence.
 
 1. `read_dictionary` returns everything with its `version`, the speech models, the
    default one (the one the person dictates with), the entries that model applies and
-   the words no entry uses any more (delete them; nothing reads them).
+   the words no entry uses any more. Delete those without asking, but keep a correctly
+   spelled name or term the person still uses: suggestion runs reuse it rather than
+   define it again.
 2. `find_in_transcripts` shows short excerpts where a heard text occurs in the person's
    transcripts, newest first, so you can judge an entry by real usage.
 3. Each change tool takes the `version` you read and returns the new one. If the person or
