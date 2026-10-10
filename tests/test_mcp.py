@@ -215,6 +215,20 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         assert call(client, "set_preferences", fast_mode=True)["fast_mode"] is True
         assert "provider:model" in call(client, "set_preferences", suggestion_model="x")["error"]
         assert call(client, "entune_setup")["needs_person"] == []
+        # A chosen suggestion model whose provider has no key is named as such.
+        call(client, "set_preferences", suggestion_model="anthropic:claude-test")
+        (blocked,) = call(client, "entune_setup")["needs_person"]
+        assert "anthropic:claude-test has no key" in blocked
+        call(client, "set_preferences", suggestion_model="openai:gpt-test")
+        # Laya installed but failed to start is not ready.
+        monkeypatch.setattr(app.decisions.laya, "status", lambda: ("failed", "port in use"))
+        (laya,) = [d for d in call(client, "entune_setup")["decision_models"] if d["id"] == "laya"]
+        assert laya == {
+            "id": "laya",
+            "ready": False,
+            "needs": "Laya did not start: port in use",
+            "state": "failed",
+        }
         assert "Unknown local model" in call(client, "download_speech_model", name="x")["error"]
         # A download that fails before the model keeps any state is still shown.
         local = LocalModelStatus("tiny", "Tiny", 1, "", "absent", 0.0, None, "local")
@@ -300,3 +314,16 @@ def test_a_dictation_app_folder_macos_will_not_let_entune_read_says_so(
         assert result["skipped"] == 1 and "Permission" in result["first_skipped"]
     finally:
         folder.chmod(0o755)
+
+
+def test_the_build_token_covers_the_new_words_definitions_too() -> None:
+    class Builds:
+        def dictionary_build_status(self) -> dict[str, str]:
+            return {"id": "b1"}
+
+    app: Any = type("App", (), {"learning": Builds()})()
+    proposal = {"changes": [{"id": "heard:x"}], "words": [{"id": "n1", "meaning": "first"}]}
+    token = mcp_setup._token(app, proposal)
+    assert token.startswith("b1:") and token == mcp_setup._token(app, proposal)
+    revised = {**proposal, "words": [{"id": "n1", "meaning": "revised"}]}
+    assert mcp_setup._token(app, revised) != token

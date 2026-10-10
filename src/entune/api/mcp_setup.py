@@ -49,7 +49,14 @@ def register(mcp: MCPServer, app: Entune) -> None:
                 needs = None
             except ValueError as exc:
                 needs = str(exc)
-            options.append({"id": model, "ready": needs is None, "needs": needs})
+            option: dict[str, Any] = {"id": model, "ready": needs is None, "needs": needs}
+            if model == "laya":
+                # Installed is not running: a failed start shows here, not in the check.
+                state, error = app.decisions.laya.status()
+                option["state"] = state
+                if state == "failed":
+                    option.update(ready=False, needs=f"Laya did not start: {error}")
+            options.append(option)
         return options
 
     @mcp.tool(annotations=READ)
@@ -70,11 +77,19 @@ def register(mcp: MCPServer, app: Entune) -> None:
                 "A speech model: download a local one with download_speech_model, or the"
                 " person saves a cloud provider's API key in Entune's Models page."
             )
+        provider = suggestion.partition(":")[0] if suggestion else None
+        credentials = {p.id: p.key_hint for p in app.settings.suggestion_providers()}
         if suggestion is None:
             needs.append(
                 "A suggestion model to build the dictionary: the person saves an Anthropic,"
                 " OpenAI, Google Gemini, Groq or Mistral API key in Settings, or signs in"
                 " with ChatGPT there."
+            )
+        elif credentials.get(provider or "") is None:
+            needs.append(
+                f"The suggestion model {suggestion} has no key or sign-in: choose one whose"
+                " provider is ready with set_preferences, or the person saves its key or"
+                " signs in again in Settings."
             )
         if not any(o["ready"] for o in decision_options()):
             needs.append(
@@ -529,7 +544,8 @@ def _import_paths(app: Entune, paths: list[str]) -> dict[str, Any]:
 def _token(app: Entune, proposal: dict[str, Any]) -> str:
     """The build and exactly these suggestions: a build continued after they were read
     keeps its ID but not its suggestions."""
-    changes = json.dumps(proposal["changes"], sort_keys=True).encode()
+    # Everything applying writes: the entries and the new words' definitions.
+    changes = json.dumps([proposal["changes"], proposal["words"]], sort_keys=True).encode()
     build = app.learning.dictionary_build_status()["id"]
     return f"{build}:{hashlib.sha256(changes).hexdigest()[:16]}"
 
