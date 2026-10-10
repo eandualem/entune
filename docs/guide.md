@@ -334,11 +334,12 @@ judging what the dictionary step made of each one. **Help**, next to **Add**, op
 Additions, before/after updates, and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
 then apply the remainder once. Dismissing a proposal does not delete active knowledge.
 
-Your coding agent can review the dictionary with you: connect it over MCP (**Settings ›
-Integrations** has the endpoint and the Claude Code command) and ask it to check your
-entries. It reads a guide to how the dictionary works, looks at how a heard text is used
-in your transcripts, and changes what you agree to; see
-[your agent and your dictionary](agents-api.md#your-agent-and-your-dictionary-mcp).
+Your coding agent can do all of this for you: connect it over MCP (**Settings ›
+Integrations** has the endpoint and the Claude Code command) and ask it to set up your
+dictionary. It imports the recordings your other dictation apps keep, builds the
+dictionary, refines it and tells you when it's ready; later it can check your recent
+dictations and fix what they show. See
+[your agent runs Entune for you](agents-api.md#your-agent-runs-entune-for-you-mcp).
 
 Learned entries stay specific to the speech model. Pinning moves one heard entry to
 every speech model and protects it from suggestions, without giving a word priority over
@@ -486,7 +487,9 @@ stage output and occurrence-selection provenance is saved internally. History sh
 only the final result for each attempt; canceled attempts show an audio-saved notice.
 Settings › Corrections & formatting › Advanced controls the processing wait: initially five seconds
 total across correction, cleanup and formatting, three per attempt, and at most two
-attempts per request. Each applicable stage sends one request before retries. Transient
+attempts per request. A dictation longer than 1,000 characters asks more and gets more:
+both limits grow by half for every 1,000 characters beyond that, up to three times the
+setting (at 3,000 characters, ten seconds and six per attempt). Each applicable stage sends one request before retries. Transient
 failures can retry within that shared deadline. Explicit exhausted-credit, authentication
 and authorization errors return immediately, including explicit credit failures in HTTP 429.
 These are configurable defaults, not an accuracy or end-to-end latency guarantee. **Copy original** in history

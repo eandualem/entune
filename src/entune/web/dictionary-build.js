@@ -70,8 +70,10 @@ export function createDictionaryBuild({ onBusy, onState, onProposal, onAccepted,
     if (state.phase === "ready" && proposalId !== state.id) {
       const detail = await api(`/api/dictionary/build/${state.id}`);
       if (detail.phase === "ready" && state.phase === "ready" && detail.id === state.id) {
+        // Drawn only once the view has it (it reloads the dictionary first); a failure
+        // leaves it unread, so the next poll tries again.
+        await onProposal(detail.proposal);
         proposalId = detail.id;
-        onProposal(detail.proposal);
       }
     } else if (state.phase !== "ready") {
       proposalId = null;

@@ -296,10 +296,13 @@ classification quality. Paid evaluation needs separate authorization.
 Every run does one job with one prompt: find the confusions the dictionary does not
 cover yet, which is the main job, and improve or remove the learned entries the
 dictations show. Each part sends its dictations, the heard entries for the run's speech
-model that occur in them (pinned and learned), and the words those entries name, the
-dictations spell or a recorded decision chose. Words carry a short label (`w1`), their
+model that occur in them (pinned and learned), other speech models' learned entries that
+occur in them, and the words those entries name, the dictations spell or a recorded
+decision chose. Words carry a short label (`w1`), their
 spelling and meaning; heard entries are named by their text, list their words' labels and
-say `pinned` when the person's own. Stored IDs, evidence, approvals, casing and personal
+say `pinned` when the person's own, or `other` when another speech model's: shown for
+its words, so a model that never writes a name correctly still reuses it. A run can add its
+own model's entry for that text, with evidence, but cannot change the other's. Stored IDs, evidence, approvals, casing and personal
 context stay in the app. Dictations carry a label (`d1`) and their raw text and, when the
 dictionary step ran and changed something, the text right after it and its per-span
 decisions (heard, written, method, words). Older attempts without recorded edits, failed
@@ -308,8 +311,10 @@ history is marked as final text. Filler reduction, formatting and delivered text
 never sent. Machine corrections are evidence of what the system did, not ground truth.
 
 The reply has four lists: new words (`n1`, spelling, meaning of at most 120 characters,
-casing), clearer meanings for shown words, heard entries (new ones, and shown learned ones
-in full) and removals of shown learned entries by text. A candidate names a shown or new
+casing), clearer meanings for shown words whose meaning is empty or not yet confirmed
+(the view marks them `review`; a meaning a person or their agent confirmed is refused),
+heard entries (new ones, and shown learned ones in full) and removals of shown learned
+entries by text. A false start the speaker corrects at once is not evidence. A candidate names a shown or new
 word and its basis: `text` with evidence (dictation label and character span), `literal`
 for the heard text's own word, or `existing` for a candidate the entry already had, whose
 stored evidence is restored. Pinned entries cannot be changed or removed, and a learned
@@ -320,7 +325,11 @@ named by an entry of the reply. An addition whose candidates are all literal dif
 in capitals and adds nothing; a revision that leaves a corrected entry with only its
 literal candidate removes the entry. A heard text the dictations use correctly is not a
 confusion, and a heard text that is a word, name or acronym in its own right keeps its
-literal candidate.
+literal candidate. Every occurrence of a new entry's text in the part's dictations is
+either cited as evidence or kept by its literal candidate. A new entry whose text stands
+as written at least four times, and four times as often as it is cited, is sent back
+for the longer heard text around the misrecognition ("first mode", not "first"). One
+message names every such entry.
 
 Default learning uses up to 300 recent, not-yet-covered attempts for this speech model;
 explicit All history includes older data. Applying a run consumes the inputs it fully
@@ -374,6 +383,6 @@ its boundary; internally it names a word and adds pinned heard entries without g
 direct replacement or priority. Whole-document editing uses version-3 JSON with ETag/If-Match.
 An agent connected over MCP edits one word or heard entry at a time, each change naming
 the version it read and validated like the page's
-([agents' API](agents-api.md#your-agent-and-your-dictionary-mcp)).
+([agents' API](agents-api.md#your-agent-runs-entune-for-you-mcp)).
 The file is read on each dictation and writes are atomic under the service lock. A broken
 dictionary is a correction failure, not a lost speech transcription.

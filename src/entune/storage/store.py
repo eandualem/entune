@@ -402,6 +402,15 @@ class Store:
                     [(model, source, identity, run_id) for identity in covered],
                 )
 
+    def learning_covered(self, model: str, source: str) -> set[str]:
+        """The inputs applied suggestion runs read for `model` from `source`."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT input_id FROM learning_coverage WHERE model = ? AND source = ?",
+                (model, source),
+            ).fetchall()
+        return {row["input_id"] for row in rows}
+
     def learning_details(self) -> list[dict[str, object]]:
         """Every finished run's receipt, for timing the suggestion models."""
         with self._lock:

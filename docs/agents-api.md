@@ -12,23 +12,49 @@ request must be addressed to `localhost` (or `127.0.0.1`), and a state
 change carrying a browser `Origin` other than Entune's own is refused, so a
 web page in a browser cannot use it.
 
-## Your agent and your dictionary (MCP)
+## Your agent runs Entune for you (MCP)
 
-Connect a coding agent to your dictionary and ask it to review and improve it with
-you. Entune serves an MCP endpoint at `http://localhost:4187/mcp` while it runs. In
-Claude Code:
+Connect a coding agent, and it runs Entune for you: it sets Entune up, builds your
+dictionary and keeps it accurate, so you don't have to think about any of it. Entune
+serves an MCP endpoint at `http://localhost:4187/mcp` while it runs. In Claude Code:
 
 ```sh
 claude mcp add --transport http entune http://localhost:4187/mcp
 ```
 
 Any agent that speaks MCP over HTTP takes the same endpoint; **Settings ›
-Integrations** shows it with the command. The agent gets a guide to how the
-dictionary works and these tools:
+Integrations** shows it with the command. In Claude Code, the tools appear in the next
+session after `claude mcp add`. An agent that cannot change its settings can still call
+the endpoint as stateless JSON-RPC over HTTP POST.
+
+The server's instructions and its guide (`dictionary_guide`) tell the agent to act
+rather than ask. It doesn't ask you to choose, review or approve anything; it asks only
+for what only you can give, and it finishes with one line saying it is done and ready.
+What only you can give: an API key, which you save in Entune's Settings (no tool reads or
+sets a key), a sign-in, a system permission, or how a private name is spelled.
+
+Asked to set Entune up, the agent follows the guide's steps: it checks the setup,
+downloads and selects a speech model (Parakeet on Apple Silicon), chooses a decision
+model and turns its steps on, imports the recordings other dictation apps keep on your
+Mac, builds the dictionary from them, applies and refines the result, and tells you it's
+ready.
 
 | Tool | What it does |
 |---|---|
-| `dictionary_guide` | How the dictionary works, why it is structured so, and what makes an entry right. The server's instructions point the agent to it first. |
+| `dictionary_guide` | How to run Entune for the person: the setup steps, how the dictionary works, and what makes an entry right. The server's instructions point the agent to it first. |
+| `entune_setup` | How Entune is set up: speech models (cloud ones whose key is saved, local ones with their download state) and the default one, the decision model and its steps, the suggestion model, the dictionary's size, any build, and `needs_person`: what only you can do. |
+| `download_speech_model` | Download a local speech model in the background. |
+| `set_speech_model` | Make a ready speech model the default. |
+| `set_processing` | Choose the decision model and turn the dictionary, formatting and cleanup steps on or off. |
+| `set_preferences` | Fast mode, leaving out long silences, and the suggestion model that builds the dictionary. |
+| `find_audio` | Which dictation apps keep recordings on this Mac, and what is already imported. |
+| `import_audio` | Import every recording a dictation app keeps, or audio files and folders. Only audio is copied, never another app's text. |
+| `start_dictionary_build` | Build the dictionary for the default speech model, in the background, from imported audio (and your Entune recordings) or your transcripts that model has not learned from yet; the reply says how much it reads. |
+| `dictionary_build_status` | Where the build stands. |
+| `control_dictionary_build` | Stop a build, continue a stopped or failed one, or discard its suggestions. |
+| `read_suggestions` | A finished build's suggestions, each with its ID. |
+| `apply_suggestions` | Apply them, all or all but some. |
+| `recent_dictations` | How your latest dictations came out: what the speech model wrote, what was delivered, and each step's outcome, including what the dictionary replaced or kept. |
 | `read_dictionary` | The dictionary with its `version`: every section (format 3: words, pinned entries, each speech model's learned entries), the speech models and the default one, the entries one speech model applies (`entries_in_use`, the default model's unless `speech_model` names another), and the words no entry uses any more. |
 | `find_in_transcripts` | Excerpts of your transcripts where a heard text occurs, newest first, for one speech model (the default one when omitted). |
 | `set_word` | Add a word, or edit one by `word_id`; the edit reaches every entry naming it. |
@@ -40,18 +66,17 @@ dictionary works and these tools:
 Each speech model has its own dictionary: the pinned entries, shared by every model,
 and its own learned entries, because every model mishears differently. Transcript
 lookups and learned entries are per speech model; the guide tells the agent to work on
-the model the person dictates with unless they name another, and to pin an entry only
-when the person wants it for every model.
+the model you dictate with unless you name another, and to pin an entry only when it
+should hold for every model, such as your own name.
 
 Every change names the `version` the agent read and returns the new one. A change on
 an older version is refused, so nothing you or Entune added meanwhile is overwritten,
-and changes are validated like edits on the Dictionary page. Editing waits while
-suggestions are open for review. How the agent works with you, for example asking
-before each change, is up to the agent; the guide asks it to change only what you
-agree to.
+and changes are validated like edits on the Dictionary page. Editing waits while a
+dictionary build runs or its suggestions wait to be applied.
 
 What the agent reads, transcript excerpts included, goes to your agent's model
-provider. The endpoint has the same boundary as the rest of this API: this machine
+provider. A build with a cloud speech model is billed per minute of audio to your key;
+a local model costs nothing, so the guide prefers one. The endpoint has the same boundary as the rest of this API: this machine
 only, no authentication.
 
 ## Corrections

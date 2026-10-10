@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import asdict, replace
@@ -53,6 +54,8 @@ def test_review_edits_and_dismissal_apply_once_without_deleting_dismissed_entrie
         "model",
     )
     assert {c.kind for c in proposal.changes} == {"add", "remove", "word"}
+    # The review tells new words by the proposal, not by its own copy of the dictionary.
+    assert proposal.as_json()["newWords"] == [groq.words[0].id]
     edited = {**asdict(clearer), "meaning": "A reviewed assistant definition."}
     result = dictionary_changes.review(
         current,
@@ -460,6 +463,38 @@ def test_stop_during_audio_keeps_its_success_for_retry_and_discard_clears_it(
         assert speech_calls == 2
         client.delete(f"/api/dictionary/build/{job['id']}")
         assert not app.builds._texts and store.list_recordings() == []
+        app.close()
+
+
+def test_the_number_of_parts_shows_once_transcription_ends_during_a_part(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = "temporary cloud code and more words"
+    asked, release = threading.Event(), threading.Event()
+
+    async def call(_: Request) -> str:
+        asked.set()
+        await asyncio.to_thread(release.wait, 5)
+        return json.dumps(proposed(text))
+
+    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", len(text) * 2)
+    with closing(Store(tmp_path)) as store:
+        app, client = setup(store, call)
+        monkeypatch.setattr(app.providers[0], "transcribe", lambda *_: Transcript(text))
+        for i in range(6):
+            audio = wav_bytes(bytes([i, 3]) * 16)
+            client.post("/api/dictionary/audio", files={"audio": (f"{i}.wav", audio)})
+        client.post("/api/dictionary/build", json={"source": "audio"})
+        assert asked.wait(2)
+        # The first part is still waiting for its reply; every recording is transcribed.
+        deadline = time.monotonic() + 2
+        while (state := client.get("/api/dictionary/build").json())["steps"] == 0:
+            assert time.monotonic() < deadline, state
+            time.sleep(0.01)
+        assert state["phase"] == "building" and state["completed"] == 6
+        assert (state["step"], state["completedBatches"], state["steps"]) == (1, 0, 3)
+        release.set()
+        assert wait_for_build(client)["phase"] == "ready"
         app.close()
 
 

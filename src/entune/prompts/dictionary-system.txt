@@ -17,12 +17,12 @@ words and each candidate's meaning, picks one, and the app writes that word's sp
    what you missed: other recurring confusions, and other heard texts for words you
    already found. A dictation set usually holds several distinct confusions; do not stop
    at the obvious ones.
-2. Improve the learned heard entries shown here, which are the ones that occur in these
-   dictations: add a word a dictation used the heard text for, add the heard text's own
-   word when a dictation uses it as written, remove a candidate it was never used for,
-   or make a word's meaning clearer. Remove a learned entry only when its confusion is
-   not credible or it does harm. Leave pinned entries as they are: they are the person's
-   own. Change only what these dictations give reason to.
+2. Improve this recognizer's learned heard entries shown here, which are the ones that
+   occur in these dictations: add a word a dictation used the heard text for, add the
+   heard text's own word when a dictation uses it as written, remove a candidate it was
+   never used for, or make a word's meaning clearer. Remove a learned entry only when
+   its confusion is not credible or it does harm. Leave pinned entries as they are: they
+   are the person's own. Change only what these dictations give reason to.
 
 When a dictation shows what the dictionary did ("after_dictionary", "decisions"), judge
 those choices against what the person meant: a wrong choice calls for a clearer meaning,
@@ -36,22 +36,35 @@ which was meant.
   little sense as written and a term that sounds alike fits, or the context names the
   term plainly. A name or term is worth an entry from one occurrence; skip one-off
   garbles and one-off slips on everyday words that are usually right.
+- A false start the speaker corrects at once ("open the Fig, um, Figma file") is not
+  evidence: the first wording was a change of mind, not a mishearing.
 - Never invent a spelling. If the intended term is a private name whose spelling these
   dictations and words do not show, leave it out.
+- Never propose one name as a mishearing of another name the person uses for the same
+  kind of thing, such as two people or two projects: context cannot tell them apart.
 - Heard text is the words actually got wrong, as written, whole words. Do not include
-  correct neighbouring words.
+  correct neighbouring words, except when the words got wrong are common ones the person
+  also uses as written ("first" in "first mode" for fast mode): then the heard text is the
+  longer phrase ("first mode"), so the app need not judge every use of the common word.
+  An entry whose text stands as written far more often than it is misheard is sent back.
 - Candidates come from real usage. A heard entry names only the words a dictation used
   that heard text for, each with evidence, never a word because it sounds alike or goes
-  with another candidate. Evidence is a place where the recognizer got the words wrong: a
+  with another candidate. Cite every occurrence in these dictations where the heard text
+  was misheard; every other occurrence needs the word written as heard (below), or the
+  entry is sent back. Evidence is a place where the recognizer got the words wrong: a
   word or name a dictation uses correctly is not a confusion ("Alice is responsible" is
   Alice). One exception: when the heard text is itself an everyday word, a name or an
-  acronym in its own right ("camel", "cloud", "Alice", "ONNX"), also name the word
-  spelled exactly like it, with its usual sense, so the app can keep it as written;
-  without it, the app replaces every occurrence. A heard text with no meaning of its own
-  ("gray fauna") names only what was meant.
-- Reuse words. When a word shown here is what was meant, name it by its id; define a
-  new word only when none fits. A name is one word however it was heard. Another sense
-  of the same spelling is a new word only when a dictation uses that sense.
+  acronym in its own right ("camel", "cloud", "Alice", "ONNX"), or everyday words someone
+  could say as written ("long fuse", "this code"), also name the word spelled exactly
+  like it, with its usual sense, so the app can keep it as written; without it, the app
+  replaces every occurrence. A heard text with no meaning of its own ("gray fauna") names
+  only what was meant.
+- Reuse words. When a word shown here is what was meant, name it by its id; define a new
+  word only when none fits. Entries marked "other" are another recognizer's, shown for
+  their words: when this recognizer makes the same mistake in these dictations, add the
+  entry for it with evidence here; you cannot change or remove them. A name is one word
+  however it was heard. Another sense of the same spelling is a new word only when a
+  dictation uses that sense.
 - Heard texts match regardless of capitals, and a name is always written with its
   spelling's capitals. Never add an entry for a heard text that differs from a word's
   spelling only in capitals.
@@ -66,9 +79,10 @@ which was meant.
 
 ## Input
 
-Words: {"id": "w1", "spelling", "meaning"}.
+Words: {"id": "w1", "spelling", "meaning", "review": true when its meaning may be revised; the
+others are confirmed and stay as they are}.
 Heard entries: {"text": "what the recognizer writes", "words": ["w1", ...], "pinned":
-true when the person's own}.
+true when the person's own, "other": true when another recognizer's}.
 Dictations: {"id": "d1", "text", optional "after_dictionary" and "decisions"}.
 Character positions count in "text", from 0, end exclusive.
 
@@ -81,8 +95,8 @@ JSON only:
  "removals": ["heard text"]}
 
 - "words": only new words, with ids n1, n2, ...
-- "meanings": a clearer meaning for a shown word, only when a dictation shows the current
-  one misleads.
+- "meanings": a clearer meaning for a shown word marked "review", only when a dictation
+  shows the current one misleads.
 - "heard": each new heard entry, and each shown learned entry you change, in full: list
   every candidate it keeps. A candidate names a word, w1 or n1.
   basis "text": a dictation used the heard text for this word; evidence lists at least
