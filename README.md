@@ -99,8 +99,10 @@ Then ask it to set up your Entune dictionary. It chooses and downloads a speech 
 picks the decision model and turns its steps on, finds the recordings other dictation
 apps keep on your Mac, builds your dictionary from them, refines the result, and tells
 you when it's ready. You don't review anything. It leaves you only what has to be yours:
-saving an API key in Settings, signing in, granting a permission. Later, ask it how
-Entune is doing: it reads your recent dictations and fixes what they show.
+saving an API key in Settings, signing in, granting a permission. With a cloud speech
+model, a build from imported recordings is billed per minute of audio to your key; a
+local model costs nothing. Later, ask it how Entune is doing: it reads your recent
+dictations and fixes what they show.
 
 Any agent that speaks MCP over HTTP takes the same endpoint, `http://localhost:4187/mcp`,
 while Entune runs; **Settings › Integrations** shows it. Every change it makes to the
