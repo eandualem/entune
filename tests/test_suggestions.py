@@ -335,13 +335,14 @@ def test_stored_words_are_reused_by_id_and_by_name_never_defined_again() -> None
         result = parse(payload, working=stored)
         assert result.words == stored.words
         assert entries(result) == {"cloud code": ["Claude Code"]}
-    # An ordinary word is the stored one with the same meaning, or when it was not shown,
-    # so the model could not reuse it. Shown and given another meaning, it is another sense.
+    # An ordinary word is the stored one only with the same meaning: the same spelling can
+    # mean something else, shown to the model or not.
     cache = Word("m_cache", "cache", "stored copy of data", casing="ordinary")
     working = Dictionary((cache,))
     for text, meaning, reused in (
         ("clear the catch in the cache", "stored copy of data", True),
-        ("clear the catch now", "copy of data kept nearby", True),
+        ("clear the catch now", "stored copy of data", True),
+        ("clear the catch now", "money", False),
         ("clear the catch in the cache", "money", False),
     ):
         word = {"id": "n1", "spelling": "cache", "meaning": meaning, "casing": "ordinary"}

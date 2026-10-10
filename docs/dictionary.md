@@ -320,9 +320,7 @@ for the heard text's own word, or `existing` for a candidate the entry already h
 stored evidence is restored. Pinned entries cannot be changed or removed, and a learned
 entry with a pinned entry's text cannot be added. A new word is the stored one when it is
 the same: a name spelled like a stored name (exactly, or else ignoring capitals when only
-one matches), or an ordinary word with the same spelling and meaning, or with the same
-spelling when it is the only ordinary word so spelled and was not shown to the model,
-which therefore could not reuse it. A new word must be
+one matches), or an ordinary word with the same spelling and meaning. A new word must be
 named by an entry of the reply. An addition whose candidates are all literal differs only
 in capitals and adds nothing; a revision that leaves a corrected entry with only its
 literal candidate removes the entry. A heard text the dictations use correctly is not a

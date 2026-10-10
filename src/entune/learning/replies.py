@@ -96,24 +96,26 @@ def _meaning(text: str, spelling: str) -> str:
     return text
 
 
-def _same(
-    spelling: str, meaning: str, casing: str, words: Sequence[Word], unseen: set[str]
-) -> Word | None:
+def _same(spelling: str, meaning: str, casing: str, words: Sequence[Word]) -> Word | None:
     """The stored word a new one is: a name is written one way, so a name spelled like a
     stored one is that word (exact spelling first, then one ignoring capitals); an
-    ordinary word is the stored one when its meaning is the same too, or when the one
-    word of that spelling is `unseen` (an ID not shown to the model, which therefore
-    could not reuse it). A word shown and defined again is another sense."""
+    ordinary word is the stored one only when its meaning is the same too, since the same
+    spelling can mean something else ("charge": a fee, or filling a battery)."""
     if casing == "fixed":
         names = [w for w in words if w.casing == "fixed"]
         exact = [w for w in names if w.spelling == spelling]
         alike = [w for w in names if key(w.spelling) == key(spelling)]
         return exact[0] if exact else alike[0] if len(alike) == 1 else None
-    ordinary = [w for w in words if w.casing == "ordinary" and key(w.spelling) == key(spelling)]
-    meant = next((w for w in ordinary if key(w.meaning) == key(meaning)), None)
-    if meant is not None:
-        return meant
-    return ordinary[0] if len(ordinary) == 1 and ordinary[0].id in unseen else None
+    return next(
+        (
+            w
+            for w in words
+            if w.casing == "ordinary"
+            and key(w.spelling) == key(spelling)
+            and key(w.meaning) == key(meaning)
+        ),
+        None,
+    )
 
 
 def parse_reply(
@@ -134,7 +136,6 @@ def parse_reply(
     learned = {key(h.text): h for h in working.learned_for(model)}
     pinned = {key(h.text) for h in working.pinned}
     supplied = sources(transcripts)
-    unseen = {w.id for w in working.words} - set(shown.word_ids.values())
 
     # New words: a stored word when it is the same, else a new ID assigned once.
     labels: dict[str, str] = {}
@@ -148,7 +149,7 @@ def parse_reply(
         if not spelling:
             raise ValueError(f"Word {label} needs a spelling")
         meaning = _meaning(item["meaning"], spelling)
-        same = _same(spelling, meaning, item["casing"], (*stored.values(), *new.values()), unseen)
+        same = _same(spelling, meaning, item["casing"], (*stored.values(), *new.values()))
         if same is None:
             # Not confirmed until applied, so a later part of the run can still refine it.
             same = Word(
