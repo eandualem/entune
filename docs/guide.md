@@ -384,7 +384,8 @@ more, then skipped, and the suggestions come from the others; the result says ho
 were skipped. If the build stops, **Continue** picks up where it was: recordings already
 transcribed and parts already finished are kept.
 A timeline over recorded time, oldest to newest without the gaps between days, shows
-each recording as a segment as wide as its length, and its two handles select a
+each recording as a segment as wide as its length (the average length when it is not
+known), and its two handles select a
 continuous stretch of whole recordings. It starts at about the most recent 90 minutes of
 recordings, or all of an imported folder; drag either handle to change it. The exact duration, count and edge dates are shown, and
 the included recordings can be listed and played. Fresh transcripts stay in memory within the workflow and never become
