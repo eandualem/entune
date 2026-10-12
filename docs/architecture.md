@@ -8,11 +8,13 @@ the main thread beside it on macOS, Windows and Linux. Nothing opens a browser.
 src/entune/
   cli.py          the `entune` command: installs the app, then data directory, port check,
                   server thread, desktop app
+  first_start.py  says at once when the Mac app starts cold, standard library only
   server.py       the page, static files and middleware: refuses requests not addressed to
                   localhost and state changes from other origins; assembles api/, and
                   starts the MCP endpoint at /mcp when an agent first connects
   api/            the HTTP routes, one module per resource (settings, models, recordings,
                   dictionary, learning, data, desktop); mcp.py: the agents' MCP tools;
+                  mcp_setup.py: the MCP tools for setup, imports and builds;
                   common.py: errors and JSON shapes
   app/            what the app does, whoever asks; entune.py builds and wires the parts:
                   settings.py (keys, fast mode, the decision model and its steps, suggestion
@@ -21,13 +23,14 @@ src/entune/
                   dictation.py (record, transcribe, process), pieces.py (fast mode),
                   dictionary_file.py (read, versioned save, pin, agent corrections),
                   learning.py and suggestion_runs.py (suggestion runs: input, job, apply),
-                  audio_import.py,
+                  audio_import.py, tracing.py (opt-in Langfuse tracing of suggestions),
                   capture.py, desktop_bridge.py, local_data.py (inventory, delete all),
                   operations.py (one user operation at a time), shortcuts.py
   audio/          formats.py: container sniffing, durations, WAV; recorder.py: microphone ->
                   WAV at the device's rate, each chunk to a sink (fast mode's pieces);
-                  pauses.py: natural pauses from loudness; convert.py: FFmpeg
-                  conversion for local engines
+                  pauses.py: natural pauses from loudness; silence.py: long silence left
+                  out of what a speech model is sent; waveform.py: History's waveform;
+                  convert.py: FFmpeg conversion for local engines
   providers/      contracts.py: audio/result types and the Provider protocol
                   registry.py: adapters and stable provider/model identifiers
                   resources.py: speech leases, local foreground priority, warming, cleanup
@@ -36,7 +39,8 @@ src/entune/
                   downloads; Parakeet's helper runs in its external engine
   processing/     after speech: pipeline.py runs the stages, results.py records them;
                   jev_client.py calls the decision model: Jev or Laya over TypeSafe's API,
-                  or OpenAI's Decisions API with the same questions in its shape;
+                  or OpenAI's or Perplexity's Decisions API with the same questions in
+                  its shape;
                   laya.py runs Laya's server from its external engine; jev.py asks the
                   meaning, filler and paragraph questions; formatting.py, cleanup.py,
                   text_edits.py
@@ -45,8 +49,9 @@ src/entune/
                   changes.py: pinning, proposals and review; matching.py: eligible words
                   and exact edits; corrections.py: confirmed corrections from other apps
   learning/       dictionary suggestions: suggestion_model/ (catalog, providers and one
-                  Pydantic AI call), inputs.py, batches.py (requests), replies.py (reply
-                  schema, parse and apply), generate.py
+                  Pydantic AI call), inputs.py, view.py (what the model sees of the
+                  dictionary), batches.py (requests), replies.py (reply schema, parse
+                  and apply), generate.py
   storage/        store.py: SQLite rows + audio files; records.py, schema.py;
                   data_folder.py: what Entune owns in its folder; paths.py: where it is
   prompts/        packaged generation text and the decision model's structured
@@ -59,6 +64,7 @@ src/entune/
   desktop/        app.py: the orchestration, written against platform.py's protocols
                   (tray, window, hotkeys, actions, permissions, UI-thread scheduling);
                   engine.py: press/release -> start/stop, pure;
+                  pill.py: how the pill moves, pure, for every system;
                   webview/shell.py: the window (pywebview) and tray (pystray, or Qt
                   on Linux), and the pill's shared logic, for every system;
                   macos/: pynput listener with the fn key (injected keystrokes
@@ -71,10 +77,10 @@ src/entune/
                   through /dev/uinput, Qt and wl-copy clipboard, the menu entry
 ```
 
-Packages depend one way: audio and dictionary; then processing, learning and storage
-(storage uses only their value types); then app; then api and desktop; then server
-and cli. Every package `__init__.py` is empty or holds only a docstring, the version,
-or the prompt loader.
+Packages depend one way: audio, dictionary and prompts; then providers (on audio),
+processing and learning; then storage (audio's formats and the others' value types);
+then app; then api and desktop; then server and cli. Every package `__init__.py` is
+empty or holds only a docstring, the version, or the prompt loader.
 
 Data flow for a dictation: the hotkey listener's thread feeds the engine;
 the engine starts and stops the recorder; on stop, a persist worker writes
