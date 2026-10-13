@@ -204,7 +204,7 @@ the parts transcribed while recording used the model selected at recording start
 if another model is selected when transcription starts, those parts are dropped and
 the saved clip goes to that model whole.
 
-**Fast mode** (the lightning switch at the top of the window, off by default) cuts
+**Fast mode** (the lightning switch at the top of the window, on by default) cuts
 a dictation at natural pauses while you speak, and your speech model, cloud or local,
 transcribes each finished part in the background, the same way it transcribes a whole
 clip. Parts are transcribed in parallel, each as soon as it is cut, so a slow one does
