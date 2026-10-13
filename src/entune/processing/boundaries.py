@@ -71,8 +71,11 @@ def gaps(
     run: list[int] = []
     for i in range(len(words)):
         run.append(i)
-        ends = i + 1 == len(words) or any(
-            c in STOPS for c in text[words[i].end() : words[i + 1].start()]
+        gap = text[words[i].end() : words[i + 1].start()] if i + 1 < len(words) else ""
+        # An abbreviation's dot ("Dr. Smith") does not end the run.
+        ends = i + 1 == len(words) or (
+            any(c in STOPS for c in gap)
+            and not (gap.startswith(".") and abbreviation(text, words[i].end() + 1))
         )
         if ends:
             run_of += [len(run)] * len(run)

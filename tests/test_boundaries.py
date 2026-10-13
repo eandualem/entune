@@ -49,3 +49,11 @@ def test_a_stop_is_taken_away_only_on_a_clear_answer_and_a_name_keeps_its_capita
 
 def test_an_abbreviation_keeps_its_stop() -> None:
     assert boundaries.gaps("Please arrive at 5 p.m. tomorrow and bring it.", {}) == []
+
+
+def test_an_abbreviation_does_not_end_a_long_run() -> None:
+    text = (
+        "We should review all the outstanding issues with Dr. Smith before we leave, then we"
+        " can send the final report to the rest of the team tomorrow morning"
+    )
+    assert [g.mark for g in boundaries.gaps(text, {})] == [","]
