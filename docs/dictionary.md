@@ -70,8 +70,10 @@ ways it is said as well as spelled: "GPT-5.5" as "gee pee tee five point five". 
 speech model's own confidence gates it: a span is offered only when one of its words
 is below 0.9, so a word the model was sure of stays out. A model that gives no
 confidence needs both the sound and half the letters alike. A span never starts or
-ends with a small word or a hesitation sound, and never crosses a stop or a comma.
-Where spans overlap, the closest is kept. The decision model then chooses between the
+ends with a small word or a hesitation sound, never crosses a stop or a comma, and
+each of its words must bring it closer to the name; a name already spelled right is
+left whole, and a possessive stays outside the span. Where spans overlap, the closest
+is kept. The decision model then chooses between the
 words as written and up to five dictionary words, each with its meaning, and a word is
 replaced only at 0.6 or more; otherwise the text stays as the speech model wrote it.
 
@@ -81,7 +83,7 @@ with the speech model's confidence re-run locally:
 | | Errors with the meant word offered | Places asked per 1,000 words | Errors fixed by Jev | Changes outside the labelled errors |
 |---|---:|---:|---:|---:|
 | Heard entries only | 63 | 6.9 | 52 | 17 |
-| Plus sound and spelling | 70 | 8.8 | 55 | 17 |
+| Plus sound and spelling | 70 | 8.5 | 55 | 17 |
 
 "Fixed" counts a labelled span whose corrected text is the intended one; 8 more were
 fixed with a wider span than labelled, in both rows. Without the confidence gate and

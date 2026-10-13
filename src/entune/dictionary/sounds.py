@@ -26,6 +26,7 @@ import jellyfish
 from entune.dictionary.entries import Active, Word, key
 from entune.dictionary.matching import Match
 
+LITERAL = "heard:"  # the ID prefix of the words as written: no dictionary word
 SOUND = 0.75  # similarity of Metaphone codes
 LETTERS = 0.8  # similarity of letters
 LETTERS_WITH_SOUND = 0.5  # without confidence: the sound and at least this
@@ -252,7 +253,7 @@ def _score(heard: str, heard_code: str, entry: _Indexed, confident: bool) -> flo
         if not LENGTH_RATIO[0] <= len(heard) / len(form_letters) <= LENGTH_RATIO[1]:
             continue
         sound = similarity(heard_code, form_code, SOUND)
-        spelled = similarity(heard, form_letters, LETTERS_WITH_SOUND if confident else LETTERS)
+        spelled = similarity(heard, form_letters, LETTERS if confident else LETTERS_WITH_SOUND)
         close = (
             sound >= SOUND or spelled >= LETTERS
             if confident
@@ -280,13 +281,14 @@ def candidates(
     # A name already spelled right, punctuation and all ("C++", "GPT-5.5"), is left alone.
     written = [(m.start(), m.end()) for entry in index for m in entry.written.finditer(text)]
     found: list[_Found] = []
-    known: dict[tuple[str, bool], list[tuple[float, Word]] | None] = {}  # spans said again
+    known: dict[tuple[str, bool, bool], list[tuple[float, Word]]] = {}  # spans said again
     for i in range(len(tokens)):
         for n in range(1, MAX_TOKENS + 1):
             if i + n > len(tokens):
                 break
             start, end = tokens[i].start(), tokens[i + n - 1].end()
-            if _POSSESSIVE.search(text, start, end):
+            possessive = bool(_POSSESSIVE.search(text, start, end))
+            if possessive:
                 end -= 2  # "Claud's": the name is decided, the possessive stays
             if n > 1 and _BREAK.search(text, tokens[i].end(), tokens[i + n - 1].start()):
                 break  # never across sentence punctuation
@@ -303,8 +305,9 @@ def candidates(
             if unsure is not None and unsure >= UNSURE:
                 continue
             said = key(span)
-            if (said, unsure is None) in known:
-                again = known[said, unsure is None]
+            seen = (said, possessive, unsure is None)
+            if seen in known:
+                again = known[seen]
                 if again:
                     found.append(_Found(start, end, tuple(again[:OPTIONS])))
                 continue
@@ -316,10 +319,25 @@ def candidates(
                     break  # the word itself, as written
                 if said in entry.parts:
                     continue  # a word of it, as "posts" of "X posts": the word itself too
-                if score := _score(heard, heard_code, entry, unsure is not None):
+                if possessive and _POSSESSIVE.search(entry.word.spelling):
+                    continue  # its own "'s" and the one kept would make two
+                score = _score(heard, heard_code, entry, unsure is not None)
+                # Each word of a longer span must bring it closer: "Macdonald's today" is
+                # no closer to McDonald's than "Macdonald's" is.
+                if score and n > 1:
+                    shorter = (
+                        text[tokens[i + 1].start() : tokens[i + n - 1].end()],
+                        text[tokens[i].start() : tokens[i + n - 2].end()],
+                    )
+                    if any(
+                        _score(letters(s), code(s), entry, unsure is not None) > score
+                        for s in shorter
+                    ):
+                        continue
+                if score:
                     scored.append((score, entry.word))
             scored.sort(key=lambda s: -s[0])
-            known[said, unsure is None] = scored
+            known[seen] = scored
             if scored:
                 found.append(_Found(start, end, tuple(scored[:OPTIONS])))
     # Overlapping spans are one place to decide: keep the closest, then the longest.
@@ -358,7 +376,7 @@ def _lowest(
 
 def _literal(heard: str) -> Word:
     return Word(
-        f"heard:{key(heard)}",
+        f"{LITERAL}{key(heard)}",
         heard,
         f'Exactly the words "{heard}" as written, or a word not listed here.',
         casing="ordinary",

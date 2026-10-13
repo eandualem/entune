@@ -78,3 +78,13 @@ def test_a_name_spelled_right_is_left_whole_and_spelling_alone_can_match() -> No
     (match,) = sounds.candidates(active, text, unsure(text, "SQLitex"))
     assert match.meanings[1] == sqlite
     assert sounds.spoken("GPT-\uff15")  # a full-width digit is not read as a number
+
+
+def test_a_name_with_its_own_possessive_and_matching_without_confidence() -> None:
+    mcd = Word("m_mcd", "McDonald's", "A restaurant chain.")
+    active = Active(sounds=(mcd, JEV))
+    text = "We ate at Macdonald's today."
+    assert sounds.candidates(active, text, unsure(text, "Macdonald's")) == []
+    # Same sound, half the letters: enough without confidence.
+    (match,) = sounds.candidates(active, "Ask Jeff about it.", None)
+    assert match.meanings[1] == JEV

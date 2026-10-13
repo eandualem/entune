@@ -12,6 +12,7 @@ from typing import Any
 
 from entune import prompts
 from entune.dictionary.matching import Component, Edit, Interpretation
+from entune.dictionary.sounds import LITERAL
 from entune.processing import cleanup, formatting
 from entune.processing.jev_client import Call
 from entune.processing.text_edits import Change
@@ -240,7 +241,12 @@ def decide(
             ):
                 decisions[i] = Decision(component, None, "contextual")
                 continue
-            readings = request.support[i][option]
+            # The words as written, offered beside a sound-alike, are no dictionary word.
+            readings = tuple(
+                kept
+                for reading in request.support[i][option]
+                if (kept := tuple(m for m in reading if not m.startswith(LITERAL)))
+            )
             decisions[i] = Decision(
                 component,
                 Edit(component.start, component.end, values[option]),
