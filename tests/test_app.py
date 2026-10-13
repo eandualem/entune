@@ -21,7 +21,7 @@ from entune.desktop.app import EntuneApp
 from entune.desktop.engine import ShortcutEngine
 from entune.desktop.platform import Delivery, State
 from entune.processing.jev_client import Client as JevClient
-from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
+from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript, Word
 from entune.storage.store import Store
 from tests.test_pieces import silence, speech
 
@@ -203,6 +203,9 @@ class FakeRecorder:
         return Capture(b"", self.capture.sample_rate) if discard else self.capture
 
 
+HEARD = "hello from the fake"
+
+
 class StubProvider:
     id: str = "stub"
     name: str = "Stub"
@@ -213,7 +216,10 @@ class StubProvider:
 
     def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         self.clips.append(clip)
-        return Failure("HTTP 401\n{}") if model == "bad" else Transcript("hello from the fake")
+        if model == "bad":
+            return Failure("HTTP 401\n{}")
+        words = tuple(Word(w, 0.2 * i, 0.2 * i + 0.2, 0.9) for i, w in enumerate(HEARD.split()))
+        return Transcript(HEARD, words)
 
 
 def make(tmp_path: Path, **kwargs: bool) -> tuple[EntuneApp, FakePlatform, Entune]:
@@ -409,6 +415,10 @@ def test_fast_mode_transcribes_the_pieces_and_delivers_their_joined_text(tmp_pat
     assert platform.actions.clipboard == "hello from the fake hello from the fake"
     attempt = entune.store.list_recordings()[0].transcriptions[0]
     assert attempt.fast and attempt.audio_seconds == pytest.approx(23.6, abs=0.1)
+    # Each piece's words, timed on the whole recording: the second piece starts at 21.3 s.
+    words = entune.store.words(attempt.id)
+    assert words is not None and [w.text for w in words] == HEARD.split() * 2
+    assert words[4].start == pytest.approx(21.3, abs=0.1)
 
 
 def test_fast_mode_pieces_of_another_model_are_dropped(tmp_path: Path) -> None:

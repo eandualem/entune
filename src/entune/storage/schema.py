@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS transcriptions (
     processing_state TEXT NOT NULL DEFAULT 'complete'
 );
 CREATE INDEX IF NOT EXISTS transcriptions_by_recording ON transcriptions(recording_id);
+CREATE TABLE IF NOT EXISTS transcription_words (
+    transcription_id INTEGER PRIMARY KEY REFERENCES transcriptions(id),
+    words TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS corrections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,

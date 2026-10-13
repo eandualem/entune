@@ -2,15 +2,48 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from typing import Protocol, runtime_checkable
 
 from entune.audio.formats import extension_for, wav_duration_seconds, webm_duration_seconds
 
 
 @dataclass(frozen=True)
+class Word:
+    """One word as the speech model heard it: its text, when it was said (seconds into the
+    clip), and how sure the model was of it (0 to 1), each None when not given."""
+
+    text: str
+    start: float | None
+    end: float | None
+    confidence: float | None
+
+
+@dataclass(frozen=True)
 class Transcript:
     text: str
+    words: tuple[Word, ...] | None = None  # in order; None when the provider gives none
+
+    def retimed(
+        self,
+        to_recording: Callable[[float], float],
+        end: Callable[[float], float] | None = None,
+    ) -> Transcript:
+        """The same transcript with each word's times moved by `to_recording`, and its
+        end by `end` when given (a word ending at a cut ends before it); an end never
+        comes before its start."""
+        if self.words is None:
+            return self
+
+        def moved(word: Word) -> Word:
+            start = None if word.start is None else to_recording(word.start)
+            stop = None if word.end is None else (end or to_recording)(word.end)
+            if start is not None and stop is not None:
+                stop = max(start, stop)
+            return replace(word, start=start, end=stop)
+
+        return replace(self, words=tuple(moved(word) for word in self.words))
 
 
 @dataclass(frozen=True)

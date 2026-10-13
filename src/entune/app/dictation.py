@@ -21,7 +21,7 @@ from entune.app.operations import Operation, Operations
 from entune.app.pieces import Pieces
 from entune.app.settings import JevStatus, Settings
 from entune.audio.formats import sniff_mime
-from entune.audio.silence import shorten_wav
+from entune.audio.silence import Shortened, shorten_wav
 from entune.dictionary.entries import Active
 from entune.processing import results
 from entune.processing.jev_client import SECTION_CONNECTIONS
@@ -218,7 +218,7 @@ class Dictation:
                 else:
                     started = time.monotonic()
                     seconds: float | None = None  # the recording's own length
-                    joined: str | None = None
+                    joined: Transcript | None = None
                     try:
                         # Before this dictation's own lease: the pieces hold theirs while
                         # they finish, and a local model has one slot.
@@ -238,17 +238,20 @@ class Dictation:
                         clip = Clip(data, mime)
                         seconds = clip.seconds
                         # Fast mode's pieces were shortened as they were sent.
+                        sent = Shortened(data)
                         if (
                             joined is None
                             and self._settings.remove_silence()
                             and mime == "audio/wav"
                         ):
-                            clip = Clip(shorten_wav(data), mime)
-                        result = (
-                            Transcript(joined)
-                            if joined is not None
-                            else ref.provider.transcribe(clip, ref.model, api_key)
-                        )
+                            sent = shorten_wav(data)
+                            clip = Clip(sent.audio, mime)
+                        if joined is not None:
+                            result = joined
+                        else:
+                            result = ref.provider.transcribe(clip, ref.model, api_key)
+                            if isinstance(result, Transcript):
+                                result = result.retimed(sent.recording_time, sent.recording_end)
                     except CancelledError:
                         raise
                     except Exception as exc:
@@ -283,6 +286,7 @@ class Dictation:
                     elapsed_seconds=timing.elapsed_seconds,
                     fast=timing.fast,
                     processing=initial,
+                    words=result.words if isinstance(result, Transcript) else None,
                 )
             if operation and operation.cancel.is_set() and raw is None:
                 self._store.cancel_recording(recording.id, attempt_id)
@@ -431,7 +435,7 @@ class Dictation:
         }
 
 
-def _joined(pieces: Pieces | None, ref: ModelRef) -> str | None:
+def _joined(pieces: Pieces | None, ref: ModelRef) -> Transcript | None:
     """Fast mode's text when its pieces were transcribed by this model; otherwise they
     are dropped and the whole clip is transcribed."""
     if pieces is None:

@@ -26,7 +26,7 @@ import httpx
 
 from entune.audio.convert import to_wav_with_ffmpeg
 from entune.audio.formats import sniff_mime
-from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
+from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript, Word
 from entune.providers.local.contracts import LocalModelStatus
 from entune.providers.local.downloads import DOWNLOAD_TIMEOUT, Download
 
@@ -252,7 +252,7 @@ class Parakeet:
             Path(path).unlink(missing_ok=True)
         if "error" in answer:
             return Failure(str(answer["error"]))
-        return Transcript(str(answer.get("text", "")).strip())
+        return Transcript(str(answer.get("text", "")).strip(), _words(answer.get("words")))
 
     # ---- the helper process
 
@@ -338,3 +338,21 @@ class Parakeet:
 def _check(name: str) -> None:
     if name != MODEL:
         raise ValueError(f"Unknown local model: {name}")
+
+
+def _words(rows: object) -> tuple[Word, ...] | None:
+    """The helper's `[text, start, end, confidence]` rows; None from an older helper or
+    when any row is malformed."""
+    if not isinstance(rows, list):
+        return None
+    words: list[Word] = []
+    for row in rows:
+        if not (
+            isinstance(row, list)
+            and len(row) == 4
+            and isinstance(row[0], str)
+            and all(isinstance(v, int | float) for v in row[1:])
+        ):
+            return None
+        words.append(Word(row[0], float(row[1]), float(row[2]), float(row[3])))
+    return tuple(words)
