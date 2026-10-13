@@ -30,12 +30,13 @@ class Shortened:
     audio: bytes
     kept: np.ndarray | None = None  # indices of the kept frames; None when all were
     frames: int = 0  # whole frames in the original; the part of a frame after them is sent as is
+    step: float = FRAME_MS / 1000  # a frame's length: 220 samples at 11,025 Hz is 19.95 ms
 
     def recording_time(self, seconds: float) -> float:
         """Where `seconds` into the shortened audio was in the original."""
         if self.kept is None or len(self.kept) == 0:
             return seconds
-        step = FRAME_MS / 1000
+        step = self.step
         index = int(seconds / step + _EPSILON)  # 2.26 / 0.02 is 112.99999...: frame 113
         if index >= len(self.kept):  # the unframed tail, sent as it was
             return self.frames * step + (seconds - len(self.kept) * step)
@@ -75,7 +76,12 @@ def shorten(pcm: bytes, sample_rate: int) -> Shortened:
             start = None
     if kept.all():
         return Shortened(pcm)
-    return Shortened(frames[kept].tobytes() + pcm[count * 2 * frame :], np.flatnonzero(kept), count)
+    return Shortened(
+        frames[kept].tobytes() + pcm[count * 2 * frame :],
+        np.flatnonzero(kept),
+        count,
+        frame / sample_rate,
+    )
 
 
 def shorten_wav(data: bytes) -> Shortened:
@@ -96,4 +102,4 @@ def shorten_wav(data: bytes) -> Shortened:
         clip.setsampwidth(2)
         clip.setframerate(rate)
         clip.writeframes(short.audio)
-    return Shortened(out.getvalue(), short.kept, short.frames)
+    return Shortened(out.getvalue(), short.kept, short.frames, short.step)

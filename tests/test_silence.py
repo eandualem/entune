@@ -153,3 +153,14 @@ def test_a_time_on_a_frame_boundary_is_in_the_frame_it_starts() -> None:
     (gap,) = np.flatnonzero(np.diff(short.kept) > 1)
     cut = round((gap + 1) * 0.02, 2)  # as a provider gives it, rounded
     assert short.recording_time(cut) == pytest.approx(short.kept[gap + 1] * 0.02)
+
+
+def test_times_use_the_frames_actual_length_at_any_rate() -> None:
+    rate = 11_025
+    loud = np.random.default_rng(0).normal(0, 6000, 30 * rate).astype(np.int16).tobytes()
+    soft = np.random.default_rng(1).normal(0, 20, 10 * rate).astype(np.int16).tobytes()
+    short = shorten(loud + soft + loud, rate)
+    assert short.kept is not None
+    (gap,) = np.flatnonzero(np.diff(short.kept) > 1)
+    cut = (gap + 1) * short.step
+    assert short.recording_time(cut) == pytest.approx(short.kept[gap + 1] * 220 / rate)
