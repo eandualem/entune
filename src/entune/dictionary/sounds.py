@@ -119,6 +119,7 @@ STOPWORDS = frozenset(
 )
 EDGES = STOPWORDS | {"um", "uh", "er", "erm", "ah", "hmm", "say", "said", "says", "so"}
 _TOKEN = re.compile(r"\w+(?:['\u2019.]\w+)*")
+_POSSESSIVE = re.compile(r"['\u2019]s$")
 _BREAK = re.compile(r"[.!?,;:\n]")
 _LETTER_NAMES = dict(
     zip(
@@ -174,7 +175,9 @@ def spoken(spelling: str) -> tuple[str, ...]:
     words = text.split()
     variants = {" ".join(words).lower()}
     lettered = [
-        " ".join(_LETTER_NAMES[c] for c in w.lower()) if w.isupper() and len(w) <= 5 else w
+        " ".join(_LETTER_NAMES[c] for c in w.lower())
+        if w.isupper() and w.isascii() and w.isalpha() and len(w) <= 5
+        else w
         for w in words
     ]
     variants.add(" ".join(lettered).lower())
@@ -267,6 +270,8 @@ def candidates(
             if i + n > len(tokens):
                 break
             start, end = tokens[i].start(), tokens[i + n - 1].end()
+            if _POSSESSIVE.search(text, start, end):
+                end -= 2  # "Claud's": the name is decided, the possessive stays
             if n > 1 and _BREAK.search(text, tokens[i].end(), tokens[i + n - 1].start()):
                 break  # never across sentence punctuation
             span = text[start:end]

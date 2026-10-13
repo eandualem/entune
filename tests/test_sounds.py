@@ -58,3 +58,12 @@ def test_the_models_words_are_located_in_the_text() -> None:
     text = "Open A, said Jev."
     located = sounds.locate(text, [("Open", 0.9), ("A,", 0.5), ("said", None), ("Jev.", 0.8)])
     assert located == [(0, 4, 0.9), (5, 6, 0.5), (13, 16, 0.8)]
+
+
+def test_a_possessive_stays_and_symbols_in_a_spelling_are_not_letters() -> None:
+    claude = Word("m_claude", "Claude", "Anthropic's model.")
+    active = Active(sounds=(claude, Word("m_cpp", "C++", "A programming language.")))
+    text = "I used Claud's model."
+    (match,) = sounds.candidates(active, text, unsure(text, "Claud's"))
+    assert text[match.start : match.end] == "Claud"
+    assert sounds.spoken("AT&T") == ("at&t",)
