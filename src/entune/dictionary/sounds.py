@@ -33,7 +33,8 @@ LETTERS_WITH_SOUND = 0.5  # without confidence: the sound and at least this
 UNSURE = 0.9  # a word below this confidence may be misheard
 LENGTH_RATIO = (0.6, 1.7)  # the span's letters against the word's
 OPTIONS = 5
-MAX_TOKENS = 3
+MAX_TOKENS = 3  # words in a span; more for a name said in more ("GPT five point five")
+LONGEST = 6
 
 # One of these alone is never a span: the decision would be about grammar, not a term.
 STOPWORDS = frozenset(
@@ -120,6 +121,7 @@ STOPWORDS = frozenset(
 )
 EDGES = STOPWORDS | {"um", "uh", "er", "erm", "ah", "hmm", "say", "said", "says", "so"}
 _TOKEN = re.compile(r"\w+(?:['\u2019.]\w+)*")
+_DIGIT = re.compile(r"[0-9]")
 _POSSESSIVE = re.compile(r"['\u2019]s$")
 _BREAK = re.compile(r"[.!?,;:\n]")
 _LETTER_NAMES = dict(
@@ -211,6 +213,7 @@ class _Indexed:
     spelled: str  # key() of the spelling
     parts: frozenset[str]  # its words
     written: re.Pattern[str]  # the spelling itself in a text
+    said_in: int  # the most words it is said in
 
 
 @dataclass(frozen=True)
@@ -227,7 +230,12 @@ def _index(active: Active) -> tuple[_Indexed, ...]:
             w,
             tuple(
                 {(code(v), letters(v)) for v in spoken(w.spelling)}
-                | {(code(w.spelling), letters(w.spelling))}
+                # Digits have no sound in a Metaphone code: such a name is matched as said.
+                | (
+                    set()
+                    if _DIGIT.search(w.spelling)
+                    else {(code(w.spelling), letters(w.spelling))}
+                )
             ),
             key(w.spelling),
             frozenset(key(w.spelling).split()),
@@ -237,16 +245,18 @@ def _index(active: Active) -> tuple[_Indexed, ...]:
                 else re.escape(w.spelling),
                 re.IGNORECASE,
             ),
+            max(len(v.split()) for v in spoken(w.spelling)),
         )
         for w in active.sounds
     )
 
 
-def _score(heard: str, heard_code: str, entry: _Indexed, confident: bool) -> float:
+def _score(heard: str, heard_code: str, entry: _Indexed, confident: bool) -> tuple[float, float]:
     """How close a heard span (its letters and code) is to the closest way the word is
     said or spelled that is close enough: by sound or by letters, or with no confidence
-    to go by (`confident` false), by both. 0 when none is."""
-    best = 0.0
+    to go by (`confident` false), by both. Then the sound and letters together, which
+    tells two spans apart when the sound alone is equal. (0, 0) when none is."""
+    best = (0.0, 0.0)
     for form_code, form_letters in entry.forms:
         if not heard or not form_letters:
             continue
@@ -260,7 +270,7 @@ def _score(heard: str, heard_code: str, entry: _Indexed, confident: bool) -> flo
             else sound >= SOUND and spelled >= LETTERS_WITH_SOUND
         )
         if close:
-            best = max(best, sound, spelled)
+            best = max(best, (max(sound, spelled), sound + spelled))
     return best
 
 
@@ -277,13 +287,14 @@ def candidates(
     index = _index(active)
     if not index:
         return []
+    longest = max(MAX_TOKENS, min(LONGEST, max(e.said_in for e in index)))
     tokens = list(_TOKEN.finditer(text))
     # A name already spelled right, punctuation and all ("C++", "GPT-5.5"), is left alone.
     written = [(m.start(), m.end()) for entry in index for m in entry.written.finditer(text)]
     found: list[_Found] = []
     known: dict[tuple[str, bool, bool], list[tuple[float, Word]]] = {}  # spans said again
     for i in range(len(tokens)):
-        for n in range(1, MAX_TOKENS + 1):
+        for n in range(1, longest + 1):
             if i + n > len(tokens):
                 break
             start, end = tokens[i].start(), tokens[i + n - 1].end()
@@ -297,12 +308,12 @@ def candidates(
             # "a career" or "GitHub uh" to a word would delete the "a" or the "uh".
             if _edge(tokens[i].group()) or _edge(tokens[i + n - 1].group()):
                 continue
+            unsure = _lowest(confidence, start, end)
+            if unsure is not None and unsure >= UNSURE:
+                continue
             if any(m.start < end and start < m.end for m in taken) or any(
                 s < end and start < e for s, e in written
             ):
-                continue
-            unsure = _lowest(confidence, start, end)
-            if unsure is not None and unsure >= UNSURE:
                 continue
             said = key(span)
             seen = (said, possessive, unsure is None)
@@ -314,6 +325,8 @@ def candidates(
             scored: list[tuple[float, Word]] = []
             heard, heard_code = letters(span), code(span)
             for entry in index:
+                if n > MAX_TOKENS and n > entry.said_in:
+                    continue  # a long span is only for a name said in as many words
                 if said == entry.spelled:
                     scored = []
                     break  # the word itself, as written
@@ -321,16 +334,16 @@ def candidates(
                     continue  # a word of it, as "posts" of "X posts": the word itself too
                 if possessive and _POSSESSIVE.search(entry.word.spelling):
                     continue  # its own "'s" and the one kept would make two
-                score = _score(heard, heard_code, entry, unsure is not None)
+                score, together = _score(heard, heard_code, entry, unsure is not None)
                 # Each word of a longer span must bring it closer: "Macdonald's today" is
-                # no closer to McDonald's than "Macdonald's" is.
+                # no closer to McDonald's than "Macdonald's" is, nor "Jeff W" to Jev.
                 if score and n > 1:
                     shorter = (
                         text[tokens[i + 1].start() : tokens[i + n - 1].end()],
                         text[tokens[i].start() : tokens[i + n - 2].end()],
                     )
                     if any(
-                        _score(letters(s), code(s), entry, unsure is not None) > score
+                        _score(letters(s), code(s), entry, unsure is not None)[1] >= together
                         for s in shorter
                     ):
                         continue

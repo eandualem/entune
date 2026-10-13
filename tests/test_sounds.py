@@ -88,3 +88,14 @@ def test_a_name_with_its_own_possessive_and_matching_without_confidence() -> Non
     # Same sound, half the letters: enough without confidence.
     (match,) = sounds.candidates(active, "Ask Jeff about it.", None)
     assert match.meanings[1] == JEV
+
+
+def test_a_long_name_is_matched_whole_and_an_extra_word_never_joins() -> None:
+    gpt = Word("m_gpt", "GPT-5.5", "A model.")
+    active = Active(sounds=(gpt, JEV))
+    text = "I use GPT five point five."
+    (match,) = sounds.candidates(active, text, unsure(text, "GPT", "five", "point"))
+    assert text[match.start : match.end] == "GPT five point five"
+    text = "Ask Jeff W about it."
+    (match,) = sounds.candidates(active, text, unsure(text, "Jeff", "W"))
+    assert text[match.start : match.end] == "Jeff"
