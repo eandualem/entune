@@ -209,7 +209,12 @@ a dictation at natural pauses while you speak, and your speech model, cloud or l
 transcribes each finished part in the background, the same way it transcribes a whole
 clip. Parts are transcribed in parallel, each as soon as it is cut, so a slow one does
 not hold up the next (a local model takes one at a time). When you stop, the last part
-is sent at once; the parts' text is joined in order and processed once. Each part's
+is sent at once; the parts' text is joined in order. The dictionary, filler and
+formatting steps are asked about each part while you speak too, once what follows it
+has been said, so after you stop only the last part is left to decide. On the eight
+longest labelled dictations (up to 4,300 characters), the steps took 0.4 s after the
+stop instead of up to 1.9 s; a paragraph break moved by one sentence in four of them,
+since a part is decided with what you had said by then. Each part's
 timing is written to `entune.log`. A part ends in the middle of a pause of at least 0.4 s, and only once
 it is long enough for the model: 30 s for Parakeet, 25 s for Whisper.cpp, 20 s for a
 cloud model. A shorter dictation is transcribed whole, as without fast mode, and so is

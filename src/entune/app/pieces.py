@@ -17,6 +17,7 @@ import threading
 import time
 from concurrent.futures import CancelledError
 
+from entune.app.ahead import Ahead
 from entune.audio.formats import wav_bytes
 from entune.audio.pauses import Pauses
 from entune.audio.silence import Shortened, shorten
@@ -44,8 +45,10 @@ class Pieces:
         cancel: threading.Event,
         *,
         remove_silence: bool = False,
+        ahead: Ahead | None = None,
     ) -> None:
         self.ref, self._api_key, self._rate = ref, api_key, sample_rate
+        self.ahead = ahead  # decides on the text while the user speaks
         self._remove_silence = remove_silence
         self._speech, self._cancel = speech, cancel
         seconds = PIECE_SECONDS.get(ref.provider.id, CLOUD_PIECE_SECONDS)
@@ -54,6 +57,7 @@ class Pieces:
         self._pcm = bytearray()  # the piece being recorded
         self._start = 0  # where it starts in the recording, in samples
         self._texts: dict[int, Transcript] = {}  # by piece number, joined in recording order
+        self._silent: set[int] = set()  # pieces transcribed to no text
         self._error: str | None = None
         self._lock = threading.Lock()
         self._changed = threading.Condition(self._lock)  # a piece finished or failed
@@ -76,6 +80,8 @@ class Pieces:
         self._chunks.put(None)
         self._worker.join()
         released = time.monotonic()
+        if self.ahead is not None:
+            self.ahead.stop()  # the final pass asks the rest
         if self._start == 0 or self._aborted.is_set() or self._cancel.is_set():
             if self._start == 0 and not self._aborted.is_set():
                 print("fast mode: no pause to cut at; the whole clip is transcribed", flush=True)
@@ -106,6 +112,8 @@ class Pieces:
     def abort(self) -> None:
         self._aborted.set()
         self._chunks.put(None)
+        if self.ahead is not None:
+            self.ahead.stop()
 
     def _stopped(self) -> bool:
         return self._aborted.is_set() or self._cancel.is_set() or self._error is not None
@@ -145,8 +153,20 @@ class Pieces:
                 sent.done.set()
                 self._changed.notify_all()
 
+    def _prefix(self) -> list[Transcript]:
+        """The pieces transcribed so far without a gap from the first; the lock is held."""
+        prefix = []
+        for number in range(1, len(self._sent) + 1):
+            if number in self._silent:
+                continue
+            if number not in self._texts:
+                break
+            prefix.append(self._texts[number])
+        return prefix
+
     def _piece(self, number: int, pcm: bytes, start: int, end: int) -> None:
         began = time.monotonic()
+        prefix: list[Transcript] = []
         if self._stopped():
             return
         result: TranscribeResult
@@ -173,6 +193,12 @@ class Pieces:
                     lambda seconds: offset + sent.recording_time(seconds),
                     lambda seconds: offset + sent.recording_end(seconds),
                 )
+                prefix = self._prefix()
+            else:
+                self._silent.add(number)
+                prefix = self._prefix()
+        if self.ahead is not None and prefix:
+            self.ahead.update(joined(prefix))
         status = "failed" if isinstance(result, Failure) else "ok"
         print(
             f"fast mode piece {number}: {start / self._rate:.1f}-{end / self._rate:.1f} s of"

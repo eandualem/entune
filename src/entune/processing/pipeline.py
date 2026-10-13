@@ -48,6 +48,7 @@ def process_text(
     endpoint: jev_client.Endpoint = jev_client.JEV,
     direct: bool = False,
     words: Sequence[tuple[str, float | None]] | None = None,
+    run: jev.Pass = jev.WHOLE,
     checkpoint: Callable[[Processed], None] | None = None,
     progress: Callable[[str], None] | None = None,
     check: Callable[[], None] | None = None,
@@ -76,12 +77,16 @@ def process_text(
 
     stages: dict[str, Callable[[], Stage]] = {}
     if contextual or direct:
-        stages["correction"] = lambda: _correction(raw, active, contextual, call(), endpoint, words)
+        stages["correction"] = lambda: _correction(
+            raw, active, contextual, call(), endpoint, words, run
+        )
     if cleanup:
-        stages["cleanup"] = lambda: _classify(raw, "cleanup", jev.cleanup_edits, call(), endpoint)
+        stages["cleanup"] = lambda: _classify(
+            raw, "cleanup", jev.cleanup_edits, call(), endpoint, run
+        )
     if formatting:
         stages["formatting"] = lambda: _classify(
-            raw, "formatting", jev.format_edits, call(), endpoint
+            raw, "formatting", jev.format_edits, call(), endpoint, run
         )
     if not stages:
         return initial
@@ -124,6 +129,7 @@ def _correction(
     call: jev_client.Call,
     endpoint: jev_client.Endpoint,
     words: Sequence[tuple[str, float | None]] | None = None,
+    run: jev.Pass = jev.WHOLE,
 ) -> Stage:
     method: Literal["contextual", "deterministic"] = "contextual" if contextual else "deterministic"
     try:
@@ -138,7 +144,7 @@ def _correction(
             found = sorted([*found, *alike], key=lambda m: (m.start, m.end))
         components = matching.components(found)
         if contextual:
-            decisions = jev.decide(raw, components, call)
+            decisions = jev.decide(raw, components, call, run=run)
         else:
             decisions = [
                 jev.settle(raw, c) or jev.Decision(c, None, "uncertain") for c in components
@@ -180,12 +186,13 @@ def _correction(
 def _classify(
     raw: str,
     method: Literal["cleanup", "formatting"],
-    classify: Callable[[str, jev_client.Call], jev.TextResult],
+    classify: Callable[[str, jev_client.Call, jev.Pass], jev.TextResult],
     call: jev_client.Call,
     endpoint: jev_client.Endpoint,
+    run: jev.Pass = jev.WHOLE,
 ) -> Stage:
     try:
-        classified = classify(raw, call)
+        classified = classify(raw, call, run)
     except CancelledError:
         raise
     except Exception as exc:
