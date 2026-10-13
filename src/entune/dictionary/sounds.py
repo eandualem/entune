@@ -3,8 +3,9 @@ was unsure of what it heard.
 
 An exact heard entry only catches a mishearing seen before. These candidates catch a new
 one: a span of one to three words (up to six for a name said in more) whose Metaphone
-code or letters are close to a name or term in the dictionary. The speech model's own confidence gates them: a span is offered only
-when one of its words is below UNSURE, so a word the model was sure of stays out. Without
+code or letters are close to a name or term in the dictionary. The speech model's own
+confidence gates them: a span is offered only when one of its words is below UNSURE, so
+a word the model was sure of stays out. Without
 confidence, both the sound and the letters must be close. The literal text is always an
 option, so the decision model can keep it; the word is replaced only on a clear choice
 (jev.FUZZY_PROBABILITY).
