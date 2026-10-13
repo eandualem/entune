@@ -437,8 +437,11 @@ the agent cannot delete pinned meanings or remove any existing pinned variant.
 
 A decision model answers questions about the text with probabilities and never writes
 any. With contextual correction enabled, it classifies eligible meanings from the words
-around each occurrence; Entune applies the selected stored spelling. Choose the decision
-model in Settings › Corrections & formatting:
+around each occurrence; Entune applies the selected stored spelling. Besides the heard
+entries, a word the speech model was unsure of that sounds or is spelled like one of
+your names or terms is offered too, with the words as written as the other choice; it is
+replaced only on a clear choice. [The dictionary file](dictionary.md) has how and the
+measurements. Choose the decision model in Settings › Corrections & formatting:
 
 | Decision model | Where it runs | Setup |
 |---|---|---|

@@ -5,12 +5,12 @@ from __future__ import annotations
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from typing import Literal
 
-from entune.dictionary import matching
+from entune.dictionary import matching, sounds
 from entune.dictionary.entries import Active
 from entune.processing import jev, jev_client, text_edits
 from entune.processing.results import Processed, Selection, Stage, pending
@@ -46,6 +46,7 @@ def process_text(
     policy: jev_client.Policy,
     endpoint: jev_client.Endpoint = jev_client.JEV,
     direct: bool = False,
+    words: Sequence[tuple[str, float | None]] | None = None,
     checkpoint: Callable[[Processed], None] | None = None,
     progress: Callable[[str], None] | None = None,
     check: Callable[[], None] | None = None,
@@ -74,7 +75,7 @@ def process_text(
 
     stages: dict[str, Callable[[], Stage]] = {}
     if contextual or direct:
-        stages["correction"] = lambda: _correction(raw, active, contextual, call(), endpoint)
+        stages["correction"] = lambda: _correction(raw, active, contextual, call(), endpoint, words)
     if cleanup:
         stages["cleanup"] = lambda: _classify(raw, "cleanup", jev.cleanup_edits, call(), endpoint)
     if formatting:
@@ -121,10 +122,18 @@ def _correction(
     contextual: bool,
     call: jev_client.Call,
     endpoint: jev_client.Endpoint,
+    words: Sequence[tuple[str, float | None]] | None = None,
 ) -> Stage:
     method: Literal["contextual", "deterministic"] = "contextual" if contextual else "deterministic"
     try:
-        components = matching.components(matching.matches(active, raw))
+        found = matching.matches(active, raw)
+        if contextual:  # only a decision model can tell a sound-alike from the word itself
+            confidence = None if words is None else sounds.locate(raw, words)
+            found = sorted(
+                [*found, *sounds.candidates(active, raw, confidence, found)],
+                key=lambda m: (m.start, m.end),
+            )
+        components = matching.components(found)
         if contextual:
             decisions = jev.decide(raw, components, call)
         else:

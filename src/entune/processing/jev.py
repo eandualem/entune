@@ -39,6 +39,9 @@ BREAK_FLOOR = 0.1
 SECTION_SENTENCES = 24
 ITEMS = ("numbered_item", "bullet_item", "list_item")
 FILLER_PROBABILITY = 0.9  # conservative initial policy; not live calibration
+# A span found by sound or spelling (dictionary/sounds.py) is replaced only when its word
+# gets at least this; below it the text stays as the speech model wrote it.
+FUZZY_PROBABILITY = 0.6
 # Context either side of a match: the sentence boundary nearest WINDOW characters away,
 # no further than WINDOW_MAX; without one, the word boundary nearest WINDOW.
 WINDOW = 160
@@ -229,6 +232,14 @@ def decide(
             probabilities = answers[f"o{i}"]
             option = max(probabilities, key=lambda name: probabilities[name])
             component = components[i]
+            raw = text[component.start : component.end]
+            if (
+                any(m.fuzzy for m in component.matches)
+                and values[option] != raw
+                and probabilities[option] < FUZZY_PROBABILITY
+            ):
+                decisions[i] = Decision(component, None, "contextual")
+                continue
             readings = request.support[i][option]
             decisions[i] = Decision(
                 component,

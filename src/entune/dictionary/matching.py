@@ -21,6 +21,7 @@ class Match:
     end: int
     meanings: tuple[Word, ...]
     direct: str | None = None
+    fuzzy: bool = False  # found by sound or spelling (sounds.py), not a heard entry
 
 
 @dataclass(frozen=True)
