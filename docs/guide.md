@@ -477,13 +477,14 @@ rather than an accuracy score. Optional formatting inserts paragraph breaks, num
 lists and bullets, including the first list item, while retaining existing structure and
 words. What you count out loud ("One… Second… Third…") becomes a numbered list, each
 number taking the place of its spoken ordinal, and a point's follow-up sentences stay in
-its entry. Lines without
-sentence punctuation stay whole; a single unpunctuated note needs no formatting request.
+its entry. It also decides where a long run of words ends a sentence, and where a stop
+or a capital the speech model wrote does not belong; a long pause before a sentence is
+part of what it weighs.
 
 **Remove fillers** is a separate opt-in. Code proposes English hesitation sounds (`um`,
-`uh`, `er`, `erm`, `ah`, `hmm`) and adjacent repeats of `like`; the decision model
-classifies hesitation versus meaningful speech. Only confidently classified hesitation is
-removed, and a repeat of `like` keeps one occurrence. Quoted/code
+`uh`, `er`, `erm`, `ah`, `hmm`) and a word or short phrase said again at once ("I I", "I
+think I think"); the decision model classifies hesitation versus meaningful speech. Only
+confidently classified hesitation is removed, and a repeat keeps one occurrence. Quoted/code
 spans are excluded, and uncertain answers preserve the words. History shows the exact
 deletions and timing separately from dictionary replacements. On 162 October transcripts,
 Jev removed 468 of 470 proposed sounds and left 2 undecided; recognising a meaningful use

@@ -14,7 +14,7 @@ from typing import Any
 from entune import prompts
 from entune.dictionary.matching import Component, Edit, Interpretation
 from entune.dictionary.sounds import LITERAL
-from entune.processing import cleanup, formatting
+from entune.processing import boundaries, cleanup, formatting
 from entune.processing.jev_client import Call
 from entune.processing.text_edits import Change
 
@@ -39,8 +39,14 @@ BREAK_FLOOR = 0.1
 # Formatting asks at most this many sentences per request; a longer dictation is asked in
 # sections at once, each with the whole transcript.
 SECTION_SENTENCES = 24
+# A sentence after at least this much silence says so in its question: on the labelled
+# October set that moved paragraph F1 from 0.579 to 0.609 (AUC 0.904 to 0.910).
+PAUSE_NOTED = 0.5
 ITEMS = ("numbered_item", "bullet_item", "list_item")
 FILLER_PROBABILITY = 0.9  # conservative initial policy; not live calibration
+# A repeat across a comma ("find it, it is") is often two clauses, not a stutter: in the
+# October test set the decision model took two of them for hesitations at 0.95 and 0.97.
+ACROSS_COMMA_PROBABILITY = 0.99
 # A span found by sound or spelling (dictionary/sounds.py) is replaced only when its word
 # gets at least this; below it the text stays as the speech model wrote it.
 FUZZY_PROBABILITY = 0.6
@@ -374,45 +380,126 @@ class TextResult:
     removed_words: int = 0
 
 
-def format_edits(text: str, call: Call, run: Pass = WHOLE) -> TextResult:
+def format_edits(
+    text: str, call: Call, run: Pass = WHOLE, pauses: dict[int, float] | None = None
+) -> TextResult:
+    """Paragraphs and list entries at sentence starts, and sentence ends at the gaps
+    worth asking about (boundaries.py), asked at once. `pauses` holds the silence before
+    each word, by where it starts."""
+    pauses = pauses or {}
     spans = formatting.sentences(text)
-    if len(spans) < 2:
-        return TextResult()
     names = [f"S{i:02d}" for i in range(len(spans))]
-    keys = {
-        name: ("format", s.start, text[s.start : s.end])
-        for name, s in zip(names, spans, strict=True)
-        if not s.listed and not s.protected
-    }
-    if not keys:
-        return TextResult()
+    keys = (
+        {
+            name: ("format", s.start, text[s.start : s.end])
+            for name, s in zip(names, spans, strict=True)
+            if not s.listed and not s.protected
+        }
+        if len(spans) >= 2
+        else {}
+    )
     answers = _reuse(call, run.memo, keys)
     # Before the stop, a sentence is asked once SETTLED_SENTENCES more follow it.
     settled = len(spans) if run.final else len(spans) - SETTLED_SENTENCES
     asked = [n for i, n in enumerate(names) if n in keys and n not in answers and i < settled]
+    noted = {s.start: pauses[s.start] for s in spans if pauses.get(s.start, 0) >= PAUSE_NOTED}
     state = {
         "transcript": text,
-        "sentences": {name: text[s.start : s.end] for name, s in zip(names, spans, strict=True)},
+        "sentences": {
+            name: (f"[after a {noted[s.start]:.1f} s pause] " if s.start in noted else "")
+            + text[s.start : s.end]
+            for name, s in zip(names, spans, strict=True)
+        },
     }
-    if asked:
-        sections = -(-len(asked) // SECTION_SENTENCES)
-        size = -(-len(asked) // sections)
-        new = call.ask_together(
-            [
-                (state, {n: prompts.render_json("jev-formatting.json", sentence=n) for n in part})
-                for part in (asked[i : i + size] for i in range(0, len(asked), size))
-            ]
-        )
+    found = boundaries.gaps(
+        text, pauses, [(s.start, s.end) for s in spans if s.listed or s.protected]
+    )
+    gap_names = [f"G{i:03d}" for i in range(len(found))]
+    options = {n: g.options() for n, g in zip(gap_names, found, strict=True)}
+    gap_keys = {
+        n: ("boundary", g.start, tuple(sorted(options[n].items())))
+        for n, g in zip(gap_names, found, strict=True)
+    }
+    gap_answers = _reuse(call, run.memo, gap_keys)
+    # Before the stop, a gap is asked once its passage has all the words after it.
+    gap_asked = [
+        n
+        for n, g in zip(gap_names, found, strict=True)
+        if n not in gap_answers and (run.final or g.complete)
+    ]
+    by_name = dict(zip(gap_names, found, strict=True))
+    # A long dictation is asked in sections at once, each with the whole state. A gap is
+    # asked with its versions alone: beside the transcript, the decision model held on to
+    # the speech model's punctuation (October 2026).
+    questions = {n: _question(n, bool(noted)) for n in asked}
+    gap_questions = {n: _gap_question(n, by_name[n], options[n]) for n in gap_asked}
+    requests: list[tuple[object, dict[str, Any]]] = [
+        *((state, part) for part in _sections(questions)),
+        *(({}, part) for part in _sections(gap_questions)),
+    ]
+    if requests:
+        new = call.ask_together(requests)
         if run.memo is not None:
-            run.memo.put({(call.endpoint.id, *keys[n]): a for n, a in new.items() if n in keys})
-        answers |= new
+            run.memo.put(
+                {
+                    (call.endpoint.id, *k[n]): a
+                    for k in (keys, gap_keys)
+                    for n, a in new.items()
+                    if n in k
+                }
+            )
+        answers |= {n: a for n, a in new.items() if n in keys}
+        gap_answers |= {n: a for n, a in new.items() if n in gap_keys}
     if not run.final:
         return TextResult()
-    actions = _actions(text, spans, [answers.get(n) for n in names])
-    _whole_lists(text, spans, actions)
-    _no_short_paragraphs(text, spans, actions)
-    _split_long(text, spans, [answers.get(n) for n in names], actions)
-    return TextResult(formatting.changes(text, spans, actions))
+    changes: tuple[Change, ...] = ()
+    if keys:
+        actions = _actions(text, spans, [answers.get(n) for n in names])
+        _whole_lists(text, spans, actions)
+        _no_short_paragraphs(text, spans, actions)
+        _split_long(text, spans, [answers.get(n) for n in names], actions)
+        changes = formatting.changes(text, spans, actions)
+    ends = [
+        c
+        for n, g in zip(gap_names, found, strict=True)
+        if n in gap_answers and (c := boundaries.change(text, g, gap_answers[n])) is not None
+    ]
+    # A paragraph or list entry at a sentence start keeps the stop before it.
+    ends = [c for c in ends if not any(c.start < p.end and p.start < c.end for p in changes)]
+    return TextResult(tuple(sorted((*changes, *ends), key=lambda c: (c.start, c.end))))
+
+
+def _sections(questions: dict[str, Any]) -> list[dict[str, Any]]:
+    """The questions in about equal parts of at most SECTION_SENTENCES."""
+    names = list(questions)
+    if not names:
+        return []
+    size = -(-len(names) // -(-len(names) // SECTION_SENTENCES))
+    return [{n: questions[n] for n in names[i : i + size]} for i in range(0, len(names), size)]
+
+
+def _gap_question(name: str, gap: boundaries.Gap, options: dict[str, str]) -> dict[str, Any]:
+    """The question about one gap: the passage written each way."""
+    question = prompts.render_json("jev-boundary.json", gap=name, word=_last_word(gap.left))
+    question["criteria"] = {option: {"what": written} for option, written in options.items()}
+    return question
+
+
+def _last_word(passage: str) -> str:
+    words = passage.split()
+    return words[-1] if words else ""
+
+
+def _question(sentence: str, paused: bool) -> dict[str, Any]:
+    """The formatting question about one sentence, saying what a marked pause means when
+    the sentences carry one."""
+    question = prompts.render_json("jev-formatting.json", sentence=sentence)
+    if paused:
+        question["instructions"]["focus"] += (
+            " A sentence marked with a pause came after that much silence: a long pause can"
+            " mark a new point, but the speaker is often just thinking."
+        )
+    return question
 
 
 def _role(probabilities: dict[str, float]) -> str:
@@ -658,7 +745,12 @@ def cleanup_edits(text: str, call: Call, run: Pass = WHOLE) -> TextResult:
     preserved = abstained = removed = 0
     for name, candidate in zip(names, candidates, strict=True):
         probabilities = answers[name]
-        if probabilities["hesitation"] >= FILLER_PROBABILITY:
+        bar = (
+            ACROSS_COMMA_PROBABILITY
+            if candidate.kind == "repeat" and "," in candidate.deletion.before
+            else FILLER_PROBABILITY
+        )
+        if probabilities["hesitation"] >= bar:
             changes.append(candidate.deletion)
             removed += candidate.removed_words
         elif probabilities["meaningful"] >= FILLER_PROBABILITY:

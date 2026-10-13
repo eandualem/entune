@@ -25,6 +25,7 @@ from entune.audio.formats import sniff_mime
 from entune.audio.silence import Shortened, shorten_wav
 from entune.dictionary.entries import Active
 from entune.processing import results
+from entune.processing.formatting import Heard
 from entune.processing.jev import WHOLE, Memo, Pass
 from entune.processing.jev_client import SECTION_CONNECTIONS
 from entune.processing.jev_client import Client as JevClient
@@ -413,7 +414,7 @@ class Dictation:
         *,
         checkpoint: Callable[[Processed], None] | None = None,
         operation: Operation | None = None,
-        words: Sequence[tuple[str, float | None]] | None = None,
+        words: Sequence[Heard] | None = None,
         run: Pass = WHOLE,
         cancel: threading.Event | None = None,
     ) -> Processed:
@@ -479,8 +480,9 @@ def _joined(pieces: Pieces | None, ref: ModelRef) -> Transcript | None:
     return pieces.finish()
 
 
-def _heard(transcript: Transcript) -> list[tuple[str, float | None]] | None:
-    """The speech model's words with its confidence, for the dictionary step."""
+def _heard(transcript: Transcript) -> list[Heard] | None:
+    """The speech model's words with their times and confidence: what it was unsure of
+    guides the dictionary step, and the pauses guide formatting."""
     if transcript.words is None:
         return None
-    return [(w.text, w.confidence) for w in transcript.words]
+    return [(w.text, w.start, w.end, w.confidence) for w in transcript.words]

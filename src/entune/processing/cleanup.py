@@ -1,5 +1,6 @@
-"""Propose English hesitation sounds for removal, and adjacent repeats of like for
-reduction to the first occurrence."""
+"""Propose English hesitation sounds for removal, and a word or a phrase of up to three
+words said again right after itself ("I I", "it's it's", "I think I think") for reduction
+to the first occurrence."""
 
 from __future__ import annotations
 
@@ -10,15 +11,19 @@ from typing import Literal
 from entune.processing.text_edits import Change, overlaps, protected
 
 # A small explicit vocabulary, not arbitrary words or spoken edit commands. A run of
-# sounds ("um, uh") is one candidate; like is a filler only when repeated.
+# sounds ("um, uh") is one candidate; any other word only when said again at once, which
+# the decision model tells from a deliberate repeat ("had had", "very very").
 _SOUND = r"(?:um|uh|er|erm|ah|hmm)"
 _SOUNDS = re.compile(
     rf"(?<![\w'\u2019\-]){_SOUND}(?:(?:[ \t,.!?]|\u2026)+{_SOUND})*(?![\w'\u2019\-])",
     re.IGNORECASE,
 )
 _STOP = re.compile(r"(?<!\.)[.!?](?!\.)")  # a sentence stop; dots ("...") are not one
+_WORD = r"\w+(?:['\u2019]\w+)?"
 _RUN = re.compile(
-    r"(?<![\w'\u2019\-])(?P<word>like)(?:[ \t,]+(?P=word)(?![\w'\u2019\-]))+",
+    # The shortest unit that repeats, so "like like like" is one word said three times.
+    rf"(?<![\w'\u2019\-])(?P<word>{_WORD}(?:[ \t]+{_WORD}){{0,2}}?)"
+    r"(?:[ \t,]+(?P=word)(?![\w'\u2019\-]))+",
     re.IGNORECASE,
 )
 _AFTER = re.compile(r"(?:,|\.\.\.|\u2026)?[ \t]*")  # a sound's own comma or dots, and space
@@ -44,16 +49,22 @@ class Filler:
 
 def candidates(text: str) -> list[Filler]:
     excluded = protected(text)
-    found: list[Filler] = []
+    proposed: list[Filler] = []
     runs: list[tuple[int, int, Literal["sound", "repeat"]]] = [
         *((start, end, "sound") for start, end in _sound_runs(text)),
-        *((m.start(), m.end(), "repeat") for m in _RUN.finditer(text)),
+        *(
+            (m.start(), m.end(), "repeat")
+            for m in _RUN.finditer(text)
+            if not _SOUNDS.fullmatch(m.group("word"))  # a run of sounds is one sound
+        ),
     ]
     for start, end, kind in sorted(runs):
         run = text[start:end]
         count = len(re.findall(r"\w+", run))
-        # Do not touch a longer run.
-        if count > MAX_REPEATS or len(run) > MAX_SPAN:
+        said = _RUN.match(text, start) if kind == "repeat" else None
+        unit = len(re.findall(r"\w+", said.group("word"))) if said else 1
+        # Do not touch a longer run: more than MAX_REPEATS sounds, or times the unit is said.
+        if count // unit > MAX_REPEATS or len(run) > MAX_SPAN:
             continue
         if overlaps(start, end, excluded):
             continue
@@ -61,17 +72,22 @@ def candidates(text: str) -> list[Filler]:
         line = text[text.rfind("\n", 0, start) + 1 : start]
         if line.startswith(("    ", "\t")):
             continue
-        if kind == "repeat":
-            first = start + len("like")  # the repeats after the first like go
+        if said is not None:
+            first = start + len(said.group("word"))  # the repeats after the first go
             deletion = Change(first, end, text[first:end], "")
-            removed = count - 1
+            removed = count - unit
         else:
             deletion = _sound_deletion(text, start, end)
             removed = count
-        if found and deletion.start < found[-1].deletion.end:
+        proposed.append(Filler(start, end, run, deletion, removed, kind))
+    # Overlaps are settled in the order of what each deletes: a phrase repeat that starts
+    # earlier ("I um go I um go") must not keep its first sound from being asked about.
+    found: list[Filler] = []
+    for filler in sorted(proposed, key=lambda f: (f.deletion.start, f.deletion.end)):
+        if found and filler.deletion.start < found[-1].deletion.end:
             continue
-        found.append(Filler(start, end, run, deletion, removed, kind))
-    return found
+        found.append(filler)
+    return sorted(found, key=lambda f: f.start)
 
 
 def _sound_runs(text: str) -> list[tuple[int, int]]:

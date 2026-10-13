@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from entune.processing import cleanup
@@ -35,6 +36,11 @@ _COUNTED = re.compile(
 )
 _NUMBERED = re.compile(r"(\d+)[.)][ \t]")  # an existing numbered list line
 _BLANK_LINE = re.compile(r"\n[ \t]*\n")
+
+
+def abbreviation(text: str, stop: int) -> bool:
+    """Whether the full stop just before `stop` ends an abbreviation ("p.m.", "Dr.")."""
+    return text[stop - 1 : stop] == "." and bool(_ABBREVIATION.search(text, max(0, stop - 8), stop))
 
 
 def ordinal(text: str, span: Sentence) -> bool:
@@ -178,3 +184,27 @@ def _first_number(text: str, spans: list[Sentence], actions: list[str], first: i
             return max(1, int(existing.group(1)) - count) if existing else 1
         count += actions[i] == "numbered_item"
     return 1
+
+
+# A word as the speech model heard it: its text, start and end in seconds into the
+# recording, and the model's confidence; each time None when not given.
+Heard = tuple[str, float | None, float | None, float | None]
+
+
+def word_pauses(text: str, words: Sequence[Heard]) -> dict[int, float]:
+    """The silence before each word whose time and the time of the word before it are
+    known, by where the word starts in `text`."""
+    before: dict[int, float] = {}
+    at = 0
+    previous_end: float | None = None
+    for heard, start, end, _ in words:
+        core = re.sub(r"^\W+|\W+$", "", heard)
+        found = text.find(core, at) if core else -1
+        if found < 0 or found - at > 200:
+            previous_end = None  # a word not found: the silence before the next is unknown
+            continue
+        at = found + len(core)
+        if previous_end is not None and start is not None:
+            before[found] = max(0.0, start - previous_end)
+        previous_end = end
+    return before
