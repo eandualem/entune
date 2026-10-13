@@ -245,9 +245,10 @@ def _index(active: Active) -> tuple[_Indexed, ...]:
                 else re.escape(w.spelling),
                 re.IGNORECASE,
             ),
-            max(len(v.split()) for v in spoken(w.spelling)),
+            max((len(v.split()) for v in spoken(w.spelling)), default=1),
         )
         for w in active.sounds
+        if letters(w.spelling)  # "_" or "++" alone has nothing to compare
     )
 
 

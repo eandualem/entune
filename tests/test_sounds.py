@@ -99,3 +99,9 @@ def test_a_long_name_is_matched_whole_and_an_extra_word_never_joins() -> None:
     text = "Ask Jeff W about it."
     (match,) = sounds.candidates(active, text, unsure(text, "Jeff", "W"))
     assert text[match.start : match.end] == "Jeff"
+
+
+def test_a_spelling_with_nothing_to_say_is_left_out() -> None:
+    active = Active(sounds=(Word("m_u", "_", "An underscore."), JEV))
+    text = "Ask Jeff."
+    assert len(sounds.candidates(active, text, unsure(text, "Jeff"))) == 1

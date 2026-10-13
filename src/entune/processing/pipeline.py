@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
@@ -128,11 +129,13 @@ def _correction(
     try:
         found = matching.matches(active, raw)
         if contextual:  # only a decision model can tell a sound-alike from the word itself
-            confidence = None if words is None else sounds.locate(raw, words)
-            found = sorted(
-                [*found, *sounds.candidates(active, raw, confidence, found)],
-                key=lambda m: (m.start, m.end),
-            )
+            try:
+                confidence = None if words is None else sounds.locate(raw, words)
+                alike = sounds.candidates(active, raw, confidence, found)
+            except Exception:  # an addition: the heard entries still apply without it
+                logging.getLogger(__name__).exception("Sound-alike candidates failed")
+                alike = []
+            found = sorted([*found, *alike], key=lambda m: (m.start, m.end))
         components = matching.components(found)
         if contextual:
             decisions = jev.decide(raw, components, call)
