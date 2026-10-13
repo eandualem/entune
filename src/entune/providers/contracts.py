@@ -25,8 +25,14 @@ class Transcript:
     text: str
     words: tuple[Word, ...] | None = None  # in order; None when the provider gives none
 
-    def retimed(self, to_recording: Callable[[float], float]) -> Transcript:
-        """The same transcript with each word's times moved by `to_recording`."""
+    def retimed(
+        self,
+        to_recording: Callable[[float], float],
+        end: Callable[[float], float] | None = None,
+    ) -> Transcript:
+        """The same transcript with each word's times moved by `to_recording`, and its
+        end by `end` when given (a word ending at a cut ends before it)."""
+        end = end or to_recording
         if self.words is None:
             return self
         return replace(
@@ -35,7 +41,7 @@ class Transcript:
                 replace(
                     word,
                     start=None if word.start is None else to_recording(word.start),
-                    end=None if word.end is None else to_recording(word.end),
+                    end=None if word.end is None else end(word.end),
                 )
                 for word in self.words
             ),

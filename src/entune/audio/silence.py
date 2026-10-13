@@ -19,6 +19,7 @@ import numpy as np
 from entune.audio.pauses import FRAME_MS, Quiet, levels
 
 KEEP_MS = 300
+_EPSILON = 1e-6
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,13 @@ class Shortened:
         if index >= len(self.kept):  # the unframed tail, sent as it was
             return self.frames * step + (seconds - len(self.kept) * step)
         return float(self.kept[index]) * step + (seconds - index * step)
+
+    def recording_end(self, seconds: float) -> float:
+        """Where a word ending `seconds` into the shortened audio ended in the original:
+        a word ending at a cut ends before the quiet left out, not after it."""
+        if seconds <= 0:
+            return self.recording_time(seconds)
+        return self.recording_time(seconds - _EPSILON) + _EPSILON
 
 
 def shorten(pcm: bytes, sample_rate: int) -> Shortened:

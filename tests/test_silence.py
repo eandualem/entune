@@ -135,6 +135,12 @@ def test_a_time_in_the_shortened_audio_is_found_in_the_recording() -> None:
     # The second starts after 1 s of speech and 0.6 s of the pause: 6 s in the recording.
     assert short.recording_time(1.9) == pytest.approx(6.0, abs=0.05)
     assert shorten(speech(2), RATE).recording_time(1.5) == 1.5  # nothing left out
+    # A word ending where quiet was left out ends before that quiet, not after it.
+    assert short.kept is not None
+    (gap,) = np.flatnonzero(np.diff(short.kept) > 1)
+    cut = (gap + 1) * 0.02  # in the sent audio: about 0.3 s into the pause
+    assert short.recording_end(cut) == pytest.approx((short.kept[gap] + 1) * 0.02)
+    assert short.recording_time(cut) == pytest.approx(short.kept[gap + 1] * 0.02)
     # Part of a frame after trailing quiet is sent as it was, at its own place.
     tail = shorten(speech(1) + quiet(2.01), RATE)
     sent = len(tail.audio) / 2 / RATE

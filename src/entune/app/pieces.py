@@ -170,7 +170,8 @@ class Pieces:
             elif result.text.strip():
                 offset = start / self._rate
                 self._texts[number] = result.retimed(
-                    lambda seconds: offset + sent.recording_time(seconds)
+                    lambda seconds: offset + sent.recording_time(seconds),
+                    lambda seconds: offset + sent.recording_end(seconds),
                 )
         status = "failed" if isinstance(result, Failure) else "ok"
         print(

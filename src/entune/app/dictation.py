@@ -251,7 +251,7 @@ class Dictation:
                         else:
                             result = ref.provider.transcribe(clip, ref.model, api_key)
                             if isinstance(result, Transcript):
-                                result = result.retimed(sent.recording_time)
+                                result = result.retimed(sent.recording_time, sent.recording_end)
                     except CancelledError:
                         raise
                     except Exception as exc:
