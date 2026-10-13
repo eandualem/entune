@@ -2,16 +2,16 @@
 was unsure of what it heard.
 
 An exact heard entry only catches a mishearing seen before. These candidates catch a new
-one: a span of one to three words whose Metaphone code or letters are close to a
-dictionary word's. The speech model's own confidence gates them: a span is offered only
+one: a span of one to three words (up to six for a name said in more) whose Metaphone
+code or letters are close to a name or term in the dictionary. The speech model's own confidence gates them: a span is offered only
 when one of its words is below UNSURE, so a word the model was sure of stays out. Without
 confidence, both the sound and the letters must be close. The literal text is always an
 option, so the decision model can keep it; the word is replaced only on a clear choice
 (jev.FUZZY_PROBABILITY).
 
-Measured on the labelled October set (94 term errors in 160 Parakeet dictations): exact
-heard entries offered the meant word for 63, these candidates with the gate for 72, at
-18.7 spans per 1,000 words against 9.1.
+Measured on the labelled October set (94 term errors in 160 Parakeet dictations): heard
+entries alone offered the meant word for 63 at 6.9 places per 1,000 words, with these
+candidates 70 at 8.5, and Jev fixed 55 instead of 52 with no more wrong changes.
 """
 
 from __future__ import annotations
