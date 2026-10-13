@@ -83,17 +83,21 @@ class Dictation:
             self._speech,
             cancel,
             remove_silence=self._settings.remove_silence(),
-            ahead=Ahead(lambda transcript, run: self._ahead(ref, transcript, run)),
+            ahead=Ahead(lambda transcript, run, halt: self._ahead(ref, transcript, run, halt)),
         )
 
-    def _ahead(self, ref: ModelRef, transcript: Transcript, run: Pass) -> None:
+    def _ahead(
+        self, ref: ModelRef, transcript: Transcript, run: Pass, halt: threading.Event
+    ) -> None:
         """A pass over the dictation so far, while the user speaks: it only fills the
         memo the final pass reads, with the steps and dictionary as they are now."""
         status = self._settings.jev_status()
         if not (status.dictionary or status.formatting or status.cleanup):
             return
         active = self._dictionary.dictionary().active(ref.id) if status.dictionary else Active()
-        self.correct(transcript.text, active, status, words=_heard(transcript), run=run)
+        self.correct(
+            transcript.text, active, status, words=_heard(transcript), run=run, cancel=halt
+        )
 
     def prepare(self) -> None:
         """While the user speaks, open the connections this dictation will use: the default
@@ -411,6 +415,7 @@ class Dictation:
         operation: Operation | None = None,
         words: Sequence[tuple[str, float | None]] | None = None,
         run: Pass = WHOLE,
+        cancel: threading.Event | None = None,
     ) -> Processed:
         endpoint, key = self._decisions.chosen()
         return process_text(
@@ -428,7 +433,7 @@ class Dictation:
                 (lambda stage: self._operations.stage(operation, stage)) if operation else None
             ),
             check=operation.check if operation else None,
-            cancel=operation.cancel if operation else None,
+            cancel=operation.cancel if operation else cancel,
             words=words,
             run=run,
         )

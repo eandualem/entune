@@ -96,11 +96,13 @@ WHOLE = Pass()
 def _reuse(
     call: Call, memo: Memo | None, keys: dict[str, tuple[Any, ...]]
 ) -> dict[str, dict[str, float]]:
-    """The answers `memo` already has for these questions, counted as this step's
-    decisions."""
+    """The answers `memo` already has for these questions from this decision model,
+    counted as this step's decisions."""
     if memo is None:
         return {}
-    known = {name: a for name, k in keys.items() if (a := memo.get(k)) is not None}
+    known = {
+        name: a for name, k in keys.items() if (a := memo.get((call.endpoint.id, *k))) is not None
+    }
     call.decisions += len(known)
     return known
 
@@ -294,6 +296,8 @@ def decide(
                 components[i].end,
                 text[components[i].start : components[i].end],
                 tuple(sorted(request.outputs[i].items())),
+                # The meanings as asked: an edited definition is asked again.
+                tuple(sorted(request.questions[f"o{i}"]["criteria"].items())),
             )
             for i in request.outputs
         }
@@ -316,7 +320,7 @@ def decide(
                 call,
             )
             if run.memo is not None:
-                run.memo.put({keys[n]: a for n, a in new.items() if n in keys})
+                run.memo.put({(call.endpoint.id, *keys[n]): a for n, a in new.items() if n in keys})
             answers |= new
         if not run.final:
             return []
@@ -400,7 +404,7 @@ def format_edits(text: str, call: Call, run: Pass = WHOLE) -> TextResult:
             ]
         )
         if run.memo is not None:
-            run.memo.put({keys[n]: a for n, a in new.items() if n in keys})
+            run.memo.put({(call.endpoint.id, *keys[n]): a for n, a in new.items() if n in keys})
         answers |= new
     if not run.final:
         return TextResult()
@@ -646,7 +650,7 @@ def cleanup_edits(text: str, call: Call, run: Pass = WHOLE) -> TextResult:
             },
         )
         if run.memo is not None:
-            run.memo.put({keys[n]: a for n, a in new.items() if n in keys})
+            run.memo.put({(call.endpoint.id, *keys[n]): a for n, a in new.items() if n in keys})
         answers |= new
     if not run.final:
         return TextResult()

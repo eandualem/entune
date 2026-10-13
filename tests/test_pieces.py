@@ -278,7 +278,7 @@ def test_each_longer_transcript_goes_to_the_decisions_made_while_speaking() -> N
     seen: list[str] = []
     done = threading.Event()
 
-    def work(transcript: Transcript, run: jev.Pass) -> None:
+    def work(transcript: Transcript, run: jev.Pass, halt: threading.Event) -> None:
         seen.append(transcript.text)
         done.set()
 

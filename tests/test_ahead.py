@@ -1,6 +1,7 @@
 import threading
 import time
 from contextlib import closing
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -54,7 +55,7 @@ def test_passes_run_one_at_a_time_on_the_latest_text_and_stop() -> None:
     running = threading.Event()
     release = threading.Event()
 
-    def work(transcript: Transcript, run: jev.Pass) -> None:
+    def work(transcript: Transcript, run: jev.Pass, halt: threading.Event) -> None:
         assert not run.final and run.memo is ahead.memo
         seen.append(transcript.text)
         running.set()
@@ -74,3 +75,31 @@ def test_passes_run_one_at_a_time_on_the_latest_text_and_stop() -> None:
     ahead.update(Transcript("one two three four"))
     time.sleep(0.05)
     assert seen == ["one", "one two three"]
+
+
+def test_stopping_cancels_the_pass_under_way() -> None:
+    started, cancelled = threading.Event(), threading.Event()
+
+    def work(transcript: Transcript, run: jev.Pass, halt: threading.Event) -> None:
+        started.set()
+        if halt.wait(2):
+            cancelled.set()
+
+    ahead = Ahead(work)
+    ahead.update(Transcript("one"))
+    assert started.wait(2)
+    ahead.stop()
+    assert cancelled.wait(2)
+
+
+def test_answers_are_kept_per_decision_model_and_per_meaning() -> None:
+    requests, handler = answering(lambda name, _: {"continues": 1.0})
+    memo = jev.Memo()
+    text = " ".join(SENTENCES)
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        jev.format_edits(text, call(client), jev.Pass(memo))
+        asked_jev = len(asked(requests))
+        requests.clear()
+        other = replace(call(client), endpoint=replace(jev_client.JEV, id="other"))
+        jev.format_edits(text, other, jev.Pass(memo))
+        assert len(asked(requests)) == asked_jev  # another model is asked itself

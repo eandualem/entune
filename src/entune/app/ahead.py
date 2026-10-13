@@ -21,7 +21,8 @@ from concurrent.futures import CancelledError
 from entune.processing import jev
 from entune.providers.contracts import Transcript
 
-Work = Callable[[Transcript, jev.Pass], None]
+# The transcript so far, the pass, and an event set when the passes stop.
+Work = Callable[[Transcript, jev.Pass, threading.Event], None]
 
 
 class Ahead:
@@ -31,6 +32,7 @@ class Ahead:
         self._changed = threading.Condition()
         self._waiting: Transcript | None = None
         self._stopped = False
+        self._halt = threading.Event()  # cancels a pass under way
         self._thread = threading.Thread(target=self._run, daemon=True, name="entune-ahead")
         self._thread.start()
 
@@ -44,7 +46,9 @@ class Ahead:
             self._changed.notify()
 
     def stop(self) -> None:
-        """No pass starts after this; one under way finishes on its own."""
+        """No pass starts after this, and one under way is cancelled: the final pass
+        does not wait for it."""
+        self._halt.set()
         with self._changed:
             self._stopped = True
             self._waiting = None
@@ -60,7 +64,7 @@ class Ahead:
                 transcript, self._waiting = self._waiting, None
             assert transcript is not None
             try:
-                self._work(transcript, jev.Pass(self.memo, final=False))
+                self._work(transcript, jev.Pass(self.memo, final=False), self._halt)
             except CancelledError:
                 return
             except Exception:
