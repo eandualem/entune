@@ -96,11 +96,11 @@ class Settings:
         self._changed()
 
     def fast_mode(self) -> bool:
-        """Stream the audio to the default model's provider while recording (opt-in)."""
-        return self._store.get_setting(FAST_MODE_KEY) == "1"
+        """Transcribe each part of a dictation while recording (on unless turned off)."""
+        return self._store.get_setting(FAST_MODE_KEY) != "0"
 
     def set_fast_mode(self, on: bool) -> None:
-        self._store.set_setting(FAST_MODE_KEY, "1" if on else None)
+        self._store.set_setting(FAST_MODE_KEY, None if on else "0")
         self._changed()
 
     def remove_silence(self) -> bool:

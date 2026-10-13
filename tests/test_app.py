@@ -395,8 +395,9 @@ def test_fast_mode_transcribes_the_pieces_and_delivers_their_joined_text(tmp_pat
     app = EntuneApp(entune, platform, "http://localhost:0/", recorder=FakeRecorder(capture))
     entune.settings.set_key("stub", "k")
     entune.models.set_default_model("stub/good")
+    entune.settings.set_fast_mode(False)
     app.start_recording()
-    app.stop_recording()  # off by default: the whole clip, once
+    app.stop_recording()  # turned off: the whole clip, once
     wait_for(lambda: platform.actions.pasted == 1)
     assert [round(c.seconds or 0) for c in stub.clips] == [24]
 
