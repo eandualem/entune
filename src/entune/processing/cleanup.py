@@ -61,8 +61,10 @@ def candidates(text: str) -> list[Filler]:
     for start, end, kind in sorted(runs):
         run = text[start:end]
         count = len(re.findall(r"\w+", run))
-        # Do not touch a longer run.
-        if count > MAX_REPEATS or len(run) > MAX_SPAN:
+        said = _RUN.match(text, start) if kind == "repeat" else None
+        unit = len(re.findall(r"\w+", said.group("word"))) if said else 1
+        # Do not touch a longer run: more than MAX_REPEATS sounds, or times the unit is said.
+        if count // unit > MAX_REPEATS or len(run) > MAX_SPAN:
             continue
         if overlaps(start, end, excluded):
             continue
@@ -70,12 +72,10 @@ def candidates(text: str) -> list[Filler]:
         line = text[text.rfind("\n", 0, start) + 1 : start]
         if line.startswith(("    ", "\t")):
             continue
-        if kind == "repeat":
-            said = _RUN.match(text, start)
-            assert said is not None
+        if said is not None:
             first = start + len(said.group("word"))  # the repeats after the first go
             deletion = Change(first, end, text[first:end], "")
-            removed = count - len(re.findall(r"\w+", said.group("word")))
+            removed = count - unit
         else:
             deletion = _sound_deletion(text, start, end)
             removed = count

@@ -702,6 +702,8 @@ def test_a_long_follow_up_on_the_next_line_stays_in_its_entry() -> None:
         ("Open the the settings.", "the", " the"),
         ("I, I want this.", "I", ", I"),
         ("It is like like like like slow.", "like", " like like like"),
+        ("I think I think I think I think so.", "I think", " I think I think I think"),
+        ("It's it's it's it's fine.", "It's", " it's it's it's"),
     ],
 )
 def test_any_word_or_short_phrase_said_again_at_once_is_a_candidate(
@@ -738,7 +740,7 @@ def test_a_sentence_after_a_long_pause_says_so_in_its_question() -> None:
 
 def test_a_phrase_repeat_does_not_keep_an_earlier_sound_from_being_asked() -> None:
     found = cleanup.candidates("I um go I um go home.")
-    assert [(c.kind, c.deletion.before) for c in found] == [
-        ("sound", "um "),
+    assert [(c.kind, c.deletion.before) for c in found] == [  # in the order they start
         ("repeat", " I um go"),
+        ("sound", "um "),
     ]
