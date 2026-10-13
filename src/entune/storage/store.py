@@ -13,13 +13,14 @@ import threading
 import uuid
 import wave
 from collections.abc import Sequence
-from dataclasses import asdict
+from dataclasses import asdict, astuple
 from pathlib import Path
 
 from entune.audio.formats import extension_for, identify, webm_duration_seconds
 from entune.dictionary.corrections import Correction as SubmittedCorrection
 from entune.learning.inputs import DictionaryResult, LearningText
 from entune.processing.results import Processed, Stage, interrupted
+from entune.providers.contracts import Word
 from entune.storage import data_folder
 from entune.storage.paths import protect_data
 from entune.storage.records import (
@@ -437,6 +438,7 @@ class Store:
         elapsed_seconds: float | None = None,
         fast: bool = False,
         processing: Processed | None = None,
+        words: tuple[Word, ...] | None = None,
     ) -> int:
         with self._lock, self._db:
             cursor = self._db.execute(
@@ -463,7 +465,23 @@ class Store:
                     "processing" if processing else "complete",
                 ),
             )
-            return int(cursor.lastrowid or 0)
+            attempt = int(cursor.lastrowid or 0)
+            if words is not None:
+                self._db.execute(
+                    "INSERT INTO transcription_words (transcription_id, words) VALUES (?, ?)",
+                    (attempt, json.dumps([astuple(word) for word in words])),
+                )
+            return attempt
+
+    def words(self, transcription_id: int) -> tuple[Word, ...] | None:
+        """The words a transcription was heard as, with times and confidence; None when
+        its speech model gave none."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT words FROM transcription_words WHERE transcription_id = ?",
+                (transcription_id,),
+            ).fetchone()
+        return None if row is None else tuple(Word(*fields) for fields in json.loads(row[0]))
 
     def finish_processing(self, attempt_id: int, result: Processed, *, final: bool = True) -> None:
         """Update only optional processing; speech status and raw text are immutable."""

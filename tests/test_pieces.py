@@ -10,7 +10,7 @@ import pytest
 
 from entune.app.pieces import Pieces
 from entune.audio.pauses import Pauses
-from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
+from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript, Word
 from entune.providers.local.contracts import LocalModelStatus
 from entune.providers.registry import ModelRef
 from entune.providers.resources import SpeechResources
@@ -102,7 +102,7 @@ def test_pieces_are_transcribed_while_recording_and_joined_after() -> None:
         time.sleep(0.01)
     assert len(provider.seconds) == 1  # the first piece, before the recording stopped
     recording.feed(speech(2))
-    assert recording.finish() == "piece 1 piece 2"
+    assert recording.finish() == Transcript("piece 1 piece 2")
     assert provider.seconds[0] == pytest.approx(21.3, abs=0.1)
     assert provider.seconds[1] == pytest.approx(3.3, abs=0.1)
 
@@ -151,7 +151,7 @@ def test_the_last_piece_is_sent_at_once_and_the_text_keeps_its_order(
     provider = Slow()
     recording = pieces(provider)
     recording.feed(speech(21) + silence(0.6) + speech(2))
-    assert recording.finish() == "first last"
+    assert recording.finish() == Transcript("first last")
     log = capsys.readouterr().out
     assert "fast mode piece 1: 0.0-21.3 s of audio, transcribed in" in log
     assert "fast mode piece 2: 21.3-" in log
@@ -243,3 +243,23 @@ while not provider.seconds:
     started = time.monotonic()
     subprocess.run([sys.executable, "-c", code], check=True, timeout=30)
     assert time.monotonic() - started < 20
+
+
+class Timed(Counting):
+    """Gives each piece one word, half a second into what it was sent, at 0.9."""
+
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
+        self.seconds.append(clip.seconds or 0.0)
+        n = len(self.seconds)
+        return Transcript(f"piece{n}", (Word(f"piece{n}", 0.5, 0.8, 0.9),))
+
+
+def test_the_pieces_words_are_timed_on_the_recording() -> None:
+    recording = pieces(Timed())
+    recording.feed(speech(21) + silence(0.6) + speech(2))
+    result = recording.finish()
+    assert result is not None and result.words is not None
+    assert [w.text for w in result.words] == ["piece1", "piece2"]
+    assert result.words[0].start == pytest.approx(0.5)
+    # The second piece starts where the first was cut, in the pause after 21 s.
+    assert result.words[1].start == pytest.approx(21.3 + 0.5, abs=0.1)

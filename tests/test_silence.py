@@ -43,12 +43,12 @@ def seconds(pcm: bytes) -> float:
 def test_long_silences_keep_300_ms_beside_speech() -> None:
     pcm = quiet(2) + speech(1) + quiet(3) + speech(1) + quiet(2)
     # 0.3 s before the first speech, 0.6 s for the pause, 0.3 s after the last.
-    assert seconds(shorten(pcm, RATE)) == pytest.approx(3.2, abs=0.1)
+    assert seconds(shorten(pcm, RATE).audio) == pytest.approx(3.2, abs=0.1)
     # Short pauses and the dips between syllables stay as they are.
     steady = speech(2) + quiet(0.5) + speech(2)
-    assert shorten(steady, RATE) == steady
+    assert shorten(steady, RATE).audio == steady
     # Nothing but silence is sent as it is.
-    assert shorten(quiet(3), RATE) == quiet(3)
+    assert shorten(quiet(3), RATE).audio == quiet(3)
 
 
 def test_a_pause_longer_than_the_window_in_a_room_with_a_hum_is_shortened() -> None:
@@ -64,25 +64,25 @@ def test_a_pause_longer_than_the_window_in_a_room_with_a_hum_is_shortened() -> N
         return np.concatenate(bursts).astype(np.int16).tobytes()
 
     room = rng.normal(0, 330, 15 * RATE).astype(np.int16).tobytes()
-    assert seconds(shorten(talk(6000, 2) + room + talk(6000, 2), RATE)) == pytest.approx(
+    assert seconds(shorten(talk(6000, 2) + room + talk(6000, 2), RATE).audio) == pytest.approx(
         4.6, abs=0.1
     )
     # Quieter speech after the pause, 7 dB over the room, is kept whole.
-    assert seconds(shorten(talk(6000, 2) + room + talk(750, 4), RATE)) == pytest.approx(
+    assert seconds(shorten(talk(6000, 2) + room + talk(750, 4), RATE).audio) == pytest.approx(
         6.6, abs=0.1
     )
     # So is speech that varies little, well over the room's floor.
     t = np.arange(15 * RATE) / RATE
     tone = 3000 * np.sin(2 * np.pi * 220 * t) * (1 + 0.15 * np.sin(2 * np.pi * 3 * t))
     steady = talk(6000, 2) + tone.astype(np.int16).tobytes()
-    assert shorten(steady, RATE) == steady
+    assert shorten(steady, RATE).audio == steady
 
 
 def test_only_a_16_bit_mono_wav_is_shortened() -> None:
     clip = wav_bytes(quiet(2) + speech(1) + quiet(2), RATE)
-    with wave.open(io.BytesIO(shorten_wav(clip))) as short:
+    with wave.open(io.BytesIO(shorten_wav(clip).audio)) as short:
         assert short.getnframes() / short.getframerate() == pytest.approx(1.6, abs=0.05)
-    assert shorten_wav(b"not a wav") == b"not a wav"
+    assert shorten_wav(b"not a wav").audio == b"not a wav"
 
 
 class Measuring:
@@ -125,3 +125,13 @@ def test_fast_mode_pieces_are_shortened_too() -> None:
     recording.finish()
     # The cut falls in the middle of the 2 s pause: 1 s of it ends the first piece.
     assert provider.seconds[0] == pytest.approx(21.3, abs=0.1)
+
+
+def test_a_time_in_the_shortened_audio_is_found_in_the_recording() -> None:
+    pcm = quiet(2) + speech(1) + quiet(3) + speech(1)
+    short = shorten(pcm, RATE)
+    # The first speech starts 0.3 s in, after the 0.3 s of quiet kept before it.
+    assert short.recording_time(0.3) == pytest.approx(2.0, abs=0.05)
+    # The second starts after 1 s of speech and 0.6 s of the pause: 6 s in the recording.
+    assert short.recording_time(1.9) == pytest.approx(6.0, abs=0.05)
+    assert shorten(speech(2), RATE).recording_time(1.5) == 1.5  # nothing left out

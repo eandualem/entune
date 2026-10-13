@@ -14,7 +14,7 @@ from entune.providers.cloud.groq import Groq
 from entune.providers.cloud.http import NotJson
 from entune.providers.cloud.soniox import Soniox
 from entune.providers.cloud.xai import XAI
-from entune.providers.contracts import Clip, Failure, Transcript
+from entune.providers.contracts import Clip, Failure, Transcript, Word
 from entune.providers.local import parakeet
 from entune.providers.local.whisper import CATALOGUE
 from entune.providers.registry import default_providers, resolve_model
@@ -36,6 +36,21 @@ def test_assemblyai_sends_multipart_audio_with_the_model_header(clip: Clip) -> N
     assert request.headers["x-aai-model"] == "universal-3-5-pro"
     assert request.headers["content-type"].startswith("multipart/form-data")
     assert b'name="audio"; filename="clip.webm"' in request.content
+
+
+def test_assemblyai_words_keep_their_times_in_seconds_and_confidence(clip: Clip) -> None:
+    words = [
+        {"text": "Open", "start": 100, "end": 400, "confidence": 0.62},
+        {"text": "A.", "start": 400, "end": 650, "confidence": 0.48},
+    ]
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"text": "Open A.", "words": words})
+
+    result = AssemblyAI(mock_client(handler)).transcribe(clip, "universal-3-5-pro", "k")
+    assert result == Transcript(
+        "Open A.", (Word("Open", 0.1, 0.4, 0.62), Word("A.", 0.4, 0.65, 0.48))
+    )
 
 
 def test_groq_sends_the_openai_style_form(clip: Clip) -> None:

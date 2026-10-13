@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from entune.providers.contracts import Word
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
 
@@ -280,3 +281,16 @@ def test_unrecorded_edits_stay_distinct_from_none(tmp_path: Path) -> None:
         formatting = processing_summary(store).stages["formatting"]
         assert (formatting.succeeded, formatting.changes, formatting.unrecorded) == (2, 0, 1)
         assert (formatting.skipped, formatting.blocked) == (1, 1)
+
+
+def test_a_transcriptions_words_are_kept_with_it(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    recording = store.create_recording(b"abc", "audio/wav")
+    heard = (Word("Open", 0.1, 0.4, 0.62), Word("A.", 0.4, 0.65, None))
+    with_words = store.add_transcription(recording.id, "p", "m", "ok", "Open A.", None, words=heard)
+    without = store.add_transcription(recording.id, "p", "m", "ok", "Open A.", None)
+    store.close()
+    reopened = Store(tmp_path)
+    assert reopened.words(with_words) == heard
+    assert reopened.words(without) is None
+    reopened.close()

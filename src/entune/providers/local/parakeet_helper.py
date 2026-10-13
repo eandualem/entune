@@ -38,7 +38,28 @@ def decode_wav(path: str, target_rate: int):  # type: ignore[no-untyped-def]
     return samples.astype(np.float32)
 
 
-def transcribe(model, path: str) -> str:  # type: ignore[no-untyped-def]
+def words(tokens: list[Any]) -> list[list[object]]:
+    """The tokens grouped into words, `[text, start, end, confidence]` each: a word starts at
+    a token beginning with a space. Its confidence is the lowest of its tokens that hold a
+    letter or digit, so a stop or comma after it does not count."""
+    grouped: list[list[Any]] = []
+    for token in tokens:
+        if not grouped or token.text.startswith(" "):
+            grouped.append([token])
+        else:
+            grouped[-1].append(token)
+    out: list[list[object]] = []
+    for group in grouped:
+        text = "".join(token.text for token in group).strip()
+        if not text:
+            continue
+        spoken = [token for token in group if any(c.isalnum() for c in token.text)] or group
+        confidence = min(float(token.confidence) for token in spoken)
+        out.append([text, round(group[0].start, 3), round(group[-1].end, 3), round(confidence, 4)])
+    return out
+
+
+def transcribe(model, path: str) -> tuple[str, list[list[object]]]:  # type: ignore[no-untyped-def]
     import mlx.core as mx
     from parakeet_mlx.alignment import (
         merge_longest_common_subsequence,
@@ -64,7 +85,7 @@ def transcribe(model, path: str) -> str:  # type: ignore[no-untyped-def]
         del mel
         mx.clear_cache()
         if start == 0 and end == len(audio):
-            return str(result.text)
+            return str(result.text), words(result.tokens)
         for token in result.tokens:
             token.start += start / config.sample_rate
             token.end = token.start + token.duration
@@ -81,7 +102,8 @@ def transcribe(model, path: str) -> str:  # type: ignore[no-untyped-def]
             tokens = result.tokens
         if end == len(audio):
             break
-    return str(sentences_to_result(tokens_to_sentences(tokens)).text)
+    whole = sentences_to_result(tokens_to_sentences(tokens))
+    return str(whole.text), words(whole.tokens)
 
 
 def main() -> None:
@@ -102,7 +124,8 @@ def main() -> None:
             elif request["op"] == "transcribe":
                 if model is None:
                     raise RuntimeError("model not loaded")
-                answer = {"text": transcribe(model, request["path"])}
+                text, heard = transcribe(model, request["path"])
+                answer = {"text": text, "words": heard}
             else:
                 answer = {"error": f"unknown op {request['op']}"}
         except Exception as exc:  # the answer carries it; the process stays up

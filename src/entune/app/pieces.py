@@ -19,8 +19,8 @@ from concurrent.futures import CancelledError
 
 from entune.audio.formats import wav_bytes
 from entune.audio.pauses import Pauses
-from entune.audio.silence import shorten
-from entune.providers.contracts import Clip, Failure, TranscribeResult
+from entune.audio.silence import Shortened, shorten
+from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
 from entune.providers.registry import ModelRef
 from entune.providers.resources import SpeechResources
 
@@ -53,7 +53,7 @@ class Pieces:
         self._chunks: queue.SimpleQueue[bytes | None] = queue.SimpleQueue()
         self._pcm = bytearray()  # the piece being recorded
         self._start = 0  # where it starts in the recording, in samples
-        self._texts: dict[int, str] = {}  # by piece number, joined in recording order
+        self._texts: dict[int, Transcript] = {}  # by piece number, joined in recording order
         self._error: str | None = None
         self._lock = threading.Lock()
         self._changed = threading.Condition(self._lock)  # a piece finished or failed
@@ -69,7 +69,7 @@ class Pieces:
         if not self._aborted.is_set():
             self._chunks.put(chunk)
 
-    def finish(self) -> str | None:
+    def finish(self) -> Transcript | None:
         """After the recording stopped: the last piece transcribed and the pieces' text
         joined; None when nothing was cut, a piece failed, or the dictation was cancelled,
         so the whole clip is transcribed as without fast mode."""
@@ -101,7 +101,7 @@ class Pieces:
             )
         if self._cancel.is_set():
             return None
-        return " ".join(self._texts[number] for number in sorted(self._texts))
+        return joined([self._texts[number] for number in sorted(self._texts)])
 
     def abort(self) -> None:
         self._aborted.set()
@@ -155,8 +155,8 @@ class Pieces:
             with self._speech.use(self.ref, cancel=self._aborted):
                 if self._stopped():
                     return
-                sent = shorten(pcm, self._rate) if self._remove_silence else pcm
-                clip = Clip(wav_bytes(sent, self._rate), "audio/wav")
+                sent = shorten(pcm, self._rate) if self._remove_silence else Shortened(pcm)
+                clip = Clip(wav_bytes(sent.audio, self._rate), "audio/wav")
                 result = self.ref.provider.transcribe(clip, self.ref.model, self._api_key)
         except CancelledError:
             return
@@ -168,7 +168,10 @@ class Pieces:
                 self._error = self._error or result.error
                 self._changed.notify_all()
             elif result.text.strip():
-                self._texts[number] = result.text.strip()
+                offset = start / self._rate
+                self._texts[number] = result.retimed(
+                    lambda seconds: offset + sent.recording_time(seconds)
+                )
         status = "failed" if isinstance(result, Failure) else "ok"
         print(
             f"fast mode piece {number}: {start / self._rate:.1f}-{end / self._rate:.1f} s of"
@@ -194,3 +197,12 @@ class _Halt(threading.Event):
 
     def is_set(self) -> bool:
         return super().is_set() or self._cancel.is_set()
+
+
+def joined(parts: list[Transcript]) -> Transcript:
+    """The pieces' transcripts as one, in order; words only when every piece gave them."""
+    words = [part.words for part in parts]
+    return Transcript(
+        " ".join(part.text.strip() for part in parts),
+        None if any(w is None for w in words) else tuple(w for ws in words if ws for w in ws),
+    )

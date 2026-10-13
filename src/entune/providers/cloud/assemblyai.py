@@ -25,7 +25,7 @@ from entune.providers.cloud.http import (
     open_connection,
     text_or_failure,
 )
-from entune.providers.contracts import Clip, Failure, TranscribeResult
+from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript, Word
 
 SYNC_URL = "https://sync.assemblyai.com/transcribe"
 SYNC_LIMIT_SECONDS = 120.0  # documented limit of the sync endpoint
@@ -65,7 +65,7 @@ class AssemblyAI:
         )
         if response.is_error:
             return failure_from_response(response)
-        return text_or_failure(json_body(response))
+        return _with_words(json_body(response))
 
     def _transcribe_long(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
         headers = {"Authorization": api_key}
@@ -104,8 +104,33 @@ class AssemblyAI:
             body = json_body(status)
             state = body.get("status") if isinstance(body, dict) else None
             if state == "completed":
-                return text_or_failure(body)
+                return _with_words(body)
             if state == "error":
                 return Failure(f"Transcription failed\n{json.dumps(body)}")
             self._sleep(POLL_SECONDS)
         return Failure(f"Transcription did not finish within {POLL_LIMIT_SECONDS:.0f} seconds")
+
+
+def _with_words(body: object) -> TranscribeResult:
+    """The transcript with AssemblyAI's `words` (times in milliseconds, confidence 0 to 1);
+    without words when they are missing or malformed."""
+    result = text_or_failure(body)
+    if not isinstance(result, Transcript) or not isinstance(body, dict):
+        return result
+    rows = body.get("words")
+    if not isinstance(rows, list):
+        return result
+    words: list[Word] = []
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("text"), str):
+            return result
+        start, end, confidence = row.get("start"), row.get("end"), row.get("confidence")
+        words.append(
+            Word(
+                row["text"],
+                start / 1000 if isinstance(start, int | float) else None,
+                end / 1000 if isinstance(end, int | float) else None,
+                float(confidence) if isinstance(confidence, int | float) else None,
+            )
+        )
+    return Transcript(result.text, tuple(words))

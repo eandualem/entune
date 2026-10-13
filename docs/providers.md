@@ -18,7 +18,12 @@ class Provider(Protocol):
 ```
 
 `Clip` carries the audio bytes, its MIME type and a filename. The result
-is either `Transcript(text)` or `Failure(error)`.
+is either `Transcript(text, words)` or `Failure(error)`. `words` is optional:
+each `Word` has its text, start and end in seconds into the clip, and the
+model's confidence from 0 to 1, each `None` when the provider does not give
+it. Give them when the API returns them: Entune keeps them with the
+transcription, moved onto the recording's own timeline. Parakeet and
+AssemblyAI give them today.
 Nothing from the dictionary goes to the provider: it transcribes the raw
 speech, and the dictionary is applied to what comes back (see
 [the dictionary file](dictionary.md)).

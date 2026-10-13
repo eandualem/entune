@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import wave
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -20,17 +21,36 @@ from entune.audio.pauses import FRAME_MS, Quiet, levels
 KEEP_MS = 300
 
 
-def shorten(pcm: bytes, sample_rate: int) -> bytes:
+@dataclass(frozen=True)
+class Shortened:
+    """Audio with its long quiet stretches shortened, and which 20 ms frames of the
+    original it kept, so a time in it can be found in the original."""
+
+    audio: bytes
+    kept: np.ndarray | None = None  # indices of the kept frames; None when all were
+
+    def recording_time(self, seconds: float) -> float:
+        """Where `seconds` into the shortened audio was in the original."""
+        if self.kept is None or len(self.kept) == 0:
+            return seconds
+        step = FRAME_MS / 1000
+        index = int(seconds / step)
+        if index >= len(self.kept):  # the unframed tail, sent as it was
+            return float(self.kept[-1] + 1 + index - len(self.kept)) * step + seconds % step
+        return float(self.kept[index]) * step + (seconds - index * step)
+
+
+def shorten(pcm: bytes, sample_rate: int) -> Shortened:
     """16-bit mono PCM with its long quiet stretches shortened."""
     frame = sample_rate * FRAME_MS // 1000
     count = len(pcm) // (2 * frame)
     if count == 0:
-        return pcm
+        return Shortened(pcm)
     frames = np.frombuffer(pcm[: count * 2 * frame], np.int16).reshape(-1, frame)
     quiet = Quiet()
     is_quiet = [quiet(level) for level in levels(frames)]
     if all(is_quiet):
-        return pcm
+        return Shortened(pcm)
     keep = KEEP_MS // FRAME_MS
     kept = np.ones(count, dtype=bool)
     start = None
@@ -44,24 +64,27 @@ def shorten(pcm: bytes, sample_rate: int) -> bytes:
             if last > first:
                 kept[first:last] = False
             start = None
-    return frames[kept].tobytes() + pcm[count * 2 * frame :]
+    if kept.all():
+        return Shortened(pcm)
+    return Shortened(frames[kept].tobytes() + pcm[count * 2 * frame :], np.flatnonzero(kept))
 
 
-def shorten_wav(data: bytes) -> bytes:
+def shorten_wav(data: bytes) -> Shortened:
     """A 16-bit mono WAV with its long quiet stretches shortened; any other audio, and a
     WAV this cannot read, as it is."""
     try:
         with wave.open(io.BytesIO(data), "rb") as clip:
             if clip.getnchannels() != 1 or clip.getsampwidth() != 2:
-                return data
+                return Shortened(data)
             rate = clip.getframerate()
             pcm = clip.readframes(clip.getnframes())
     except (wave.Error, EOFError):
-        return data
+        return Shortened(data)
+    short = shorten(pcm, rate)
     out = io.BytesIO()
     with wave.open(out, "wb") as clip:
         clip.setnchannels(1)
         clip.setsampwidth(2)
         clip.setframerate(rate)
-        clip.writeframes(shorten(pcm, rate))
-    return out.getvalue()
+        clip.writeframes(short.audio)
+    return Shortened(out.getvalue(), short.kept)
