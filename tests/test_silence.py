@@ -135,3 +135,7 @@ def test_a_time_in_the_shortened_audio_is_found_in_the_recording() -> None:
     # The second starts after 1 s of speech and 0.6 s of the pause: 6 s in the recording.
     assert short.recording_time(1.9) == pytest.approx(6.0, abs=0.05)
     assert shorten(speech(2), RATE).recording_time(1.5) == 1.5  # nothing left out
+    # Part of a frame after trailing quiet is sent as it was, at its own place.
+    tail = shorten(speech(1) + quiet(2.01), RATE)
+    sent = len(tail.audio) / 2 / RATE
+    assert tail.recording_time(sent - 0.005) == pytest.approx(3.005, abs=0.001)
