@@ -40,8 +40,8 @@ def decode_wav(path: str, target_rate: int):  # type: ignore[no-untyped-def]
 
 def words(tokens: list[Any]) -> list[list[object]]:
     """The tokens grouped into words, `[text, start, end, confidence]` each: a word starts at
-    a token beginning with a space. Its confidence is the lowest of its tokens that hold a
-    letter or digit, so a stop or comma after it does not count."""
+    a token beginning with a space. Its end and confidence come from its tokens that hold a
+    letter or digit, so a stop or comma after it, emitted late, does not count."""
     grouped: list[list[Any]] = []
     for token in tokens:
         if not grouped or token.text.startswith(" "):
@@ -55,7 +55,7 @@ def words(tokens: list[Any]) -> list[list[object]]:
             continue
         spoken = [token for token in group if any(c.isalnum() for c in token.text)] or group
         confidence = min(float(token.confidence) for token in spoken)
-        out.append([text, round(group[0].start, 3), round(group[-1].end, 3), round(confidence, 4)])
+        out.append([text, round(group[0].start, 3), round(spoken[-1].end, 3), round(confidence, 4)])
     return out
 
 

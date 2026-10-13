@@ -86,7 +86,8 @@ def test_tokens_become_words_with_the_lowest_confidence_of_their_letters() -> No
         token(" Open", 0.0, 0.99),
         token("A", 0.1, 0.6),
         token("I", 0.2, 0.9),
-        token(".", 0.3, 0.2),  # a stop does not lower the word's confidence
+        token(".", 0.3, 0.2),
         token(" Yes", 0.5, 1.0),
     ]
-    assert helper.words(tokens) == [["OpenAI.", 0.0, 0.3 + 0.1, 0.6], ["Yes", 0.5, 0.6, 1.0]]
+    # The stop, emitted late, neither lowers the confidence nor moves the end.
+    assert helper.words(tokens) == [["OpenAI.", 0.0, 0.3, 0.6], ["Yes", 0.5, 0.6, 1.0]]
