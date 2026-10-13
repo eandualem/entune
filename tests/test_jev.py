@@ -879,3 +879,21 @@ def test_an_attempt_that_times_out_says_how_long_it_waited() -> None:
         pytest.raises(jev_client.JevError, match=named),
     ):
         jev.decide("Jeff", matches(GROUPS, "Jeff"), call(client, policy))
+
+
+@pytest.mark.parametrize(("p", "replaced"), [(0.9, True), (0.55, False)])
+def test_a_sound_alike_is_replaced_only_on_a_clear_choice(p: float, replaced: bool) -> None:
+    from entune.dictionary import sounds
+
+    jev_word = dictionary_entries.Word("m_jev", "Jev", "A decision model.")
+    active = dictionary_entries.Active(sounds=(jev_word,))
+    text = "Then give it the questions."
+    confidence = [(m.start(), m.end(), 0.5) for m in sounds._TOKEN.finditer(text)]
+    found = matching.components(sounds.candidates(active, text, confidence))
+    assert len(found) == 1
+    # Option i0 is the literal text; i1 is Jev.
+    _, handler = answering(lambda name, _: {"i1": p, "i0": 1 - p})
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        (decision,) = jev.decide(text, found, call(client))
+    out = matching.apply(text, (decision.edit,) if decision.edit else ())
+    assert out == ("Then Jev it the questions." if replaced else text)

@@ -12,6 +12,7 @@ from typing import Any
 
 from entune import prompts
 from entune.dictionary.matching import Component, Edit, Interpretation
+from entune.dictionary.sounds import LITERAL
 from entune.processing import cleanup, formatting
 from entune.processing.jev_client import Call
 from entune.processing.text_edits import Change
@@ -39,6 +40,9 @@ BREAK_FLOOR = 0.1
 SECTION_SENTENCES = 24
 ITEMS = ("numbered_item", "bullet_item", "list_item")
 FILLER_PROBABILITY = 0.9  # conservative initial policy; not live calibration
+# A span found by sound or spelling (dictionary/sounds.py) is replaced only when its word
+# gets at least this; below it the text stays as the speech model wrote it.
+FUZZY_PROBABILITY = 0.6
 # Context either side of a match: the sentence boundary nearest WINDOW characters away,
 # no further than WINDOW_MAX; without one, the word boundary nearest WINDOW.
 WINDOW = 160
@@ -229,7 +233,20 @@ def decide(
             probabilities = answers[f"o{i}"]
             option = max(probabilities, key=lambda name: probabilities[name])
             component = components[i]
-            readings = request.support[i][option]
+            raw = text[component.start : component.end]
+            if (
+                any(m.fuzzy for m in component.matches)
+                and values[option] != raw
+                and probabilities[option] < FUZZY_PROBABILITY
+            ):
+                decisions[i] = Decision(component, None, "contextual")
+                continue
+            # The words as written, offered beside a sound-alike, are no dictionary word.
+            readings = tuple(
+                kept
+                for reading in request.support[i][option]
+                if (kept := tuple(m for m in reading if not m.startswith(LITERAL)))
+            )
             decisions[i] = Decision(
                 component,
                 Edit(component.start, component.end, values[option]),

@@ -59,8 +59,36 @@ file, and nothing is migrated.
 
 The matcher indexes the heard texts by first word and retrieves all eligible words
 and overlapping spans. Matching ignores case and allows whitespace between phrase
-words; it does not infer plurals, fuzzy aliases or word boundaries. Costs include the
-size of the matching bucket: a larger dictionary is not automatically faster.
+words; it does not infer plurals or word boundaries. Costs include the size of the
+matching bucket: a larger dictionary is not automatically faster.
+
+A heard entry only catches a mishearing seen before, so a second matcher looks for new
+ones (`dictionary/sounds.py`). It compares every span of one to three words with each
+name or term whose spelling is fixed, whatever the speech model, by its Metaphone code
+(at least 0.75 alike) or its letters (at least 0.8 alike). Each word is compared the
+ways it is said as well as spelled: "GPT-5.5" as "gee pee tee five point five". The
+speech model's own confidence gates it: a span is offered only when one of its words
+is below 0.9, so a word the model was sure of stays out. A model that gives no
+confidence needs both the sound and half the letters alike. A span never starts or
+ends with a small word or a hesitation sound, never crosses a stop or a comma, and
+each of its words must bring it closer to the name; a name already spelled right is
+left whole, and a possessive stays outside the span. Where spans overlap, the closest
+is kept. The decision model then chooses between the
+words as written and up to five dictionary words, each with its meaning, and a word is
+replaced only at 0.6 or more; otherwise the text stays as the speech model wrote it.
+
+On the labelled October set (160 Parakeet dictations, 14,764 words, 94 term errors),
+with the speech model's confidence re-run locally:
+
+| | Errors with the meant word offered | Places asked per 1,000 words | Errors fixed by Jev | Changes outside the labelled errors |
+|---|---:|---:|---:|---:|
+| Heard entries only | 63 | 6.9 | 52 | 17 |
+| Plus sound and spelling | 70 | 8.5 | 55 | 17 |
+
+"Fixed" counts a labelled span whose corrected text is the intended one; 8 more were
+fixed with a wider span than labelled, in both rows. Without the confidence gate and
+with ordinary words indexed, the same generator offered 72 at 18 places per 1,000
+words, and Jev made 22 more wrong changes, such as "a career" to "career".
 
 With contextual correction enabled, one request supplies the original transcript,
 matched words, original character spans and surrounding context. The decision model
@@ -72,8 +100,8 @@ cloud; selecting Claude outputs Claude. There is no semantic replace/keep choice
 A valid response always selects its highest-scoring eligible interpretation, even
 when probabilities are close. Meanings that output the same text are one option, which
 lists each of their definitions once. Exact ties honor the decision model's declared choice after validating
-that it is tied for highest. There is no generic uncertainty candidate or confidence
-threshold for dictionary choices. Invalid/failed responses fail the stage; missing
+that it is tied for highest. Only a span found by sound or spelling has a threshold: its
+word must reach 0.6. Invalid/failed responses fail the stage; missing
 usable definitions or overly complex overlaps remain visibly unresolved without an
 invented meaning. Scores are not acoustic accuracy measurements or proof of complete
 candidate coverage. Offline fixtures test these contracts, not live model quality.

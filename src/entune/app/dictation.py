@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import CancelledError
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
@@ -262,6 +262,12 @@ class Dictation:
                         joined is not None,
                     )
                 raw = result.text if isinstance(result, Transcript) else None
+                # What the speech model was unsure of guides the dictionary step.
+                heard = (
+                    [(w.text, w.confidence) for w in result.words]
+                    if isinstance(result, Transcript) and result.words is not None
+                    else None
+                )
                 status = self._settings.jev_status()
                 initial = (
                     results.pending(
@@ -324,7 +330,12 @@ class Dictation:
                             checkpoint(latest)  # a cancel from here on keeps the reason
                     processed = damaged(
                         self.correct(
-                            raw, active, status, checkpoint=checkpoint, operation=operation
+                            raw,
+                            active,
+                            status,
+                            checkpoint=checkpoint,
+                            operation=operation,
+                            words=heard,
                         )
                     )
                 except CancelledError:
@@ -385,6 +396,7 @@ class Dictation:
         *,
         checkpoint: Callable[[Processed], None] | None = None,
         operation: Operation | None = None,
+        words: Sequence[tuple[str, float | None]] | None = None,
     ) -> Processed:
         endpoint, key = self._decisions.chosen()
         return process_text(
@@ -403,6 +415,7 @@ class Dictation:
             ),
             check=operation.check if operation else None,
             cancel=operation.cancel if operation else None,
+            words=words,
         )
 
     def safe_mapping_recovery(self, recording_id: int, attempt_id: int) -> dict[str, object]:
