@@ -36,7 +36,7 @@ class Shortened:
         if self.kept is None or len(self.kept) == 0:
             return seconds
         step = FRAME_MS / 1000
-        index = int(seconds / step)
+        index = int(seconds / step + _EPSILON)  # 2.26 / 0.02 is 112.99999...: frame 113
         if index >= len(self.kept):  # the unframed tail, sent as it was
             return self.frames * step + (seconds - len(self.kept) * step)
         return float(self.kept[index]) * step + (seconds - index * step)

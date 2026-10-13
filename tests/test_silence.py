@@ -145,3 +145,11 @@ def test_a_time_in_the_shortened_audio_is_found_in_the_recording() -> None:
     tail = shorten(speech(1) + quiet(2.01), RATE)
     sent = len(tail.audio) / 2 / RATE
     assert tail.recording_time(sent - 0.005) == pytest.approx(3.005, abs=0.001)
+
+
+def test_a_time_on_a_frame_boundary_is_in_the_frame_it_starts() -> None:
+    short = shorten(speech(2) + quiet(3) + speech(1), RATE)
+    assert short.kept is not None
+    (gap,) = np.flatnonzero(np.diff(short.kept) > 1)
+    cut = round((gap + 1) * 0.02, 2)  # as a provider gives it, rounded
+    assert short.recording_time(cut) == pytest.approx(short.kept[gap + 1] * 0.02)
