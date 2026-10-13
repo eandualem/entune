@@ -273,25 +273,54 @@ item drops its spoken ordinal ("One,", "Secondly,", "First of all,") and capital
 next word; original line endings, paragraphs, indentation and recognized list markers
 are retained. Existing bullet/numeric/`A)` lists,
 indented code and lines containing protected quotes/code are not classified internally.
-Single unpunctuated lines remain whole; fewer than two spans need no request.
+A line without sentence punctuation gets no paragraph break; where its sentences end is
+decided as below.
+
+When the speech model gives word times, a sentence that came after at least 0.5 s of
+silence says so in its question ("[after a 1.2 s pause]"), with the note that a long pause
+can mark a new point but is often just thinking. On the 108 labelled October dictations
+this raised how well the answers rank the labelled breaks (AUC) from 0.904 to 0.909, and
+paragraph F1 from 0.579 to between 0.584 and 0.609 over two runs. No rule over the
+answers, and no new wording of the paragraph definition, did better than 0.6.
+
+Formatting also decides where sentences end, rather than keeping the speech model's
+punctuation as given (`processing/boundaries.py`). It asks about a gap inside a stretch of
+25 or more words without a stop, where there is a comma or a pause of at least 0.3 s; a
+stop followed by a lower-case word; and a capital mid-sentence on a word the speaker also
+writes in lower case. The decision model sees the passage written each way (no mark, a
+comma, a full stop, a question mark) and chooses; asked about the gap alone, or beside the
+whole transcript, it kept to the speech model's punctuation. A full stop or question mark
+is added at 0.9 or more, with the next word's capital; a stop is taken away at 0.2 or
+less. On the 160 October test dictations from Parakeet, against AssemblyAI's
+punctuation of the same audio, full stops agreed at F1 0.746 instead of 0.741, from 9
+changes in 14,405 words, 8 of them right on reading ("on GitHub. Uh it only replaces",
+"analyzing the data incorrectly? Love to understand").
 
 Segmentation handles common English titles/abbreviations, initials, decimals and domains.
 Ethiopic `።` and CJK stops can delimit sentences without spaces. These are explicit
 heuristics, not universal language segmentation: abbreviation-final sentences can remain
-joined, and punctuation-free prose does not gain inferred sentence boundaries.
+joined.
 
 Filler candidates are English hesitation sounds, `um`, `uh`, `er`, `erm`, `ah` and
 `hmm`, alone or in a run of up to 6 separated by spaces, commas or dots (across a
-sentence stop only when the run starts the sentence), and runs of
-**2–6 adjacent repetitions** of `like`; a candidate spans no more than 80 characters. Code
+sentence stop only when the run starts the sentence), and any word or phrase of up to
+three words said again right after itself, up to 6 times ("I I", "the the", "I think I
+think"); a candidate spans no more than 80 characters. Code
 excludes quoted/code spans, indented code and line crossings. A hesitation probability of
-at least **0.9** permits deletion. A sound goes with its own comma and the space after it;
+at least **0.9** permits deletion; a repeat across a comma ("if I can find it, it is")
+needs **0.99**, since it is often two clauses rather than a stutter. A sound goes with its own comma and the space after it;
 at the end of a sentence, with the comma and space before it; as a whole sentence, with
-its stop. When it started the sentence, the next word takes the capital. A repeat of
-`like` keeps its first occurrence. Answers, reactions, quotations, talk about the word
-itself and meaningful `like` uses should be classified as meaningful; uncertain or
-malformed answers preserve text. This threshold is an initial, uncalibrated policy. It
-does not remove other words, arbitrary repeats or spoken repairs.
+its stop. When it started the sentence, the next word takes the capital. A repeat keeps
+its first occurrence. Answers, reactions, quotations, talk about the word itself,
+meaningful `like` uses and deliberate repeats ("very very", "again and again") should be
+classified as meaningful; uncertain or malformed answers preserve text. It does not
+remove other words or longer spoken repairs.
+
+Repeats, measured on the 160 October test dictations from Parakeet (14,405 words): 49
+candidates. Jev took 37 for hesitations, of which 34 were stutters ("the the", "I I", "how
+much how much") and 3 were two clauses ("find it, it is", "within it, it has", "with it it
+doesn't"); the comma rule keeps the first two. It kept "very very", "again again" and
+"hint hint".
 
 Measured on 162 October transcripts from AssemblyAI Universal-3.5 Pro, which keeps filler
 sounds: code proposed 470 candidates, almost all `um` and `uh`. Jev removed 468 and left

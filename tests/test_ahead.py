@@ -16,7 +16,10 @@ SENTENCES = [f"This is sentence number {n} of the dictation." for n in range(6)]
 
 def asked(requests: list[Any]) -> list[str]:
     return sorted(
-        body["state"]["sentences"][name] for body in requests for name in body["questions"]
+        body["state"]["sentences"][name]
+        for body in requests
+        for name in body["questions"]
+        if name.startswith("S")  # a sentence, not a gap between two
     )
 
 

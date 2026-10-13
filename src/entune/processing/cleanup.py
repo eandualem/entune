@@ -1,5 +1,6 @@
-"""Propose English hesitation sounds for removal, and adjacent repeats of like for
-reduction to the first occurrence."""
+"""Propose English hesitation sounds for removal, and a word or a phrase of up to three
+words said again right after itself ("I I", "it's it's", "I think I think") for reduction
+to the first occurrence."""
 
 from __future__ import annotations
 
@@ -10,15 +11,18 @@ from typing import Literal
 from entune.processing.text_edits import Change, overlaps, protected
 
 # A small explicit vocabulary, not arbitrary words or spoken edit commands. A run of
-# sounds ("um, uh") is one candidate; like is a filler only when repeated.
+# sounds ("um, uh") is one candidate; any other word only when said again at once, which
+# the decision model tells from a deliberate repeat ("had had", "very very").
 _SOUND = r"(?:um|uh|er|erm|ah|hmm)"
 _SOUNDS = re.compile(
     rf"(?<![\w'\u2019\-]){_SOUND}(?:(?:[ \t,.!?]|\u2026)+{_SOUND})*(?![\w'\u2019\-])",
     re.IGNORECASE,
 )
 _STOP = re.compile(r"(?<!\.)[.!?](?!\.)")  # a sentence stop; dots ("...") are not one
+_WORD = r"\w+(?:['\u2019]\w+)?"
 _RUN = re.compile(
-    r"(?<![\w'\u2019\-])(?P<word>like)(?:[ \t,]+(?P=word)(?![\w'\u2019\-]))+",
+    rf"(?<![\w'\u2019\-])(?P<word>{_WORD}(?:[ \t]+{_WORD}){{0,2}})"
+    r"(?:[ \t,]+(?P=word)(?![\w'\u2019\-]))+",
     re.IGNORECASE,
 )
 _AFTER = re.compile(r"(?:,|\.\.\.|\u2026)?[ \t]*")  # a sound's own comma or dots, and space
@@ -47,7 +51,11 @@ def candidates(text: str) -> list[Filler]:
     found: list[Filler] = []
     runs: list[tuple[int, int, Literal["sound", "repeat"]]] = [
         *((start, end, "sound") for start, end in _sound_runs(text)),
-        *((m.start(), m.end(), "repeat") for m in _RUN.finditer(text)),
+        *(
+            (m.start(), m.end(), "repeat")
+            for m in _RUN.finditer(text)
+            if not _SOUNDS.fullmatch(m.group("word"))  # a run of sounds is one sound
+        ),
     ]
     for start, end, kind in sorted(runs):
         run = text[start:end]
@@ -62,9 +70,11 @@ def candidates(text: str) -> list[Filler]:
         if line.startswith(("    ", "\t")):
             continue
         if kind == "repeat":
-            first = start + len("like")  # the repeats after the first like go
+            said = _RUN.match(text, start)
+            assert said is not None
+            first = start + len(said.group("word"))  # the repeats after the first go
             deletion = Change(first, end, text[first:end], "")
-            removed = count - 1
+            removed = count - len(re.findall(r"\w+", said.group("word")))
         else:
             deletion = _sound_deletion(text, start, end)
             removed = count

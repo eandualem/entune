@@ -264,7 +264,6 @@ def test_fillers_are_removed_and_repeats_keep_their_first_occurrence() -> None:
         "    um um\n\tlike like",
         "> um um",
         'An unclosed "um um',
-        "I really really like this.",
         "hum umbrella like-minded like-minded uh-huh",
         "like\nlike",
         "um um um um um um um",  # longer than the explicit bound: no partial deletion
@@ -693,3 +692,44 @@ def test_a_long_follow_up_on_the_next_line_stays_in_its_entry() -> None:
     assert text_edits.apply(raw, result.changes) == (
         f"1. Open settings.\n{follow_up}\n2. Choose the model.\n3. Save it."
     )
+
+
+@pytest.mark.parametrize(
+    ("raw", "first", "removed"),
+    [
+        ("I I think so.", "I", " I"),
+        ("I think I think we should go.", "I think", " I think"),
+        ("Open the the settings.", "the", " the"),
+        ("I, I want this.", "I", ", I"),
+    ],
+)
+def test_any_word_or_short_phrase_said_again_at_once_is_a_candidate(
+    raw: str, first: str, removed: str
+) -> None:
+    (repeat,) = [c for c in cleanup.candidates(raw) if c.kind == "repeat"]
+    assert repeat.text.startswith(first) and repeat.deletion.before == removed
+
+
+def test_the_silence_before_a_sentence_is_measured_from_the_word_before_it() -> None:
+    text = "We start here. Then a new point."
+    words = [
+        ("We", 0.0, 0.2, 0.9),
+        ("start", 0.2, 0.5, 0.9),
+        ("here.", 0.5, 0.8, 0.9),
+        ("Then", 2.0, 2.2, 0.9),
+        ("a", 2.2, 2.3, None),
+        ("new", 2.3, 2.5, None),
+        ("point.", 2.5, 2.9, None),
+    ]
+    assert formatting.word_pauses(text, words)[15] == pytest.approx(1.2)
+
+
+def test_a_sentence_after_a_long_pause_says_so_in_its_question() -> None:
+    requests, handler = answering(lambda name, _: {"continues": 1.0})
+    text = "We start here. Then a new point. And more."
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        jev.format_edits(text, call(client), pauses={15: 1.2, 33: 0.1})
+    (body,) = requests
+    assert body["state"]["sentences"]["S01"] == "[after a 1.2 s pause] Then a new point."
+    assert body["state"]["sentences"]["S02"] == "And more."
+    assert "pause" in body["questions"]["S01"]["instructions"]["focus"]

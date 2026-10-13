@@ -14,6 +14,7 @@ from typing import Literal
 from entune.dictionary import matching, sounds
 from entune.dictionary.entries import Active
 from entune.processing import jev, jev_client, text_edits
+from entune.processing.formatting import Heard, word_pauses
 from entune.processing.results import Processed, Selection, Stage, pending
 from entune.processing.text_edits import Change
 
@@ -47,7 +48,7 @@ def process_text(
     policy: jev_client.Policy,
     endpoint: jev_client.Endpoint = jev_client.JEV,
     direct: bool = False,
-    words: Sequence[tuple[str, float | None]] | None = None,
+    words: Sequence[Heard] | None = None,
     run: jev.Pass = jev.WHOLE,
     checkpoint: Callable[[Processed], None] | None = None,
     progress: Callable[[str], None] | None = None,
@@ -85,8 +86,14 @@ def process_text(
             raw, "cleanup", jev.cleanup_edits, call(), endpoint, run
         )
     if formatting:
+        pauses = {} if words is None else word_pauses(raw, words)
         stages["formatting"] = lambda: _classify(
-            raw, "formatting", jev.format_edits, call(), endpoint, run
+            raw,
+            "formatting",
+            lambda text, call, run: jev.format_edits(text, call, run, pauses),
+            call(),
+            endpoint,
+            run,
         )
     if not stages:
         return initial
@@ -128,7 +135,7 @@ def _correction(
     contextual: bool,
     call: jev_client.Call,
     endpoint: jev_client.Endpoint,
-    words: Sequence[tuple[str, float | None]] | None = None,
+    words: Sequence[Heard] | None = None,
     run: jev.Pass = jev.WHOLE,
 ) -> Stage:
     method: Literal["contextual", "deterministic"] = "contextual" if contextual else "deterministic"
@@ -136,7 +143,9 @@ def _correction(
         found = matching.matches(active, raw)
         if contextual:  # only a decision model can tell a sound-alike from the word itself
             try:
-                confidence = None if words is None else sounds.locate(raw, words)
+                confidence = (
+                    None if words is None else sounds.locate(raw, [(w[0], w[3]) for w in words])
+                )
                 alike = sounds.candidates(active, raw, confidence, found)
             except Exception:  # an addition: the heard entries still apply without it
                 logging.getLogger(__name__).exception("Sound-alike candidates failed")
