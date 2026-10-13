@@ -21,7 +21,8 @@ _SOUNDS = re.compile(
 _STOP = re.compile(r"(?<!\.)[.!?](?!\.)")  # a sentence stop; dots ("...") are not one
 _WORD = r"\w+(?:['\u2019]\w+)?"
 _RUN = re.compile(
-    rf"(?<![\w'\u2019\-])(?P<word>{_WORD}(?:[ \t]+{_WORD}){{0,2}})"
+    # The shortest unit that repeats, so "like like like" is one word said three times.
+    rf"(?<![\w'\u2019\-])(?P<word>{_WORD}(?:[ \t]+{_WORD}){{0,2}}?)"
     r"(?:[ \t,]+(?P=word)(?![\w'\u2019\-]))+",
     re.IGNORECASE,
 )

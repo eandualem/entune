@@ -701,6 +701,7 @@ def test_a_long_follow_up_on_the_next_line_stays_in_its_entry() -> None:
         ("I think I think we should go.", "I think", " I think"),
         ("Open the the settings.", "the", " the"),
         ("I, I want this.", "I", ", I"),
+        ("It is like like like like slow.", "like", " like like like"),
     ],
 )
 def test_any_word_or_short_phrase_said_again_at_once_is_a_candidate(
