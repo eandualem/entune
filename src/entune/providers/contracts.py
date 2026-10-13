@@ -31,21 +31,19 @@ class Transcript:
         end: Callable[[float], float] | None = None,
     ) -> Transcript:
         """The same transcript with each word's times moved by `to_recording`, and its
-        end by `end` when given (a word ending at a cut ends before it)."""
-        end = end or to_recording
+        end by `end` when given (a word ending at a cut ends before it); an end never
+        comes before its start."""
         if self.words is None:
             return self
-        return replace(
-            self,
-            words=tuple(
-                replace(
-                    word,
-                    start=None if word.start is None else to_recording(word.start),
-                    end=None if word.end is None else end(word.end),
-                )
-                for word in self.words
-            ),
-        )
+
+        def moved(word: Word) -> Word:
+            start = None if word.start is None else to_recording(word.start)
+            stop = None if word.end is None else (end or to_recording)(word.end)
+            if start is not None and stop is not None:
+                stop = max(start, stop)
+            return replace(word, start=start, end=stop)
+
+        return replace(self, words=tuple(moved(word) for word in self.words))
 
 
 @dataclass(frozen=True)

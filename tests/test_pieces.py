@@ -263,3 +263,9 @@ def test_the_pieces_words_are_timed_on_the_recording() -> None:
     assert result.words[0].start == pytest.approx(0.5)
     # The second piece starts where the first was cut, in the pause after 21 s.
     assert result.words[1].start == pytest.approx(21.3 + 0.5, abs=0.1)
+
+
+def test_a_word_of_no_length_at_a_cut_never_ends_before_it_starts() -> None:
+    word = Transcript("a", (Word("a", 2.26, 2.26, 0.9),))
+    (moved,) = word.retimed(lambda t: t + 2.44, lambda t: t).words or ()
+    assert moved.start == moved.end == pytest.approx(4.7)
