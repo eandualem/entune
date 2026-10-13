@@ -14,6 +14,7 @@ from concurrent.futures import CancelledError
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 
+from entune.app.ahead import Ahead
 from entune.app.decision_models import DecisionModels
 from entune.app.dictionary_file import DictionaryFile
 from entune.app.models import NoDefaultModel, SpeechModels, UnknownModel
@@ -24,6 +25,7 @@ from entune.audio.formats import sniff_mime
 from entune.audio.silence import Shortened, shorten_wav
 from entune.dictionary.entries import Active
 from entune.processing import results
+from entune.processing.jev import WHOLE, Memo, Pass
 from entune.processing.jev_client import SECTION_CONNECTIONS
 from entune.processing.jev_client import Client as JevClient
 from entune.processing.pipeline import process_text
@@ -81,6 +83,20 @@ class Dictation:
             self._speech,
             cancel,
             remove_silence=self._settings.remove_silence(),
+            ahead=Ahead(lambda transcript, run, halt: self._ahead(ref, transcript, run, halt)),
+        )
+
+    def _ahead(
+        self, ref: ModelRef, transcript: Transcript, run: Pass, halt: threading.Event
+    ) -> None:
+        """A pass over the dictation so far, while the user speaks: it only fills the
+        memo the final pass reads, with the steps and dictionary as they are now."""
+        status = self._settings.jev_status()
+        if not (status.dictionary or status.formatting or status.cleanup):
+            return
+        active = self._dictionary.dictionary().active(ref.id) if status.dictionary else Active()
+        self.correct(
+            transcript.text, active, status, words=_heard(transcript), run=run, cancel=halt
         )
 
     def prepare(self) -> None:
@@ -219,10 +235,14 @@ class Dictation:
                     started = time.monotonic()
                     seconds: float | None = None  # the recording's own length
                     joined: Transcript | None = None
+                    memo: Memo | None = None
                     try:
                         # Before this dictation's own lease: the pieces hold theirs while
                         # they finish, and a local model has one slot.
-                        joined, pieces = _joined(pieces, ref), None
+                        joined = _joined(pieces, ref)
+                        if joined is not None and pieces is not None and pieces.ahead:
+                            memo = pieces.ahead.memo  # what was decided while speaking
+                        pieces = None
                         if joined is None:
                             resources.enter_context(
                                 self._speech.use(
@@ -263,11 +283,7 @@ class Dictation:
                     )
                 raw = result.text if isinstance(result, Transcript) else None
                 # What the speech model was unsure of guides the dictionary step.
-                heard = (
-                    [(w.text, w.confidence) for w in result.words]
-                    if isinstance(result, Transcript) and result.words is not None
-                    else None
-                )
+                heard = _heard(result) if isinstance(result, Transcript) else None
                 status = self._settings.jev_status()
                 initial = (
                     results.pending(
@@ -336,6 +352,7 @@ class Dictation:
                             checkpoint=checkpoint,
                             operation=operation,
                             words=heard,
+                            run=Pass(memo),
                         )
                     )
                 except CancelledError:
@@ -397,6 +414,8 @@ class Dictation:
         checkpoint: Callable[[Processed], None] | None = None,
         operation: Operation | None = None,
         words: Sequence[tuple[str, float | None]] | None = None,
+        run: Pass = WHOLE,
+        cancel: threading.Event | None = None,
     ) -> Processed:
         endpoint, key = self._decisions.chosen()
         return process_text(
@@ -414,8 +433,9 @@ class Dictation:
                 (lambda stage: self._operations.stage(operation, stage)) if operation else None
             ),
             check=operation.check if operation else None,
-            cancel=operation.cancel if operation else None,
+            cancel=operation.cancel if operation else cancel,
             words=words,
+            run=run,
         )
 
     def safe_mapping_recovery(self, recording_id: int, attempt_id: int) -> dict[str, object]:
@@ -457,3 +477,10 @@ def _joined(pieces: Pieces | None, ref: ModelRef) -> Transcript | None:
         pieces.abort()
         return None
     return pieces.finish()
+
+
+def _heard(transcript: Transcript) -> list[tuple[str, float | None]] | None:
+    """The speech model's words with its confidence, for the dictionary step."""
+    if transcript.words is None:
+        return None
+    return [(w.text, w.confidence) for w in transcript.words]

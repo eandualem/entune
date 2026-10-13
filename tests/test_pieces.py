@@ -269,3 +269,29 @@ def test_a_word_of_no_length_at_a_cut_never_ends_before_it_starts() -> None:
     word = Transcript("a", (Word("a", 2.26, 2.26, 0.9),))
     (moved,) = word.retimed(lambda t: t + 2.44, lambda t: t).words or ()
     assert moved.start == moved.end == pytest.approx(4.7)
+
+
+def test_each_longer_transcript_goes_to_the_decisions_made_while_speaking() -> None:
+    from entune.app.ahead import Ahead
+    from entune.processing import jev
+
+    seen: list[str] = []
+    done = threading.Event()
+
+    def work(transcript: Transcript, run: jev.Pass, halt: threading.Event) -> None:
+        seen.append(transcript.text)
+        done.set()
+
+    provider = Counting()
+    speech_resources = SpeechResources([provider], lambda _: None)
+    ahead = Ahead(work)
+    recording = Pieces(
+        ModelRef(provider, "good"), "k", RATE, speech_resources, threading.Event(), ahead=ahead
+    )
+    recording.feed(speech(21) + silence(0.6) + speech(1))
+    assert done.wait(3)  # the first piece, while the recording goes on
+    assert seen == ["piece 1"]
+    recording.feed(speech(2))
+    assert recording.finish() == Transcript("piece 1 piece 2")
+    time.sleep(0.05)
+    assert seen == ["piece 1"]  # after the stop, the final pass asks the rest

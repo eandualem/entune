@@ -91,7 +91,11 @@ formatting) run at once on the raw text, and their exact changes are applied tog
 stored with each stage's outcome. The transcript is copied and
 pasted on the main thread, because HIToolbox insists on it. With fast mode
 on, the recorder's chunks are cut at natural pauses and each finished piece is
-transcribed while recording; after the stop only the last one is (app/pieces.py). A local model is
+transcribed while recording; after the stop only the last one is (app/pieces.py). Each
+time the transcript grows, app/ahead.py runs a pass of the enabled stages over it that
+only asks what is settled (jev.Pass: a sentence once two follow it, a filler or a word
+once 240 characters do) and keeps the answers in a memo; the final pass reuses them,
+keyed by kind, place and text, and asks the rest. A local model is
 loaded while it is the selected default and freed when it is not; Parakeet
 lives in a helper process that exits on unload. A failed stage
 contributes no changes; the others still apply theirs. No model generates text or deletion offsets. Code validates its own

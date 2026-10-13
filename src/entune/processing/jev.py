@@ -7,7 +7,8 @@ Code alone applies what the answers allow; the decision model never writes text.
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass
+import threading
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from entune import prompts
@@ -49,6 +50,61 @@ WINDOW = 160
 WINDOW_MAX = 240
 _WORD_START = re.compile(r"(?<!\S)\S")
 _WORD_END = re.compile(r"\S(?=\s)")
+
+
+# While the user still speaks, a question is asked only once what it depends on has been
+# said: a sentence once two more follow it, a filler or a dictionary word once SETTLED_CHARS
+# more characters do (the context a question shows, jev.WINDOW_MAX). The pass after the
+# recording stops asks everything else.
+SETTLED_SENTENCES = 2
+SETTLED_CHARS = 240
+
+
+@dataclass
+class Memo:
+    """Answers kept between passes over one dictation's growing transcript, each under
+    the item it answers: its kind, place and text. Text already said never moves, so an
+    answer found again in a later pass is reused instead of asked again."""
+
+    answers: dict[tuple[Any, ...], dict[str, float]] = field(default_factory=dict)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def get(self, key: tuple[Any, ...]) -> dict[str, float] | None:
+        with self.lock:
+            return self.answers.get(key)
+
+    def put(self, answers: dict[tuple[Any, ...], dict[str, float]]) -> None:
+        with self.lock:
+            self.answers.update(answers)
+
+
+@dataclass(frozen=True)
+class Pass:
+    """How much of the dictation a pass sees: `final` once the recording has stopped,
+    with the answers of earlier passes in `memo`."""
+
+    memo: Memo | None = None
+    final: bool = True
+
+    def settled(self, text: str, end: int) -> bool:
+        return self.final or end <= len(text.rstrip()) - SETTLED_CHARS
+
+
+WHOLE = Pass()
+
+
+def _reuse(
+    call: Call, memo: Memo | None, keys: dict[str, tuple[Any, ...]]
+) -> dict[str, dict[str, float]]:
+    """The answers `memo` already has for these questions from this decision model,
+    counted as this step's decisions."""
+    if memo is None:
+        return {}
+    known = {
+        name: a for name, k in keys.items() if (a := memo.get((call.endpoint.id, *k))) is not None
+    }
+    call.decisions += len(known)
+    return known
 
 
 # ---- meaning classification
@@ -218,17 +274,56 @@ def meaning_request(
 
 
 def decide(
-    text: str, components: list[Component], call: Call, variant: Variant = DEFAULT
+    text: str,
+    components: list[Component],
+    call: Call,
+    variant: Variant = DEFAULT,
+    run: Pass = WHOLE,
 ) -> list[Decision]:
     """Apply the top eligible interpretation, even when scores are close.
 
     Literal meanings compete normally. Meanings that write the same text share one
-    option (meaning_request); invalid responses fail the whole stage.
+    option (meaning_request); invalid responses fail the whole stage. Before the stop
+    (`run.final` false) only settled occurrences are asked, and nothing is decided.
     """
     request = meaning_request(text, components, variant)
     decisions = dict(request.decisions)
     if request.questions:
-        answers = _ask_meanings(request, call)
+        keys = {
+            f"o{i}": (
+                "meaning",
+                components[i].start,
+                components[i].end,
+                text[components[i].start : components[i].end],
+                tuple(sorted(request.outputs[i].items())),
+                # The meanings as asked: an edited definition is asked again.
+                tuple(sorted(request.questions[f"o{i}"]["criteria"].items())),
+            )
+            for i in request.outputs
+        }
+        answers = _reuse(call, run.memo, keys)
+        asked = [
+            name
+            for name in request.questions
+            if name not in answers and run.settled(text, keys[name][2])
+        ]
+        if asked:
+            new = _ask_meanings(
+                replace(
+                    request,
+                    state={
+                        **request.state,
+                        "occurrences": {n: request.state["occurrences"][n] for n in asked},
+                    },
+                    questions={n: request.questions[n] for n in asked},
+                ),
+                call,
+            )
+            if run.memo is not None:
+                run.memo.put({(call.endpoint.id, *keys[n]): a for n, a in new.items() if n in keys})
+            answers |= new
+        if not run.final:
+            return []
         for i, values in request.outputs.items():
             probabilities = answers[f"o{i}"]
             option = max(probabilities, key=lambda name: probabilities[name])
@@ -279,30 +374,40 @@ class TextResult:
     removed_words: int = 0
 
 
-def format_edits(text: str, call: Call) -> TextResult:
+def format_edits(text: str, call: Call, run: Pass = WHOLE) -> TextResult:
     spans = formatting.sentences(text)
     if len(spans) < 2:
         return TextResult()
     names = [f"S{i:02d}" for i in range(len(spans))]
-    asked = [
-        name
-        for name, span in zip(names, spans, strict=True)
-        if not span.listed and not span.protected
-    ]
-    if not asked:
+    keys = {
+        name: ("format", s.start, text[s.start : s.end])
+        for name, s in zip(names, spans, strict=True)
+        if not s.listed and not s.protected
+    }
+    if not keys:
         return TextResult()
+    answers = _reuse(call, run.memo, keys)
+    # Before the stop, a sentence is asked once SETTLED_SENTENCES more follow it.
+    settled = len(spans) if run.final else len(spans) - SETTLED_SENTENCES
+    asked = [n for i, n in enumerate(names) if n in keys and n not in answers and i < settled]
     state = {
         "transcript": text,
         "sentences": {name: text[s.start : s.end] for name, s in zip(names, spans, strict=True)},
     }
-    sections = -(-len(asked) // SECTION_SENTENCES)
-    size = -(-len(asked) // sections)
-    answers = call.ask_together(
-        [
-            (state, {n: prompts.render_json("jev-formatting.json", sentence=n) for n in part})
-            for part in (asked[i : i + size] for i in range(0, len(asked), size))
-        ]
-    )
+    if asked:
+        sections = -(-len(asked) // SECTION_SENTENCES)
+        size = -(-len(asked) // sections)
+        new = call.ask_together(
+            [
+                (state, {n: prompts.render_json("jev-formatting.json", sentence=n) for n in part})
+                for part in (asked[i : i + size] for i in range(0, len(asked), size))
+            ]
+        )
+        if run.memo is not None:
+            run.memo.put({(call.endpoint.id, *keys[n]): a for n, a in new.items() if n in keys})
+        answers |= new
+    if not run.final:
+        return TextResult()
     actions = _actions(text, spans, [answers.get(n) for n in names])
     _whole_lists(text, spans, actions)
     _no_short_paragraphs(text, spans, actions)
@@ -515,20 +620,40 @@ def _split(
     _split(spans, answers, actions, i, hi)
 
 
-def cleanup_edits(text: str, call: Call) -> TextResult:
+def cleanup_edits(text: str, call: Call, run: Pass = WHOLE) -> TextResult:
     candidates = cleanup.candidates(text)
     if not candidates:
         return TextResult()
     names = [f"F{i:02d}" for i in range(len(candidates))]
-    answers = call.ask(
-        {"transcript": text, "fillers": dict(zip(names, map(asdict, candidates), strict=True))},
-        {
-            name: prompts.render_json(
-                "jev-filler.json" if candidate.kind == "sound" else "jev-cleanup.json", filler=name
-            )
-            for name, candidate in zip(names, candidates, strict=True)
-        },
-    )
+    keys = {
+        name: ("filler", c.start, c.end, c.kind, c.text)
+        for name, c in zip(names, candidates, strict=True)
+    }
+    answers = _reuse(call, run.memo, keys)
+    asked = [
+        name
+        for name, c in zip(names, candidates, strict=True)
+        if name not in answers and run.settled(text, c.end)
+    ]
+    if asked:
+        new = call.ask(
+            {
+                "transcript": text,
+                "fillers": dict(zip(names, map(asdict, candidates), strict=True)),
+            },
+            {
+                name: prompts.render_json(
+                    "jev-filler.json" if c.kind == "sound" else "jev-cleanup.json", filler=name
+                )
+                for name, c in zip(names, candidates, strict=True)
+                if name in asked
+            },
+        )
+        if run.memo is not None:
+            run.memo.put({(call.endpoint.id, *keys[n]): a for n, a in new.items() if n in keys})
+        answers |= new
+    if not run.final:
+        return TextResult()
     changes = []
     preserved = abstained = removed = 0
     for name, candidate in zip(names, candidates, strict=True):
