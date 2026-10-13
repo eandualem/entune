@@ -734,3 +734,11 @@ def test_a_sentence_after_a_long_pause_says_so_in_its_question() -> None:
     assert body["state"]["sentences"]["S01"] == "[after a 1.2 s pause] Then a new point."
     assert body["state"]["sentences"]["S02"] == "And more."
     assert "pause" in body["questions"]["S01"]["instructions"]["focus"]
+
+
+def test_a_phrase_repeat_does_not_keep_an_earlier_sound_from_being_asked() -> None:
+    found = cleanup.candidates("I um go I um go home.")
+    assert [(c.kind, c.deletion.before) for c in found] == [
+        ("sound", "um "),
+        ("repeat", " I um go"),
+    ]

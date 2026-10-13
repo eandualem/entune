@@ -45,3 +45,7 @@ def test_a_stop_is_taken_away_only_on_a_clear_answer_and_a_name_keeps_its_capita
     named = boundaries.Gap(26, 28, ".", "and Jeff", "Then more", False, True)
     change = boundaries.change(text, named, answer(0.1))
     assert change is not None and change.after == " T"  # "Then" is not written lower here
+
+
+def test_an_abbreviation_keeps_its_stop() -> None:
+    assert boundaries.gaps("Please arrive at 5 p.m. tomorrow and bring it.", {}) == []

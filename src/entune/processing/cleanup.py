@@ -49,7 +49,7 @@ class Filler:
 
 def candidates(text: str) -> list[Filler]:
     excluded = protected(text)
-    found: list[Filler] = []
+    proposed: list[Filler] = []
     runs: list[tuple[int, int, Literal["sound", "repeat"]]] = [
         *((start, end, "sound") for start, end in _sound_runs(text)),
         *(
@@ -79,10 +79,15 @@ def candidates(text: str) -> list[Filler]:
         else:
             deletion = _sound_deletion(text, start, end)
             removed = count
-        if found and deletion.start < found[-1].deletion.end:
+        proposed.append(Filler(start, end, run, deletion, removed, kind))
+    # Overlaps are settled in the order of what each deletes: a phrase repeat that starts
+    # earlier ("I um go I um go") must not keep its first sound from being asked about.
+    found: list[Filler] = []
+    for filler in sorted(proposed, key=lambda f: (f.deletion.start, f.deletion.end)):
+        if found and filler.deletion.start < found[-1].deletion.end:
             continue
-        found.append(Filler(start, end, run, deletion, removed, kind))
-    return found
+        found.append(filler)
+    return sorted(found, key=lambda f: f.start)
 
 
 def _sound_runs(text: str) -> list[tuple[int, int]]:

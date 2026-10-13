@@ -38,6 +38,11 @@ _NUMBERED = re.compile(r"(\d+)[.)][ \t]")  # an existing numbered list line
 _BLANK_LINE = re.compile(r"\n[ \t]*\n")
 
 
+def abbreviation(text: str, stop: int) -> bool:
+    """Whether the full stop just before `stop` ends an abbreviation ("p.m.", "Dr.")."""
+    return text[stop - 1 : stop] == "." and bool(_ABBREVIATION.search(text, max(0, stop - 8), stop))
+
+
 def ordinal(text: str, span: Sentence) -> bool:
     """Whether the sentence opens with a spoken ordinal: "Second, ...", "Number three: ..."."""
     return _ORDINAL.match(text, span.start, span.end) is not None

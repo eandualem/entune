@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from entune.processing.formatting import abbreviation
 from entune.processing.text_edits import Change, overlaps, protected
 
 ADD = 0.9  # a full stop or question mark is added at this probability or more
@@ -83,6 +84,8 @@ def gaps(
         if between is None or overlaps(before.start(), after.end(), excluded):
             continue  # a line break, a dash, a quote or code: left as it is
         mark = between.group(1)
+        if mark == "." and abbreviation(text, before.end() + 1):
+            continue  # "5 p.m. tomorrow": the stop is the abbreviation's
         following = after.group()
         lower_after_stop = mark in STOPS and following[:1].islower()
         # "pay $100 to use it Then when": a capital mid-sentence on a word the speaker
