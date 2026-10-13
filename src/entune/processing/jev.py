@@ -465,7 +465,7 @@ def format_edits(
         if n in gap_answers and (c := boundaries.change(text, g, gap_answers[n])) is not None
     ]
     # A paragraph or list entry at a sentence start keeps the stop before it.
-    ends = [c for c in ends if not any(c.start <= p.end and p.start <= c.end for p in changes)]
+    ends = [c for c in ends if not any(c.start < p.end and p.start < c.end for p in changes)]
     return TextResult(tuple(sorted((*changes, *ends), key=lambda c: (c.start, c.end))))
 
 
