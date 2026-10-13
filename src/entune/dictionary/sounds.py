@@ -171,7 +171,7 @@ def spoken(spelling: str) -> tuple[str, ...]:
     text = re.sub(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", text)
     text = re.sub(r"(?<=\d)\.(?=\d)", " point ", text)
     text = text.replace(".", " dot ").replace("-", " ").replace("_", " ")
-    text = re.sub(r"\d", lambda m: f" {_NUMBERS[m.group()]} ", text)
+    text = re.sub(r"[0-9]", lambda m: f" {_NUMBERS[m.group()]} ", text)
     words = text.split()
     variants = {" ".join(words).lower()}
     lettered = [
@@ -209,6 +209,7 @@ class _Indexed:
     forms: tuple[tuple[str, str], ...]  # (Metaphone code, letters) of each way it is said
     spelled: str  # key() of the spelling
     parts: frozenset[str]  # its words
+    written: re.Pattern[str]  # the spelling itself in a text
 
 
 @dataclass(frozen=True)
@@ -229,23 +230,36 @@ def _index(active: Active) -> tuple[_Indexed, ...]:
             ),
             key(w.spelling),
             frozenset(key(w.spelling).split()),
+            re.compile(
+                rf"(?<![\w.]){re.escape(w.spelling)}(?![\w+#])"
+                if w.spelling[:1].isalnum() or w.spelling[:1] == "."
+                else re.escape(w.spelling),
+                re.IGNORECASE,
+            ),
         )
         for w in active.sounds
     )
 
 
-def _score(heard: str, heard_code: str, entry: _Indexed) -> tuple[float, float]:
-    """The best (sound, letters) similarity of a heard span, its letters and code, to a
-    way the word is said or spelled, among those whose length is close enough."""
-    best = (0.0, 0.0)
+def _score(heard: str, heard_code: str, entry: _Indexed, confident: bool) -> float:
+    """How close a heard span (its letters and code) is to the closest way the word is
+    said or spelled that is close enough: by sound or by letters, or with no confidence
+    to go by (`confident` false), by both. 0 when none is."""
+    best = 0.0
     for form_code, form_letters in entry.forms:
         if not heard or not form_letters:
             continue
-        ratio = len(heard) / len(form_letters)
-        if LENGTH_RATIO[0] <= ratio <= LENGTH_RATIO[1]:
-            sound = similarity(heard_code, form_code, SOUND)
-            spelled = similarity(heard, form_letters, LETTERS_WITH_SOUND if sound else LETTERS)
-            best = max(best, (sound, spelled))
+        if not LENGTH_RATIO[0] <= len(heard) / len(form_letters) <= LENGTH_RATIO[1]:
+            continue
+        sound = similarity(heard_code, form_code, SOUND)
+        spelled = similarity(heard, form_letters, LETTERS_WITH_SOUND if confident else LETTERS)
+        close = (
+            sound >= SOUND or spelled >= LETTERS
+            if confident
+            else sound >= SOUND and spelled >= LETTERS_WITH_SOUND
+        )
+        if close:
+            best = max(best, sound, spelled)
     return best
 
 
@@ -263,6 +277,8 @@ def candidates(
     if not index:
         return []
     tokens = list(_TOKEN.finditer(text))
+    # A name already spelled right, punctuation and all ("C++", "GPT-5.5"), is left alone.
+    written = [(m.start(), m.end()) for entry in index for m in entry.written.finditer(text)]
     found: list[_Found] = []
     known: dict[tuple[str, bool], list[tuple[float, Word]] | None] = {}  # spans said again
     for i in range(len(tokens)):
@@ -279,7 +295,9 @@ def candidates(
             # "a career" or "GitHub uh" to a word would delete the "a" or the "uh".
             if _edge(tokens[i].group()) or _edge(tokens[i + n - 1].group()):
                 continue
-            if any(m.start < end and start < m.end for m in taken):
+            if any(m.start < end and start < m.end for m in taken) or any(
+                s < end and start < e for s, e in written
+            ):
                 continue
             unsure = _lowest(confidence, start, end)
             if unsure is not None and unsure >= UNSURE:
@@ -298,14 +316,8 @@ def candidates(
                     break  # the word itself, as written
                 if said in entry.parts:
                     continue  # a word of it, as "posts" of "X posts": the word itself too
-                sound, spelled = _score(heard, heard_code, entry)
-                close = (
-                    sound >= SOUND and spelled >= LETTERS_WITH_SOUND
-                    if unsure is None
-                    else sound >= SOUND or spelled >= LETTERS
-                )
-                if close:
-                    scored.append((max(sound, spelled), entry.word))
+                if score := _score(heard, heard_code, entry, unsure is not None):
+                    scored.append((score, entry.word))
             scored.sort(key=lambda s: -s[0])
             known[said, unsure is None] = scored
             if scored:

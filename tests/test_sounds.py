@@ -67,3 +67,14 @@ def test_a_possessive_stays_and_symbols_in_a_spelling_are_not_letters() -> None:
     (match,) = sounds.candidates(active, text, unsure(text, "Claud's"))
     assert text[match.start : match.end] == "Claud"
     assert sounds.spoken("AT&T") == ("at&t",)
+
+
+def test_a_name_spelled_right_is_left_whole_and_spelling_alone_can_match() -> None:
+    cpp = Word("m_cpp", "C++", "A programming language.")
+    sqlite = Word("m_sqlite", "SQLite", "A small database.")
+    active = Active(sounds=(cpp, sqlite, Word("m_gpt", "GPT-5.5", "A model.")))
+    assert sounds.candidates(active, "I use C++ and GPT-5.5 daily.", None) == []
+    text = "It runs on SQLitex here."
+    (match,) = sounds.candidates(active, text, unsure(text, "SQLitex"))
+    assert match.meanings[1] == sqlite
+    assert sounds.spoken("GPT-\uff15")  # a full-width digit is not read as a number
