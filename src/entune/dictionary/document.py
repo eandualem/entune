@@ -57,7 +57,9 @@ def parse_words(value: object, where: str) -> tuple[Word, ...]:
     for i, item in enumerate(_list(value, where)):
         loc = f"{where}[{i}]"
         w = _object(
-            item, loc, {"id", "spelling", "meaning", "personal_context", "casing", "needs_review"}
+            item,
+            loc,
+            {"id", "spelling", "meaning", "personal_context", "casing", "needs_review", "said_as"},
         )
         word_id = _id(w.get("id"), f"{loc}.id")
         if word_id in ids:
@@ -67,6 +69,7 @@ def parse_words(value: object, where: str) -> tuple[Word, ...]:
         if type(review) is not bool:
             raise ValueError(f"{loc}.needs_review must be a boolean")
         context = w.get("personal_context")
+        said_as = w.get("said_as")
         casing = w.get("casing", "fixed")
         if casing not in ("fixed", "ordinary"):
             raise ValueError(f"{loc}: casing must be fixed or ordinary")
@@ -78,6 +81,7 @@ def parse_words(value: object, where: str) -> tuple[Word, ...]:
                 _string(context, f"{loc}.personal_context") if context is not None else None,
                 casing,
                 review,
+                _string(said_as, f"{loc}.said_as") if said_as is not None else None,
             )
         )
     return tuple(words)
@@ -171,7 +175,10 @@ def dumps(dictionary: Dictionary) -> str:
     return json.dumps(
         {
             "version": VERSION,
-            "words": [asdict(w) for w in dictionary.words],
+            "words": [
+                {k: v for k, v in asdict(w).items() if k != "said_as" or v is not None}
+                for w in dictionary.words
+            ],
             "pinned": [h.as_json() for h in dictionary.pinned],
             "learned": {m: [h.as_json() for h in es] for m, es in dictionary.learned.items()},
         },
