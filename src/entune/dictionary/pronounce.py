@@ -237,10 +237,10 @@ def _lettered(chunk: str) -> bool:
 def _chunk(chunk: str) -> tuple[Phones, ...]:
     if chunk == "dot":
         return word("dot")
-    if chunk[0].isdigit():
+    if chunk[0] in "0123456789":
         return _join([word(w) for w in _number(chunk)], 2)
     if _lettered(chunk):
-        spelled = _join([word(_LETTERS[c]) for c in chunk.lower()], 1)
+        spelled = _join([word(w) for c in chunk.lower() for w in _LETTERS[c].split("-")], 1)
         if len(chunk) == 1:
             return spelled
         return tuple(dict.fromkeys(spelled + word(chunk.lower())))
@@ -276,7 +276,7 @@ def said_words(text: str) -> int:
     count = 0
     for t in _TOKEN.findall(text):
         for chunk in _chunks(t):
-            if chunk[0].isdigit():
+            if chunk[0] in "0123456789":
                 count += len(_number(chunk))
             elif _lettered(chunk):
                 count += sum(_LETTERS[c].count("-") + 1 for c in chunk.lower())  # W: two

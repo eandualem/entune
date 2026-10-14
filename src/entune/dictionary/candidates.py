@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from entune.dictionary import pronounce
@@ -388,21 +388,21 @@ def _check(
                     first[0],
                     last[1],
                     text[whole_start:whole_end],
-                    tuple(before + c.word.spelling + after for c in s.found if not c.homophone),
+                    tuple(before + c.word.spelling + after for c in s.found if _scored(s, c)),
                 )
             )
         for s, deltas in zip(asked, scorer.score(requests), strict=True):
             scored = iter(deltas)
             kept = []
             for c in s.found:
-                if c.homophone:
+                if not _scored(s, c):
                     kept.append(c)
                     continue
                 delta = next(scored)
                 if s.written and delta <= 0:
                     continue  # a word as written stays unless the audio prefers another
-                if delta + AUDIO_WEIGHT * c.similarity >= AUDIO_BAR:
-                    kept.append(Candidate(c.start, c.end, c.word, c.similarity, False, delta))
+                if c.homophone or delta + AUDIO_WEIGHT * c.similarity >= AUDIO_BAR:
+                    kept.append(replace(c, delta=delta))
             s.found = kept
     checked = {id(s) for s in asked} if scorer is not None else set()
     for s in spans:
@@ -411,6 +411,12 @@ def _check(
         s.found = (
             [] if s.written else [c for c in s.found if c.homophone or c.similarity >= TEXT_SIMILAR]
         )
+
+
+def _scored(span: _Span, c: Candidate) -> bool:
+    """Whether the audio is asked: not for a homophone, since audio cannot tell it apart,
+    unless the span is a dictionary word as written and needs the audio to prefer another."""
+    return span.written or not c.homophone
 
 
 def _rank(c: Candidate) -> float:

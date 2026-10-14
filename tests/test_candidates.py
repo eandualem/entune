@@ -28,6 +28,8 @@ def test_a_name_is_said_as_its_spelling_suggests_and_acronyms_as_letters() -> No
     assert pronounce.readings("see el eye")[0] in pronounce.readings("CLI")
     assert pronounce.said_words("GPT-5.5") == 6
     assert pronounce.said_words("WSL") == 4  # "double you ess el"
+    assert pronounce.readings("double you ess el")[0] in pronounce.readings("WSL")
+    assert pronounce.readings("m\u00b2")  # no crash on a superscript
     assert pronounce.readings("eye tee")[0] in pronounce.readings("IT")
     assert pronounce.readings("see plus plus") == pronounce.readings("C++")
     assert pronounce.readings("see sharp") == pronounce.readings("C#")
@@ -126,6 +128,9 @@ def test_a_dictionary_word_as_written_is_questioned_only_when_the_audio_prefers_
     assert candidates.find(text, said(text, "Jeff"), vocabulary, Audio(-1.0)) == []
     places = candidates.find(text, said(text, "Jeff"), vocabulary, Audio(2.0))
     assert offered(text, places) == [("Jeff", "Jev")]
+    homophones = Vocabulary([ENTUNE, Word("w_intune", "Intune", "Device management.")])
+    text = "We use Intune daily."
+    assert candidates.find(text, said(text, "Intune"), homophones, Audio(-1.0)) == []
 
 
 def test_overlapping_spans_make_one_place_and_each_word_keeps_its_span() -> None:
