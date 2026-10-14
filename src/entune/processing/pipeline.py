@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
@@ -15,6 +16,7 @@ from entune.processing import jev, jev_client, text_edits
 from entune.processing.formatting import Heard, word_pauses
 from entune.processing.results import Processed, Selection, Stage, pending
 from entune.processing.text_edits import Change
+from entune.providers.contracts import Scorer, ScoreRequest
 
 # A long text asks more and answers slower: past LONG_CHARS characters, the time limits
 # grow by half for every LONG_CHARS more, up to LONG_FACTOR times the settings. Measured
@@ -46,6 +48,7 @@ def process_text(
     policy: jev_client.Policy,
     endpoint: jev_client.Endpoint = jev_client.JEV,
     words: Sequence[Heard] | None = None,
+    audio: Scorer | None = None,
     run: jev.Pass = jev.WHOLE,
     checkpoint: Callable[[Processed], None] | None = None,
     progress: Callable[[str], None] | None = None,
@@ -54,7 +57,8 @@ def process_text(
 ) -> Processed:
     """Run the enabled stages at once on the speech model's text, within one wall-clock
     budget including retries and backoff, and apply their edits together. A stage that
-    fails keeps its edits out; the others still apply theirs."""
+    fails keeps its edits out; the others still apply theirs. `audio` scores the
+    dictionary's candidates against the recording, when the speech model can."""
     policy = scaled(policy, len(raw))
     deadline = time.monotonic() + policy.total_seconds
     initial = pending(
@@ -74,7 +78,9 @@ def process_text(
 
     stages: dict[str, Callable[[], Stage]] = {}
     if contextual:
-        stages["correction"] = lambda: _correction(raw, vocabulary, call(), endpoint, words, run)
+        stages["correction"] = lambda: _correction(
+            raw, vocabulary, call(), endpoint, words, run, audio
+        )
     if cleanup:
         stages["cleanup"] = lambda: _classify(
             raw, "cleanup", jev.cleanup_edits, call(), endpoint, run
@@ -130,9 +136,11 @@ def _correction(
     endpoint: jev_client.Endpoint,
     words: Sequence[Heard] | None = None,
     run: jev.Pass = jev.WHOLE,
+    audio: Scorer | None = None,
 ) -> Stage:
     try:
-        places = candidates.find(raw, words, vocabulary)
+        checked = None if audio is None else _TextIfFailed(audio)
+        places = candidates.find(raw, words, vocabulary, checked)
         decisions = jev.decide(raw, places, call, run=run)
     except CancelledError:
         raise
@@ -160,6 +168,23 @@ def _correction(
         output=text_edits.apply(raw, changes),
         model=endpoint.id,
     )
+
+
+class _TextIfFailed:
+    """An audio check that cannot be made (the speech model no longer holds the recording,
+    or its helper failed) leaves the text to decide, as for other speech models."""
+
+    def __init__(self, audio: Scorer) -> None:
+        self._audio = audio
+
+    def score(self, requests: Sequence[ScoreRequest]) -> Sequence[Sequence[float] | None]:
+        try:
+            return self._audio.score(requests)
+        except CancelledError:
+            raise
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Audio check not made, text only: %s", exc)
+            return [None] * len(requests)
 
 
 def _classify(

@@ -68,5 +68,10 @@ endpoint, never its streaming socket. If the provider keeps uploads, attempt
 deletion afterwards, as the Soniox and AssemblyAI long-form paths do. Cleanup
 can fail; a deletion request does not establish the provider's retention policy.
 
+A transcript may also carry `audio`, a scorer the dictionary step uses to check its
+candidate words against the recording (contracts.py: `Scorer`, `ScoreRequest`). Parakeet's
+helper keeps each transcription's encoder output and tokens for it, the newest ten minutes
+of audio, while the helper runs; other providers leave it None and the text decides.
+
 Tests use `httpx.MockTransport` to assert the request shape and the
 verbatim error; see `tests/test_providers.py`.

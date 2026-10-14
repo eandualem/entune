@@ -6,6 +6,10 @@ Models page installs it, pinned, into its own environment in the models folder, 
 fetches the weights (2.5 GB); removing the model removes that environment too. An
 engine installed by the person with `uv tool install parakeet-mlx` is used when there
 is none of Entune's. The model runs in a helper process inside the engine's Python.
+
+The helper keeps each transcription's encoder output and tokens, for the newest ten
+minutes of audio, so the dictionary step can score other words against the recording: a
+transcript carries a scorer for it (`Transcript.audio`) while the helper that made it runs.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +31,14 @@ import httpx
 
 from entune.audio.convert import to_wav_with_ffmpeg
 from entune.audio.formats import sniff_mime
-from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript, Word
+from entune.providers.contracts import (
+    Clip,
+    Failure,
+    ScoreRequest,
+    TranscribeResult,
+    Transcript,
+    Word,
+)
 from entune.providers.local.contracts import LocalModelStatus
 from entune.providers.local.downloads import DOWNLOAD_TIMEOUT, Download
 
@@ -144,6 +156,7 @@ class Parakeet:
         self._download: Download | None = None
         self._helper: subprocess.Popen[str] | None = None
         self._loaded = False
+        self._kept = 0  # the number the helper keeps the latest transcription under
         self._lock = threading.RLock()
 
     @property
@@ -245,14 +258,36 @@ class Parakeet:
                 answer = self._ensure_loaded()
                 if "error" in answer:
                     return Failure(f"Could not load {MODEL}: {answer['error']}")
-                answer = self._ask_locked({"op": "transcribe", "path": path})
+                self._kept += 1
+                kept = self._kept
+                answer = self._ask_locked({"op": "transcribe", "path": path, "keep": kept})
         except OSError as exc:
             return Failure(f"Parakeet helper: {type(exc).__name__}: {exc}")
         finally:
             Path(path).unlink(missing_ok=True)
         if "error" in answer:
             return Failure(str(answer["error"]))
-        return Transcript(str(answer.get("text", "")).strip(), _words(answer.get("words")))
+        words = _words(answer.get("words"))
+        audio = None if words is None else _Audio(self, kept)
+        return Transcript(str(answer.get("text", "")).strip(), words, audio)
+
+    def score_kept(self, kept: int, requests: Sequence[ScoreRequest]) -> list[list[float] | None]:
+        """Each request's candidates scored against the transcription the helper keeps
+        under `kept`; an OSError when it no longer does (another model was chosen, or the
+        helper stopped), as when the helper fails."""
+        with self._lock:
+            if self._helper is None or self._helper.poll() is not None or not self._loaded:
+                raise OSError("Parakeet's helper has stopped since it transcribed this")
+            spans = [
+                {"start": r.start, "end": r.end, "heard": r.heard, "candidates": list(r.candidates)}
+                for r in requests
+            ]
+            answer = self._ask_locked({"op": "score", "keep": kept, "spans": spans})
+        if "error" in answer:
+            raise OSError(str(answer["error"]))
+        return [
+            None if row is None else [float(value) for value in row] for row in answer["scores"]
+        ]
 
     # ---- the helper process
 
@@ -299,6 +334,7 @@ class Parakeet:
                 isinstance(answer.get("error"), str)
                 or (request["op"] == "load" and answer.get("ok") is True)
                 or (request["op"] == "transcribe" and isinstance(answer.get("text"), str))
+                or (request["op"] == "score" and _scores(request["spans"], answer.get("scores")))
             ):
                 raise ValueError("invalid helper answer")
         except (OSError, ValueError) as exc:
@@ -333,6 +369,40 @@ class Parakeet:
 
     def _ready(self) -> bool:
         return all((self._dir() / file).exists() for file, _ in FILES)
+
+
+class _Audio:
+    """The audio of one transcription, scored while the helper keeps it. Answers are
+    remembered: fast mode's passes while the user speaks ask about the same spans again."""
+
+    def __init__(self, parakeet: Parakeet, kept: int) -> None:
+        self._parakeet, self._kept = parakeet, kept
+        self._known: dict[ScoreRequest, list[float] | None] = {}
+
+    def score(self, requests: Sequence[ScoreRequest]) -> list[list[float] | None]:
+        asked = list(dict.fromkeys(r for r in requests if r.candidates and r not in self._known))
+        if asked:
+            answers = self._parakeet.score_kept(self._kept, asked)
+            self._known.update(zip(asked, answers, strict=True))
+        return [self._known[r] if r.candidates else [] for r in requests]
+
+
+def _scores(spans: list[dict[str, Any]], rows: object) -> bool:
+    """Whether the helper's scores answer these spans: per span, None or a number for each
+    candidate."""
+    return (
+        isinstance(rows, list)
+        and len(rows) == len(spans)
+        and all(
+            row is None
+            or (
+                isinstance(row, list)
+                and len(row) == len(span["candidates"])
+                and all(isinstance(v, int | float) and not isinstance(v, bool) for v in row)
+            )
+            for span, row in zip(spans, rows, strict=True)
+        )
+    )
 
 
 def _check(name: str) -> None:

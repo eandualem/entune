@@ -4,7 +4,7 @@ import asyncio
 import json
 import threading
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
@@ -20,6 +20,8 @@ from entune.dictionary.entries import Word
 from entune.processing import jev, jev_client, text_edits
 from entune.processing.pipeline import process_text, scaled
 from entune.processing.results import Processed
+from entune.providers.contracts import Clip, ScoreRequest, TranscribeResult, Transcript
+from entune.providers.contracts import Word as Said
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
@@ -348,6 +350,63 @@ def test_correction_failure_keeps_its_words_and_the_other_stages_still_apply() -
         assert missing.text == raw and missing.correction.attempts == 0
         assert missing.correction.error == "no TypeSafe API key" and len(seen) == 1
         assert missing.formatting.error == "no TypeSafe API key"
+
+
+def test_an_audio_check_that_fails_leaves_the_text_to_decide(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Gone:
+        def score(self, requests: Sequence[ScoreRequest]) -> list[list[float]]:
+            raise OSError("Parakeet's helper has stopped")
+
+    heard = [("Ask", 0.0, 0.3, 1.0), ("Jeff", 0.4, 0.7, 0.5), ("today.", 0.8, 1.1, 1.0)]
+    handler = answering(lambda *_: {"i1": 1.0})[1]
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = process_text(
+            "Ask Jeff today.",
+            WORDS,
+            contextual=True,
+            formatting=False,
+            key="ts-key",
+            client=client,
+            policy=jev_client.Policy(),
+            words=heard,
+            audio=Gone(),
+        )
+    assert result.text == "Ask Jev today." and result.correction.status == "succeeded"
+    assert "Audio check not made, text only: Parakeet's helper has stopped" in caplog.text
+
+
+def test_the_speech_models_audio_reaches_the_dictionary_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[ScoreRequest] = []
+
+    class Audio:
+        def score(self, requests: Sequence[ScoreRequest]) -> list[list[float]]:
+            asked.extend(requests)
+            return [[0.5] * len(r.candidates) for r in requests]
+
+    class Speaking(StubProvider):
+        def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
+            words = (Said("Ask", 0.0, 0.3, 1.0), Said("Jeff.", 0.4, 0.7, 0.5))
+            return Transcript("Ask Jeff.", words, Audio())
+
+    with closing(Store(tmp_path)) as store:
+        service = Entune(store, [Speaking()])
+        service.settings.set_key("stub", "k")
+        service.models.set_default_model("stub/good")
+        seen: list[dict[str, Any]] = []
+
+        def correct(*args: object, **kwargs: Any) -> Processed:
+            seen.append(kwargs)
+            raise KeyError("stop here")
+
+        monkeypatch.setattr(service.dictation, "correct", correct)
+        service.dictation.record_and_transcribe(WEBM_HEADER, None, None)
+    (_, start, end, _) = seen[0]["words"][1]
+    assert seen[0]["audio"].score([ScoreRequest(start, end, "Jeff", ("Jev",))]) == [[0.5]]
+    assert [(r.start, r.end) for r in asked] == [(0.4, 0.7)]
 
 
 def test_formatter_failure_preserves_successful_correction() -> None:
