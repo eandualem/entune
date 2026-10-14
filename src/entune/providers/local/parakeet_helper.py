@@ -335,11 +335,10 @@ def score(model: Any, tokenizer: Tokenizer, heard: Heard, spans: list[Any]) -> l
                 owner.append(c)
         jobs.append((found[0], found[1], seqs))
         owners.append((n, owner, len(candidates)))
-    for (n, owner, count), (heard_score, scores) in zip(
-        owners, lattice_scores(model, heard, jobs), strict=True
-    ):
-        if heard_score < FLOOR / 2:
-            continue  # no path through the window: it cannot be scored
+    for (n, owner, count), result in zip(owners, lattice_scores(model, heard, jobs), strict=True):
+        if result is None or result[0] < FLOOR / 2:
+            continue  # no audio, or no path, for its window: it cannot be scored
+        heard_score, scores = result
         best = [FLOOR] * count
         for c, value in zip(owner, scores, strict=True):
             best[c] = max(best[c], value - heard_score)
@@ -380,10 +379,11 @@ def run_lstm(model: Any, x: Any, hidden: Any = None, cell: Any = None) -> tuple[
     return out, layers
 
 
-def window(heard: Heard, a: int, b: int, ratio: float) -> tuple[int, int, int]:
+def window(heard: Heard, a: int, b: int, ratio: float) -> tuple[int, int, int | None]:
     """The tokens p..q-1 around the span a..b-1, CONTEXT_SECONDS on each side, and the
     chunk of audio holding them; narrowed, one token on each side at a time, until one
-    chunk holds them whole."""
+    chunk does. The window ends where token q starts, or where its chunk ends when q is
+    past it (after a pause). None when no chunk holds even the span."""
     tokens = heard.tokens
     count = len(tokens)
     span_start = tokens[a].start
@@ -396,7 +396,7 @@ def window(heard: Heard, a: int, b: int, ratio: float) -> tuple[int, int, int]:
         q += 1
 
     def holding(p: int, q: int) -> int | None:
-        last = tokens[q].start if q < count else tokens[-1].start
+        last = tokens[q - 1].start + tokens[q - 1].duration
         for n, (offset, _, frames) in enumerate(heard.chunks):
             if tokens[p].start >= offset and last <= offset + frames * ratio:
                 return n
@@ -406,7 +406,7 @@ def window(heard: Heard, a: int, b: int, ratio: float) -> tuple[int, int, int]:
     while chunk is None and (p < a or q > b):
         p, q = min(a, p + 1), max(b, q - 1)
         chunk = holding(p, q)
-    return p, q, 0 if chunk is None else chunk
+    return p, q, chunk
 
 
 Row = tuple[object, int, int, int]  # decoder state, target token, first and end frame
@@ -435,10 +435,11 @@ class _Plan:
 
 def lattice_scores(
     model: Any, heard: Heard, jobs: list[tuple[int, int, list[list[int]]]]
-) -> list[tuple[float, list[float]]]:
+) -> list[tuple[float, list[float]] | None]:
     """For each job (span tokens a..b-1, candidate token lists): log P(window | the heard
-    tokens) and log P(window | the span's tokens replaced by each candidate's). All of a
-    transcription's jobs are computed in one pass of the LSTM and of the joint network."""
+    tokens) and log P(window | the span's tokens replaced by each candidate's), or None
+    when no chunk of audio holds its window. All of a transcription's jobs are computed in
+    one pass of the LSTM and of the joint network."""
     import mlx.core as mx
 
     if not jobs:
@@ -453,9 +454,12 @@ def lattice_scores(
     starts = np.cumsum([0] + [frames for _, _, frames in heard.chunks])
     seqs: list[list[int]] = []  # each candidate's tokens and the OWN after the span
     seq_at: list[int] = []  # and the decoder state it starts from
-    plans: list[_Plan] = []
+    plans: list[_Plan | None] = []
     for a, b, candidates in jobs:
         p, q, chunk = window(heard, a, b, ratio)
+        if chunk is None:
+            plans.append(None)
+            continue
         offset, _, chunk_frames = heard.chunks[chunk]
         at = [round((tokens[k].start - offset) / ratio) for k in range(p, q)]
         f0 = max(0, min(at[0], chunk_frames - 1))
@@ -505,6 +509,8 @@ def lattice_scores(
                 hyp.append(plan.row(("own", n, j - 1), target, lo, hi))
             plan.candidates.append(hyp)
         plans.append(plan)
+    if not seqs:
+        return [None] * len(jobs)
     # One LSTM pass over every candidate, each from the decoder's state before its span.
     width = max(len(s) for s in seqs)
     padded = np.zeros((len(seqs), width), dtype=np.int32)
@@ -519,15 +525,17 @@ def lattice_scores(
     encoded = mx.concatenate([e for _, e, _ in heard.chunks], axis=0)
     # The cells of every row.
     sources, cells, targets = [], [], []
-    for plan in plans:
-        for state, target, lo, hi in plan.rows:
+    for job in plans:
+        if job is None:
+            continue
+        for state, target, lo, hi in job.rows:
             if isinstance(state, int):
                 index = state
             else:
                 assert isinstance(state, tuple)  # ("own", candidate, step)
                 index = count + 1 + state[1] * width + state[2]
             sources.append(np.full(hi - lo, index, dtype=np.int32))
-            cells.append(np.arange(plan.first + lo, plan.first + hi, dtype=np.int32))
+            cells.append(np.arange(job.first + lo, job.first + hi, dtype=np.int32))
             targets.append(np.full(hi - lo, target, dtype=np.int32))
     source = np.concatenate(sources)
     frame = np.concatenate(cells)
@@ -552,19 +560,22 @@ def lattice_scores(
     emits = np.concatenate(token_parts)
     stills = np.concatenate(blank_parts)
     moving = np.concatenate(duration_parts)
-    results = []
+    results: list[tuple[float, list[float]] | None] = []
     done = 0
-    for plan in plans:
-        rows = len(plan.rows)
-        token = np.full((rows, plan.frames), FLOOR)
-        blanks = np.full((rows, plan.frames), FLOOR)
-        moved = np.full((rows, plan.frames, len(durations)), FLOOR)
-        for r, (_, _, lo, hi) in enumerate(plan.rows):
+    for job in plans:
+        if job is None:
+            results.append(None)
+            continue
+        rows = len(job.rows)
+        token = np.full((rows, job.frames), FLOOR)
+        blanks = np.full((rows, job.frames), FLOOR)
+        moved = np.full((rows, job.frames, len(durations)), FLOOR)
+        for r, (_, _, lo, hi) in enumerate(job.rows):
             token[r, lo:hi] = emits[done : done + hi - lo]
             blanks[r, lo:hi] = stills[done : done + hi - lo]
             moved[r, lo:hi] = moving[done : done + hi - lo]
             done += hi - lo
-        sums = forward([plan.heard, *plan.candidates], token, blanks, moved, durations)
+        sums = forward([job.heard, *job.candidates], token, blanks, moved, durations)
         results.append((float(sums[0]), [float(s) for s in sums[1:]]))
     return results
 

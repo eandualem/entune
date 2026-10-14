@@ -137,6 +137,17 @@ def test_a_span_is_found_by_its_words_times_and_its_text() -> None:
     assert helper.span_tokens(kept, 0.2, 0.5, "Open AI") is None  # not what it wrote
 
 
+def test_a_span_before_a_long_pause_is_scored_in_the_chunk_that_holds_it() -> None:
+    # 260 s in chunks of 120 s every 105 s; a word at 200 s, the next after a pause at
+    # 240 s: the second chunk (105-225 s) holds the word, and its window ends with it.
+    tokens = [token(" Ask", 100.0), token(" Jeff", 200.0), token(" now", 240.0)]
+    chunks = [(0.0, None, 1500), (105.0, None, 1500), (210.0, None, 625)]
+    kept = helper._heard("Ask Jeff now", tokens, chunks, 260.0)
+    assert [helper.window(kept, k, k + 1, 0.08)[2] for k in range(3)] == [0, 1, 2]
+    # A span no chunk holds whole is not scored.
+    assert helper.window(kept, 0, 2, 0.08)[2] is None
+
+
 def test_the_forward_sum_is_the_sum_over_every_alignment() -> None:
     rng = np.random.default_rng(0)
     durations = np.array([0, 1, 2])
