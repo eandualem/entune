@@ -82,8 +82,12 @@ def test_a_possessive_and_quotes_stay_outside_the_replaced_span() -> None:
 def test_a_name_with_its_own_possessive_replaces_the_whole_word() -> None:
     vocabulary = Vocabulary([Word("w_mcd", "McDonald's", "A restaurant chain.")])
     text = "We ate at MacDonald's."
-    places = candidates.find(text, said(text, "MacDonald's"), vocabulary, Audio(0.0))
+    audio = Audio(0.0)
+    places = candidates.find(text, said(text, "MacDonald's"), vocabulary, audio)
     assert offered(text, places) == [("MacDonald's", "McDonald's")]
+    assert [r.candidates for r in audio.asked] == [("McDonald's",)]
+    both = Vocabulary([*vocabulary.words, Word("w_mac", "MacDonald", "A surname.")])
+    assert candidates.find("We ate at McDonald's.", None, both) == []
 
 
 def test_each_part_of_a_speech_model_word_gets_its_confidence() -> None:

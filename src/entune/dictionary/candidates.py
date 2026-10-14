@@ -241,7 +241,9 @@ def find(
     spans = _spans(text, tokens, words.confidence, max(vocabulary.said_in, default=1))
     for span in spans:
         written_text = text[span.start : span.end]
-        span.written = key(written_text) in vocabulary.keys
+        # As written, with its "'s" when it has one ("McDonald's" is a word as written too).
+        as_written = {key(written_text), key(text[span.start : span.end + 2 * span.possessive])}
+        span.written = bool(as_written & vocabulary.keys)
         n = span.last - span.first + 1
         similarity, same = vocabulary.scores(written_text, n)
         shorter = _shorter(text, tokens, span)
@@ -249,12 +251,15 @@ def find(
         chosen = [i for i in ranked[:TOP] if similarity[i] >= SIMILAR] + sorted(same)
         for i in dict.fromkeys(chosen):
             word = vocabulary.words[i]
-            if similarity[i] <= 0 or key(word.spelling) == key(written_text):
+            if similarity[i] <= 0 or key(word.spelling) in as_written:
                 continue
             if _contains(written_text, word.spelling):
                 continue  # "the Canary" would lose its "the"
             if any(vocabulary.scores(s, n - 1)[0][i] >= similarity[i] for s in shorter):
                 continue  # a shorter span is as close: the extra word is not part of it
+            own = bool(_POSSESSIVE.search(word.spelling))
+            if own and not span.possessive and _POSSESSIVE.match(text, span.end, span.end + 2):
+                continue  # a part of a word before its "'s": the "'s" would be doubled
             # A word with its own "'s" ("McDonald's") replaces the possessive too.
             end = (
                 span.end + 2 if span.possessive and _POSSESSIVE.search(word.spelling) else span.end
@@ -396,13 +401,16 @@ def _check(text: str, words: _Words, spans: list[_Span], scorer: Scorer | None) 
             assert first is not None and last is not None
             # A part of a word ("JF" of "JFDemo") is scored with the rest of its word.
             whole_start, whole_end = words.whole[s.first][0], words.whole[s.last][1]
-            before, after = text[whole_start : s.start], text[s.end : whole_end]
             requests.append(
                 ScoreRequest(
                     first[0],
                     last[1],
                     text[whole_start:whole_end],
-                    tuple(before + c.word.spelling + after for c in s.found if _scored(s, c)),
+                    tuple(
+                        text[whole_start : c.start] + c.word.spelling + text[c.end : whole_end]
+                        for c in s.found
+                        if _scored(s, c)
+                    ),
                 )
             )
         for s, deltas in zip(asked, scorer.score(requests), strict=True):
