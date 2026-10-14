@@ -455,12 +455,13 @@ def _contains(span_text: str, spelling: str) -> bool:
 
 
 def _written_over(text: str, start: int, end: int, spelling: str) -> bool:
-    """Whether the spelling is written, in any capitals, over the span start..end."""
-    left = max(0, start - len(spelling))
-    pattern = re.compile(re.escape(spelling), re.IGNORECASE)
+    """Whether the spelling is written, in any capitals and as whole words, around the span
+    start..end ("NET" of ".NET"); "Ann" is not written around "Anne"."""
+    pattern = re.compile(r"(?<!\w)" + re.escape(spelling) + r"(?!\w)", re.IGNORECASE)
+    left = max(0, end - len(spelling) - 1)
     return any(
-        m.start() < end and start < m.end()
-        for m in pattern.finditer(text, left, end + len(spelling))
+        m.start() <= start and end <= m.end()
+        for m in pattern.finditer(text, left, start + len(spelling) + 1)
     )
 
 

@@ -203,3 +203,6 @@ def test_a_word_already_written_around_the_span_is_not_offered_there() -> None:
     dotnet = Word("w_dotnet", ".NET", "Microsoft's developer platform.")
     for text in ("I use .NET daily.", "I use .net daily."):
         assert candidates.find(text, None, Vocabulary([dotnet])) == []
+    ann = Word("w_ann", "Ann", "A colleague.")
+    text = "Ask Anne tomorrow."
+    assert offered(text, candidates.find(text, None, Vocabulary([ann]))) == [("Anne", "Ann")]
