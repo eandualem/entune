@@ -344,24 +344,27 @@ another, each with the dictionary as the earlier parts left it. A part shows:
   decision: the words as heard, what was written, how it was decided, and the words
   chosen. An older attempt without its raw text is marked as final text. Filler removal,
   formatting and the delivered text are never sent;
-- the words those dictations bear on: written there, used there (evidence), or chosen
-  there by the dictionary step. Each has a label (`w1`), its spelling and meaning, and
+- the words those dictations bear on: written there as spelled or said, used there
+  (evidence), or chosen there by the dictionary step. Each has a label (`w1`), its spelling and meaning, and
   `review` when its meaning may be revised. Only these words are shown, so a request
   does not grow with the dictionary. IDs, casing, personal context and evidence stay in
   Entune.
 
-**The reply.** JSON with two lists: new words (`n1`, spelling, a meaning of at most 120
+**The reply.** JSON with three lists: new words (`n1`, spelling, a meaning of at most 120
 characters, casing, and evidence: `{"dictation": "d3", "text": "the words as d3 writes
-them"}`), and clearer meanings (`{"word": "w2", "meaning": ...}`) for shown words marked
-`review`.
+them", "occurrence": 1}`, where `occurrence` says which of their occurrences in d3 it
+is, counting from 1), clearer meanings (`{"word": "w2", "meaning": ...}`) for shown words
+marked `review`, and uses of shown words (`{"word": "w1", "evidence": [...]}`), so the
+words you have keep counting where you use them.
 
 **The rules Entune checks.**
 
-- Every new word needs evidence of use: a dictation shown in this part, and the words
-  there quoted as the dictation writes them. The quoted words must be the word or sound
-  like it, at the candidate finder's least similarity of 0.5 ("in tune" for Entune).
-  Entune finds the place in the text and keeps only that: the dictation's hash and
-  character offsets.
+- Every new word needs evidence of use: a dictation shown in this part, the words there
+  quoted as the dictation writes them, and which occurrence it is. The quoted words must
+  be the word or sound like it, as spelled or as said (`said_as`), at the candidate
+  finder's least similarity of 0.5 ("in tune" for Entune). Entune finds the place in the
+  text and keeps only that: the dictation's hash and character offsets. The uses listed
+  for shown words are checked the same way.
 - A new word that is a stored one is that word: a name spelled the same (exactly, or
   ignoring capitals when only one name matches), or an ordinary word with the same
   spelling and meaning. It gains the new places, and the meaning if it had none.
