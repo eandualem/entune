@@ -1,9 +1,10 @@
 # Choosing models
 
 Entune uses three kinds of model. A **speech model** transcribes audio. A
-**dictionary model** proposes vocabulary entries when you ask. A **decision
-model** chooses among those entries during dictation. Choosing a local speech
-model does not automatically make the other two jobs local.
+**suggestion model** proposes the words you use for your dictionary when you ask. A
+**decision model** chooses, during dictation, whether one of those words fits where the
+speech model was unsure. Choosing a local speech model does not automatically make the
+other two jobs local.
 
 ## Speech recognition
 
@@ -47,7 +48,7 @@ Choose **OpenAI** in dictionary setup, then choose how to access it:
 - **API key:** enter your OpenAI API key. Usage is billed to that API account,
   separately from a ChatGPT subscription.
 
-Then choose the dictionary model on the Dictionary page. For a model that is not in
+Then choose the suggestion model in dictionary setup. For a model that is not in
 the suggested list, open **Settings → Dictionary setup → Custom** and enter just its
 ID, such as `gpt-6.1-sol`, for either access option. Entune adds the provider prefix
 automatically. The selected account must have access to the model. The suggestions
@@ -73,14 +74,16 @@ In our October test, GPT-6 Astra at high effort on a ChatGPT plan learned a 64-e
 dictionary from 7.5 hours of dictation in 39 minutes; on the next 2.1 hours, which it
 never saw, Jev's choices among its entries were right in 38 of 39 changes (see the
 [results](decision-model-results.md)). It is offered on ChatGPT plans, where GPT-6.1
-Sol may not be, and it was tested end to end with the shipped prompts.
+Sol may not be. That test used the earlier dictionary design, which stored mishearings;
+the suggestion prompts for today's dictionary of words have not been compared across
+models yet.
 
 In an earlier September experiment, one completed GPT-6.1 Sol 24k build learned 48 of 64
 recurring correction pairs, versus 40 for Astra 24k and 45 for Astra 48k.
 Sol 48k did not finish, so it has no complete dictionary score. Sol 24k offered
 the broadest coverage of the completed configurations, but also offered more
 changes to correctly recognized words; this is why contextual decisions and
-reviewing the proposed entries matter. Sol remains a good choice where your account
+reviewing the suggestions matter. Sol remains a good choice where your account
 offers it.
 
 These were single builds using an experimental prompt, not a replicated ranking
@@ -106,7 +109,7 @@ model, and parts start while the rest is still being transcribed.
 
 Start with a modest history. Dictation keeps working during learning and review;
 separate dictionary editing waits. **Stop** retains validated completed parts for
-review; **Continue** picks up from there. Review and apply the entries you want.
+review; **Continue** picks up from there. Review and apply the words you want.
 Nothing is installed automatically. See the [learning guide](guide.md#personal-dictionary)
 for imports and suggestions.
 
@@ -144,9 +147,9 @@ contextual dictionary correction.
 
 | Choose | Setup | Tradeoff |
 |---|---|---|
-| **Jev** | Enter a TypeSafe API key | Fewest wrong replacements (1 in 39) and the most paragraph breaks found in our test; matched context is sent to TypeSafe |
-| **OpenAI** | Enter an OpenAI API key (the same key as OpenAI in Dictionary setup) | OpenAI's Decisions API, a public beta at $0.10 per million input tokens. Caught 42 correct replacements but made 8 wrong ones in 50, and rarely formats; matched context is sent to OpenAI. A ChatGPT sign-in cannot be used for it |
-| **Perplexity** | Enter a Perplexity API key ([get one](https://console.perplexity.ai/project/keys)) | Perplexity's Decisions API with `pplx-decider-v1.1-27b`, $0.02 per million input tokens, open weights on Hugging Face. Caught the most correct replacements (43) with 3 wrong in 47, and left the most dictations formatted exactly as judged (72 of 108); matched context is sent to Perplexity |
+| **Jev** | Enter a TypeSafe API key | Fewest wrong replacements (1 in 39) and the most paragraph breaks found in our test; the context of each place is sent to TypeSafe |
+| **OpenAI** | Enter an OpenAI API key (the same key as OpenAI in Dictionary setup) | OpenAI's Decisions API, a public beta at $0.10 per million input tokens. Caught 42 correct replacements but made 8 wrong ones in 50, and rarely formats; the context of each place is sent to OpenAI. A ChatGPT sign-in cannot be used for it |
+| **Perplexity** | Enter a Perplexity API key ([get one](https://console.perplexity.ai/project/keys)) | Perplexity's Decisions API with `pplx-decider-v1.1-27b`, $0.02 per million input tokens, open weights on Hugging Face. Caught the most correct replacements (43) with 3 wrong in 47, and left the most dictations formatted exactly as judged (72 of 108); the context of each place is sent to Perplexity |
 | **Laya** | Install `uv tool install 'laya[serve]'`, then choose Laya | Runs locally and fastest; 8 wrong replacements in 36, fewer correct ones caught, and poor formatting in our test |
 
 Laya's first start downloads about 850 MB of weights. Its engine includes
@@ -154,15 +157,16 @@ PyTorch and uses additional memory. Entune manages its local server while Laya
 is selected and an applicable processing feature is enabled. Parakeet and Laya
 can both be selected; leave enough memory for both engines and your other apps.
 
-Every decision model chooses only among the dictionary's eligible meanings. They cannot
-invent a missing correct spelling or choose a literal meaning that the dictionary
-has not supplied. Check the entries if a recurring correct word keeps changing.
+Every decision model chooses only between the words as written and the dictionary
+words offered at a place; it cannot invent a spelling the dictionary lacks. If a correct
+word keeps changing, give the dictionary word it changes to a clearer meaning, or delete
+that word if you don't use it.
 
-In our October test, a recording needing a decision had median dictionary-processing
-times of 0.54 seconds with Jev, 0.37 seconds with Perplexity, 0.34 seconds with OpenAI
-and 0.15 seconds with Laya, excluding local model startup; formatting took 0.73, 0.43,
-0.58 and 0.45 seconds. Each cloud model answers a dictation in one request; Laya asks
-about each match separately. Those observations came from normal machine load, not a controlled
+In our October test, on the earlier dictionary design, a recording needing a decision
+had median dictionary-processing times of 0.54 seconds with Jev, 0.37 seconds with
+Perplexity, 0.34 seconds with OpenAI and 0.15 seconds with Laya, excluding local model
+startup; formatting took 0.73, 0.43, 0.58 and 0.45 seconds. Each cloud model answers a
+dictation in one request; Laya asks about each place separately. Those observations came from normal machine load, not a controlled
 speed benchmark, and are not end-to-end dictation times. Read the
 [complete comparison](decision-model-results.md) before interpreting the counts
 or using them to choose a model.

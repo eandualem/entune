@@ -100,15 +100,16 @@ apart. A decision model answers questions about the text with probabilities
 and generates nothing, so no generated text ever reaches the user. The user
 chooses it (issue #165): Jev, TypeSafe's, in the cloud on their key, or Laya,
 Convai Innovations' open-weight model, on this Mac through a user-installed
-engine, running only while chosen and asked. Since 2026-10-09 (issue #245, the
-owner's decision; it replaced the confusion groups of issue #114), the dictionary
-defines each word once and keys heard entries by their text, pinned or learned
-per speech model; an entry names only the words it was actually used for, plus
-the heard text's own word when that is a real word. The decision model selects
-eligible words in context; pinned entries are shared and protected without
-semantic priority. A
-second switch places paragraph breaks and bullets. Since issue #117, another
-opt-in removes code-proposed English fillers after the decision model classifies
+engine, running only while chosen and asked. Since 2026-10-14 (issue #297, the
+owner's decision; it replaced the heard entries of issue #245, which had replaced
+the confusion groups of issue #114), the dictionary holds only the words the
+person uses, each defined once for every speech model with the places they used
+it; no mishearing is stored. Where the speech model was unsure of a word, Entune
+compares its sound with every dictionary word and, with Parakeet, checks the
+candidates against the recording; the decision model chooses one word or keeps
+the text as written. Suggestions add only words with evidence of use and never
+remove one. A second switch places paragraph breaks and bullets. Since issue #117,
+another opt-in removes code-proposed English fillers after the decision model classifies
 hesitation, preserving uncertain/meaningful uses: repeats at first, and since
 2026-10-08 (issue #231, the owner's decision) every hesitation sound (um, uh, er, erm,
 ah, hmm). The steps run at once on the raw transcript.
