@@ -28,6 +28,7 @@ the dictionary, October 2026): with the audio check the right word was among the
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Protocol
@@ -235,8 +236,9 @@ def find(
     """The places in `text` where a dictionary word may have been misheard."""
     if not vocabulary.words:
         return []
-    tokens, confidence, times = _tokens(text, said)
-    spans = _spans(text, tokens, confidence, max(vocabulary.said_in, default=1))
+    words = _tokens(text, said)
+    tokens = words.tokens
+    spans = _spans(text, tokens, words.confidence, max(vocabulary.said_in, default=1))
     for span in spans:
         written_text = text[span.start : span.end]
         span.written = key(written_text) in vocabulary.keys
@@ -249,27 +251,35 @@ def find(
             word = vocabulary.words[i]
             if similarity[i] <= 0 or key(word.spelling) == key(written_text):
                 continue
-            if span.possessive and _POSSESSIVE.search(word.spelling):
-                continue  # its own "'s" and the one kept would make two
             if _contains(written_text, word.spelling):
                 continue  # "the Canary" would lose its "the"
             if any(vocabulary.scores(s, n - 1)[0][i] >= similarity[i] for s in shorter):
                 continue  # a shorter span is as close: the extra word is not part of it
-            span.found.append(Candidate(span.start, span.end, word, similarity[i], i in same))
-    _check(text, tokens, spans, times, scorer)
+            # A word with its own "'s" ("McDonald's") replaces the possessive too.
+            end = (
+                span.end + 2 if span.possessive and _POSSESSIVE.search(word.spelling) else span.end
+            )
+            span.found.append(Candidate(span.start, end, word, similarity[i], i in same))
+    _check(text, words, spans, scorer)
     return _places(spans)
 
 
-def _tokens(
-    text: str, said: Sequence[Said] | None
-) -> tuple[list[tuple[int, int]], list[float | None], list[tuple[float, float] | None]]:
-    """The text's words with the speech model's confidence and times, where it gave them."""
+@dataclass
+class _Words:
+    tokens: list[tuple[int, int]]  # the text's words
+    confidence: list[float | None]  # the speech model's, where it gave one
+    times: list[tuple[float, float] | None]  # seconds, where it gave them
+    whole: list[tuple[int, int]]  # the speech model's word each is part of ("Jeff-Jeff")
+
+
+def _tokens(text: str, said: Sequence[Said] | None) -> _Words:
+    """The text's words with the speech model's confidence and times, where it gave them;
+    a word of the model's that holds several of the text's gives each of them its own."""
     tokens = [(m.start(), m.end()) for m in _WORD.finditer(text)]
-    confidence: list[float | None] = [None] * len(tokens)
-    times: list[tuple[float, float] | None] = [None] * len(tokens)
+    found_words = _Words(tokens, [None] * len(tokens), [None] * len(tokens), [t for t in tokens])
     if said is None:
-        return tokens, confidence, times
-    starts = {s: i for i, (s, _) in enumerate(tokens)}
+        return found_words
+    starts = [s for s, _ in tokens]
     located = [False] * len(tokens)
     at = 0
     for word, start, end, sure in said:
@@ -280,18 +290,20 @@ def _tokens(
         if found < 0 or found - at > 200:
             continue
         at = found + len(core)
-        i = starts.get(found)
-        if i is None:
-            continue
-        located[i] = True
-        confidence[i] = sure
-        if start is not None and end is not None:
-            times[i] = (start, end)
-    if all(c is None for c in confidence):  # the model gave no confidence at all
-        return tokens, confidence, times
-    # A word the model's list does not hold is taken as sure; one it gave without a
-    # confidence stays unknown.
-    return tokens, [c if located[i] else 1.0 for i, c in enumerate(confidence)], times
+        first = bisect_left(starts, found)
+        for i in range(first, bisect_left(starts, at)):
+            located[i] = True
+            found_words.confidence[i] = sure
+            found_words.whole[i] = (found, at)
+            if start is not None and end is not None:
+                found_words.times[i] = (start, end)
+    if any(c is not None for c in found_words.confidence):
+        # A word the model's list does not hold is taken as sure; one it gave without a
+        # confidence stays unknown.
+        found_words.confidence = [
+            c if located[i] else 1.0 for i, c in enumerate(found_words.confidence)
+        ]
+    return found_words
 
 
 def _spans(
@@ -371,14 +383,9 @@ def _contains(span_text: str, spelling: str) -> bool:
     return bool(re.search(pattern, span_text, re.IGNORECASE))
 
 
-def _check(
-    text: str,
-    tokens: list[tuple[int, int]],
-    spans: list[_Span],
-    times: list[tuple[float, float] | None],
-    scorer: Scorer | None,
-) -> None:
+def _check(text: str, words: _Words, spans: list[_Span], scorer: Scorer | None) -> None:
     """Keep the candidates the audio supports, or without audio the closest ones."""
+    times = words.times
     asked = [
         s for s in spans if s.found and times[s.first] is not None and times[s.last] is not None
     ]
@@ -388,7 +395,7 @@ def _check(
             first, last = times[s.first], times[s.last]
             assert first is not None and last is not None
             # A part of a word ("JF" of "JFDemo") is scored with the rest of its word.
-            whole_start, whole_end = tokens[s.first][0], tokens[s.last][1]
+            whole_start, whole_end = words.whole[s.first][0], words.whole[s.last][1]
             before, after = text[whole_start : s.start], text[s.end : whole_end]
             requests.append(
                 ScoreRequest(
