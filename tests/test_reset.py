@@ -65,7 +65,10 @@ def fill(client: TestClient, data: Path, local: LocalStub) -> None:
     client.put("/api/dictionary", json={"version": 3, "words": [], "pinned": [], "learned": {}})
     client.post(
         "/api/dictionary/corrections",
-        json={"entries": [{"spelling": "Entune", "heard": ["in tune"]}], "source": "test"},
+        json={
+            "entries": [{"spelling": "Entune", "description": "an app", "heard": ["in tune"]}],
+            "source": "test",
+        },
     )
     audio = wav_bytes(b"\0\1" * 1600, 1600)
     client.post("/api/dictionary/audio", files={"audio": ("a.wav", audio, "audio/wav")})

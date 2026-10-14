@@ -1,8 +1,10 @@
 """Confirmed corrections from other apps, added to the pinned dictionary.
 
 Agents and apps you dictate to post what the person confirmed (`POST
-/api/dictionary/corrections`); each names a word, and its heard phrases become pinned
-heard entries where it competes normally: no implicit priority.
+/api/dictionary/corrections`); each names a word and says what it is, and its heard
+phrases become pinned heard entries where it competes normally: no implicit priority.
+A correction without a description is refused: the decision model can only choose a
+word it can read a description of.
 """
 
 from __future__ import annotations
@@ -13,6 +15,11 @@ from dataclasses import dataclass, replace
 
 from entune.dictionary.document import validate
 from entune.dictionary.entries import Candidate, Dictionary, Heard, Word, key
+
+FORMAT = (
+    '{"entries": [{"spelling": "Claude Code", "description": "Anthropic\'s coding agent",'
+    ' "heard": ["cloud code"]}], "source": "my-agent"}'
+)
 
 
 @dataclass(frozen=True)
@@ -30,38 +37,26 @@ class Correction:
 
 
 def read_entries(value: object, where: str) -> tuple[Correction, ...]:
-    if isinstance(value, dict):
-        if set(value) - {"terms", "replacements"}:
-            raise ValueError(f"{where}: use terms and replacements")
-        terms, replacements = value.get("terms", []), value.get("replacements", {})
-        if not isinstance(terms, list) or not all(isinstance(t, str) for t in terms):
-            raise ValueError(f"{where}.terms must be a list of strings")
-        if not isinstance(replacements, dict) or not all(
-            isinstance(k, str) and isinstance(v, str) for k, v in replacements.items()
-        ):
-            raise ValueError(f"{where}.replacements must map strings to strings")
-        value = [{"spelling": t} for t in terms if t.strip()] + [
-            {"spelling": v, "heard": [k]}
-            for k, v in replacements.items()
-            if k.strip() and v.strip()
-        ]
     if not isinstance(value, list):
-        raise ValueError(f"{where} must be a list of entries")
+        raise ValueError(f"{where} must be a list of entries, as in {FORMAT}")
     result = []
-    for item in value:
+    for i, item in enumerate(value):
+        loc = f"{where}[{i}]"
         if not isinstance(item, dict) or set(item) - {"spelling", "description", "heard"}:
-            raise ValueError(f"{where}: use spelling, description and heard")
+            raise ValueError(f"{loc}: use spelling, description and heard, as in {FORMAT}")
         spelling, description, heard = (
             item.get("spelling"),
-            item.get("description", ""),
+            item.get("description"),
             item.get("heard", []),
         )
         if not isinstance(spelling, str) or not spelling.strip():
-            raise ValueError(f"{where}.spelling must be a non-empty string")
-        if not isinstance(description, str):
-            raise ValueError(f"{where}.description must be a string")
+            raise ValueError(f"{loc}.spelling must be a non-empty string, as in {FORMAT}")
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError(
+                f"{loc}.description must say what the word is, in a short phrase, as in {FORMAT}"
+            )
         if not isinstance(heard, list) or not all(isinstance(h, str) for h in heard):
-            raise ValueError(f"{where}.heard must be a list of strings")
+            raise ValueError(f"{loc}.heard must be a list of strings, as in {FORMAT}")
         phrases = {key(h): " ".join(h.split()) for h in heard if h.strip()}
         if any(not h[0].isalnum() and h[0] != "_" for h in phrases.values()):
             raise ValueError("A heard phrase must start with a letter or digit")
@@ -82,13 +77,14 @@ def add_corrections(
     added = []
     for correction in corrections:
         # The word itself: the one already spelled so (and described so, when a
-        # description is given), else a new one.
-        same = [
-            w
-            for w in words.values()
-            if key(w.spelling) == key(correction.spelling)
-            and (not correction.description or w.meaning == correction.description)
-        ]
+        # description is given; else one still waiting for a description), else a new one.
+        spelled = [w for w in words.values() if key(w.spelling) == key(correction.spelling)]
+        same = (
+            [w for w in spelled if w.meaning == correction.description]
+            or [w for w in spelled if not w.meaning]
+            if correction.description
+            else spelled
+        )
         if len(same) > 1:
             # The one pinned for another heard text first (a confirmed confusion), then
             # any one pinned entries name.
@@ -118,6 +114,10 @@ def add_corrections(
                 needs_review=not correction.description,
             )
         is_new = word.id not in words
+        # A word that had no description takes the one this correction gives.
+        described = not word.meaning and bool(correction.description)
+        if described:
+            word = replace(word, meaning=correction.description, needs_review=False)
 
         def named(text: str, word: Word = word) -> bool:
             entry = pinned.get(key(text))
@@ -142,7 +142,7 @@ def add_corrections(
             (t, Candidate(word.id, basis="literal" if key(t) == key(word.spelling) else "user"))
             for t in texts
         ]
-        if not links and not is_new:
+        if not links and not is_new and not described:
             continue
         words[word.id] = word
         for text, candidate in links:
