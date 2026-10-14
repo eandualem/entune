@@ -124,7 +124,7 @@ _ONES = "zero one two three four five six seven eight nine ten eleven twelve thi
 _ONES += "fifteen sixteen seventeen eighteen nineteen"
 _SMALL = _ONES.split()
 _TENS = ["_", "_", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
-_TOKEN = re.compile(r"[\w'\u2019.+\-]+")
+_TOKEN = re.compile(r"[\w'\u2019.+#\-]+")
 _CHUNK = re.compile(r"[A-Z]{2,}(?![a-z])|[A-Z]?[a-z]+|[A-Z]|\d+(?:\.\d+)?|[^\W\d_]+")
 
 
@@ -228,12 +228,18 @@ def _join(options: Iterable[Sequence[Phones]], limit: int) -> tuple[Phones, ...]
     return tuple(out)
 
 
+def _lettered(chunk: str) -> bool:
+    """Short capitals, said letter by letter ("CLI"); "I" is a word."""
+    short = chunk.isascii() and chunk.isalpha() and len(chunk) <= 5
+    return short and chunk.isupper() and chunk != "I"
+
+
 def _chunk(chunk: str) -> tuple[Phones, ...]:
     if chunk == "dot":
         return word("dot")
     if chunk[0].isdigit():
         return _join([word(w) for w in _number(chunk)], 2)
-    if chunk.isupper() and chunk.isascii() and chunk.isalpha() and len(chunk) <= 5 and chunk != "I":
+    if _lettered(chunk):
         spelled = _join([word(_LETTERS[c]) for c in chunk.lower()], 1)
         if len(chunk) == 1:
             return spelled
@@ -244,21 +250,24 @@ def _chunk(chunk: str) -> tuple[Phones, ...]:
 @lru_cache(maxsize=65536)
 def token(text: str, limit: int = 4) -> tuple[Phones, ...]:
     """The readings of one written token ("OpenAI's", "GPT-5.5", "entune.dev")."""
-    plain = text.lower().replace("\u2019", "'").strip(".-+")
-    if plain in _cmudict():  # "I'll", "don't" and other words with their apostrophe
+    plain = text.lower().replace("\u2019", "'").strip(".-")
+    if "'" in plain.rstrip("'") and plain in _cmudict():  # "I'll", "don't": a word whole
         return word(plain)
     return _join([r for r in map(_chunk, _chunks(text)) if r], limit)
 
 
 def _chunks(text: str) -> list[str]:
     """A token's parts as said: camelCase, capitals and numbers apart, a dot as "dot"."""
-    text = re.sub(r"['\u2019]s$", "", text).strip(".-+'\u2019")
+    text = re.sub(r"['\u2019]s$", "", text).strip(".-'\u2019")
     chunks: list[str] = []
     for i, part in enumerate(re.split(r"(?<=\D)\.|\.(?=\D)", text)):
         if i:
             chunks.append("dot")
-        for piece in re.split(r"[-_/+]", part):
-            chunks += _CHUNK.findall(piece)
+        for piece in re.split(r"([-_/+#])", part):
+            if piece in ("+", "#"):
+                chunks.append("plus" if piece == "+" else "sharp")
+            elif piece not in ("-", "_", "/"):
+                chunks += _CHUNK.findall(piece)
     return chunks
 
 
@@ -269,7 +278,7 @@ def said_words(text: str) -> int:
         for chunk in _chunks(t):
             if chunk[0].isdigit():
                 count += len(_number(chunk))
-            elif chunk.isupper() and chunk.isalpha() and len(chunk) <= 5 and chunk != "I":
+            elif _lettered(chunk):
                 count += sum(_LETTERS[c].count("-") + 1 for c in chunk.lower())  # W: two
             else:
                 count += 1

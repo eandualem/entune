@@ -28,6 +28,9 @@ def test_a_name_is_said_as_its_spelling_suggests_and_acronyms_as_letters() -> No
     assert pronounce.readings("see el eye")[0] in pronounce.readings("CLI")
     assert pronounce.said_words("GPT-5.5") == 6
     assert pronounce.said_words("WSL") == 4  # "double you ess el"
+    assert pronounce.readings("eye tee")[0] in pronounce.readings("IT")
+    assert pronounce.readings("see plus plus") == pronounce.readings("C++")
+    assert pronounce.readings("see sharp") == pronounce.readings("C#")
     assert pronounce.readings("I\u2019ll")[0] in pronounce.readings("aisle")
     sim = pronounce.Index([pronounce.readings("Jev")]).similarity(pronounce.readings("Jeff"))
     assert sim[0] > 0.8
@@ -68,6 +71,11 @@ def test_times_without_confidence_still_allow_close_sounds() -> None:
     assert offered(text, candidates.find(text, timed, VOCABULARY)) == [("Jeff", "Jev")]
 
 
+def test_a_word_said_only_as_its_said_as_is_kept() -> None:
+    vocabulary = Vocabulary([Word("w_hi", "\u4f60\u597d", "A greeting.", said_as="nee how")])
+    assert vocabulary.words
+
+
 def test_a_symbol_suffix_belongs_to_its_word() -> None:
     vocabulary = Vocabulary([Word("w_cpp", "C++", "A programming language.")])
     assert candidates.find("I use C++ daily.", None, vocabulary) == []
@@ -94,10 +102,13 @@ def test_the_audio_check_keeps_only_candidates_the_recording_supports() -> None:
     assert kept[0].candidates[0].delta == 0.0
 
 
-def test_a_part_of_a_word_written_as_several_is_looked_at() -> None:
+def test_a_part_of_a_word_written_as_several_is_looked_at_with_its_word() -> None:
     text = "Open the JFDemo now."
-    places = candidates.find(text, said(text, "JFDemo"), VOCABULARY, Audio(0.0))
+    audio = Audio(0.0)
+    places = candidates.find(text, said(text, "JFDemo"), VOCABULARY, audio)
     assert ("JF", "Jev") in offered(text, places)
+    asked = [r for r in audio.asked if "JevDemo" in r.candidates]
+    assert asked and asked[0].heard == "JFDemo"
 
 
 def test_homophones_skip_the_audio_check() -> None:

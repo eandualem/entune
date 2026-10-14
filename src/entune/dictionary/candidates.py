@@ -173,7 +173,7 @@ class Vocabulary:
     """The dictionary's words with their pronunciations, built once per dictionary."""
 
     def __init__(self, words: Sequence[Word]) -> None:
-        self.words = tuple(w for w in words if pronounce.readings(w.spelling))
+        self.words = tuple(w for w in words if forms(w))
         self.index = pronounce.Index([forms(w) for w in self.words])
         self.keys = {key(w.spelling) for w in self.words}
         self.said_in = [
@@ -251,7 +251,7 @@ def find(
             if any(vocabulary.scores(s, n - 1)[0][i] >= similarity[i] for s in shorter):
                 continue  # a shorter span is as close: the extra word is not part of it
             span.found.append(Candidate(span.start, span.end, word, similarity[i], i in same))
-    _check(text, spans, times, scorer)
+    _check(text, tokens, spans, times, scorer)
     return _places(spans)
 
 
@@ -366,6 +366,7 @@ def _contains(span_text: str, spelling: str) -> bool:
 
 def _check(
     text: str,
+    tokens: list[tuple[int, int]],
     spans: list[_Span],
     times: list[tuple[float, float] | None],
     scorer: Scorer | None,
@@ -379,12 +380,15 @@ def _check(
         for s in asked:
             first, last = times[s.first], times[s.last]
             assert first is not None and last is not None
+            # A part of a word ("JF" of "JFDemo") is scored with the rest of its word.
+            whole_start, whole_end = tokens[s.first][0], tokens[s.last][1]
+            before, after = text[whole_start : s.start], text[s.end : whole_end]
             requests.append(
                 ScoreRequest(
                     first[0],
                     last[1],
-                    text[s.start : s.end],
-                    tuple(c.word.spelling for c in s.found if not c.homophone),
+                    text[whole_start:whole_end],
+                    tuple(before + c.word.spelling + after for c in s.found if not c.homophone),
                 )
             )
         for s, deltas in zip(asked, scorer.score(requests), strict=True):
