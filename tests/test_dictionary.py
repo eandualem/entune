@@ -114,6 +114,9 @@ def test_applying_a_build_records_where_it_found_the_words_the_dictionary_has() 
     applied = dictionary_changes.review(current, proposal)
     assert applied.words[0].evidence == found.evidence
     assert dictionary_changes.review(current, proposal, []) == current
+    # A build that found only places of use has nothing to review: accepting records them.
+    usage = dictionary_changes.propose(current, dictionary(found))
+    assert usage.changes == () and dictionary_changes.review(current, usage).words == (found,)
 
 
 def test_confirmed_corrections_add_the_words_the_person_meant_once() -> None:

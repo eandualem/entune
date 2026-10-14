@@ -91,7 +91,8 @@ def review(current: Dictionary, proposal: Proposal, selected: object = None) -> 
                 " Dictionary page"
             )
         words[word.id] = replace(stored, meaning=word.meaning, needs_review=not word.meaning)
-    if seen:
+    # With nothing to review, accepting a build still records where it found words.
+    if seen or not proposal.changes:
         for found in proposal.working.words:
             if (stored := words.get(found.id)) is not None:
                 places = tuple(dict.fromkeys((*stored.evidence, *found.evidence)))
