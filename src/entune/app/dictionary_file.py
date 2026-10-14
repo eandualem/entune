@@ -1,4 +1,4 @@
-"""The dictionary file: read it, save a new version of it, pin, add confirmed corrections.
+"""The dictionary file: read it, save a new version of it, add confirmed corrections.
 
 It is read from disk each time, so a hand edit of the file counts too. A writer names
 the version it edited; a save on a stale copy is refused rather than silently dropping
@@ -12,7 +12,6 @@ import threading
 from collections.abc import Callable
 
 from entune.app.operations import Operations
-from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
 from entune.dictionary.corrections import Correction, add_corrections, read_entries
 from entune.dictionary.entries import EMPTY, Dictionary
@@ -53,6 +52,7 @@ class DictionaryFile:
         return _revision(self._read() or b"")
 
     def _read(self) -> bytes | None:
+        dictionary_document.set_aside_older(self._store.data_dir)
         try:
             return (self._store.data_dir / dictionary_document.FILENAME).read_bytes()
         except FileNotFoundError:
@@ -89,18 +89,13 @@ class DictionaryFile:
         self._changed()
         return changed
 
-    def pin(self, model: str, text: str | None, version: str) -> None:
-        """Pin one learned heard entry of `model`, or all of them when `text` is None."""
-        with self._operations.dictionary_edit(), self.lock:
-            updated = dictionary_changes.pin(self.dictionary(), model, text)
-            self.set_dictionary(dictionary_document.dumps(updated), version)
-
     def add_agent_corrections(self, data: object) -> tuple[Correction, ...]:
-        """Pin corrections an agent sent after confirming them with the user.
+        """Add the words in corrections an agent sent after confirming them with the user,
+        and log every correction received.
 
         `data` is the request body: `entries` (spelling, description, heard), or
-        `terms` and `replacements`, plus an optional `source`. Returns what was actually
-        new. Raises ValueError with the reason on bad input.
+        `terms` and `replacements`, plus an optional `source`. Returns the corrections
+        that added a word. Raises ValueError with the reason on bad input.
         """
         if not isinstance(data, dict):
             raise ValueError("Send a JSON object with entries")
@@ -110,15 +105,14 @@ class DictionaryFile:
             body = {k: v for k, v in data.items() if k in ("terms", "replacements")}
             corrections = read_entries(body, "corrections")
         if not corrections:
-            raise ValueError("Nothing to add: give entries with a spelling and heard phrases")
+            raise ValueError("Nothing to add: give entries with a spelling")
         with self._operations.dictionary_edit(), self.lock:
-            current = self.dictionary()
-            updated, added = add_corrections(current, corrections)
+            updated, added = add_corrections(self.dictionary(), corrections)
             if added:
                 dictionary_document.save(self._store.data_dir, updated)
-                # Logged under the same lock, so a data reset cannot land between the two.
-                source = data.get("source")
-                self._store.add_corrections(added, source if isinstance(source, str) else None)
+            # Logged under the same lock, so a data reset cannot land between the two.
+            source = data.get("source")
+            self._store.add_corrections(corrections, source if isinstance(source, str) else None)
         if added:
             self._changed()
         return added

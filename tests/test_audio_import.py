@@ -18,7 +18,7 @@ from entune.providers.contracts import Clip, Transcript
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import wait_for_build
-from tests.dictionary_samples import document, group, proposed
+from tests.dictionary_samples import document, proposed, word
 from tests.test_server import StubProvider
 
 
@@ -141,11 +141,11 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
         prompts.append(request.user)
         assert request.model == "openai:gpt-5.4-mini"  # frozen even when Settings changes
         assert "I use cloud code for work." in request.user
-        assert "PinnedName" in request.user and "OtherOnly" not in request.user
+        assert '"spelling": "Work"' in request.user and "OtherOnly" not in request.user
         return (
             json.dumps(proposed("I use cloud code for work."))
             if len(prompts) == 1
-            else '{"words": [], "meanings": [], "heard": [], "removals": []}'
+            else '{"words": [], "meanings": []}'
         )
 
     monkeypatch.setattr(stub, "transcribe", transcribe)
@@ -158,11 +158,8 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
         "/api/settings", json={"keys": {"stub": "k", "openai": "k"}, "defaultModel": "stub/good"}
     )
     assert "import audio" in client.post("/api/dictionary/build", json={"source": "audio"}).text
-    original = document(
-        # The pinned entry's heard form occurs in the audio's text, so the parts show it.
-        group("PinnedName", "work"),
-        learned={"stub/other": (group("OtherOnly", "other only"),)},
-    )
+    # A word the audio's text writes is shown with its parts; one it does not is not.
+    original = document(word("Work"), word("OtherOnly"))
     client.put("/api/dictionary", json=original)
     before = client.get("/api/dictionary")
     for i in range(2):
@@ -185,16 +182,13 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
     assert result["phase"] == "ready", result
     assert calls == ["good", "good"] and len(prompts) == 2
     assert '"spelling": "Claude Code"' in prompts[1]  # next chunk gets the working list
-    assert result["proposal"]["model"] == "stub/good"
     assert result["proposal"]["version"] == before.headers["etag"]
     assert client.get("/api/dictionary").json() == before.json()  # review before saving
     assert client.post(f"/api/dictionary/build/{result['id']}/accept").status_code == 200
-    saved = client.get("/api/dictionary").json()
-    assert saved["pinned"] == before.json()["pinned"]
-    assert saved["learned"]["stub/other"] == before.json()["learned"]["stub/other"]
-    assert saved["learned"]["stub/good"] == [
-        c["after"] for c in result["proposal"]["changes"] if c["kind"] == "add"
-    ]
+    saved = client.get("/api/dictionary").json()["words"]
+    assert saved[:2] == before.json()["words"]
+    (added,) = [c["after"] for c in result["proposal"]["changes"] if c["kind"] == "add"]
+    assert saved[2] == {**added, "needs_review": False} and added["evidence"]
     assert client.get("/api/dictionary/build").json()["phase"] == "accepted"
     assert store.list_recordings() == [] and store.timed_transcriptions() == []
     assert not any(
@@ -213,7 +207,7 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
 
     async def fake(request: Request) -> str:
         prompts.append(request.user)
-        return '{"words": [], "meanings": [], "heard": [], "removals": []}'
+        return '{"words": [], "meanings": []}'
 
     store = Store(tmp_path)
     client = TestClient(
@@ -232,7 +226,6 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
             assert "proposal" not in result
         else:
             assert result["phase"] == "ready", result
-            assert result["proposal"]["model"] == f"stub/{model}"
         assert client.delete(f"/api/dictionary/build/{result['id']}").status_code == 200
     assert len(stub.calls) == 4 and len(prompts) == 2  # the bad one once more, no fallback
     assert client.get("/api/dictionary/audio").json()["count"] == 1

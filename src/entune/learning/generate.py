@@ -1,10 +1,9 @@
-"""Propose a speech model's dictionary, one bounded batch at a time.
+"""Propose the dictionary's new words, one bounded batch of dictations at a time.
 
-Each part shows the model its dictations, the heard entries that occur in them and the
-words they name, compactly (learning/view.py). The model finds the confusions not covered
-yet, improves or removes the learned entries shown, and the reply is validated against
-the working dictionary. Pinned entries are the person's; suggestions leave them as they
-are.
+Each part shows the model its dictations and the words they bear on, compactly
+(learning/view.py). The model finds the words the person used that the dictionary lacks,
+each with evidence, and clearer meanings for words still to check; the reply is validated
+against the working dictionary.
 """
 
 from __future__ import annotations
@@ -101,13 +100,13 @@ async def propose_part(
     its time limit or reached the output limit is not tried again: the person is told to
     choose a lower reasoning effort or less audio. Raises StepFailed carrying the
     provider's or the model's own words."""
-    shown = view.build(proposed, speech_model, step.snippets)
+    shown = view.build(proposed, step.snippets)
     request_text = user_prompt(speech_model, shown)
     system = system_prompt()
     texts = [s.text for s in step.snippets]
 
     def check(reply: str) -> Dictionary:
-        return parse_reply(reply, shown, proposed, speech_model, transcripts=texts)
+        return parse_reply(reply, shown, proposed, transcripts=texts)
 
     request = Request(
         provider,

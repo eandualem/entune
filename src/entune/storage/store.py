@@ -292,10 +292,10 @@ class Store:
         with self._lock:
             rows = self._db.execute(
                 "SELECT t.id, t.created_at, LENGTH(COALESCE(t.raw_text, t.text)) AS characters,"
-                " EXISTS (SELECT 1 FROM learning_coverage c WHERE c.model = ?"
-                " AND c.source = 'history' AND c.input_id = CAST(t.id AS TEXT)) AS used"
+                " EXISTS (SELECT 1 FROM dictionary_coverage c WHERE c.source = 'history'"
+                " AND c.input_id = CAST(t.id AS TEXT)) AS used"
                 f" FROM transcriptions t WHERE {_LEARNABLE} ORDER BY t.id",
-                (f"{provider}/{model}", provider, model),
+                (provider, model),
             ).fetchall()
         return [
             {
@@ -326,10 +326,9 @@ class Store:
             params.extend(ids)
         if scope == "new":
             query += (
-                " AND NOT EXISTS (SELECT 1 FROM learning_coverage c WHERE c.model = ?"
-                " AND c.source = 'history' AND c.input_id = CAST(t.id AS TEXT))"
+                " AND NOT EXISTS (SELECT 1 FROM dictionary_coverage c"
+                " WHERE c.source = 'history' AND c.input_id = CAST(t.id AS TEXT))"
             )
-            params.append(f"{provider}/{model}")
         query += " ORDER BY t.id DESC"
         if scope == "new":
             query += " LIMIT ?"
@@ -365,7 +364,8 @@ class Store:
         *,
         applied: bool,
     ) -> None:
-        """Only explicit application consumes fully covered inputs of this speech model."""
+        """Only explicit application consumes fully covered inputs; `model` is the speech
+        model the run read with, kept in its receipt."""
         # Receipts contain coverage and model metadata, never temporary generated
         # transcripts, proposal text, or provider responses that might echo them.
         details = {
@@ -399,16 +399,15 @@ class Store:
             )
             if applied:
                 self._db.executemany(
-                    "INSERT OR REPLACE INTO learning_coverage VALUES (?, ?, ?, ?)",
-                    [(model, source, identity, run_id) for identity in covered],
+                    "INSERT OR REPLACE INTO dictionary_coverage VALUES (?, ?, ?)",
+                    [(source, identity, run_id) for identity in covered],
                 )
 
-    def learning_covered(self, model: str, source: str) -> set[str]:
-        """The inputs applied suggestion runs read for `model` from `source`."""
+    def learning_covered(self, source: str) -> set[str]:
+        """The inputs applied suggestion runs read from `source`."""
         with self._lock:
             rows = self._db.execute(
-                "SELECT input_id FROM learning_coverage WHERE model = ? AND source = ?",
-                (model, source),
+                "SELECT input_id FROM dictionary_coverage WHERE source = ?", (source,)
             ).fetchall()
         return {row["input_id"] for row in rows}
 

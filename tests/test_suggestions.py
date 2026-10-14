@@ -22,11 +22,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from entune.dictionary import changes as dictionary_changes
-from entune.dictionary.entries import Candidate, Dictionary, Heard, Word
+from entune.dictionary.entries import Dictionary, Word
 from entune.learning import batches, generate, replies, suggestion_model, view
 from entune.learning import inputs as learning_inputs
 from entune.learning.suggestion_model import Request, call, chatgpt, providers
-from tests.dictionary_samples import CLOUD, JEV, dictionary, group, proposed
+from tests.dictionary_samples import CLAUDE, JEV, dictionary, proposed, word
 
 
 async def propose_learned(
@@ -89,180 +89,153 @@ def parse(
     reply: str | dict[str, Any],
     texts: tuple[str, ...] = (TEXT,),
     working: Dictionary | None = None,
-    model: str = "s/m",
 ) -> Dictionary:
     """The reply checked as one part over `texts` checks it."""
     working = working or Dictionary()
-    shown = view.build(working, model, snippets(*texts))
+    shown = view.build(working, snippets(*texts))
     content = reply if isinstance(reply, str) else json.dumps(reply)
-    return replies.parse_reply(content, shown, working, model, transcripts=texts)
+    return replies.parse_reply(content, shown, working, transcripts=texts)
 
 
-def reply(
-    words: list[Any] | None = None,
-    heard: list[Any] | None = None,
-    removals: list[str] | None = None,
-    meanings: list[Any] | None = None,
+def reply(words: list[Any] | None = None, meanings: list[Any] | None = None) -> dict[str, Any]:
+    return {"words": words or [], "meanings": meanings or []}
+
+
+def new_word(
+    spelling: str, *said: tuple[str, str], meaning: str = "a named tool", label: str = "n1"
 ) -> dict[str, Any]:
+    """A reply's new word, used at each (dictation, words as written) in `said`."""
+    evidence = [{"dictation": d, "text": t} for d, t in said]
     return {
-        "words": words or [],
-        "meanings": meanings or [],
-        "heard": heard or [],
-        "removals": removals or [],
+        "id": label,
+        "spelling": spelling,
+        "meaning": meaning,
+        "casing": "fixed",
+        "evidence": evidence,
     }
 
 
-def candidate(word: str, basis: str = "text", *spans: tuple[int, int]) -> dict[str, Any]:
-    evidence = [{"dictation": "d1", "start": start, "end": end} for start, end in spans]
-    return {"word": word, "basis": basis, "evidence": evidence}
-
-
-def entries(result: Dictionary, model: str = "s/m") -> dict[str, list[str]]:
-    """Each learned heard text of `model` and the spellings it can stand for."""
-    words = {w.id: w for w in result.words}
-    return {
-        h.text: [words[c.word].spelling for c in h.candidates] for h in result.learned_for(model)
-    }
-
-
-def test_the_request_shows_only_entries_in_its_dictations_by_short_labels() -> None:
-    current = dictionary(
-        (JEV,),
-        {
-            "stub/good": (group("Soniox", "sonics"), group("Groq", "grok")),
-            "other/model": (group("Elsewhere", "else where"),),
-        },
-    )
-    shown = view.build(current, "stub/good", snippets("ask grok", "Jeff said hi"))
+def test_the_request_shows_only_the_words_its_dictations_bear_on_by_short_labels() -> None:
+    current = dictionary(JEV, word("Groq"), word("Soniox"))
+    shown = view.build(current, snippets("ask Groq", "the Jev model said hi"))
     prompt = batches.user_prompt("stub/good", shown)
     assert "Groq" in prompt and "Jev" in prompt and "stub/good" in prompt
-    # Soniox does not occur in these dictations; Elsewhere belongs to another recognizer.
-    assert "Soniox" not in prompt and "Elsewhere" not in prompt
+    assert "Soniox" not in prompt  # not in these dictations
     # No stored IDs, evidence, sources or hidden fields reach the model.
-    for hidden in ("a_jev", "s_", "evidence", "personal_context", "casing", "direct", "basis"):
+    for hidden in ("a_jev", "s_", "evidence", "personal_context", "casing"):
         assert hidden not in prompt
     assert json.loads(shown.words) == [
         {"id": "w1", "spelling": "Jev", "meaning": "TypeSafe's contextual decision model."},
-        {"id": "w2", "spelling": "Jeff", "meaning": "A person's given name."},
-        {"id": "w3", "spelling": "Groq", "meaning": "The named tool Groq."},
-    ]
-    assert json.loads(shown.entries) == [
-        {"text": "Jeff", "words": ["w1", "w2"], "pinned": True},
-        {"text": "grok", "words": ["w3"]},
+        {"id": "w2", "spelling": "Groq", "meaning": "The named tool Groq."},
     ]
     assert [d["id"] for d in json.loads(shown.dictations)] == ["d1", "d2"]
     system = batches.system_prompt()
-    assert "main job" in system and "$" not in system
-
-
-def test_all_supplied_text_is_processed_in_bounded_steps(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
-    transcripts = [" first second third\nfourth fifth ", "", "x" * 15, *["tail"] * 301]
-    steps = [
-        [s.text for s in step.snippets]
-        for step in batches.learning_batches(
-            [learning_inputs.LearningText(str(i), text) for i, text in enumerate(transcripts)]
-        )
-    ]
-    assert all(sum(map(len, step)) <= 10 for step in steps)
-    assert "".join("".join(t.split()) for step in steps for t in step) == "".join(
-        "".join(t.split()) for t in transcripts
-    )
-    assert steps[:2] == [["first"], ["second"]]  # whole words when they fit
-    assert batches.learning_batches([]) == []
-    assert batches.learning_batches([learning_inputs.LearningText("empty", " ")]) == []
+    assert "Only words the person used" in system and "$" not in system
 
 
 @pytest.mark.parametrize("content", [REPLY, f"```json\n{REPLY}\n```"])
-def test_reply_has_persistent_ids_and_validated_source_occurrences(content: str) -> None:
+def test_a_new_word_has_a_persistent_id_and_where_it_was_used(content: str) -> None:
     result = parse(content)
     (word,) = result.words
-    assert word.id.startswith("w_") and word.spelling == "Claude Code"
-    (entry,) = result.learned_for("s/m")
-    assert entry.text == "cloud code" and entry.candidates[0].word == word.id
-    (evidence,) = entry.candidates[0].evidence
-    assert evidence.source == batches.source_id(TEXT) and evidence.start == 6
-    assert TEXT not in json.dumps(entry.as_json())  # no source excerpt persisted
-    assert not result.pinned
+    assert word.id.startswith("w_") and word.spelling == "Claude Code" and word.needs_review
+    (evidence,) = word.evidence
+    assert (evidence.source, evidence.start, evidence.end) == (batches.source_id(TEXT), 6, 16)
 
 
-def test_a_miscounted_span_is_moved_to_the_occurrence_and_an_absent_text_is_rejected() -> None:
-    text = 'He said "use cloud code" and later cloud code again.'
-    payload = proposed(text)
-    # The occurrence not cited stands as written, so the entry keeps that word too.
-    payload["words"].append(
-        {
-            "id": "n2",
-            "spelling": "cloud code",
-            "meaning": "code run in the cloud",
-            "casing": "ordinary",
-        }
-    )
-    payload["heard"][0]["candidates"].append({"word": "n2", "basis": "literal", "evidence": []})
-    evidence = payload["heard"][0]["candidates"][0]["evidence"][0]
-    real = evidence["start"]
-    for start in (real + 3, real - 2, real + 25):  # off-by-some counts, as a model makes them
-        evidence.update(start=start, end=start + 10)
-        (found,) = parse(payload, (text,)).learned_for("s/m")
-        (item,) = found.candidates[0].evidence
-        assert text[item.start : item.end] == "cloud code"
-        assert item.start == (real if start < real + 12 else text.rindex("cloud code"))
-    payload["heard"][0]["text"] = "claude coat"
-    with pytest.raises(ValueError, match="exact whole heard text"):
-        parse(payload, (text,))
-
-
-def test_candidates_need_real_usage_and_new_words_an_entry() -> None:
-    payload = proposed(TEXT)
-    payload["heard"][0]["text"] = "cloud coat"  # not in the cited dictation
-    with pytest.raises(ValueError, match="exact whole"):
-        parse(payload)
-    payload = proposed(TEXT)
-    payload["heard"][0]["candidates"][0]["evidence"][0]["dictation"] = "d9"
-    with pytest.raises(ValueError, match="unknown dictation"):
-        parse(payload)
-    payload = proposed(TEXT)
-    payload["heard"][0]["candidates"][0]["evidence"] = []
+def test_a_word_without_evidence_that_the_person_used_it_is_refused() -> None:
     with pytest.raises(ValueError, match="needs evidence"):
-        parse(payload)
-    payload = proposed(TEXT)
-    payload["heard"][0]["candidates"][0]["basis"] = "existing"
-    with pytest.raises(ValueError, match="did not name n1 before"):
-        parse(payload)
-    payload = proposed(TEXT)
-    payload["heard"][0]["candidates"][0]["basis"] = "literal"
-    with pytest.raises(ValueError, match="is not spelled Claude Code"):
-        parse(payload)
-    payload = proposed(TEXT)
-    payload["heard"][0]["candidates"][0]["word"] = "w9"
-    with pytest.raises(ValueError, match="Name a word shown here"):
-        parse(payload)
-    payload = proposed(TEXT)
-    payload["heard"] = []
-    with pytest.raises(ValueError, match="vocabulary list"):
-        parse(payload)
-    payload = proposed(TEXT)
-    payload["words"][0]["meaning"] = "x" * (view.MEANING_CHARS + 1)
-    with pytest.raises(ValueError, match="short phrase"):
-        parse(payload)
-    for content in ("no JSON", '{"words":[}', '{"words": [], "heard": []}'):
-        with pytest.raises(ValueError):
-            parse(content)
+        parse(reply([new_word("Intune")]))
+    with pytest.raises(ValueError, match="Cite a dictation shown here"):
+        parse(reply([new_word("Claude Code", ("d9", "cloud code"))]))
+    with pytest.raises(ValueError, match="is not in d1"):
+        parse(reply([new_word("Intune", ("d1", "in tune"))]))
+    # The words cited are where the person said it: they are the word or sound like it.
+    with pytest.raises(ValueError, match="does not sound like Intune"):
+        parse(reply([new_word("Intune", ("d1", "cloud code"))]))
+    said = "We use in tune daily."
+    (entune,) = parse(reply([new_word("Entune", ("d1", "in tune"))]), (said,)).words
+    assert said[entune.evidence[0].start : entune.evidence[0].end] == "in tune"
 
 
-def test_pinned_entries_are_the_persons_and_stay_as_they_are() -> None:
-    working = dictionary((group("Claude Code", "cloud code"),))
-    shown = json.loads(view.build(working, "s/m", snippets(TEXT)).entries)
-    assert shown == [{"text": "cloud code", "words": ["w1"], "pinned": True}]
-    with pytest.raises(ValueError, match="pinned by the person"):
-        parse(
-            reply(heard=[{"text": "cloud code", "candidates": [candidate("w1", "existing")]}]),
-            working=working,
-        )
-    with pytest.raises(ValueError, match="Pinned entries cannot be removed"):
-        parse(reply(removals=["cloud code"]), working=working)
-    with pytest.raises(ValueError, match="shown here"):
-        parse(reply(removals=["nothing"]), working=working)
+def test_stored_words_are_reused_never_defined_again() -> None:
+    stored = word("Claude Code")
+    (reused,) = parse(proposed(TEXT), working=dictionary(stored)).words
+    assert reused.id == stored.id and reused.meaning == stored.meaning
+    assert reused.evidence  # where it was used is kept with it
+    # Two senses of an ordinary spelling are two words.
+    charge = word("charge", "a fee", casing="ordinary")
+    battery = {**new_word("charge", ("d1", "charge"), meaning="filling a battery")}
+    result = parse(reply([{**battery, "casing": "ordinary"}]), ("charge it",), dictionary(charge))
+    assert [w.meaning for w in result.words] == ["a fee", "filling a battery"]
+
+
+def test_a_stored_word_without_a_meaning_takes_the_one_suggested() -> None:
+    grafana = Word("w_grafana", "Grafana", "", needs_review=True)
+    working = dictionary(grafana)
+    text = "open the gray fauna panel"
+    suggested = new_word("Grafana", ("d1", "gray fauna"), meaning="dashboards for metrics")
+    (described,) = parse(reply([suggested]), (text,), working).words
+    assert described.meaning == "dashboards for metrics" and described.needs_review
+    proposal = dictionary_changes.propose(working, dictionary(described))
+    assert [c.kind for c in proposal.changes] == ["meaning"]
+    # Applying the suggested description is the person's check of it.
+    (applied,) = dictionary_changes.review(working, proposal).words
+    assert applied.meaning == "dashboards for metrics" and not applied.needs_review
+
+
+def test_a_new_word_stays_revisable_until_its_suggestions_are_applied() -> None:
+    result = parse(proposed(TEXT))
+    better = [{"word": "w1", "meaning": "Anthropic's coding agent"}]
+    revised = parse(reply(meanings=better), (TEXT,), result)
+    assert revised.words[0].meaning == "Anthropic's coding agent"
+    applied = dictionary_changes.review(
+        Dictionary(), dictionary_changes.propose(Dictionary(), revised)
+    )
+    assert not applied.words[0].needs_review  # applying confirms it
+    assert applied.words[0].evidence == result.words[0].evidence
+
+
+def test_a_clearer_meaning_changes_a_word_still_to_check() -> None:
+    confirmed = dictionary(CLAUDE)
+    text = "ask Claude"
+    better = [{"word": "w1", "meaning": "Anthropic's AI model family"}]
+    # A meaning a person or their agent confirmed stays as they left it.
+    assert "review" not in json.loads(view.build(confirmed, snippets(text)).words)[0]
+    with pytest.raises(ValueError, match="confirmed"):
+        parse(reply(meanings=better), (text,), confirmed)
+    working = dictionary(replace(CLAUDE, needs_review=True))
+    assert json.loads(view.build(working, snippets(text)).words)[0]["review"] is True
+    result = parse(reply(meanings=better), (text,), working)
+    assert result.words[0].meaning == "Anthropic's AI model family"
+    proposal = dictionary_changes.propose(working, result)
+    assert [(c.id, c.kind) for c in proposal.changes] == [("word:a_claude", "meaning")]
+    with pytest.raises(ValueError, match="at most once"):
+        parse(reply(meanings=[*better, *better]), (text,), working)
+    with pytest.raises(ValueError, match="at most once"):
+        parse(reply(meanings=[{"word": "w9", "meaning": "x"}]), (text,), working)
+
+
+def test_a_decided_word_is_shown_with_the_dictation() -> None:
+    from entune.learning.inputs import DictionaryResult
+    from entune.processing.results import Selection
+
+    keep = dictionary(word("Keep"))
+    # A decision chose Keep where the text does not write it.
+    decided = batches.Snippet(
+        "s_1",
+        "raw_speech",
+        "keep turn",
+        DictionaryResult((), (Selection(0, 9, ("a_keep",), "contextual"),)),
+    )
+    shown = view.build(keep, [decided])
+    (entry,) = json.loads(shown.dictations)
+    assert entry["decisions"][0]["words"] == ["w1"]
+    assert json.loads(shown.words)[0]["spelling"] == "Keep"
+
+
+def test_overlapping_occurrences_are_found_and_a_text_may_start_with_punctuation() -> None:
+    assert replies.occurrences("go go go", "go go") == [(0, 5), (3, 8)]
+    assert replies.occurrences("We use .NET daily.", ".NET") == [(7, 11)]
 
 
 def test_propose_uses_chosen_model_and_does_not_change_the_live_dictionary() -> None:
@@ -291,343 +264,13 @@ def test_propose_uses_chosen_model_and_does_not_change_the_live_dictionary() -> 
             call=fake,
         )
     )
-    assert entries(learned) == {"cloud code": ["Claude Code"]} and not current
+    assert [w.spelling for w in learned.words] == ["Claude Code"] and not current
     assert seen["model"] == "anthropic:claude-sonnet-5" and seen["provider"] == "anthropic"
     assert seen["system"] == batches.system_prompt() and TEXT in seen["user"]
     assert seen["effort"] == "high"
 
 
-def test_a_real_word_keeps_itself_as_a_candidate_beside_what_it_was_used_for() -> None:
-    text = "Ask cloud about the cloud backups."
-    words = [
-        {
-            "id": "n1",
-            "spelling": "Claude",
-            "meaning": "Anthropic's AI assistant",
-            "casing": "fixed",
-        },
-        {"id": "n2", "spelling": "cloud", "meaning": "remote computing", "casing": "ordinary"},
-    ]
-    # A text candidate spelled like its heard text is the literal one, without evidence.
-    heard = {
-        "text": "cloud",
-        "candidates": [candidate("n1", "text", (4, 9)), candidate("n2", "text", (20, 25))],
-    }
-    result = parse(reply(words, [heard]), (text,))
-    (entry,) = result.learned_for("s/m")
-    assert [(c.basis, len(c.evidence)) for c in entry.candidates] == [("text", 1), ("literal", 0)]
-    assert entries(result) == {"cloud": ["Claude", "cloud"]}
-
-
-def test_stored_words_are_reused_by_id_and_by_name_never_defined_again() -> None:
-    # A shown word, named by its label.
-    working = dictionary(learned={"s/m": (CLOUD,)})
-    text = "ask clawed about the cloud"
-    heard = {"text": "clawed", "candidates": [candidate("w1", "text", (4, 10))]}
-    result = parse(reply(heard=[heard]), (text,), working)
-    assert result.words == working.words
-    assert entries(result)["clawed"] == ["Claude"]
-    # A name stored but not shown here, defined again: the stored word, as it is.
-    stored = dictionary(learned={"other/model": (group("Claude Code", "claw code"),)})
-    for spelling in ("Claude Code", "CLAUDE CODE"):
-        payload = proposed(TEXT)
-        payload["words"][0].update(spelling=spelling, meaning="AI coding agent")
-        result = parse(payload, working=stored)
-        assert result.words == stored.words
-        assert entries(result) == {"cloud code": ["Claude Code"]}
-    # An ordinary word is the stored one only with the same meaning: the same spelling can
-    # mean something else, shown to the model or not.
-    cache = Word("m_cache", "cache", "stored copy of data", casing="ordinary")
-    working = Dictionary((cache,))
-    for text, meaning, reused in (
-        ("clear the catch in the cache", "stored copy of data", True),
-        ("clear the catch now", "stored copy of data", True),
-        ("clear the catch now", "money", False),
-        ("clear the catch in the cache", "money", False),
-    ):
-        word = {"id": "n1", "spelling": "cache", "meaning": meaning, "casing": "ordinary"}
-        heard = {"text": "catch", "candidates": [candidate("n1", "text", (10, 15))]}
-        result = parse(reply([word], [heard]), (text,), working)
-        assert (result.words == (cache,)) is reused and len(result.words) == 2 - reused
-
-
-def test_another_speech_models_entries_in_these_dictations_are_shown_for_their_words() -> None:
-    working = dictionary(learned={"other/model": (group("Claude Code", "claw code"),)})
-    text = "ask claw code to fix it"
-    shown = view.build(working, "s/m", snippets(text))
-    assert json.loads(shown.words) == [
-        {"id": "w1", "spelling": "Claude Code", "meaning": "The named tool Claude Code."}
-    ]
-    assert json.loads(shown.entries) == [{"text": "claw code", "words": ["w1"], "other": True}]
-    assert json.loads(view.build(working, "s/m", snippets("nothing here")).entries) == []
-    # This recognizer's own entry reuses the word, with evidence here; the other model's
-    # entry is not this run's to change or remove.
-    heard = {"text": "claw code", "candidates": [candidate("w1", "text", (4, 13))]}
-    result = parse(reply(heard=[heard]), (text,), working)
-    assert result.words == working.words
-    assert entries(result) == {"claw code": ["Claude Code"]}
-    assert entries(result, "other/model") == entries(working, "other/model")
-    with pytest.raises(ValueError, match="Removals name a learned entry shown here"):
-        parse(reply(removals=["claw code"]), (text,), working)
-    # Shown also when this model has its own entry for the text, unless the text is pinned.
-    both = dictionary(
-        learned={
-            "s/m": (group("Claw", "claw code"),),
-            "other/model": (group("Claude Code", "claw code"),),
-        }
-    )
-
-    def other(current: Dictionary) -> list[str]:
-        shown = json.loads(view.build(current, "s/m", snippets(text)).entries)
-        return [e["text"] for e in shown if e.get("other")]
-
-    assert other(both) == ["claw code"]
-    pinned = dictionary(
-        (group("Claw", "claw code"),), {"other/model": (group("Claude Code", "claw code"),)}
-    )
-    assert other(pinned) == []
-
-
-def test_every_occurrence_of_a_new_heard_text_is_cited_or_kept_as_written() -> None:
-    text = "use cloud code daily; cloud code helps"
-    payload = proposed(text)
-    with pytest.raises(ValueError, match="occurs 2 times here, 1 cited as misheard"):
-        parse(payload, (text,))
-    second = text.rindex("cloud code")
-    evidence = payload["heard"][0]["candidates"][0]["evidence"]
-    evidence.append({"dictation": "d1", "start": second, "end": second + 10})
-    assert entries(parse(payload, (text,))) == {"cloud code": ["Claude Code"]}
-    # The same text listed twice, in another case, citing one occurrence each.
-    again = {**payload["heard"][0], "text": "Cloud Code"}
-    again["candidates"] = [{**again["candidates"][0], "evidence": evidence[1:]}]
-    payload["heard"][0]["candidates"][0]["evidence"] = evidence[:1]
-    payload["heard"].append(again)
-    (found,) = parse(payload, (text,)).learned_for("s/m")
-    assert len(found.candidates[0].evidence) == 2
-
-
-def test_overlapping_occurrences_count_as_the_dictionary_step_finds_them() -> None:
-    assert replies.occurrences("go go go", "go go") == [(0, 5), (3, 8)]
-    assert replies.occurrences("We use .NET daily.", ".NET") == [(7, 11)]
-    word = {"id": "n1", "spelling": "Gogo", "meaning": "a named tool", "casing": "fixed"}
-    heard = {"text": "go go", "candidates": [candidate("n1", "text", (0, 5))]}
-    with pytest.raises(ValueError, match="occurs 2 times here, 1 cited as misheard"):
-        parse(reply([word], [heard]), ("go go go",))
-
-
-def test_a_heard_text_written_as_itself_far_more_often_than_misheard_is_sent_back() -> None:
-    fast = {"id": "n1", "spelling": "fast", "meaning": "quick", "casing": "ordinary"}
-    first = {"id": "n2", "spelling": "first", "meaning": "before all others", "casing": "ordinary"}
-    for text, sent_back in (
-        ("first the first step, first thing first; then first mode is on", True),
-        ("first the first step, first thing; then first mode is on", False),
-    ):
-        start = text.index("first mode")
-        heard = {
-            "text": "first",
-            "candidates": [candidate("n1", "text", (start, start + 5)), candidate("n2", "literal")],
-        }
-        if sent_back:
-            with pytest.raises(ValueError, match='"first mode", not "first"'):
-                parse(reply([fast, first], [heard]), (text,))
-        else:
-            assert entries(parse(reply([fast, first], [heard]), (text,))) == {
-                "first": ["fast", "first"]
-            }
-    # Dictations with the same text are counted each time: four misheard, four as written.
-    texts = ("first mode is on",) * 4 + ("first", "the first one", "first things", "at first")
-    heard = {
-        "text": "first",
-        "candidates": [candidate("n1", "text", (0, 5)), candidate("n2", "literal")],
-    }
-    assert entries(parse(reply([fast, first], [heard]), texts)) == {"first": ["fast", "first"]}
-    # The longer heard text around the misrecognition is the safe entry.
-    mode = {"id": "n1", "spelling": "fast mode", "meaning": "transcribes while you speak"}
-    heard = {"text": "first mode", "candidates": [candidate("n1", "text", (start, start + 10))]}
-    result = parse(reply([{**mode, "casing": "ordinary"}], [heard]), (text,))
-    assert entries(result) == {"first mode": ["fast mode"]}
-
-
-def test_a_stored_word_without_a_meaning_takes_the_one_suggested_or_is_refused() -> None:
-    grafana = Word("w_grafana", "Grafana", "", needs_review=True)
-    working = Dictionary(
-        (grafana,), (Heard("Grafana", (Candidate("w_grafana", basis="literal"),)),)
-    )
-    text = "open the gray fauna panel for Grafana"
-    heard: dict[str, Any] = {"text": "gray fauna", "candidates": [candidate("w1", "text", (9, 19))]}
-    with pytest.raises(ValueError, match="no meaning yet"):
-        parse(reply(heard=[heard]), (text,), working)
-    word = {
-        "id": "n1",
-        "spelling": "Grafana",
-        "meaning": "dashboards for metrics",
-        "casing": "fixed",
-    }
-    heard["candidates"][0]["word"] = "n1"
-    result = parse(reply([word], [heard]), (text,), working)
-    assert result.words == (replace(grafana, meaning="dashboards for metrics"),)
-    proposal = dictionary_changes.propose(working, result, "s/m")
-    assert [c.kind for c in proposal.changes] == ["add", "word"]
-    # Applying the suggested description is the person's check of it.
-    applied = dictionary_changes.review(working, proposal)
-    confirmed = replace(grafana, meaning="dashboards for metrics", needs_review=False)
-    assert applied.words == (confirmed,)
-    # The heard text's own word, kept as written, needs a meaning too.
-    cloud = Word("w_cloud", "cloud", "", casing="ordinary", needs_review=True)
-    working = Dictionary((cloud,))
-    text = "ask cloud about the cloud storage"
-    assert json.loads(view.build(working, "s/m", snippets(text)).words)[0]["id"] == "w1"
-    word = {"id": "n1", "spelling": "Claude", "meaning": "an AI assistant", "casing": "fixed"}
-    claude, kept = candidate("n1", "text", (4, 9)), candidate("w1", "literal")
-    with pytest.raises(ValueError, match="no meaning yet"):
-        parse(reply([word], [{"text": "cloud", "candidates": [claude, kept]}]), (text,), working)
-
-
-def test_a_new_word_stays_revisable_until_its_suggestions_are_applied() -> None:
-    result = parse(proposed(TEXT))
-    (word,) = result.words
-    assert word.needs_review  # a later part of the same run may still refine it
-    better = [{"word": "w1", "meaning": "Anthropic's coding agent"}]
-    revised = parse(reply(meanings=better), (TEXT,), result)
-    assert revised.words[0].meaning == "Anthropic's coding agent"
-    applied = dictionary_changes.review(
-        Dictionary(), dictionary_changes.propose(Dictionary(), revised, "s/m")
-    )
-    assert not applied.words[0].needs_review  # applying confirms it
-
-
-def test_a_clearer_meaning_changes_the_shared_word_for_review() -> None:
-    confirmed = dictionary(learned={"s/m": (CLOUD,)})
-    text = "ask cloud"
-    better = [{"word": "w1", "meaning": "Anthropic's AI model family"}]
-    # A meaning a person or their agent confirmed stays as they left it.
-    assert "review" not in json.loads(view.build(confirmed, "s/m", snippets(text)).words)[0]
-    with pytest.raises(ValueError, match="confirmed"):
-        parse(reply(meanings=better), (text,), confirmed)
-    words = (replace(confirmed.words[0], needs_review=True), *confirmed.words[1:])
-    working = replace(confirmed, words=words)
-    assert json.loads(view.build(working, "s/m", snippets(text)).words)[0]["review"] is True
-    result = parse(reply(meanings=better), (text,), working)
-    assert result.words[0].meaning == "Anthropic's AI model family"
-    proposal = dictionary_changes.propose(working, result, "s/m")
-    assert [(c.id, c.kind) for c in proposal.changes] == [("word:a_claude", "word")]
-    with pytest.raises(ValueError, match="at most once"):
-        parse(reply(meanings=[*better, *better]), (text,), working)
-    with pytest.raises(ValueError, match="at most once"):
-        parse(reply(meanings=[{"word": "w9", "meaning": "x"}]), (text,), working)
-
-
-def test_a_decided_word_is_shown_with_the_dictation() -> None:
-    from entune.learning.inputs import DictionaryResult
-    from entune.processing.results import Selection
-
-    keep = dictionary(learned={"s/m": (group("Keep", "keep term"),)})
-    # A decision chose Keep where the text no longer matches its heard texts.
-    decided = batches.Snippet(
-        "s_1",
-        "raw_speech",
-        "keep turn",
-        DictionaryResult((), (Selection(0, 9, ("a_keep",), "contextual"),)),
-    )
-    shown = view.build(keep, "s/m", [decided])
-    (entry,) = json.loads(shown.dictations)
-    assert entry["decisions"][0]["words"] == ["w1"]
-    assert json.loads(shown.words)[0]["spelling"] == "Keep"
-
-
-def test_an_approved_direct_mapping_cannot_be_dropped() -> None:
-    working = dictionary(learned={"s/m": (group("Entune", "dictim", direct=True),)})
-    text = "open dictim"
-    other = {"id": "n1", "spelling": "Different", "meaning": "a name", "casing": "fixed"}
-    heard: dict[str, Any] = {"text": "dictim", "candidates": [candidate("n1", "text", (5, 11))]}
-    with pytest.raises(ValueError, match="approved direct mapping"):
-        parse(reply([other], [heard]), (text,), working)
-    with pytest.raises(ValueError, match="approved direct mapping"):
-        parse(reply(removals=["dictim"]), (text,), working)
-    heard["candidates"].insert(0, candidate("w1", "existing"))
-    (entry, _) = parse(reply([other], [heard]), (text,), working).learned_for("s/m")
-    assert entry.direct == "a_entune" and len(entry.candidates) == 2
-
-
-def test_a_heard_text_differing_only_in_capitals_is_not_a_confusion() -> None:
-    # Both replies a real run rejected: "LangFuse" beside Langfuse, and "PRs" whose only
-    # heard text was "PRS". Neither breaks the reply.
-    working = dictionary(learned={"s/m": (group("Langfuse", "LogFuse"),)})
-    text = "This LangFuse trace has PRS in it."
-    prs = {"id": "n1", "spelling": "PRs", "meaning": "pull requests", "casing": "fixed"}
-    heard = [
-        {"text": "LangFuse", "candidates": [candidate("w1", "text", (5, 13))]},
-        {"text": "PRS", "candidates": [candidate("n1", "text", (24, 27))]},
-    ]
-    result = parse(reply([prs], heard), (text,), working)
-    assert result == working
-
-
-def test_an_entry_whose_corrections_a_revision_took_away_is_removed() -> None:
-    # A run added GIF -> get, then a later part saw GIF used correctly and kept only GIF.
-    working = dictionary(learned={"s/m": (group("get", "GIF", literal="an image format"),)})
-    text = "Send the GIF here."
-    shown = json.loads(view.build(working, "s/m", snippets(text)).words)
-    gif = next(w["id"] for w in shown if w["spelling"] == "GIF")
-    kept = {"text": "GIF", "candidates": [candidate(gif, "existing")]}
-    result = parse(reply(heard=[kept]), (text,), working)
-    assert "GIF" not in entries(result)
-    assert result.words == working.words  # the words stay
-
-
-def test_a_capitals_correction_the_person_added_stays_when_a_reply_keeps_it() -> None:
-    from entune.dictionary.entries import Candidate, Heard, Word
-    from tests.dictionary_samples import Active
-
-    added = Active(
-        (Word("a_anthropic", "Anthropic", "The AI company."),),
-        (Heard("anthropic", (Candidate("a_anthropic", basis="user"),)),),
-    )
-    working = dictionary(learned={"s/m": (added,)})
-    text = "I asked anthropic today."
-    shown = json.loads(view.build(working, "s/m", snippets(text)).words)
-    kept = {"text": "anthropic", "candidates": [candidate(shown[0]["id"], "existing")]}
-    (entry,) = parse(reply(heard=[kept]), (text,), working).learned_for("s/m")
-    assert entry.candidates == (Candidate("a_anthropic", basis="user"),)
-
-
-def test_a_heard_text_given_twice_is_one_entry_whatever_the_order() -> None:
-    text = "Keep it in camel. The Camel sleeps."
-    words = [
-        {"id": "n1", "spelling": "camel", "meaning": "the desert animal", "casing": "ordinary"},
-        {"id": "n2", "spelling": "YAML", "meaning": "configuration format", "casing": "fixed"},
-    ]
-    literal = {"text": "Camel", "candidates": [candidate("n1", "text", (22, 27))]}
-    yaml = {"text": "camel", "candidates": [candidate("n2", "text", (11, 16))]}
-    for heard in ([literal, yaml], [yaml, literal]):
-        (entry,) = parse(reply(words, heard), (text,)).learned_for("s/m")
-        assert sorted(c.basis for c in entry.candidates) == ["literal", "text"]
-
-
-def test_learned_entries_are_named_once_and_only_when_shown() -> None:
-    working = dictionary(
-        learned={"s/m": (group("Keep", "keep term"), group("Other", "other term"))}
-    )
-    texts = ("keep term and other term",)
-    kept = {"text": "keep term", "candidates": [candidate("w1", "existing")]}
-    with pytest.raises(ValueError, match="shown here"):
-        parse(reply(removals=["absent"]), texts, working)
-    with pytest.raises(ValueError, match="once"):
-        parse(reply(heard=[kept], removals=["keep term"]), texts, working)
-    with pytest.raises(ValueError, match="once"):
-        parse(reply(removals=["keep term", "KEEP TERM"]), texts, working)
-    assert entries(parse(reply(removals=["keep term"]), texts, working)) == {
-        "Keep": ["Keep"],
-        "other term": ["Other"],
-        "Other": ["Other"],
-    }
-    with pytest.raises(ValueError, match="not in these dictations"):
-        parse(reply(heard=[kept]), ("nothing here",), working)
-
-
-def test_steps_preserve_ids_previous_evidence_and_unmentioned_entries(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_steps_keep_ids_meanings_and_every_place_of_use(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("entune.learning.batches.BATCH_CHARS", 10)
     seen: list[str] = []
 
@@ -638,18 +281,11 @@ def test_steps_preserve_ids_previous_evidence_and_unmentioned_entries(
         if len(seen) == 2:
             # "clod code" does not show Claude Code; the model defines it again.
             assert "Claude Code" not in request.user
-            word = {"id": "n1", "spelling": "Claude Code", "meaning": "AI coding agent"}
-            heard = {"text": "clod code", "candidates": [candidate("n1", "text", (0, 9))]}
-            return json.dumps(reply([{**word, "casing": "fixed"}], [heard], ["clod"]))
+            again = new_word("Claude Code", ("d1", "clod code"), meaning="AI coding agent")
+            return json.dumps(reply([again]))
         return json.dumps(reply())
 
-    current = dictionary(
-        (JEV,),
-        {
-            "s/m": (group("Keep", "keep term"), group("Wrong", "clod")),
-            "other/model": (group("Elsewhere", "else where"),),
-        },
-    )
+    current = dictionary(word("Keep"))
     learned = asyncio.run(
         propose_learned(
             "openai",
@@ -661,21 +297,15 @@ def test_steps_preserve_ids_previous_evidence_and_unmentioned_entries(
             call=fake,
         )
     )
-    (target,) = [w for w in learned.words if w.spelling == "Claude Code"]
-    assert target.meaning == "The named tool Claude Code."  # stored, not redefined
-    assert entries(learned) == {
-        "keep term": ["Keep"],
-        "Keep": ["Keep"],
-        "Wrong": ["Wrong"],
-        "cloud code": ["Claude Code"],
-        "clod code": ["Claude Code"],
-    }
-    cloud = next(h for h in learned.learned_for("s/m") if h.text == "cloud code")
-    assert cloud.candidates[0].evidence  # the first part's evidence is kept
-    assert learned.pinned == current.pinned
-    assert learned.learned_for("other/model") == current.learned_for("other/model")
-    assert all("Elsewhere" not in prompt and "Keep" not in prompt for prompt in seen)
-    assert len(current.learned_for("s/m")) == 4  # still a proposal
+    keep, target = learned.words
+    assert keep == current.words[0]
+    assert target.meaning == "The named tool Claude Code."  # kept, not redefined
+    assert [e.source for e in target.evidence] == [
+        batches.source_id("cloud code"),
+        batches.source_id("clod code"),
+    ]
+    assert all("Keep" not in prompt for prompt in seen)
+    assert current.words == (keep,)  # still a proposal
 
 
 def test_a_later_step_failure_returns_no_partial_dictionary(
@@ -790,10 +420,10 @@ def test_reply_shapes_stay_strict_for_openai() -> None:
     assert schema.is_strict_compatible
 
 
-def unknown_basis() -> str:
-    """A reply whose link names a basis the schema does not allow."""
+def unknown_casing() -> str:
+    """A reply whose word names a casing the schema does not allow."""
     reply = proposed(TEXT)
-    reply["heard"][0]["candidates"][0]["basis"] = "guessed"
+    reply["words"][0]["casing"] = "guessed"
     return json.dumps(reply)
 
 
@@ -841,14 +471,14 @@ def scripted(*replies_: str) -> tuple[FunctionModel, list[int]]:
 
 def test_a_reply_breaking_the_schema_is_sent_back_with_the_rule_and_the_person_told() -> None:
     good = strict_reply(REPLY)
-    model, calls = scripted(unknown_basis(), good)
+    model, calls = scripted(unknown_casing(), good)
     heard: list[tuple[int, str]] = []
     result = asyncio.run(
         suggestion_model.call_model(request(retrying=lambda *a: heard.append(a)), model)
     )
     assert json.loads(result) == json.loads(good) and len(calls) == 2
-    assert heard == [(2, heard[0][1])] and "basis" in heard[0][1]
-    assert "Input should be 'text', 'literal' or 'existing'" in heard[0][1]
+    assert heard == [(2, heard[0][1])] and "casing" in heard[0][1]
+    assert "Input should be 'fixed' or 'ordinary'" in heard[0][1]
 
 
 def test_rules_the_schema_cannot_hold_are_checked_and_fixed_at_most_twice() -> None:
@@ -948,7 +578,7 @@ def test_only_a_stream_the_provider_finished_is_used_and_it_carries_the_saved_ke
     )
     run = suggestion_model.call_model(request())
     if ending == "completed":
-        assert json.loads(asyncio.run(run))["heard"] == []
+        assert json.loads(asyncio.run(run))["words"] == []
     else:
         # A failed reply is never used: either its error, with the service's own code and
         # words, or a reply that did not finish.
@@ -1136,7 +766,7 @@ def test_a_part_whose_reply_still_broke_the_rules_gets_one_fresh_attempt() -> No
             ),
         )
     )
-    assert entries(learned) == {"cloud code": ["Claude Code"]} and len(calls) == 2
+    assert [w.spelling for w in learned.words] == ["Claude Code"] and len(calls) == 2
     assert heard == [(1, 2, "the reply still broke a rule after its corrections")]
 
 
@@ -1172,7 +802,7 @@ def test_a_reply_that_runs_into_empty_output_is_stopped_and_its_part_retried() -
             ),
         )
     )
-    assert entries(learned) == {"cloud code": ["Claude Code"]}
+    assert [w.spelling for w in learned.words] == ["Claude Code"]
     assert blank == [call.RUNAWAY + 100, 0]  # stopped at the first chunk past the threshold
     assert heard == [(1, 2, "the reply ran into empty output")]
 
@@ -1316,7 +946,7 @@ def test_a_retried_part_starts_from_the_working_dictionary_and_repeats_no_finish
     assert saved == [1, 2, 3] and len(prompts) == 4
     assert prompts[1] == prompts[2]  # the same part, from the same working dictionary
     assert len({prompts[0], prompts[2], prompts[3]}) == 3  # part 1 was not asked again
-    assert entries(learned) == {"cloud code": ["Claude Code"]}
+    assert [w.spelling for w in learned.words] == ["Claude Code"]
 
 
 def test_starting_entune_loads_no_suggestion_sdk() -> None:
@@ -1536,11 +1166,11 @@ def test_a_chatgpt_plan_is_asked_at_the_public_api_within_the_preview_limits(
         ),
     )
     plan = replace(request(), provider="chatgpt", api_key="access-1", model="chatgpt:gpt-6-sol")
-    assert json.loads(asyncio.run(suggestion_model.call_model(plan)))["heard"] == []
+    assert json.loads(asyncio.run(suggestion_model.call_model(plan)))["words"] == []
     # The current access is read before each HTTP request, so a correction within a call
     # goes out on one renewed meanwhile.
     renewed = replace(plan, access=lambda: "access-2")
-    assert json.loads(asyncio.run(suggestion_model.call_model(renewed)))["heard"] == []
+    assert json.loads(asyncio.run(suggestion_model.call_model(renewed)))["words"] == []
     outgoing, again = sent
     assert again.headers["authorization"] == "Bearer access-2"
     assert str(outgoing.url) == f"{chatgpt.API}/responses"  # never ChatGPT's backend

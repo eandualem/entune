@@ -95,13 +95,12 @@ def system_prompt() -> str:
 
 
 def user_prompt(speech_model: str, shown: view.View) -> str:
-    """The part's request: the recognizer, the words and heard entries that occur in its
-    dictations, and the dictations, all in the compact form of learning/view.py."""
+    """The part's request: the recognizer, the words its dictations bear on, and the
+    dictations, all in the compact form of learning/view.py."""
     return prompts.render_text(
         "dictionary-user.txt",
         speech_model=speech_model,
         words=shown.words,
-        heard=shown.entries,
         dictations=shown.dictations,
     )
 

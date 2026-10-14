@@ -309,7 +309,7 @@ def test_a_reply_sent_back_is_marked_as_a_warning_with_its_rule(
     from entune.learning import suggestion_model
     from tests.test_suggestions import request, scripted
 
-    empty = '{"words": [], "meanings": [], "heard": [], "removals": []}'
+    empty = '{"words": [], "meanings": []}'
     answers = iter([ValueError("Evidence must reference the exact whole heard text"), None])
 
     def check(reply: str) -> None:
