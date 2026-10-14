@@ -20,6 +20,9 @@ word. A candidate stays when delta + AUDIO_WEIGHT * similarity reaches AUDIO_BAR
 skip the check, since audio cannot tell them apart. Without a scorer a candidate needs
 TEXT_SIMILAR. Overlapping spans make one place, with at most OPTIONS words, best first.
 
+A word whose spelling is fixed, written in other capitals ("github" for GitHub), is offered
+there whatever the confidence: it was heard, and only its capitals are in doubt.
+
 Measured on 210 held-out Parakeet dictations (24,857 words, 103 term errors whose word was in
 the dictionary, October 2026): with the audio check the right word was among the options for
 98, at 16.7 places per 1,000 words; heard entries had offered it for 54.
@@ -31,6 +34,7 @@ import re
 from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import Protocol
 
 from entune.dictionary import pronounce
@@ -150,6 +154,16 @@ class Candidate:
     homophone: bool
     delta: float | None = None  # the audio score, when checked
 
+    def written(self, text: str) -> str:
+        """What the word writes in place of its span of `text`: a fixed spelling as it is, an
+        ordinary word with a capital at the start of a sentence."""
+        spelling = self.word.spelling
+        if self.word.casing == "ordinary" and re.search(
+            r"(?:^|[.!?\n])\s*[\"'\u201c\u2018(\[]*$", text[: self.start]
+        ):
+            return spelling[:1].upper() + spelling[1:]
+        return spelling
+
 
 @dataclass(frozen=True)
 class Place:
@@ -179,6 +193,14 @@ class Vocabulary:
         self.words = tuple(w for w in words if forms(w))
         self.index = pronounce.Index([forms(w) for w in self.words])
         self.keys = {key(w.spelling) for w in self.words}
+        self.fixed: dict[str, list[int]] = {}  # each fixed spelling's words, by its key
+        for i, w in enumerate(self.words):
+            if w.casing == "fixed":
+                self.fixed.setdefault(key(w.spelling), []).append(i)
+        self.fixed_tokens = max(
+            (len(_WORD.findall(self.words[ids[0]].spelling)) for ids in self.fixed.values()),
+            default=0,
+        )
         self.said_in = [
             max(pronounce.said_words(w.spelling), pronounce.said_words(w.said_as or ""))
             for w in self.words
@@ -208,6 +230,12 @@ class Vocabulary:
                 self._seen.clear()
             self._seen[(text, words)] = found
         return found
+
+
+@lru_cache(maxsize=4)
+def vocabulary(words: tuple[Word, ...]) -> Vocabulary:
+    """The vocabulary of these words, built once while the dictionary stays the same."""
+    return Vocabulary(words)
 
 
 def forms(word: Word) -> tuple[pronounce.Phones, ...]:
@@ -257,6 +285,8 @@ def find(
                 continue
             if _contains(written_text, word.spelling):
                 continue  # "the Canary" would lose its "the"
+            if _written_over(text, span.start, span.end, word.spelling):
+                continue  # "NET" of ".NET" is the word already, its dot outside the span
             if any(vocabulary.scores(s, n - 1)[0][i] >= similarity[i] for s in shorter):
                 continue  # a shorter span is as close: the extra word is not part of it
             own = bool(_POSSESSIVE.search(word.spelling))
@@ -268,7 +298,7 @@ def find(
             )
             span.found.append(Candidate(span.start, end, word, similarity[i], i in same))
     _check(text, words, spans, scorer)
-    return _places(spans)
+    return _places(spans + _miscased(text, tokens, vocabulary))
 
 
 @dataclass
@@ -390,6 +420,24 @@ def _parts(text: str, i: int, start: int, end: int) -> list[_Span]:
     return out
 
 
+def _miscased(text: str, tokens: list[tuple[int, int]], vocabulary: Vocabulary) -> list[_Span]:
+    """Fixed spellings written in other capitals, each offered its word."""
+    out = []
+    for first in range(len(tokens)):
+        for last in range(first, min(len(tokens), first + vocabulary.fixed_tokens)):
+            start, end = tokens[first][0], tokens[last][1]
+            # "anthropic's" is Anthropic with its possessive, unless a word keeps its "'s".
+            ends = (end, end - 2) if _POSSESSIVE.search(text, start, end) else (end,)
+            for stop in ends:
+                written = text[start:stop]
+                for i in vocabulary.fixed.get(key(written), ()):
+                    word = vocabulary.words[i]
+                    if written != word.spelling:
+                        found = [Candidate(start, stop, word, 1.0, True)]
+                        out.append(_Span(first, last, start, stop, found=found))
+    return out
+
+
 def _shorter(text: str, tokens: list[tuple[int, int]], span: _Span) -> list[str]:
     """The span without its first or without its last word."""
     if span.last == span.first:
@@ -404,6 +452,17 @@ def _contains(span_text: str, spelling: str) -> bool:
     """Whether the spelling is written, as whole words, inside the span."""
     pattern = r"(?<![\w.])" + re.escape(spelling) + r"(?![\w])"
     return bool(re.search(pattern, span_text, re.IGNORECASE))
+
+
+def _written_over(text: str, start: int, end: int, spelling: str) -> bool:
+    """Whether the spelling is written, in any capitals and as whole words, around the span
+    start..end ("NET" of ".NET"); "Ann" is not written around "Anne"."""
+    pattern = re.compile(r"(?<!\w)" + re.escape(spelling) + r"(?!\w)", re.IGNORECASE)
+    left = max(0, end - len(spelling) - 1)
+    return any(
+        m.start() <= start and end <= m.end()
+        for m in pattern.finditer(text, left, start + len(spelling) + 1)
+    )
 
 
 def _check(text: str, words: _Words, spans: list[_Span], scorer: Scorer | None) -> None:

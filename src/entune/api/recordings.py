@@ -16,17 +16,6 @@ from entune.audio.waveform import levels
 
 
 def routes(app: Entune) -> list[Route]:
-    async def safe_mapping_recovery(request: Request) -> Response:
-        try:
-            result = await run_in_threadpool(
-                app.dictation.safe_mapping_recovery,
-                request.path_params["id"],
-                request.path_params["attempt"],
-            )
-        except ValueError as exc:
-            return bad(str(exc))
-        return JSONResponse(result)
-
     def list_recordings(request: Request) -> Response:
         try:
             limit = int(request.query_params["limit"]) if "limit" in request.query_params else None
@@ -154,11 +143,6 @@ def routes(app: Entune) -> list[Route]:
         return JSONResponse({"levels": waveforms[key]})
 
     return [
-        Route(
-            "/api/recordings/{id:int}/transcriptions/{attempt:int}/safe-copy",
-            safe_mapping_recovery,
-            methods=["POST"],
-        ),
         Route("/api/operations", operation_status, methods=["GET"]),
         Route("/api/operations", begin_operation, methods=["POST"]),
         Route("/api/operations/{operation}/cancel", cancel_operation, methods=["POST"]),

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import re
 import threading
 import time
@@ -11,8 +10,7 @@ from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from typing import Literal
 
-from entune.dictionary import matching, sounds
-from entune.dictionary.entries import Active
+from entune.dictionary import candidates
 from entune.processing import jev, jev_client, text_edits
 from entune.processing.formatting import Heard, word_pauses
 from entune.processing.results import Processed, Selection, Stage, pending
@@ -38,7 +36,7 @@ def scaled(policy: jev_client.Policy, characters: int) -> jev_client.Policy:
 
 def process_text(
     raw: str,
-    active: Active,
+    vocabulary: candidates.Vocabulary,
     *,
     contextual: bool,
     formatting: bool,
@@ -47,7 +45,6 @@ def process_text(
     client: jev_client.Client,
     policy: jev_client.Policy,
     endpoint: jev_client.Endpoint = jev_client.JEV,
-    direct: bool = False,
     words: Sequence[Heard] | None = None,
     run: jev.Pass = jev.WHOLE,
     checkpoint: Callable[[Processed], None] | None = None,
@@ -65,7 +62,6 @@ def process_text(
         contextual=contextual,
         formatting=formatting,
         cleanup=cleanup,
-        direct=direct,
         model=endpoint.id,
     )
     if check:
@@ -77,10 +73,8 @@ def process_text(
         )
 
     stages: dict[str, Callable[[], Stage]] = {}
-    if contextual or direct:
-        stages["correction"] = lambda: _correction(
-            raw, active, contextual, call(), endpoint, words, run
-        )
+    if contextual:
+        stages["correction"] = lambda: _correction(raw, vocabulary, call(), endpoint, words, run)
     if cleanup:
         stages["cleanup"] = lambda: _classify(
             raw, "cleanup", jev.cleanup_edits, call(), endpoint, run
@@ -131,64 +125,40 @@ def _timed(stage: Callable[[], Stage]) -> Stage:
 
 def _correction(
     raw: str,
-    active: Active,
-    contextual: bool,
+    vocabulary: candidates.Vocabulary,
     call: jev_client.Call,
     endpoint: jev_client.Endpoint,
     words: Sequence[Heard] | None = None,
     run: jev.Pass = jev.WHOLE,
 ) -> Stage:
-    method: Literal["contextual", "deterministic"] = "contextual" if contextual else "deterministic"
     try:
-        found = matching.matches(active, raw)
-        if contextual:  # only a decision model can tell a sound-alike from the word itself
-            try:
-                confidence = (
-                    None if words is None else sounds.locate(raw, [(w[0], w[3]) for w in words])
-                )
-                alike = sounds.candidates(active, raw, confidence, found)
-            except Exception:  # an addition: the heard entries still apply without it
-                logging.getLogger(__name__).exception("Sound-alike candidates failed")
-                alike = []
-            found = sorted([*found, *alike], key=lambda m: (m.start, m.end))
-        components = matching.components(found)
-        if contextual:
-            decisions = jev.decide(raw, components, call, run=run)
-        else:
-            decisions = [
-                jev.settle(raw, c) or jev.Decision(c, None, "uncertain") for c in components
-            ]
+        places = candidates.find(raw, words, vocabulary)
+        decisions = jev.decide(raw, places, call, run=run)
     except CancelledError:
         raise
     except Exception as exc:
         return Stage(
             "failed",
-            method,
+            "contextual",
             attempts=call.attempts,
             error=_error(exc, call.key or None),
-            model=endpoint.id if contextual else None,
+            model=endpoint.id,
         )
-    edits = tuple(
-        d.edit
-        for d in decisions
-        if d.edit is not None and d.edit.text != raw[d.edit.start : d.edit.end]
-    )
+    changes = tuple(d.change for d in decisions if d.change is not None)
     return Stage(
-        "succeeded" if components else "skipped",
-        method,
+        "succeeded" if places else "skipped",
+        "contextual",
         attempts=call.attempts,
         decisions=call.decisions,
-        replacements=len(edits),
-        direct_replacements=sum(d.method == "direct" and d.edit in edits for d in decisions),
-        preserved=sum(d.method != "uncertain" and d.edit not in edits for d in decisions),
+        replacements=len(changes),
+        preserved=sum(d.method == "contextual" and d.change is None for d in decisions),
         abstained=sum(d.method == "uncertain" for d in decisions),
-        changes=tuple(Change(e.start, e.end, raw[e.start : e.end], e.text) for e in edits),
+        changes=changes,
         selections=tuple(
-            Selection(d.component.start, d.component.end, d.meaning_ids, d.method, d.readings)
-            for d in decisions
+            Selection(d.place.start, d.place.end, d.meaning_ids, d.method) for d in decisions
         ),
-        output=matching.apply(raw, edits),
-        model=endpoint.id if contextual else None,
+        output=text_edits.apply(raw, changes),
+        model=endpoint.id,
     )
 
 

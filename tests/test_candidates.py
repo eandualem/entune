@@ -181,3 +181,28 @@ def test_overlapping_spans_make_one_place_and_each_word_keeps_its_span() -> None
     text = "We use in tune with Jeff."
     places = candidates.find(text, said(text, "in", "tune", "Jeff"), VOCABULARY)
     assert [text[p.start : p.end] for p in places] == ["in tune", "Jeff"]
+
+
+def test_an_ordinary_word_takes_a_capital_only_at_the_start_of_a_sentence() -> None:
+    kubectl = Word("w_kubectl", "kubectl", "A command-line tool for Kubernetes.", casing="ordinary")
+    text = 'Use cube. "Cube works.'
+    inside, start = (candidates.Candidate(i, i + 4, kubectl, 0.9, False) for i in (4, 11))
+    assert (inside.written(text), start.written(text)) == ("kubectl", "Kubectl")
+    fixed = candidates.Candidate(0, 3, CLI, 0.9, False)
+    assert fixed.written("cli is") == "CLI"
+
+
+def test_a_fixed_spelling_in_other_capitals_is_offered_whatever_the_confidence() -> None:
+    anthropic = Word("w_anthropic", "Anthropic", "The AI company.")
+    text = "I asked anthropic's team. Anthropic agreed."
+    places = candidates.find(text, said(text), Vocabulary([anthropic, ENTUNE]))
+    assert offered(text, places) == [("anthropic", "Anthropic")]
+
+
+def test_a_word_already_written_around_the_span_is_not_offered_there() -> None:
+    dotnet = Word("w_dotnet", ".NET", "Microsoft's developer platform.")
+    for text in ("I use .NET daily.", "I use .net daily."):
+        assert candidates.find(text, None, Vocabulary([dotnet])) == []
+    ann = Word("w_ann", "Ann", "A colleague.")
+    text = "Ask Anne tomorrow."
+    assert offered(text, candidates.find(text, None, Vocabulary([ann]))) == [("Anne", "Ann")]

@@ -23,7 +23,7 @@ from entune.app.pieces import Pieces
 from entune.app.settings import JevStatus, Settings
 from entune.audio.formats import sniff_mime
 from entune.audio.silence import Shortened, shorten_wav
-from entune.dictionary.entries import Active
+from entune.dictionary import candidates
 from entune.processing import results
 from entune.processing.formatting import Heard
 from entune.processing.jev import WHOLE, Memo, Pass
@@ -38,6 +38,8 @@ from entune.providers.registry import ModelRef
 from entune.providers.resources import SpeechResources
 from entune.storage.records import Recording
 from entune.storage.store import Store
+
+NO_WORDS = candidates.vocabulary(())  # the dictionary step is off
 
 
 @dataclass(frozen=True)
@@ -95,9 +97,13 @@ class Dictation:
         status = self._settings.jev_status()
         if not (status.dictionary or status.formatting or status.cleanup):
             return
-        active = self._dictionary.dictionary().active(ref.id) if status.dictionary else Active()
         self.correct(
-            transcript.text, active, status, words=_heard(transcript), run=run, cancel=halt
+            transcript.text,
+            self._vocabulary() if status.dictionary else NO_WORDS,
+            status,
+            words=_heard(transcript),
+            run=run,
+            cancel=halt,
         )
 
     def prepare(self) -> None:
@@ -338,17 +344,17 @@ class Dictation:
                         operation.check()
                     # A damaged dictionary must not stop speech transcription or its persistence,
                     # nor the steps that do not read it: only the dictionary step fails.
-                    active = Active()
+                    vocabulary = NO_WORDS
                     if status.dictionary:
                         try:
-                            active = self._dictionary.dictionary().active(ref.id)
+                            vocabulary = self._vocabulary()
                         except (ValueError, OSError) as exc:
                             unreadable = f"Could not read dictionary.json: {exc}"
                             checkpoint(latest)  # a cancel from here on keeps the reason
                     processed = damaged(
                         self.correct(
                             raw,
-                            active,
+                            vocabulary,
                             status,
                             checkpoint=checkpoint,
                             operation=operation,
@@ -406,10 +412,14 @@ class Dictation:
             if pieces is not None:
                 pieces.abort()
 
+    def _vocabulary(self) -> candidates.Vocabulary:
+        """The dictionary's words, the same for every speech model."""
+        return candidates.vocabulary(self._dictionary.dictionary().words)
+
     def correct(
         self,
         raw: str,
-        active: Active,
+        vocabulary: candidates.Vocabulary,
         status: JevStatus,
         *,
         checkpoint: Callable[[Processed], None] | None = None,
@@ -421,7 +431,7 @@ class Dictation:
         endpoint, key = self._decisions.chosen()
         return process_text(
             raw,
-            active,
+            vocabulary,
             contextual=status.dictionary,
             formatting=status.formatting,
             cleanup=status.cleanup,
@@ -438,35 +448,6 @@ class Dictation:
             words=words,
             run=run,
         )
-
-    def safe_mapping_recovery(self, recording_id: int, attempt_id: int) -> dict[str, object]:
-        """Apply only approved direct mappings to an earlier attempt, for copying: never
-        saved to history and never pasted into another app."""
-        recording = self._store.get_recording(recording_id)
-        attempt = (
-            next((a for a in recording.transcriptions if a.id == attempt_id), None)
-            if recording
-            else None
-        )
-        if attempt is None or attempt.status != "ok" or attempt.raw_text is None:
-            raise ValueError("No original successful transcription for that attempt")
-        result = process_text(
-            attempt.raw_text,
-            self._dictionary.dictionary().active(f"{attempt.provider}/{attempt.model}"),
-            contextual=False,
-            formatting=False,
-            direct=True,
-            key=None,
-            client=self._jev,
-            policy=self._settings.jev_policy(),
-        )
-        if result.correction.status == "failed":
-            raise ValueError(result.correction.error)
-        return {
-            "text": result.text,
-            "replacements": result.correction.replacements,
-            "unresolved": result.correction.abstained,
-        }
 
 
 def _joined(pieces: Pieces | None, ref: ModelRef) -> Transcript | None:

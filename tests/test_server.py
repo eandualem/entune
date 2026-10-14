@@ -357,9 +357,7 @@ def test_capture_needs_the_menu_bar_app_or_hands_over_keys_once(
 CLAUDE_CODE = {"spelling": "Claude Code", "description": "the agent", "heard": ["cloud code"]}
 
 
-def test_dictionary_direct_mappings_are_explicit_and_scope_is_preserved(
-    client: TestClient, stub: StubProvider
-) -> None:
+def test_the_dictionary_is_read_and_saved_as_one_document(client: TestClient) -> None:
     assert client.get("/api/dictionary").json() == {
         "version": 3,
         "words": [],
@@ -368,31 +366,10 @@ def test_dictionary_direct_mappings_are_explicit_and_scope_is_preserved(
     }
     bad = client.put("/api/dictionary", content='{"pinned":[]}')
     assert bad.status_code == 400 and 'needs "version"' in bad.text
-    saved = client.put(
-        "/api/dictionary",
-        json=document(
-            group("Claude Code", "cloud code", direct=True),
-            learned={"stub/bad": (group("Hello", "hello", direct=True),)},
-        ),
-    )
+    body = document(group("Claude Code", "cloud code"), learned={"stub/bad": (group("Hi", "hi"),)})
+    saved = client.put("/api/dictionary", json=body)
     assert saved.status_code == 200, saved.text
-    client.put(
-        "/api/settings",
-        json={
-            "keys": {"stub": "k", "typesafe": "ts-key"},
-            "defaultModel": "stub/good",
-            "jev": {"dictionary": True},
-        },
-    )
-    rec = client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}).json()
-    attempt = rec["transcriptions"][0]
-    assert attempt["raw_text"] == "hello there, I use cloud code"
-    assert attempt["text"] == "hello there, I use Claude Code"
-    assert attempt["correction"]["method"] == "contextual"
-    assert (
-        attempt["correction"]["direct_replacements"] == attempt["correction"]["replacements"] == 1
-    )
-    assert attempt["formatting"]["status"] == "disabled"
+    assert client.get("/api/dictionary").json() == body
 
 
 def test_dictionary_model_settings_and_llm_keys(client: TestClient) -> None:
@@ -1138,40 +1115,6 @@ def test_pin_endpoint_needs_revision_and_moves_heard_entries(client: TestClient)
     assert shared.status_code == 200 and not shared.json()["learned"]
     assert [h["text"] for h in shared.json()["pinned"]] == ["Jeff", "GIF", "Jif", "Jev"]
     assert shared.json()["words"] == response.json()["words"]
-
-
-def test_safe_recovery_is_derived_and_copies_only_approved_nonambiguous_mappings(
-    client: TestClient, store: Store
-) -> None:
-    from entune.processing.results import Processed, Stage
-
-    raw = "Open dictim. Jeff called."
-    rec = store.create_recording(WEBM_HEADER)
-    attempt = store.add_transcription(
-        rec.id,
-        "stub",
-        "good",
-        "ok",
-        raw,
-        None,
-        raw_text=raw,
-        processing=Processed(
-            raw, Stage("failed", "contextual", error="unavailable"), Stage("disabled", "formatting")
-        ),
-    )
-    client.put("/api/dictionary", json=document(group("Entune", "dictim", direct=True), JEV))
-    before = client.get("/api/recordings").json()
-    result = client.post(f"/api/recordings/{rec.id}/transcriptions/{attempt}/safe-copy")
-    assert result.status_code == 200, result.text
-    assert result.json() == {
-        "text": "Open Entune. Jeff called.",
-        "replacements": 1,
-        "unresolved": 1,
-    }
-    assert client.get("/api/recordings").json() == before
-    assert (
-        client.post(f"/api/recordings/{rec.id}/transcriptions/99999/safe-copy").status_code == 400
-    )
 
 
 def test_speed_and_corrections_use_only_measured_evidence(tmp_path: Path) -> None:

@@ -48,7 +48,6 @@ class StageSummary:
     pending: int
     decisions: int
     replacements: int
-    direct_replacements: int
     preserved: int
     abstained: int
     retries: int
@@ -175,7 +174,6 @@ def processing_summary(store: Store, model: str | None = None) -> ProcessingSumm
             pending=sum(s.status == "pending" for s in group),
             decisions=sum(s.decisions for s in group),
             replacements=sum(s.replacements for s in group),
-            direct_replacements=sum(s.direct_replacements for s in group),
             preserved=sum(s.preserved for s in group),
             abstained=sum(s.abstained for s in group),
             retries=sum(max(0, s.attempts - 1) for s in group),

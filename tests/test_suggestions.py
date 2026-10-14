@@ -535,22 +535,6 @@ def test_a_decided_word_is_shown_with_the_dictation() -> None:
     assert json.loads(shown.words)[0]["spelling"] == "Keep"
 
 
-def test_a_choice_of_readings_writing_the_same_text_is_shown_as_one_of() -> None:
-    from entune.learning.inputs import DictionaryResult
-    from entune.processing.results import Selection
-    from tests.dictionary_samples import CLOUD
-
-    readings = (("b_cloud",), ("c_cloud",))
-    chosen = Selection(4, 9, ("b_cloud", "c_cloud"), "contextual", readings)
-    decided = batches.Snippet("s_1", "raw_speech", "the cloud", DictionaryResult((), (chosen,)))
-    (entry,) = json.loads(
-        view.build(dictionary(learned={"s/m": (CLOUD,)}), "s/m", [decided]).dictations
-    )
-    assert entry["decisions"] == [
-        {"heard": "cloud", "wrote": "cloud", "method": "contextual", "one_of": [["w2"], ["w3"]]}
-    ]
-
-
 def test_an_approved_direct_mapping_cannot_be_dropped() -> None:
     working = dictionary(learned={"s/m": (group("Entune", "dictim", direct=True),)})
     text = "open dictim"
@@ -592,7 +576,8 @@ def test_an_entry_whose_corrections_a_revision_took_away_is_removed() -> None:
 
 
 def test_a_capitals_correction_the_person_added_stays_when_a_reply_keeps_it() -> None:
-    from entune.dictionary.entries import Active, Candidate, Heard, Word
+    from entune.dictionary.entries import Candidate, Heard, Word
+    from tests.dictionary_samples import Active
 
     added = Active(
         (Word("a_anthropic", "Anthropic", "The AI company."),),

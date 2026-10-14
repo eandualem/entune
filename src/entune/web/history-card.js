@@ -144,13 +144,6 @@ function changesPanel(t) {
     }
     panel.append(block);
   }
-  if (t.correction?.status === "failed") {
-    const recover = node("button", "btn fill sm safe-copy", "Apply safe mappings and copy");
-    recover.type = "button";
-    recover.dataset.attempt = t.id;
-    recover.title = "Use only explicitly approved direct mappings. Ambiguous words stay original; history and already-pasted text are unchanged.";
-    panel.append(recover);
-  }
   return panel;
 }
 

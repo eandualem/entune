@@ -64,18 +64,6 @@ Entries = tuple[Heard, ...]
 
 
 @dataclass(frozen=True)
-class Active:
-    """What one speech model uses: its heard entries and the words they name."""
-
-    words: tuple[Word, ...] = ()
-    entries: Entries = ()
-    # Words a span may be matched to by sound or spelling (sounds.py), whatever the speech
-    # model: the names and terms, whose spelling is fixed. Ordinary words are matched only
-    # by their heard entries, since a sound-alike of one is usually another real word.
-    sounds: tuple[Word, ...] = ()
-
-
-@dataclass(frozen=True)
 class Dictionary:
     words: tuple[Word, ...] = ()
     pinned: Entries = ()
@@ -92,15 +80,6 @@ class Dictionary:
         learned one with the same text."""
         pinned = {key(h.text) for h in self.pinned}
         return (*self.pinned, *(h for h in self.learned_for(model) if key(h.text) not in pinned))
-
-    def active(self, model: str) -> Active:
-        entries = self.effective(model)
-        named = {c.word for h in entries for c in h.candidates}
-        return Active(
-            tuple(w for w in self.words if w.id in named),
-            entries,
-            tuple(w for w in self.words if w.casing == "fixed"),
-        )
 
 
 EMPTY = Dictionary()

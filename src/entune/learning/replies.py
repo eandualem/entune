@@ -377,8 +377,7 @@ def _check(evidence: Evidence, text: str, supplied: dict[str, str]) -> None:
 
 def occurrences(source: str, text: str) -> list[tuple[int, int]]:
     """Every whole-word occurrence of `text` in `source`, compared as validation compares.
-    Overlapping ones count too ("go go" twice in "go go go"), since the dictionary step
-    finds a match at every word (dictionary/matching.py); a lookahead tries every
+    Overlapping ones count too ("go go" twice in "go go go"); a lookahead tries every
     position, so a text that starts with punctuation (".NET") is found as well."""
     words = text.split()
     if not words:

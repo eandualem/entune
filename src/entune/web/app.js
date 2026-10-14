@@ -367,21 +367,6 @@ revealNewest();
 
 // Copy (click on the transcript) and re-transcribe, delegated so re-renders need no rebinding.
 historyList.addEventListener("click", async (e) => {
-  const recovery = e.target.closest(".safe-copy");
-  if (recovery) {
-    const card = recovery.closest(".card"), message = card.querySelector(".card-foot .status");
-    recovery.disabled = true;
-    try {
-      // WebKit only allows a clipboard write that starts in the click, so hand it the pending text.
-      const request = api(`/api/recordings/${card.dataset.id}/transcriptions/${recovery.dataset.attempt}/safe-copy`, { method: "POST" });
-      await navigator.clipboard.write([new ClipboardItem({ "text/plain": request.then((r) => new Blob([r.text], { type: "text/plain" })) })]);
-      copiedNewest(card);
-      const result = await request;
-      message.textContent = `Copied · ${result.replacements} direct mappings · ${result.unresolved} unresolved`;
-    } catch (err) { message.textContent = errorText(err); }
-    finally { recovery.disabled = false; }
-    return;
-  }
   const block = e.target.closest(".transcript, .failed, .copy-raw");
   if (block) {
     const card = block.closest(".card");

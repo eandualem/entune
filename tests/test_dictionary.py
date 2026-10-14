@@ -7,10 +7,9 @@ import pytest
 
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
-from entune.dictionary import matching
 from entune.dictionary.corrections import Correction, add_corrections
 from entune.dictionary.entries import Candidate, Dictionary, Heard, Word
-from tests.dictionary_samples import CLOUD, JEV, combine, dictionary, group
+from tests.dictionary_samples import CLOUD, JEV, dictionary, group
 
 
 def test_round_trip_keeps_words_once_and_entries_per_scope(tmp_path: Path) -> None:
@@ -20,12 +19,6 @@ def test_round_trip_keeps_words_once_and_entries_per_scope(tmp_path: Path) -> No
     assert dictionary_document.parse(dictionary_document.dumps(original)) == original
     assert dictionary_document.load(tmp_path / "missing") == Dictionary()
     assert len(original.words) == 6
-    jeff, gif, jif = matching.matches(original.active("other/model"), "Jeff GIF Jif")
-    assert {m.spelling for m in jeff.meanings} == {"Jev", "Jeff"}
-    assert {m.spelling for m in gif.meanings} == {"Jev", "GIF"}
-    assert {m.spelling for m in jif.meanings} == {"Jev", "GIF"}
-    assert not matching.matches(original.active("other/model"), "cloud")
-    assert len(matching.matches(original.active("local/small.en"), "cloud")[0].meanings) == 3
 
 
 def test_evidence_on_a_literal_candidate_is_dropped_on_load() -> None:
@@ -44,11 +37,6 @@ def test_pin_moves_one_heard_entry_and_words_stay_shared() -> None:
     assert [h.text for h in pinned.pinned] == ["Jeff"]
     assert [h.text for h in pinned.learned_for("one/model")] == ["GIF", "Jif", "Jev"]
     assert pinned.words == doc.words
-    other = matching.matches(pinned.active("two/model"), "Jeff GIF cloud")
-    assert [{m.spelling for m in o.meanings} for o in other] == [
-        {"Jev", "Jeff"},
-        {"Claude", "cloud"},
-    ]
     assert dictionary_document.parse(dictionary_document.dumps(pinned)) == pinned
     every = dictionary_changes.pin(doc, "one/model", None)
     assert [h.text for h in every.pinned] == ["Jeff", "GIF", "Jif", "Jev"]
@@ -60,8 +48,6 @@ def test_pin_moves_one_heard_entry_and_words_stay_shared() -> None:
 def test_a_pinned_entry_supersedes_and_absorbs_a_learned_one_with_the_same_text() -> None:
     claude = Heard("CLOUD", (Candidate("a_claude"),))
     doc = Dictionary(CLOUD.words, (claude,), {"m": CLOUD.entries})
-    (found,) = [m for m in matching.matches(doc.active("m"), "cloud")]
-    assert [w.id for w in found.meanings] == ["a_claude"]
     merged = dictionary_changes.pin(doc, "m", "cloud")
     assert merged.pinned[0].text == "CLOUD"
     assert [c.word for c in merged.pinned[0].candidates] == ["a_claude", "b_cloud", "c_cloud"]
@@ -151,89 +137,6 @@ def test_corrupt_references_duplicates_and_older_versions_are_rejected() -> None
         dictionary_document.parse("[]")
 
 
-def test_overlaps_keep_phrase_and_word_plans_with_original_offsets() -> None:
-    phrase = group("Agent Backbone", "agent back bone")
-    word = group("backbone", "back bone")
-    found = matching.matches(
-        combine(phrase, word), "😀 Restart agent back bone, then agentbackbone."
-    )
-    assert [(m.start, m.end) for m in found] == [(10, 25), (16, 25)]
-    (component,) = matching.components(found)
-    assert {
-        component.output("😀 Restart agent back bone, then agentbackbone.", p)
-        for p in component.interpretations
-    } == {"Agent Backbone", "agent backbone"}
-    selected = next(p for p in component.interpretations if p.choices[0].match.start == 16)
-    assert (
-        matching.apply(
-            "😀 Restart agent back bone, then agentbackbone.",
-            selected.edits("😀 Restart agent back bone, then agentbackbone."),
-        )
-        == "😀 Restart agent backbone, then agentbackbone."
-    )
-    merged = group("Agent Backbone", "agentbackbone")
-    assert matching.matches(merged, "agentbackbone")[0].end == 13
-    with pytest.raises(ValueError, match="disjoint"):
-        matching.apply("text", (matching.Edit(0, 3, "a"), matching.Edit(2, 4, "b")))
-
-
-def test_rendering_preserves_literal_casing_number_punctuation_and_unicode() -> None:
-    found = matching.matches(CLOUD, "Cloud storage, cloud weather. cloudy clouds")
-    assert len(found) == 2
-    assert (
-        matching.render("Cloud storage, cloud weather. cloudy clouds", found[0], CLOUD.words[1])
-        == "Cloud"
-    )
-    terms = group("em dashes", "M dashes")
-    terms = replace(terms, words=(replace(terms.words[0], casing="ordinary"),))
-    text = "Use M dashes. M dashes here."
-    edits = tuple(
-        matching.Edit(m.start, m.end, matching.render(text, m, m.meanings[0]))
-        for m in matching.matches(terms, text)
-    )
-    assert matching.apply(text, edits) == "Use em dashes. Em dashes here."
-    term = group("GitHub", "git hub")
-    text = "git hub's releases"
-    match = matching.matches(term, text)[0]
-    assert (
-        matching.apply(text, (matching.Edit(match.start, match.end, "GitHub"),))
-        == "GitHub's releases"
-    )
-    assert len(matching.matches(group("Istanbul", "istanbul"), "İstanbul")) == 1
-
-
-def test_direct_policy_is_never_inferred_and_competitors_or_overlaps_disable_it() -> None:
-    unapproved = group("Entune", "dictim")
-    approved = group("Entune", "dictim", direct=True)
-    for active in [unapproved, combine(approved, group("Other", "dictim"))]:
-        (component,) = matching.components(matching.matches(active, "dictim"))
-        assert component.direct_choice("dictim") is None
-    (component,) = matching.components(matching.matches(approved, "dictim"))
-    assert component.direct_choice("dictim") is not None
-    both = combine(group("Phrase", "dictim app", direct=True), approved)
-    (component,) = matching.components(matching.matches(both, "dictim app"))
-    assert component.direct_choice("dictim app") is None
-
-
-def test_large_overlap_abstains_without_truncating_a_candidate() -> None:
-    many = combine(*(group(f"Term{i}", "sound") for i in range(33)))
-    (component,) = matching.components(matching.matches(many, "sound"))
-    assert len(component.matches[0].meanings) == 33 and not component.interpretations
-
-
-def test_large_dictionary_lookup_remains_indexed_and_cached() -> None:
-    import time
-
-    active = combine(*(group(f"Term{i}", f"word{i} thing") for i in range(10_000)))
-    text = " ".join(f"word{i} thing and filler" for i in range(0, 10_000, 500))
-    started = time.monotonic()
-    assert len(matching.matches(active, text)) == 20
-    assert time.monotonic() - started < 2.0
-    started = time.monotonic()
-    assert len(matching.matches(active, text)) == 20
-    assert time.monotonic() - started < 0.1
-
-
 def test_confirmed_agent_boundary_is_idempotent_and_does_not_grant_precedence() -> None:
     doc, added = add_corrections(
         dictionary(learned={"m": (JEV,)}), (Correction("Jev", "A model.", ("Jeff",)),)
@@ -247,11 +150,6 @@ def test_confirmed_agent_boundary_is_idempotent_and_does_not_grant_precedence() 
     ]
     again, added = add_corrections(doc, (Correction("jev", heard=("JEFF",)),))
     assert not added and again == doc
-    # The pinned entry supersedes the learned one with the same text.
-    assert {w.spelling for w in matching.matches(doc.active("m"), "Jeff")[0].meanings} == {
-        "Jev",
-        "Jeff",
-    }
     # A phrase given twice in other capitals is one entry.
     twice, _ = add_corrections(
         Dictionary(), (Correction("Groq", "a model host", ("grok", "GROK")),)
@@ -278,14 +176,6 @@ def test_confirmed_agent_boundary_is_idempotent_and_does_not_grant_precedence() 
     # A term only learned so far is pinned with its own spelling, for every speech model.
     pinned, added = add_corrections(doc, (Correction("GIF"),))
     assert added == (Correction("GIF"),) and pinned.pinned[-1].text == "GIF"
-    assert matching.matches(pinned.active("other/model"), "gif")[0].meanings[0].id == "c_gif"
-
-
-def test_index_folds_case_as_widely_as_the_matching_regex() -> None:
-    sigma, final_sigma, micro, capital_mu = "\u03c3", "\u03c2", "\u00b5", "\u039c"
-    active = combine(group("Sigma", sigma), group("Micro", micro), group("Street", "stra\u00dfe"))
-    found = matching.matches(active, f"{final_sigma} {capital_mu} STRASSE")
-    assert [(m.start, m.end) for m in found] == [(0, 1), (2, 3)]
 
 
 def test_agent_edits_follow_the_pages_rules() -> None:
