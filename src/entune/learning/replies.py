@@ -133,7 +133,7 @@ def parse_reply(
         if not spelling:
             raise ValueError(f"Word {label} needs a spelling")
         meaning = _meaning(item["meaning"], spelling)
-        evidence = _evidence(item["evidence"], spelling, shown, supplied)
+        evidence = _evidence(item["evidence"], Word("", spelling, meaning), shown, supplied)
         same = _same(spelling, meaning, item["casing"], tuple(words.values()))
         if same is None:
             # Not confirmed until applied, so a later part of the run can still refine it.
@@ -175,18 +175,20 @@ def parse_reply(
             raise ValueError(f"List each shown word's uses at most once: {item['word']}")
         noted.add(shown_id)
         word = words[shown_id]
-        evidence = _evidence(item["evidence"], word.spelling, shown, supplied)
+        evidence = _evidence(item["evidence"], word, shown, supplied)
         words[shown_id] = replace(word, evidence=tuple(dict.fromkeys((*word.evidence, *evidence))))
     return dictionary_document.validate(Dictionary(tuple(words.values())))
 
 
 def _evidence(
-    items: list[dict[str, Any]], spelling: str, shown: view.View, supplied: dict[str, str]
+    items: list[dict[str, Any]], word: Word, shown: view.View, supplied: dict[str, str]
 ) -> tuple[Evidence, ...]:
     """Where the person used the word: each cited dictation, at the occurrence of the words
     cited there."""
     if not items:
-        raise ValueError(f"{spelling} needs evidence: a dictation here where the person used it")
+        raise ValueError(
+            f"{word.spelling} needs evidence: a dictation here where the person used it"
+        )
     found = []
     for item in items:
         label = item["dictation"]
@@ -198,9 +200,10 @@ def _evidence(
         spans = occurrences(text, said)
         if not spans:
             raise ValueError(f'"{said}" is not in {label}; quote the words as {label} writes them')
-        if not sounds_like(said, spelling):
+        if not sounds_like(said, word):
             raise ValueError(
-                f'"{said}" in {label} does not sound like {spelling}; cite where the person said it'
+                f'"{said}" in {label} does not sound like {word.spelling}; cite where the'
+                " person said it"
             )
         nth = item["occurrence"]
         if not 1 <= nth <= len(spans):
@@ -212,12 +215,13 @@ def _evidence(
     return tuple(dict.fromkeys(found))
 
 
-def sounds_like(said: str, spelling: str) -> bool:
-    """Whether words as written are the spelling, or close enough in sound to be a
-    misrecognition of it (dictionary/candidates.py's least similarity)."""
-    if key(said) == key(spelling):
+def sounds_like(said: str, word: Word) -> bool:
+    """Whether words as written are the word, or close enough in sound to be a
+    misrecognition of it, as it is spelled or said (dictionary/candidates.py's least
+    similarity)."""
+    if key(said) in {key(word.spelling), key(word.said_as or "")}:
         return True
-    index = pronounce.Index([pronounce.readings(spelling)])
+    index = pronounce.Index([candidates.forms(word)])
     return float(index.similarity(pronounce.readings(said))[0]) >= candidates.SIMILAR
 
 

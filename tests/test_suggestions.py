@@ -188,6 +188,11 @@ def test_uses_of_a_shown_word_are_recorded_with_it() -> None:
     with pytest.raises(ValueError, match="does not sound like"):
         wrong = [{"word": "w1", "evidence": [{"dictation": "d1", "text": "use", "occurrence": 1}]}]
         parse(reply(used=wrong), (text,), dictionary(stored))
+    # A word said otherwise than spelled is recognised as it is said.
+    nginx = word("nginx", said_as="engine x")
+    said = [{"word": "w1", "evidence": [{"dictation": "d1", "text": "engine x", "occurrence": 1}]}]
+    (found,) = parse(reply(used=said), ("use engine x here",), dictionary(nginx)).words
+    assert len(found.evidence) == 1
 
 
 def test_stored_words_are_reused_never_defined_again() -> None:

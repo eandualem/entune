@@ -1,10 +1,10 @@
 """What the suggestion model sees of the dictionary and the dictations.
 
 The model needs only what helps it judge words: the words a part's dictations bear on
-(written there, used there, or chosen there by the dictionary step), and each
-dictation's text. A part shows only those, so a request stays the same size however
-large the dictionary grows. Everything else (permanent IDs, evidence, casing, personal
-context) stays in the app: words and dictations get short labels (w1, d1), and
+(written there as spelled or said, used there, or chosen there by the dictionary step),
+and each dictation's text. A part shows only those, so a request stays the same size
+however large the dictionary grows. Everything else (permanent IDs, evidence, casing,
+personal context) stays in the app: words and dictations get short labels (w1, d1), and
 learning/replies.py maps a reply in the same compact shape back onto the stored
 dictionary.
 """
@@ -64,7 +64,7 @@ def build(working: Dictionary, snippets: Sequence[Any]) -> View:
         for w in working.words
         if w.id in chosen
         or any(e.source in here for e in w.evidence)
-        or any(occurs(text, w.spelling) for text in texts)
+        or any(occurs(text, w.spelling) or occurs(text, w.said_as or "") for text in texts)
     ]
     labels = {w.id: f"w{number}" for number, w in enumerate(shown, 1)}
     words = [
