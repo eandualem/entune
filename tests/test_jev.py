@@ -23,7 +23,7 @@ from entune.processing.results import Processed
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
-from tests.dictionary_samples import Active, document
+from tests.dictionary_samples import document
 from tests.test_server import StubProvider
 
 JEV = Word("a_jev", "Jev", "TypeSafe's contextual decision model.", "Used in Entune.")
@@ -408,7 +408,7 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
                 ).status_code
                 == 200
             )
-            client.put("/api/dictionary", json=document(Active((CLAUDE_CODE,))))
+            client.put("/api/dictionary", json=document(CLAUDE_CODE))
             attempt = client.post(
                 "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}
             ).json()["transcriptions"][0]
@@ -578,10 +578,7 @@ def test_final_write_failure_preserves_completed_stage_evidence(
                     ).status_code
                     == 200
                 )
-                assert (
-                    client.put("/api/dictionary", json=document(Active((CLAUDE_CODE,)))).status_code
-                    == 200
-                )
+                assert client.put("/api/dictionary", json=document(CLAUDE_CODE)).status_code == 200
                 recording = client.post(
                     "/api/recordings",
                     files={
@@ -749,9 +746,9 @@ def test_disabled_dictionary_does_not_read_broken_file_or_run_approved_mappings(
         service.close()
 
 
-@pytest.mark.parametrize("unreadable", ["format 2", "not a file"])
+@pytest.mark.parametrize("unreadable", ["a later format", "not a file"])
 def test_an_unreadable_dictionary_fails_only_its_own_step(tmp_path: Path, unreadable: str) -> None:
-    # A 0.4 dictionary (format 2) after upgrading, or one that cannot be opened.
+    # A dictionary from a later Entune after going back, or one that cannot be opened.
     with closing(Store(tmp_path)) as store:
         client = jev_client.Client(httpx.MockTransport(lambda _: httpx.Response(500)))
         service = Entune(store, [StubProvider()], jev_client=client)
@@ -759,8 +756,8 @@ def test_an_unreadable_dictionary_fails_only_its_own_step(tmp_path: Path, unread
         service.models.set_default_model("stub/good")
         service.settings.set_key("typesafe", "k")
         service.settings.set_processing(model="jev", dictionary=True, formatting=True)
-        if unreadable == "format 2":
-            (tmp_path / "dictionary.json").write_text('{"version": 2, "entries": []}')
+        if unreadable == "a later format":
+            (tmp_path / "dictionary.json").write_text('{"version": 5, "words": []}')
         else:
             (tmp_path / "dictionary.json").mkdir()
         saved: list[Processed] = []

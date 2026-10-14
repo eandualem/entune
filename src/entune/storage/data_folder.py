@@ -7,7 +7,7 @@ from pathlib import Path
 
 # What a data reset deletes: the database, audio, imported audio, the dictionary and
 # its automatic copies, downloaded models, the backups folder and the log (emptied).
-# A copy of the dictionary from its earlier format may still be there too. Nothing else
+# Copies of the dictionary from its earlier formats may still be there too. Nothing else
 # is touched.
 MANAGED = frozenset(
     {
@@ -20,7 +20,7 @@ MANAGED = frozenset(
         "backups",
     }
 )
-MANAGED_PATTERNS = ("dictionary.pre-v2-*.json",)
+MANAGED_PATTERNS = ("dictionary.pre-v2-*.json", "dictionary.pre-v4-*.json")
 LOG = "entune.log"
 
 
