@@ -273,11 +273,12 @@ class Parakeet:
 
     def score_kept(self, kept: int, requests: Sequence[ScoreRequest]) -> list[list[float] | None]:
         """Each request's candidates scored against the transcription the helper keeps
-        under `kept`; an OSError when it no longer does (another model was chosen, or the
-        helper stopped), as when the helper fails."""
+        under `kept`; None for each when it no longer does (another model was chosen and
+        the helper stopped, or newer audio took its place). An OSError when the helper
+        fails."""
         with self._lock:
             if self._helper is None or self._helper.poll() is not None or not self._loaded:
-                raise OSError("Parakeet's helper has stopped since it transcribed this")
+                return [None] * len(requests)  # the helper that heard it has stopped
             spans = [
                 {"start": r.start, "end": r.end, "heard": r.heard, "candidates": list(r.candidates)}
                 for r in requests

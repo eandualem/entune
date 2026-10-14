@@ -18,6 +18,8 @@ from entune.processing.results import Processed, Selection, Stage, pending
 from entune.processing.text_edits import Change
 from entune.providers.contracts import Scorer, ScoreRequest
 
+_log = logging.getLogger(__name__)
+
 # A long text asks more and answers slower: past LONG_CHARS characters, the time limits
 # grow by half for every LONG_CHARS more, up to LONG_FACTOR times the settings. Measured
 # in October 2026, formatting's median grew from 0.4 s under 500 characters to 1.8 s at
@@ -139,7 +141,7 @@ def _correction(
     audio: Scorer | None = None,
 ) -> Stage:
     try:
-        checked = None if audio is None else _TextIfFailed(audio)
+        checked = None if audio is None else _AudioCheck(audio, call)
         places = candidates.find(raw, words, vocabulary, checked)
         decisions = jev.decide(raw, places, call, run=run)
     except CancelledError:
@@ -170,21 +172,42 @@ def _correction(
     )
 
 
-class _TextIfFailed:
-    """An audio check that cannot be made (the speech model no longer holds the recording,
-    or its helper failed) leaves the text to decide, as for other speech models."""
+class _AudioCheck:
+    """The speech model's audio check, within the stage's deadline and cancel. A check
+    that fails or is not done in time leaves the text to decide, and is logged; a cancel
+    stops the stage. A check left running finishes on its own and its answer is dropped."""
 
-    def __init__(self, audio: Scorer) -> None:
-        self._audio = audio
+    def __init__(self, audio: Scorer, call: jev_client.Call) -> None:
+        self._audio, self._call = audio, call
 
     def score(self, requests: Sequence[ScoreRequest]) -> Sequence[Sequence[float] | None]:
-        try:
-            return self._audio.score(requests)
-        except CancelledError:
-            raise
-        except Exception as exc:
-            logging.getLogger(__name__).warning("Audio check not made, text only: %s", exc)
-            return [None] * len(requests)
+        unchecked: list[Sequence[float] | None] = [None] * len(requests)
+        if time.monotonic() >= self._call.deadline:
+            return unchecked
+        done = threading.Event()
+        answers: list[Sequence[Sequence[float] | None]] = []
+        failed: list[Exception] = []
+
+        def check() -> None:
+            try:
+                answers.append(self._audio.score(requests))
+            except Exception as exc:
+                failed.append(exc)
+            finally:
+                done.set()
+
+        threading.Thread(target=check, daemon=True, name="entune-audio-check").start()
+        cancel = self._call.cancel
+        while not done.wait(0.05):
+            if cancel is not None and cancel.is_set():
+                raise CancelledError()
+            if time.monotonic() >= self._call.deadline:
+                _log.warning("Audio check not done in time, text only")
+                return unchecked
+        if failed:
+            _log.warning("Audio check not made, text only: %s", failed[0])
+            return unchecked
+        return answers[0]
 
 
 def _classify(

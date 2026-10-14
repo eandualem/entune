@@ -38,7 +38,7 @@ def test_helper_caps_and_clears_gpu_cache_on_success_and_failure(
             '{"op":"transcribe","path":"test.wav","keep":1}\n'
             '{"op":"transcribe","path":"test.wav","keep":2}\n'
             '{"op":"score","keep":1,"spans":[]}\n'
-            '{"op":"score","keep":2,"spans":[]}\n'
+            '{"op":"score","keep":2,"spans":[{"start":0,"end":1,"heard":"a","candidates":["b"]}]}\n'
         ),
     )
     helper.main()
@@ -49,7 +49,7 @@ def test_helper_caps_and_clears_gpu_cache_on_success_and_failure(
         '{"text": "hello", "words": [["hello", 0.1, 0.4, 0.97]]}',
         '{"error": "RuntimeError: failed"}',
         '{"scores": [[2.5]]}',
-        '{"error": "LookupError: this recording\'s audio is no longer kept"}',
+        '{"scores": [null]}',  # never kept: it holds no span
     ]
     assert score.call_args.args[2].text == "hello"  # the transcription kept as 1
 

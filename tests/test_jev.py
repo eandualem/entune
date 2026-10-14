@@ -5,7 +5,7 @@ import json
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import CancelledError, ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -375,6 +375,52 @@ def test_an_audio_check_that_fails_leaves_the_text_to_decide(
         )
     assert result.text == "Ask Jev today." and result.correction.status == "succeeded"
     assert "Audio check not made, text only: Parakeet's helper has stopped" in caplog.text
+
+
+def test_an_audio_check_is_bounded_by_the_stages_time_and_cancel(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    release = threading.Event()
+
+    class Slow:
+        def score(self, requests: Sequence[ScoreRequest]) -> list[list[float]]:
+            release.wait(5)
+            return [[0.0] * len(r.candidates) for r in requests]
+
+    heard = [("Ask", 0.0, 0.3, 1.0), ("Jeff", 0.4, 0.7, 0.5), ("today.", 0.8, 1.1, 1.0)]
+    try:
+        with closing(jev_client.Client(httpx.MockTransport(lambda r: httpx.Response(500)))) as c:
+            started = time.monotonic()
+            result = process_text(
+                "Ask Jeff today.",
+                WORDS,
+                contextual=True,
+                formatting=False,
+                key="ts-key",
+                client=c,
+                policy=jev_client.Policy(total_seconds=0.3, attempt_seconds=0.3),
+                words=heard,
+                audio=Slow(),
+            )
+            assert time.monotonic() - started < 2 and result.text == "Ask Jeff today."
+            assert "Audio check not done in time" in caplog.text
+            cancel = threading.Event()
+            cancel.set()
+            with pytest.raises(CancelledError):
+                process_text(
+                    "Ask Jeff today.",
+                    WORDS,
+                    contextual=True,
+                    formatting=False,
+                    key="ts-key",
+                    client=c,
+                    policy=jev_client.Policy(),
+                    words=heard,
+                    audio=Slow(),
+                    cancel=cancel,
+                )
+    finally:
+        release.set()
 
 
 def test_the_speech_models_audio_reaches_the_dictionary_step(

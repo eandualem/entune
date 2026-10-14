@@ -289,6 +289,5 @@ def test_a_transcript_is_scored_against_the_audio_its_helper_keeps(
     spans = [{"start": 0.4, "end": 0.7, "heard": "Jeff", "candidates": ["Jev", "Jeff's"]}]
     assert asked[0]["keep"] == 1 and asked[1:] == [{"op": "score", "keep": 1, "spans": spans}]
     assert not parakeet_module._scores(spans, [[1.5]])  # one score short: an invalid answer
-    parakeet._helper = None  # another model was chosen: the audio is gone
-    with pytest.raises(OSError, match="stopped"):
-        result.audio.score([ScoreRequest(0.0, 0.3, "Ask", ("Axe",))])
+    parakeet._helper = None  # another model was chosen: the audio is gone, not failed
+    assert result.audio.score([ScoreRequest(0.0, 0.3, "Ask", ("Axe",))]) == [None]

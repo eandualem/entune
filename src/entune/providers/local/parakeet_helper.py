@@ -11,7 +11,8 @@ its mel front end are used directly.
 
 The audio check. A transcription asked with "keep" is kept, its encoder output and
 tokens, for the newest KEEP_SECONDS of audio. {"op": "score"} then says, for each span
-of it, how much likelier the audio is with the span's text replaced by each candidate:
+of it (None when it is no longer kept, or the span is not found in it), how much likelier
+the audio is with the span's text replaced by each candidate:
 log P(audio | candidate) - log P(audio | the text heard), each a TDT forward sum over
 the span's audio and CONTEXT_SECONDS on each side. The text heard is scored with the
 model's own tokens, a candidate with the best of its tokenisations. The encoder output
@@ -663,10 +664,11 @@ def main() -> None:
                 if model is None:
                     raise RuntimeError("model not loaded")
                 found = kept.get(request["keep"])
-                if found is None:
-                    raise LookupError("this recording's audio is no longer kept")
-                tokenizer = tokenizer or Tokenizer(list(model.vocabulary))
-                answer = {"scores": score(model, tokenizer, found, request["spans"])}
+                if found is None:  # no longer kept: it holds none of the spans
+                    answer = {"scores": [None] * len(request["spans"])}
+                else:
+                    tokenizer = tokenizer or Tokenizer(list(model.vocabulary))
+                    answer = {"scores": score(model, tokenizer, found, request["spans"])}
             else:
                 answer = {"error": f"unknown op {request['op']}"}
         except Exception as exc:  # the answer carries it; the process stays up
