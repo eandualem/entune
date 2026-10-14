@@ -1,0 +1,1 @@
+$recognized means $recognized: Exactly the words "$recognized" as written, or a word not listed here.

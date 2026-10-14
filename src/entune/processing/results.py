@@ -20,7 +20,6 @@ class Stage:
     attempts: int = 0
     decisions: int = 0
     replacements: int = 0
-    direct_replacements: int = 0
     preserved: int = 0
     abstained: int = 0
     error: str | None = None
@@ -42,10 +41,8 @@ class Stage:
 class Selection:
     start: int
     end: int
-    meaning_ids: tuple[str, ...]
+    meaning_ids: tuple[str, ...]  # several when they write the same text, any one meant
     method: str
-    # Several readings that write the same text, any one of them meant (jev.Decision).
-    readings: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -62,14 +59,13 @@ def pending(
     contextual: bool,
     formatting: bool,
     cleanup: bool = False,
-    direct: bool = False,
     model: str | None = None,
 ) -> Processed:
     """Each enabled step, not yet run, with the decision model it will ask, if any."""
     return Processed(
         raw,
         Stage(
-            "pending" if contextual or direct else "disabled",
+            "pending" if contextual else "disabled",
             "contextual" if contextual else "deterministic",
             model=model if contextual else None,
         ),

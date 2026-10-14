@@ -83,14 +83,14 @@ def transcription_from_row(row: sqlite3.Row) -> Transcription:
             )
             stage["selections"] = tuple(
                 Selection(
-                    **{
-                        **selection,
-                        "meaning_ids": tuple(selection["meaning_ids"]),
-                        "readings": tuple(map(tuple, selection.get("readings", ()))),
-                    }
+                    selection["start"],
+                    selection["end"],
+                    tuple(selection["meaning_ids"]),
+                    selection["method"],
                 )
                 for selection in stage.get("selections", ())
             )
+            stage.pop("direct_replacements", None)  # counted by an older dictionary
             fields[name] = Stage(**stage)
         else:
             fields[name] = None

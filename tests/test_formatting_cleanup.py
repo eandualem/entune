@@ -8,7 +8,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from entune.app.entune import Entune
-from entune.dictionary.entries import Active
+from entune.dictionary.candidates import Vocabulary
 from entune.processing import cleanup, formatting, jev, jev_client, text_edits
 from entune.processing.pipeline import _combine, process_text
 from entune.processing.results import Processed, Stage, notice
@@ -17,7 +17,7 @@ from entune.providers.contracts import Transcript
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
-from tests.dictionary_samples import JEV, document
+from tests.dictionary_samples import JEV, Active, document
 from tests.test_jev import answering, call
 from tests.test_server import StubProvider
 
@@ -53,7 +53,7 @@ def test_a_spoken_ordinal_goes_even_when_a_filler_follows_it() -> None:
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             raw,
-            Active(),
+            Vocabulary(()),
             contextual=False,
             formatting=True,
             cleanup=True,
@@ -81,7 +81,7 @@ def test_a_number_another_stage_keeps_out_leaves_its_ordinal_as_said() -> None:
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             raw,
-            Active(),
+            Vocabulary(()),
             contextual=False,
             formatting=True,
             cleanup=True,
@@ -231,7 +231,7 @@ def test_fillers_are_removed_and_repeats_keep_their_first_occurrence() -> None:
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             raw,
-            Active(),
+            Vocabulary(()),
             contextual=False,
             formatting=False,
             cleanup=True,
@@ -317,7 +317,7 @@ def test_meaningful_and_uncertain_repetition_survives() -> None:
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             raw,
-            Active(),
+            Vocabulary(()),
             contextual=False,
             formatting=False,
             cleanup=True,
@@ -340,7 +340,7 @@ def test_cleanup_is_opt_in_and_invalid_answers_preserve_stage_input() -> None:
     with closing(jev_client.Client(httpx.MockTransport(malformed))) as client:
         off = process_text(
             raw,
-            Active(),
+            Vocabulary(()),
             contextual=False,
             formatting=False,
             key="ts-key",
@@ -350,7 +350,7 @@ def test_cleanup_is_opt_in_and_invalid_answers_preserve_stage_input() -> None:
         assert off.text == raw and off.cleanup.status == "disabled" and not requests
         result = process_text(
             raw,
-            Active(),
+            Vocabulary(()),
             contextual=False,
             formatting=False,
             cleanup=True,
@@ -386,7 +386,7 @@ def test_a_failed_stage_keeps_its_edits_out_and_the_other_applies(failure: str) 
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
             "Um um first item. Second item.",
-            Active(),
+            Vocabulary(()),
             contextual=False,
             formatting=True,
             cleanup=True,
@@ -455,7 +455,7 @@ def test_a_finished_stage_is_saved_before_the_others_end_and_kept_on_cancel() ->
     ):
         process_text(
             "Um, first. Second.",
-            Active(),
+            Vocabulary(()),
             contextual=False,
             formatting=True,
             cleanup=True,
@@ -483,7 +483,7 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
             if "hesitation" in question["criteria"]
             else {"list_item": 1.0}
             if "list_item" in question["criteria"]
-            else {"i0": 1.0}
+            else {"i1": 1.0}
         )
     )
 
@@ -513,10 +513,7 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
                 == 200
             )
             assert (
-                client.put(
-                    "/api/dictionary",
-                    json=document(JEV),
-                ).status_code
+                client.put("/api/dictionary", json=document(Active(JEV.words[:1]))).status_code
                 == 200
             )
             result = client.post(

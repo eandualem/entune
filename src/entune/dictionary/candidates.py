@@ -31,6 +31,7 @@ import re
 from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import Protocol
 
 from entune.dictionary import pronounce
@@ -150,6 +151,16 @@ class Candidate:
     homophone: bool
     delta: float | None = None  # the audio score, when checked
 
+    def written(self, text: str) -> str:
+        """What the word writes in place of its span of `text`: a fixed spelling as it is, an
+        ordinary word with a capital at the start of a sentence."""
+        spelling = self.word.spelling
+        if self.word.casing == "ordinary" and re.search(
+            r"(?:^|[.!?\n])\s*[\"'\u201c\u2018(\[]*$", text[: self.start]
+        ):
+            return spelling[:1].upper() + spelling[1:]
+        return spelling
+
 
 @dataclass(frozen=True)
 class Place:
@@ -208,6 +219,12 @@ class Vocabulary:
                 self._seen.clear()
             self._seen[(text, words)] = found
         return found
+
+
+@lru_cache(maxsize=4)
+def vocabulary(words: tuple[Word, ...]) -> Vocabulary:
+    """The vocabulary of these words, built once while the dictionary stays the same."""
+    return Vocabulary(words)
 
 
 def forms(word: Word) -> tuple[pronounce.Phones, ...]:

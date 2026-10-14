@@ -12,13 +12,17 @@ import pytest
 from starlette.testclient import TestClient
 
 from entune.app.entune import Entune
+from entune.dictionary.candidates import Vocabulary
+from entune.dictionary.entries import Word
 from entune.processing import laya as laya_module
 from entune.processing.laya import Laya
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
-from tests.dictionary_samples import dictionary, group
 from tests.test_server import StubProvider
+
+ENTUNE = Word("a_entune", "Entune", "The dictation app.")
+JEV = Word("a_jev", "Jev", "TypeSafe's contextual decision model.")
 
 # Stands in for the `laya` package's server: the same environment, health check and
 # System One answers (the first option of each question), without PyTorch.
@@ -253,12 +257,10 @@ def test_meaning_questions_go_to_the_chosen_endpoint(
     laya.start()
     try:
         wait_until(lambda: laya.status()[0] == "ready")
-        found = (group("Entune", "victim"), group("Jev", "Jeff"))
-        groups = dictionary(learned={"s/m": found}).active("s/m")
         with closing(jev_client.Client()) as client:
             result = process_text(
-                "Open victim now. Then ask Jeff.",
-                groups,
+                "Open in tune now. Then ask Jeff.",
+                Vocabulary([ENTUNE, JEV]),
                 contextual=True,
                 formatting=False,
                 key="ts-key",  # a saved TypeSafe key never goes to Laya
@@ -342,7 +344,6 @@ def test_model_and_step_changes_are_checked_and_applied_together(
 def test_more_questions_than_laya_takes_are_asked_in_batches(
     tmp_path: Path, fake_engine: Path
 ) -> None:
-    from entune.dictionary import entries
     from entune.processing import jev_client
     from entune.processing.pipeline import process_text
 
@@ -353,7 +354,7 @@ def test_more_questions_than_laya_takes_are_asked_in_batches(
         with closing(jev_client.Client()) as client:
             result = process_text(
                 " ".join(["Um, do it."] * 70),
-                entries.Dictionary().active("s/m"),
+                Vocabulary(()),
                 contextual=False,
                 formatting=False,
                 cleanup=True,
@@ -400,13 +401,10 @@ def test_openai_is_asked_the_same_questions_in_its_own_shape_on_the_openai_key(
             )
         return httpx.Response(200, json={"answers": answers})
 
-    jev = group("Jev", "Jeff", literal="Jeff: a person's first name.")
-    one = group("Entune", "in tune")  # a single meaning: OpenAI refuses one-option questions
-    groups = dictionary(learned={"s/m": (jev, one)}).active("s/m")
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
             "Then ask Jeff about in tune.",
-            groups,
+            Vocabulary([ENTUNE, JEV]),
             contextual=True,
             formatting=False,
             key="sk-openai",
@@ -415,16 +413,15 @@ def test_openai_is_asked_the_same_questions_in_its_own_shape_on_the_openai_key(
             endpoint=jev_client.OPENAI,
         )
     assert result.correction.status == "succeeded" and result.correction.model == "openai"
-    # OpenAI's choice is applied (the stub picks the last option, the literal Jeff), and
-    # the one-option occurrence is answered with its only option, without asking.
-    assert result.correction.output == "Then ask Jeff about Entune."
+    # OpenAI's choice is applied: the stub picks the last option, the word offered.
+    assert result.correction.output == "Then ask Jev about Entune."
     [request] = asked
     assert str(request.url) == "https://api.openai.com/v1/decisions"
     assert request.headers["authorization"] == "Bearer sk-openai"
     body = json.loads(request.content)
     assert body["model"] == "gpt-6-luna" and isinstance(body["input"], str)
     assert json.loads(body["input"])["occurrences"]["o0"] == "Then ask ⟦Jeff⟧ about ⟨in tune⟩."
-    [question] = body["questions"]
+    question, _ = body["questions"]
     assert question["type"] == "choice" and question["name"] == "o0"
     assert "Jeff" in question["instructions"]
     assert len(question["choices"]) == 2
@@ -470,12 +467,10 @@ def test_perplexity_is_asked_in_typesafes_shape_with_text_instructions(tmp_path:
             }
         return httpx.Response(200, json={"answers": answers, "usage": {"input_tokens": 1}})
 
-    jev = group("Jev", "Jeff", literal="Jeff: a person's first name.")
-    groups = dictionary(learned={"s/m": (jev,)}).active("s/m")
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
             "Then ask Jeff.",
-            groups,
+            Vocabulary([JEV]),
             contextual=True,
             formatting=False,
             key="pplx-key",

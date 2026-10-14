@@ -2,11 +2,19 @@
 
 import json
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 from entune.dictionary import document as dictionary_document
-from entune.dictionary.entries import Active, Candidate, Dictionary, Heard, Word, key
+from entune.dictionary.entries import Candidate, Dictionary, Entries, Heard, Word, key
+
+
+@dataclass(frozen=True)
+class Active:
+    """Words and the heard entries that name them, as one sample."""
+
+    words: tuple[Word, ...] = ()
+    entries: Entries = ()
 
 
 def group(spelling: str, heard: str, *, literal: str | None = None, direct: bool = False) -> Active:

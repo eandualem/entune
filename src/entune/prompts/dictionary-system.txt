@@ -27,8 +27,7 @@ words and each candidate's meaning, picks one, and the app writes that word's sp
 When a dictation shows what the dictionary did ("after_dictionary", "decisions"), judge
 those choices against what the person meant: a wrong choice calls for a clearer meaning,
 the heard text's own word as a candidate, or a candidate removed. A decision lists the
-"words" it chose, or, under "one_of", readings that all write the same text, any one of
-which was meant.
+"words" it chose: several when they write the same text, any one of which was meant.
 
 ## Rules
 

@@ -15,24 +15,32 @@ import pytest
 from starlette.testclient import TestClient
 
 from entune.app.entune import Entune
-from entune.dictionary import changes as dictionary_changes
-from entune.dictionary import entries as dictionary_entries
-from entune.dictionary import matching
+from entune.dictionary.candidates import Candidate, Place, Vocabulary
+from entune.dictionary.entries import Word
 from entune.processing import jev, jev_client, text_edits
 from entune.processing.pipeline import process_text, scaled
 from entune.processing.results import Processed
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
-from tests.dictionary_samples import JEV, combine, dictionary, document, group
+from tests.dictionary_samples import Active, document
 from tests.test_server import StubProvider
 
-CLAUDE_CODE = group("Claude Code", "cloud code", literal="Program code for cloud infrastructure.")
-GROUPS = combine(JEV, CLAUDE_CODE, group("Entune", "victim"))
+JEV = Word("a_jev", "Jev", "TypeSafe's contextual decision model.", "Used in Entune.")
+GIF = Word("c_gif", "GIF", "An image format for still or animated images.")
+CLAUDE_CODE = Word("a_claudecode", "Claude Code", "The named tool Claude Code.")
+WORDS = Vocabulary([JEV, GIF])
 
 
-def matches(active: dictionary_entries.Active, text: str) -> list[matching.Component]:
-    return matching.components(matching.matches(active, text))
+def place(text: str, heard: str, *words: Word, after: int = 0) -> Place:
+    """The first `heard` in `text` from `after` on, offering `words` there."""
+    start = text.index(heard, after)
+    end = start + len(heard)
+    return Place(start, end, tuple(Candidate(start, end, w, 0.9, False) for w in words))
+
+
+def jeff() -> list[Place]:
+    return [place("Jeff", "Jeff", JEV)]
 
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -76,39 +84,40 @@ def call(client: jev_client.Client, policy: jev_client.Policy | None = None) -> 
     return jev_client.Call(client, "ts-key", policy, time.monotonic() + policy.total_seconds)
 
 
-@pytest.mark.parametrize("pinned", [False, True])
-def test_decide_selects_literal_or_term_from_original_context(pinned: bool) -> None:
-    text = "My colleague Jeff called. Use Jeff to classify. Send the animated GIF."
-    requests, handler = answering(
-        lambda name, _: {"i1": 1.0} if name in ("o0", "o2") else {"i0": 1.0}
-    )
+def test_each_place_is_one_question_with_the_words_as_written_first() -> None:
+    text = "My colleague Jeff called. Use Jeff to classify. Send the animated Jif."
+    places = [
+        place(text, "Jeff", JEV),
+        place(text, "Jeff", JEV, after=20),
+        place(text, "Jif", JEV, GIF),
+    ]
+    answers = {"o0": {"i0": 1.0}, "o1": {"i1": 1.0}, "o2": {"i2": 1.0}}
+    requests, handler = answering(lambda name, _: answers[name])
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         context = call(client)
-        doc = dictionary(learned={"speech/model": (GROUPS,)})
-        if pinned:
-            doc = dictionary_changes.pin(doc, "speech/model", "Jeff")
-        decisions = jev.decide(text, matches(doc.active("speech/model"), text), context)
-        edits = tuple(d.edit for d in decisions if d.edit)
+        decisions = jev.decide(text, places, context)
+        changes = tuple(d.change for d in decisions if d.change)
         assert (
-            matching.apply(text, edits)
+            text_edits.apply(text, changes)
             == "My colleague Jeff called. Use Jev to classify. Send the animated GIF."
         )
+        assert [d.meaning_ids for d in decisions] == [(), ("a_jev",), ("c_gif",)]
         assert context.attempts == 1 and context.decisions == 3
         assert jev.decide(text, [], call(client)) == []
-    # Only the local text is state, the other questions' words marked; each option states
-    # its own meaning, without ID hops.
+    # Only the local text is state, the other places marked; each option states its own
+    # meaning, without ID hops.
     state = requests[0]["state"]
     assert set(state) == {"occurrences"}
     assert state["occurrences"]["o1"] == (
         "My colleague \u27e8Jeff\u27e9 called. Use \u27e6Jeff\u27e7 to classify."
-        " Send the animated \u27e8GIF\u27e9."
+        " Send the animated \u27e8Jif\u27e9."
     )
     question = requests[0]["questions"]["o1"]
     assert "Jeff" in question["instructions"]["question"]
     assert question["criteria"] == {
-        "i0": "Jeff means Jev: TypeSafe's contextual decision model."
+        "i0": 'Jeff means Jeff: Exactly the words "Jeff" as written, or a word not listed here.',
+        "i1": "Jeff means Jev: TypeSafe's contextual decision model."
         " Personal usage: Used in Entune.",
-        "i1": "Jeff means Jeff: A person's given name.",
     }
 
 
@@ -145,10 +154,10 @@ def test_transient_retry_reuses_client_and_nonretryable_answers_stop() -> None:
 
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         context = call(client)
-        jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
+        jev.decide("Jeff", jeff(), context)
         assert context.attempts == 2 and len(requests) == 1
         pool = client._http
-        jev.decide("Jeff", matches(GROUPS, "Jeff"), call(client))
+        jev.decide("Jeff", jeff(), call(client))
         assert client._http is pool
     assert pool is not None and pool.is_closed
 
@@ -167,7 +176,7 @@ def test_transient_retry_reuses_client_and_nonretryable_answers_stop() -> None:
         with closing(jev_client.Client(httpx.MockTransport(reject))) as client:
             context = call(client)
             with pytest.raises(jev_client.JevError) as caught:
-                jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
+                jev.decide("Jeff", jeff(), context)
             assert "ts-key" not in str(caught.value)
             assert context.attempts == 1
 
@@ -190,7 +199,7 @@ def test_total_deadline_cancels_a_dripping_body_and_releases_the_socket() -> Non
         context = call(client, jev_client.Policy(total_seconds=0.15, attempt_seconds=1.0))
         started = time.monotonic()
         with pytest.raises(jev_client.JevError):
-            jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
+            jev.decide("Jeff", jeff(), context)
         elapsed = time.monotonic() - started
         assert 0.1 <= elapsed < 0.6
         assert closed.wait(0.3) and context.attempts == 1
@@ -256,7 +265,7 @@ def test_shutdown_cancels_inflight_work_and_rejects_new_requests() -> None:
 
     client = jev_client.Client(httpx.MockTransport(stalled))
     with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(jev.decide, "Jeff", matches(GROUPS, "Jeff"), call(client))
+        future = executor.submit(jev.decide, "Jeff", jeff(), call(client))
         assert entered.wait(1)
         started = time.monotonic()
         client.close()
@@ -264,7 +273,7 @@ def test_shutdown_cancels_inflight_work_and_rejects_new_requests() -> None:
         with pytest.raises(jev_client.JevError, match="shutting down"):
             future.result(timeout=1)
     with pytest.raises(jev_client.JevError, match="shutting down"):
-        jev.decide("Jeff", matches(GROUPS, "Jeff"), call(client))
+        jev.decide("Jeff", jeff(), call(client))
     client.close()
 
 
@@ -314,7 +323,7 @@ def test_correction_failure_keeps_its_words_and_the_other_stages_still_apply() -
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
             raw,
-            GROUPS,
+            WORDS,
             contextual=True,
             formatting=True,
             cleanup=True,
@@ -329,7 +338,7 @@ def test_correction_failure_keeps_its_words_and_the_other_stages_still_apply() -
         assert result.correction.replacements == 0 and len(seen) == 1
         missing = process_text(
             raw,
-            GROUPS,
+            WORDS,
             contextual=True,
             formatting=True,
             key=None,
@@ -345,12 +354,12 @@ def test_formatter_failure_preserves_successful_correction() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         if "sentences" in json.loads(request.content)["state"]:
             return httpx.Response(401, text="invalid key")
-        return answering(lambda *_: {"i0": 1.0})[1](request)
+        return answering(lambda *_: {"i1": 1.0})[1](request)
 
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         result = process_text(
             "Jeff is fast. Next topic.",
-            GROUPS,
+            WORDS,
             contextual=True,
             formatting=True,
             key="ts-key",
@@ -366,7 +375,7 @@ def test_formatter_failure_preserves_successful_correction() -> None:
 def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> None:
     store = Store(tmp_path)
     seen_pending = []
-    handler = answering(lambda *_: {"i0": 0.05, "i1": 0.95})[1]
+    handler = answering(lambda *_: {"i0": 0.95, "i1": 0.05})[1]
 
     def respond(request: httpx.Request) -> httpx.Response:
         current = store.list_recordings()[0].transcriptions[0]
@@ -399,10 +408,7 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
                 ).status_code
                 == 200
             )
-            client.put(
-                "/api/dictionary",
-                json=document(CLAUDE_CODE),
-            )
+            client.put("/api/dictionary", json=document(Active((CLAUDE_CODE,))))
             attempt = client.post(
                 "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}
             ).json()["transcriptions"][0]
@@ -412,7 +418,7 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
                 and attempt["correction"]["replacements"] == 0
             )
             assert seen_pending[-1] != store.history_version()
-            handler = answering(lambda *_: {"i0": 0.9, "i1": 0.1})[1]
+            handler = answering(lambda *_: {"i0": 0.1, "i1": 0.9})[1]
             attempt = client.post(
                 "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}
             ).json()["transcriptions"][0]
@@ -468,13 +474,13 @@ def test_all_three_stages_run_at_once_within_one_deadline() -> None:
         await asyncio.sleep(0.15)
         if "fillers" in state:
             return answering(lambda *_: {"hesitation": 1.0})[1](request)
-        return answering(lambda *_: {"i0": 1.0})[1](request)
+        return answering(lambda *_: {"i1": 1.0})[1](request)
 
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         started = time.monotonic()
         result = process_text(
             "Um um Jeff is fast. Next topic.",
-            GROUPS,
+            WORDS,
             contextual=True,
             formatting=True,
             cleanup=True,
@@ -500,11 +506,11 @@ def test_network_timeout_retries_but_honors_retry_after_dates() -> None:
         attempts += 1
         if attempts == 1:
             raise httpx.ReadTimeout("stalled ts-key")
-        return answering(lambda *_: {"i0": 1.0})[1](request)
+        return answering(lambda *_: {"i1": 1.0})[1](request)
 
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         context = call(client)
-        assert jev.decide("Jeff", matches(GROUPS, "Jeff"), context)[0].edit is not None
+        assert jev.decide("Jeff", jeff(), context)[0].change is not None
         assert context.attempts == 2
     from email.utils import formatdate
 
@@ -557,7 +563,7 @@ def test_final_write_failure_preserves_completed_stage_evidence(
 
         monkeypatch.setattr(store, "finish_processing", fail_final)
         with closing(
-            jev_client.Client(httpx.MockTransport(answering(lambda *_: {"i0": 1.0})[1]))
+            jev_client.Client(httpx.MockTransport(answering(lambda *_: {"i1": 1.0})[1]))
         ) as network:
             service = Entune(store, [StubProvider()], jev_client=network)
             with TestClient(create_app(service), base_url="http://localhost") as client:
@@ -573,10 +579,7 @@ def test_final_write_failure_preserves_completed_stage_evidence(
                     == 200
                 )
                 assert (
-                    client.put(
-                        "/api/dictionary",
-                        json=document(CLAUDE_CODE),
-                    ).status_code
+                    client.put("/api/dictionary", json=document(Active((CLAUDE_CODE,)))).status_code
                     == 200
                 )
                 recording = client.post(
@@ -599,12 +602,12 @@ def test_final_write_failure_preserves_completed_stage_evidence(
                 assert durable.correction.selections and durable.correction.changes
 
 
-def test_formatting_with_dictionary_disabled_does_not_apply_even_direct_mappings() -> None:
+def test_formatting_with_dictionary_disabled_asks_nothing_about_words() -> None:
     requests, handler = answering(lambda *_: {"list_item": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
         result = process_text(
             "Jeff is fast. Next topic.",
-            group("Jev", "Jeff", direct=True),
+            WORDS,
             contextual=False,
             formatting=True,
             key="ts-key",
@@ -618,45 +621,43 @@ def test_formatting_with_dictionary_disabled_does_not_apply_even_direct_mappings
     assert result.formatting.status == "succeeded" and result.formatting.decisions == 2
 
 
-def test_meanings_that_write_the_same_text_are_one_option() -> None:
-    from tests.dictionary_samples import CLOUD
-
-    requests, handler = answering(lambda *_: {"i0": 0.4, "i1": 0.6})
+def test_words_that_write_the_same_text_are_one_option() -> None:
+    remote = Word("b_cloud", "Cloud", "Remote computing infrastructure.")
+    sky = Word("c_cloud", "Cloud", "A visible cloud in the sky.")
+    claude = Word("a_claude", "Claude", "Anthropic's AI assistant.")
+    text = "Ask cloud here."
+    requests, handler = answering(lambda *_: {"i0": 0.1, "i1": 0.2, "i2": 0.7})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
-        decisions = jev.decide("Ask cloud here.", matches(CLOUD, "Ask cloud here."), call(client))
+        (decision,) = jev.decide(text, [place(text, "cloud", claude, remote, sky)], call(client))
     assert requests[0]["questions"]["o0"]["criteria"] == {
-        "i0": "cloud means Claude: Anthropic's AI assistant.",
-        "i1": "cloud means cloud: Remote computing infrastructure."
-        " Or: cloud means cloud: A visible cloud in the sky.",
+        "i0": 'cloud means cloud: Exactly the words "cloud" as written, or a word not listed here.',
+        "i1": "cloud means Claude: Anthropic's AI assistant.",
+        "i2": "cloud means Cloud: Remote computing infrastructure."
+        " Or: cloud means Cloud: A visible cloud in the sky.",
     }
-    assert decisions[0].edit is not None and decisions[0].edit.text == "cloud"
-    assert decisions[0].meaning_ids == ("b_cloud", "c_cloud")
-    assert decisions[0].readings == (("b_cloud",), ("c_cloud",))
+    assert decision.change is not None and decision.change.after == "Cloud"
+    assert decision.meaning_ids == ("b_cloud", "c_cloud")
 
 
 @pytest.mark.parametrize(
-    "scores, expected",
+    ("scores", "expected"),
     [
-        ({"i0": 0.51, "i1": 0.49}, "Use Jev here."),
-        ({"i0": 0.49, "i1": 0.51}, "Use GIF here."),
+        ({"i0": 0.1, "i1": 0.6, "i2": 0.3}, "Use Jev here."),
+        ({"i0": 0.1, "i1": 0.3, "i2": 0.6}, "Use GIF here."),
+        ({"i0": 0.2, "i1": 0.5, "i2": 0.3}, "Use Jif here."),  # Jev, but below the bar
+        ({"i0": 0.7, "i1": 0.3, "i2": 0.0}, "Use Jif here."),
     ],
 )
-def test_jif_uses_highest_eligible_meaning_even_when_scores_are_close(
-    scores: dict[str, float],
-    expected: str,
+def test_a_word_replaces_the_text_only_when_it_is_chosen_clearly(
+    scores: dict[str, float], expected: str
 ) -> None:
+    text = "Use Jif here."
     _, handler = answering(lambda *_: scores)
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
-        result = process_text(
-            "Use Jif here.",
-            JEV,
-            contextual=True,
-            formatting=False,
-            key="ts-key",
-            client=client,
-            policy=jev_client.Policy(),
-        )
-    assert result.text == expected and result.correction.abstained == 0
+        (decision,) = jev.decide(text, [place(text, "Jif", JEV, GIF)], call(client))
+    changes = (decision.change,) if decision.change else ()
+    assert text_edits.apply(text, changes) == expected
+    assert decision.method == "contextual"
 
 
 def test_exact_tie_honors_validated_provider_choice_not_json_or_candidate_order() -> None:
@@ -667,75 +668,48 @@ def test_exact_tie_honors_validated_provider_choice_not_json_or_candidate_order(
                 "answers": {
                     "o0": {
                         "type": "choice",
-                        "choice": "i1",
-                        "probabilities": {"i0": 0.5, "i1": 0.5},
+                        "choice": "i2",
+                        "probabilities": {"i0": 0.0, "i1": 0.0, "i2": 1.0},
                     }
                 }
             },
         )
 
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
-        decisions = jev.decide("Jif", matches(JEV, "Jif"), call(client))
-    assert decisions[0].edit is not None and decisions[0].edit.text == "GIF"
+        decisions = jev.decide("Jif", [place("Jif", "Jif", JEV, GIF)], call(client))
+    assert decisions[0].change is not None and decisions[0].change.after == "GIF"
     assert decisions[0].meaning_ids == ("c_gif",)
 
 
-def test_shorter_interpretation_can_win_over_phrase_and_edits_do_not_cascade() -> None:
-    groups = combine(group("Agent Backbone", "agent back bone"), group("backbone", "back bone"))
-    requests, handler = answering(lambda *_: {"i1": 1.0})
-    raw = "😀 Restart agent back bone."
+def test_a_word_for_part_of_a_place_says_how_the_place_reads_and_changes_only_its_part() -> None:
+    text = "Restart agent back bone now."
+    start = text.index("agent back bone")
+    whole = Candidate(
+        start, start + 15, Word("w_ab", "Agent Backbone", "A control plane."), 0.9, False
+    )
+    part = Candidate(
+        start + 6,
+        start + 15,
+        Word("w_b", "backbone", "The main part.", casing="ordinary"),
+        0.9,
+        False,
+    )
+    requests, handler = answering(lambda *_: {"i2": 1.0})
     with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
-        result = process_text(
-            raw,
-            groups,
-            contextual=True,
-            formatting=False,
-            key="ts-key",
-            client=client,
-            policy=jev_client.Policy(),
-        )
-    assert result.text == "😀 Restart agent backbone."
-    assert requests[0]["state"] == {
-        "occurrences": {"o0": "😀 Restart \u27e6agent back bone\u27e7."}
-    }
+        (decision,) = jev.decide(text, [Place(start, start + 15, (whole, part))], call(client))
     options = requests[0]["questions"]["o0"]["criteria"]
-    assert sorted(option.split('"')[1] for option in options.values()) == [
-        "Agent Backbone",
-        "agent backbone",
-    ]
-    assert result.correction.decisions == 1  # classify the overlap as one coherent choice
+    assert "marked words read" not in options["i1"]
+    assert options["i2"].startswith('The marked words read "agent backbone" with this choice.')
+    assert decision.change == text_edits.Change(start + 6, start + 15, "back bone", "backbone")
 
 
-def test_direct_only_needs_no_request_but_failure_in_mixed_text_still_returns_all_raw() -> None:
-    direct = group("Entune", "dictim", direct=True)
-
-    def failure(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(401, text="unavailable")
-
-    with closing(jev_client.Client(httpx.MockTransport(failure))) as client:
-        result = process_text(
-            "Open dictim.",
-            direct,
-            contextual=True,
-            formatting=False,
-            key=None,
-            client=client,
-            policy=jev_client.Policy(),
-        )
-        assert result.text == "Open Entune." and result.correction.attempts == 0
-        assert result.correction.direct_replacements == 1 and result.correction.decisions == 0
-        raw = "Open dictim. Use Jeff to classify."
-        result = process_text(
-            raw,
-            combine(direct, JEV),
-            contextual=True,
-            formatting=False,
-            key="ts-key",
-            client=client,
-            policy=jev_client.Policy(),
-        )
-    assert result.text == raw and result.correction.status == "failed"
-    assert result.correction.replacements == result.correction.direct_replacements == 0
+def test_a_place_whose_words_have_no_meaning_yet_is_not_asked() -> None:
+    unchecked = Word("w_new", "Jev", "", needs_review=True)
+    with closing(jev_client.Client(httpx.MockTransport(lambda _: httpx.Response(500)))) as client:
+        context = call(client)
+        (decision,) = jev.decide("Jeff", [place("Jeff", "Jeff", unchecked)], context)
+    assert decision.method == "uncertain" and decision.change is None
+    assert context.attempts == 0
 
 
 @pytest.mark.parametrize(
@@ -756,7 +730,7 @@ def test_explicit_terminal_error_never_retries_even_with_429(body: dict[str, obj
     with closing(jev_client.Client(httpx.MockTransport(respond))) as client:
         context = call(client)
         with pytest.raises(jev_client.JevError):
-            jev.decide("Jeff", matches(GROUPS, "Jeff"), context)
+            jev.decide("Jeff", jeff(), context)
     assert context.attempts == 1 and len(requests) == 1
 
 
@@ -810,46 +784,21 @@ def test_an_unreadable_dictionary_fails_only_its_own_step(tmp_path: Path, unread
         service.close()
 
 
-def test_meaning_request_variants_add_only_the_compared_context() -> None:
-    text = "Parse the jif. " + "Unrelated words. " * 20 + "Done."
-    found = matches(JEV, text)
-    focused = jev.meaning_request(text, found)
-    assert set(focused.state) == {"occurrences"}
-    assert focused.state["occurrences"]["o0"].startswith("Parse the ⟦jif⟧.")
-    assert "examples" not in focused.questions["o0"]["instructions"]
-    wide = jev.meaning_request(text, found, jev.Variant(transcript=True))
-    assert wide.state["transcript"] == text
-    examples = jev.meaning_request(text, found, jev.Variant(examples=True))
-    assert len(examples.questions["o0"]["instructions"]["examples"]) == 4
-    assert examples.questions["o0"]["criteria"] == focused.questions["o0"]["criteria"]
-
-
 def test_context_ends_at_the_sentence_boundary_nearest_the_window_else_a_word() -> None:
     sentence = "Filler words keep this sentence long enough to matter. "
     text = sentence * 4 + "Use the jif here. " + sentence * 4
-    context = jev.meaning_request(text, matches(JEV, text)).state["occurrences"]["o0"]
+    context = jev.meaning_request(text, [place(text, "jif", JEV)]).state["occurrences"]["o0"]
     # The sentence boundaries nearest 160 characters away: 176 before, 174 after.
     assert (
         context == sentence * 3 + "Use the \u27e6jif\u27e7 here. " + sentence * 2 + sentence.strip()
     )
     text = "word " * 100 + "jif " + "word " * 100  # no sentence ends to cut at
-    context = jev.meaning_request(text, matches(JEV, text)).state["occurrences"]["o0"]
+    context = jev.meaning_request(text, [place(text, "jif", JEV)]).state["occurrences"]["o0"]
     assert context.startswith("word ") and context.endswith(" word")
     assert len(context) <= 2 * jev.WINDOW + len("\u27e6jif\u27e7")
     text = "\u5b57" * 300 + "\uff0cjif\uff0c" + "\u5b57" * 300  # no spaces to cut at
-    context = jev.meaning_request(text, matches(JEV, text)).state["occurrences"]["o0"]
+    context = jev.meaning_request(text, [place(text, "jif", JEV)]).state["occurrences"]["o0"]
     assert len(context) == 2 * jev.WINDOW + len("\u27e6jif\u27e7")
-
-
-def test_overlapping_options_say_which_words_they_change() -> None:
-    text = "Use go go go."
-    found = matches(group("GoGo", "go go"), text)
-    request = jev.meaning_request(text, found)
-    options = list(request.questions["o0"]["criteria"].values())
-    assert len(set(options)) == len(options) == 2
-    assert {o.split('"')[1] for o in options} == {"GoGo go", "go GoGo"}
-    single = jev.meaning_request("Use jif.", matches(JEV, "Use jif."))
-    assert all("marked words read" not in o for o in single.questions["o0"]["criteria"].values())
 
 
 @pytest.mark.parametrize("total, usable", [(0.99, True), (0.9, False)])
@@ -889,22 +838,4 @@ def test_an_attempt_that_times_out_says_how_long_it_waited() -> None:
         closing(jev_client.Client(httpx.MockTransport(slow))) as client,
         pytest.raises(jev_client.JevError, match=named),
     ):
-        jev.decide("Jeff", matches(GROUPS, "Jeff"), call(client, policy))
-
-
-@pytest.mark.parametrize(("p", "replaced"), [(0.9, True), (0.55, False)])
-def test_a_sound_alike_is_replaced_only_on_a_clear_choice(p: float, replaced: bool) -> None:
-    from entune.dictionary import sounds
-
-    jev_word = dictionary_entries.Word("m_jev", "Jev", "A decision model.")
-    active = dictionary_entries.Active(sounds=(jev_word,))
-    text = "Then give it the questions."
-    confidence = [(m.start(), m.end(), 0.5) for m in sounds._TOKEN.finditer(text)]
-    found = matching.components(sounds.candidates(active, text, confidence))
-    assert len(found) == 1
-    # Option i0 is the literal text; i1 is Jev.
-    _, handler = answering(lambda name, _: {"i1": p, "i0": 1 - p})
-    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
-        (decision,) = jev.decide(text, found, call(client))
-    out = matching.apply(text, (decision.edit,) if decision.edit else ())
-    assert out == ("Then Jev it the questions." if replaced else text)
+        jev.decide("Jeff", jeff(), call(client, policy))

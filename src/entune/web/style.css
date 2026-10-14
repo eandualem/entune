@@ -352,7 +352,6 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .change del { color: var(--text-dim); }
 .change .to { color: var(--text-faint); }
 .change ins { text-decoration: none; color: var(--text-strong); }
-.changes-panel .safe-copy { align-self: flex-start; }
 .attempt { display: flex; flex-direction: column; gap: var(--sp-4); }
 .attempt .meta { margin: 0; font-size: var(--fs-11-5); color: var(--text-faint); }
 .attempt .text { margin: 0; font-size: var(--fs-14-5); line-height: 1.6; color: var(--text-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
