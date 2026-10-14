@@ -285,6 +285,8 @@ def find(
                 continue
             if _contains(written_text, word.spelling):
                 continue  # "the Canary" would lose its "the"
+            if _written_over(text, span.start, span.end, word.spelling):
+                continue  # "NET" of ".NET" is the word already, its dot outside the span
             if any(vocabulary.scores(s, n - 1)[0][i] >= similarity[i] for s in shorter):
                 continue  # a shorter span is as close: the extra word is not part of it
             own = bool(_POSSESSIVE.search(word.spelling))
@@ -450,6 +452,16 @@ def _contains(span_text: str, spelling: str) -> bool:
     """Whether the spelling is written, as whole words, inside the span."""
     pattern = r"(?<![\w.])" + re.escape(spelling) + r"(?![\w])"
     return bool(re.search(pattern, span_text, re.IGNORECASE))
+
+
+def _written_over(text: str, start: int, end: int, spelling: str) -> bool:
+    """Whether the spelling is written, in any capitals, over the span start..end."""
+    left = max(0, start - len(spelling))
+    pattern = re.compile(re.escape(spelling), re.IGNORECASE)
+    return any(
+        m.start() < end and start < m.end()
+        for m in pattern.finditer(text, left, end + len(spelling))
+    )
 
 
 def _check(text: str, words: _Words, spans: list[_Span], scorer: Scorer | None) -> None:

@@ -197,3 +197,9 @@ def test_a_fixed_spelling_in_other_capitals_is_offered_whatever_the_confidence()
     text = "I asked anthropic's team. Anthropic agreed."
     places = candidates.find(text, said(text), Vocabulary([anthropic, ENTUNE]))
     assert offered(text, places) == [("anthropic", "Anthropic")]
+
+
+def test_a_word_already_written_around_the_span_is_not_offered_there() -> None:
+    dotnet = Word("w_dotnet", ".NET", "Microsoft's developer platform.")
+    for text in ("I use .NET daily.", "I use .net daily."):
+        assert candidates.find(text, None, Vocabulary([dotnet])) == []
