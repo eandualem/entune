@@ -34,7 +34,7 @@ def proposed(text: str = "I use cloud code.", dictation: str = "d1") -> dict[str
         "spelling": "Claude Code",
         "meaning": "The named tool Claude Code.",
         "casing": "fixed",
-        "evidence": [{"dictation": dictation, "text": "cloud code"}],
+        "evidence": [{"dictation": dictation, "text": "cloud code", "occurrence": 1}],
     }
     assert "cloud code" in text
-    return {"words": [new], "meanings": []}
+    return {"words": [new], "meanings": [], "used": []}

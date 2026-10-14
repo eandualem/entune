@@ -35,6 +35,7 @@ class _Shape(BaseModel):
 class _Evidence(_Shape):
     dictation: str
     text: str  # the words as the dictation writes them, where the person used the word
+    occurrence: int  # which of their occurrences there, from 1
 
 
 class _Word(_Shape):
@@ -50,9 +51,15 @@ class _Meaning(_Shape):
     meaning: str
 
 
+class _Used(_Shape):
+    word: str  # a shown word's label
+    evidence: list[_Evidence]
+
+
 class Reply(_Shape):
     words: list[_Word]
     meanings: list[_Meaning]
+    used: list[_Used]
 
 
 def _reply(content: str, fields: set[str]) -> dict[str, Any]:
@@ -110,9 +117,10 @@ def parse_reply(
     *,
     transcripts: Sequence[str] = (),
 ) -> Dictionary:
-    """New words the person used, each with its evidence, and clearer meanings for shown
-    words, mapped back onto the working dictionary and validated."""
-    data = Reply.model_validate(_reply(content, {"words", "meanings"})).model_dump()
+    """New words the person used, each with its evidence, clearer meanings for shown
+    words, and where shown words were used, mapped back onto the working dictionary and
+    validated."""
+    data = Reply.model_validate(_reply(content, {"words", "meanings", "used"})).model_dump()
     supplied = sources(transcripts)
     words = {w.id: w for w in working.words}
     labels: set[str] = set()
@@ -159,14 +167,24 @@ def parse_reply(
                 f"{word.spelling}'s meaning is confirmed; revise only meanings marked review"
             )
         words[shown_id] = replace(word, meaning=_meaning(item["meaning"], word.spelling))
+
+    noted: set[str] = set()
+    for item in data["used"]:
+        shown_id = shown.word_ids.get(item["word"])
+        if shown_id is None or shown_id in noted:
+            raise ValueError(f"List each shown word's uses at most once: {item['word']}")
+        noted.add(shown_id)
+        word = words[shown_id]
+        evidence = _evidence(item["evidence"], word.spelling, shown, supplied)
+        words[shown_id] = replace(word, evidence=tuple(dict.fromkeys((*word.evidence, *evidence))))
     return dictionary_document.validate(Dictionary(tuple(words.values())))
 
 
 def _evidence(
     items: list[dict[str, Any]], spelling: str, shown: view.View, supplied: dict[str, str]
 ) -> tuple[Evidence, ...]:
-    """Where the person used the word: each cited dictation, at the first place its words
-    stand as cited."""
+    """Where the person used the word: each cited dictation, at the occurrence of the words
+    cited there."""
     if not items:
         raise ValueError(f"{spelling} needs evidence: a dictation here where the person used it")
     found = []
@@ -184,7 +202,12 @@ def _evidence(
             raise ValueError(
                 f'"{said}" in {label} does not sound like {spelling}; cite where the person said it'
             )
-        start, end = spans[0]
+        nth = item["occurrence"]
+        if not 1 <= nth <= len(spans):
+            raise ValueError(
+                f'"{said}" occurs {len(spans)} time(s) in {label}; occurrence is 1 to {len(spans)}'
+            )
+        start, end = spans[nth - 1]
         found.append(Evidence(source, start, end))
     return tuple(dict.fromkeys(found))
 

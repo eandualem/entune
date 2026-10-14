@@ -133,7 +133,7 @@ def test_partial_generation_keeps_validated_proposal_and_only_fully_covered_inpu
         if calls == 1:
             return json.dumps(proposed("cloud code"))
         if calls == 2:
-            return '{"words": [], "meanings": []}'
+            return '{"words": [], "meanings": [], "used": []}'
         if stop:
             later.set()
             await asyncio.sleep(30)
@@ -211,7 +211,7 @@ def test_a_recording_recovered_on_retry_is_not_left_out_of_generation(
         attempts["generation"] += 1
         if attempts["generation"] == 2:
             raise ValueError("generation stopped")  # after the first part finished
-        return '{"words": [], "meanings": []}'
+        return '{"words": [], "meanings": [], "used": []}'
 
     with closing(Store(tmp_path)) as store:
         app, client = setup(store, call)
@@ -280,7 +280,7 @@ def test_old_saved_recordings_are_selectable_with_duration_and_never_gain_learni
     tmp_path: Path,
 ) -> None:
     async def call(_: Request) -> str:
-        return '{"words": [], "meanings": []}'
+        return '{"words": [], "meanings": [], "used": []}'
 
     with closing(Store(tmp_path)) as store:
         r = store.create_recording(wav_bytes(b"\0\0" * 16000))
@@ -319,7 +319,7 @@ def test_learning_starts_while_speech_is_running(
         return Transcript("cloud code")
 
     async def call(_: Request) -> str:
-        return '{"words": [], "meanings": []}'
+        return '{"words": [], "meanings": [], "used": []}'
 
     with closing(Store(tmp_path)) as store:
         source(store, "cloud code")
@@ -353,7 +353,7 @@ def test_retry_resumes_completed_generation_batches_with_accumulated_groups(
         # Batch one's word is kept for the proposal, but a part shows only the words its
         # own dictations bear on.
         assert "Claude Code" not in request.user
-        return '{"words": [], "meanings": []}'
+        return '{"words": [], "meanings": [], "used": []}'
 
     with closing(Store(tmp_path)) as store:
         source(store, "older data")
@@ -481,7 +481,9 @@ def test_audio_from_other_models_builds_then_extends_the_dictionary(
 
     async def call(request: Request) -> str:
         prompts.append(request.user)
-        return json.dumps(proposed(heard) if len(prompts) == 1 else {"words": [], "meanings": []})
+        return json.dumps(
+            proposed(heard) if len(prompts) == 1 else {"words": [], "meanings": [], "used": []}
+        )
 
     with closing(Store(tmp_path)) as store:
         other = store.create_recording(WEBM_HEADER)

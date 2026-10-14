@@ -145,7 +145,7 @@ def test_audio_build_uses_frozen_models_and_raw_text_without_persisting_transcri
         return (
             json.dumps(proposed("I use cloud code for work."))
             if len(prompts) == 1
-            else '{"words": [], "meanings": []}'
+            else '{"words": [], "meanings": [], "used": []}'
         )
 
     monkeypatch.setattr(stub, "transcribe", transcribe)
@@ -207,7 +207,7 @@ def test_reuse_with_another_model_and_provider_failure_keeps_audio(
 
     async def fake(request: Request) -> str:
         prompts.append(request.user)
-        return '{"words": [], "meanings": []}'
+        return '{"words": [], "meanings": [], "used": []}'
 
     store = Store(tmp_path)
     client = TestClient(

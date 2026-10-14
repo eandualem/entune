@@ -97,15 +97,20 @@ def parse(
     return replies.parse_reply(content, shown, working, transcripts=texts)
 
 
-def reply(words: list[Any] | None = None, meanings: list[Any] | None = None) -> dict[str, Any]:
-    return {"words": words or [], "meanings": meanings or []}
+def reply(
+    words: list[Any] | None = None,
+    meanings: list[Any] | None = None,
+    used: list[Any] | None = None,
+) -> dict[str, Any]:
+    return {"words": words or [], "meanings": meanings or [], "used": used or []}
 
 
 def new_word(
     spelling: str, *said: tuple[str, str], meaning: str = "a named tool", label: str = "n1"
 ) -> dict[str, Any]:
-    """A reply's new word, used at each (dictation, words as written) in `said`."""
-    evidence = [{"dictation": d, "text": t} for d, t in said]
+    """A reply's new word, used at each (dictation, words as written) in `said`, at their
+    first occurrence there."""
+    evidence = [{"dictation": d, "text": t, "occurrence": 1} for d, t in said]
     return {
         "id": label,
         "spelling": spelling,
@@ -155,6 +160,34 @@ def test_a_word_without_evidence_that_the_person_used_it_is_refused() -> None:
     said = "We use in tune daily."
     (entune,) = parse(reply([new_word("Entune", ("d1", "in tune"))]), (said,)).words
     assert said[entune.evidence[0].start : entune.evidence[0].end] == "in tune"
+
+
+def test_evidence_names_the_occurrence_the_model_judged() -> None:
+    text = "The camel at the zoo is asleep. Write the config in camel."
+    second = {
+        **new_word("YAML", ("d1", "camel")),
+        "evidence": [{"dictation": "d1", "text": "camel", "occurrence": 2}],
+    }
+    (yaml,) = parse(reply([second]), (text,)).words
+    assert (yaml.evidence[0].start, yaml.evidence[0].end) == (52, 57)
+    third = {**second, "evidence": [{"dictation": "d1", "text": "camel", "occurrence": 3}]}
+    with pytest.raises(ValueError, match="occurs 2 time"):
+        parse(reply([third]), (text,))
+
+
+def test_uses_of_a_shown_word_are_recorded_with_it() -> None:
+    text = "I use cloud code and Claude Code."
+    stored = word("Claude Code")
+    used = [
+        {"word": "w1", "evidence": [{"dictation": "d1", "text": "cloud code", "occurrence": 1}]}
+    ]
+    (claude,) = parse(reply(used=used), (text,), dictionary(stored)).words
+    assert [(e.start, e.end) for e in claude.evidence] == [(6, 16)]
+    with pytest.raises(ValueError, match="at most once"):
+        parse(reply(used=used * 2), (text,), dictionary(stored))
+    with pytest.raises(ValueError, match="does not sound like"):
+        wrong = [{"word": "w1", "evidence": [{"dictation": "d1", "text": "use", "occurrence": 1}]}]
+        parse(reply(used=wrong), (text,), dictionary(stored))
 
 
 def test_stored_words_are_reused_never_defined_again() -> None:
