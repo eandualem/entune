@@ -28,7 +28,7 @@ the dictionary, October 2026): with the audio check the right word was among the
 from __future__ import annotations
 
 import re
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Protocol
@@ -297,13 +297,25 @@ def _tokens(text: str, said: Sequence[Said] | None) -> _Words:
         if found < 0 or found - at > 200:
             continue
         at = found + len(core)
-        first = bisect_left(starts, found)
+        # Every text word it overlaps: several in "Jeff—Jeff", or one in "Jeff-Jeff" said as
+        # two, which then takes the lowest confidence and the time of both.
+        first = max(0, bisect_right(starts, found) - 1)
         for i in range(first, bisect_left(starts, at)):
+            if tokens[i][1] <= found:
+                continue
+            w = found_words
+            if located[i]:
+                w.confidence[i] = _lowest(w.confidence[i], sure)
+                w.whole[i] = (min(w.whole[i][0], found), max(w.whole[i][1], at))
+                held = w.times[i]
+                if held is not None and start is not None and end is not None:
+                    w.times[i] = (min(held[0], start), max(held[1], end))
+                continue
             located[i] = True
-            found_words.confidence[i] = sure
-            found_words.whole[i] = (found, at)
+            w.confidence[i] = sure
+            w.whole[i] = (min(tokens[i][0], found), max(tokens[i][1], at))
             if start is not None and end is not None:
-                found_words.times[i] = (start, end)
+                w.times[i] = (start, end)
     if any(c is not None for c in found_words.confidence):
         # A word the model's list does not hold is taken as sure; one it gave without a
         # confidence stays unknown.
@@ -311,6 +323,10 @@ def _tokens(text: str, said: Sequence[Said] | None) -> _Words:
             c if located[i] else 1.0 for i, c in enumerate(found_words.confidence)
         ]
     return found_words
+
+
+def _lowest(a: float | None, b: float | None) -> float | None:
+    return b if a is None else a if b is None else min(a, b)
 
 
 def _spans(

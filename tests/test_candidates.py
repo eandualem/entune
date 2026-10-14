@@ -108,6 +108,15 @@ def test_a_part_of_a_written_dictionary_word_is_left_alone() -> None:
     assert all(r.heard == "C#" for r in audio.asked)
 
 
+def test_a_text_word_said_as_two_takes_the_lower_confidence_and_both_times() -> None:
+    text = "Ask Jeff-Jeff now."
+    timed = [("Ask", 0.0, 0.5, 1.0), ("Jeff-", 0.5, 1.0, 1.0), ("Jeff", 1.0, 1.5, 0.5)]
+    audio = Audio(0.0)
+    candidates.find(text, timed, Vocabulary([JEV]), audio)
+    asked = {(r.start, r.end, r.heard) for r in audio.asked}
+    assert asked == {(0.5, 1.5, "Jeff-Jeff")}  # the whole word and each part, one window
+
+
 def test_a_word_said_only_as_its_said_as_is_kept() -> None:
     vocabulary = Vocabulary([Word("w_hi", "\u4f60\u597d", "A greeting.", said_as="nee how")])
     assert vocabulary.words
