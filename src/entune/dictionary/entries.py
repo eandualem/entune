@@ -26,6 +26,7 @@ class Word:
     personal_context: str | None = None
     casing: Literal["fixed", "ordinary"] = "fixed"
     needs_review: bool = False
+    said_as: str | None = None  # how it is said, when its spelling does not tell
 
 
 @dataclass(frozen=True)
