@@ -25,12 +25,24 @@ def test_round_trip_keeps_words_with_their_notes_and_evidence(tmp_path: Path) ->
     assert body["words"][0]["evidence"] == [{"source": "s_1", "start": 4, "end": 8}]
 
 
-def test_an_older_dictionary_is_set_aside_and_entune_starts_empty(tmp_path: Path) -> None:
+def test_an_older_dictionary_is_set_aside_and_entune_starts_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     older = '{"version": 3, "words": [], "pinned": [], "learned": {}}'
     (tmp_path / "dictionary.json").write_text(older)
     assert dictionary_document.load(tmp_path) == Dictionary()
     (aside,) = tmp_path.glob("dictionary.pre-v4-*.json")
     assert aside.read_text() == older and not (tmp_path / "dictionary.json").exists()
+    # Another reader that set it aside first leaves this one an empty dictionary.
+    (tmp_path / "dictionary.json").write_text(older)
+
+    def gone(*_: object) -> None:
+        raise FileNotFoundError
+
+    monkeypatch.setattr("entune.dictionary.document.os.replace", gone)
+    assert dictionary_document.set_aside_older(tmp_path) is None
+    monkeypatch.undo()
+    (tmp_path / "dictionary.json").unlink()
     # One this version cannot read for another reason stays, and says why.
     (tmp_path / "dictionary.json").write_text('{"version": 5, "words": []}')
     with pytest.raises(ValueError, match='needs "version": 4'):

@@ -8,6 +8,7 @@ dictionary.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from datetime import UTC, datetime
@@ -163,7 +164,11 @@ def set_aside_older(data_dir: Path) -> Path | None:
         return None
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     target = data_dir / OLDER.replace("*", stamp)
-    os.replace(path, target)
+    try:
+        os.replace(path, target)
+    except FileNotFoundError:
+        return None  # another reader set it aside first
+    logging.getLogger(__name__).info("Set aside the older dictionary.json as %s", target.name)
     return target
 
 

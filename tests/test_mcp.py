@@ -106,7 +106,29 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
             w for w in call(client, "read_dictionary")["words"] if w["spelling"] != "Claude"
         ]
         assert stored["id"] == added["word_id"] and stored["said_as"] == "clawed code"
-        deleted = call(client, "delete_word", version=added["version"], word_id=added["word_id"])
+        # An edit keeps what it leaves out; "" clears a note.
+        edited = call(
+            client,
+            "set_word",
+            version=added["version"],
+            word_id=added["word_id"],
+            spelling="Claude Code",
+            meaning="Anthropic's agent for coding",
+        )
+        (kept,) = [w for w in call(client, "read_dictionary")["words"] if w["id"] == stored["id"]]
+        assert (kept["said_as"], kept["casing"]) == ("clawed code", "fixed")
+        cleared = call(
+            client,
+            "set_word",
+            version=edited["version"],
+            word_id=added["word_id"],
+            spelling="Claude Code",
+            meaning="Anthropic's agent for coding",
+            said_as="",
+        )
+        (plain,) = [w for w in call(client, "read_dictionary")["words"] if w["id"] == stored["id"]]
+        assert "said_as" not in plain
+        deleted = call(client, "delete_word", version=cleared["version"], word_id=added["word_id"])
         again = call(client, "delete_word", version=deleted["version"], word_id=added["word_id"])
         assert "No word has the ID" in again["error"]
         assert [w["spelling"] for w in client.get("/api/dictionary").json()["words"]] == ["Claude"]

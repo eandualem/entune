@@ -107,41 +107,47 @@ def server(app: Entune) -> MCPServer:
         version: str,
         spelling: str,
         meaning: str,
-        casing: Literal["fixed", "ordinary"] = "fixed",
+        casing: Literal["fixed", "ordinary"] | None = None,
         personal_context: str | None = None,
         said_as: str | None = None,
         word_id: str | None = None,
     ) -> dict[str, str]:
-        """Add a word the person uses, or with `word_id` edit one. `meaning` is a short
-        phrase (at most 120 characters) saying what the word is. `said_as` is how it is
-        said, only when its spelling does not tell ("kube control" for kubectl). Returns the
-        word's ID and the dictionary's new version."""
+        """Add a word the person uses, or with `word_id` edit one; editing keeps what you
+        leave out, and "" clears a note. `meaning` is a short phrase (at most 120
+        characters) saying what the word is. `casing` is "fixed" (a new word's default)
+        or "ordinary". `said_as` is how it is said, only when its spelling does not tell
+        ("kube control" for kubectl). Returns the word's ID and the dictionary's new
+        version."""
         identity = word_id or "w_" + uuid.uuid4().hex
-        try:
+
+        def update(dictionary: Dictionary) -> Dictionary:
+            stored = next((w for w in dictionary.words if w.id == identity), None)
+            if word_id is not None and stored is None:
+                raise ValueError(f"No word has the ID {word_id}")
             (word,) = dictionary_document.parse_words(
                 [
                     {
                         "id": identity,
                         "spelling": spelling,
                         "meaning": meaning,
-                        "personal_context": personal_context or None,
-                        "casing": casing,
+                        "personal_context": (
+                            stored.personal_context
+                            if stored and personal_context is None
+                            else personal_context or None
+                        ),
+                        "casing": casing or (stored.casing if stored else "fixed"),
                         "needs_review": not meaning.strip(),
-                        "said_as": said_as or None,
+                        "said_as": (
+                            stored.said_as if stored and said_as is None else said_as or None
+                        ),
                     }
                 ],
                 "word",
             )
-        except ValueError as exc:
-            raise ToolError(str(exc)) from exc
-        if len(word.meaning) > view.MEANING_CHARS:
-            raise ToolError(
-                f"Keep the meaning to a short phrase of at most {view.MEANING_CHARS} characters"
-            )
-
-        def update(dictionary: Dictionary) -> Dictionary:
-            if word_id is not None and not any(w.id == word_id for w in dictionary.words):
-                raise ValueError(f"No word has the ID {word_id}")
+            if len(word.meaning) > view.MEANING_CHARS:
+                raise ValueError(
+                    f"Keep the meaning to a short phrase of at most {view.MEANING_CHARS} characters"
+                )
             return edits.set_word(dictionary, word)
 
         return {"word_id": identity, "version": change(update, version)}
