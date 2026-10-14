@@ -133,8 +133,9 @@ def parse_reply(
         if not spelling:
             raise ValueError(f"Word {label} needs a spelling")
         meaning = _meaning(item["meaning"], spelling)
-        evidence = _evidence(item["evidence"], Word("", spelling, meaning), shown, supplied)
         same = _same(spelling, meaning, item["casing"], tuple(words.values()))
+        # A stored word's evidence is checked as it is said, too.
+        evidence = _evidence(item["evidence"], same or Word("", spelling, meaning), shown, supplied)
         if same is None:
             # Not confirmed until applied, so a later part of the run can still refine it.
             word = Word(

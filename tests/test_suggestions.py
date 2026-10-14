@@ -193,6 +193,10 @@ def test_uses_of_a_shown_word_are_recorded_with_it() -> None:
     said = [{"word": "w1", "evidence": [{"dictation": "d1", "text": "engine x", "occurrence": 1}]}]
     (found,) = parse(reply(used=said), ("use engine x here",), dictionary(nginx)).words
     assert len(found.evidence) == 1
+    # Proposed again where it is not shown, it is still recognised as it is said.
+    again = {**new_word("nginx", ("d1", "engine ex")), "casing": "fixed"}
+    (found,) = parse(reply([again]), ("use engine ex here",), dictionary(nginx)).words
+    assert found.id == nginx.id and len(found.evidence) == 1
 
 
 def test_stored_words_are_reused_never_defined_again() -> None:
