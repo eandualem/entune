@@ -23,6 +23,8 @@ a = Analysis(
             for path in (PACKAGE_DIR / "prompts").iterdir()
             if path.suffix in {".txt", ".json", ".md"}
         ],
+        # Pronunciations and their licences, read by the dictionary step.
+        (str(PACKAGE_DIR / "dictionary" / "pronunciation"), "entune/dictionary/pronunciation"),
         (str(PACKAGE_DIR / "providers" / "local" / "parakeet_helper.py"), "entune/providers/local"),
         # Both read their own version from package metadata when imported.
         *copy_metadata("pydantic_ai_slim"),

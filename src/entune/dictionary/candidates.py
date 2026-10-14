@@ -20,6 +20,9 @@ word. A candidate stays when delta + AUDIO_WEIGHT * similarity reaches AUDIO_BAR
 skip the check, since audio cannot tell them apart. Without a scorer a candidate needs
 TEXT_SIMILAR. Overlapping spans make one place, with at most OPTIONS words, best first.
 
+A word whose spelling is fixed, written in other capitals ("github" for GitHub), is offered
+there whatever the confidence: it was heard, and only its capitals are in doubt.
+
 Measured on 210 held-out Parakeet dictations (24,857 words, 103 term errors whose word was in
 the dictionary, October 2026): with the audio check the right word was among the options for
 98, at 16.7 places per 1,000 words; heard entries had offered it for 54.
@@ -190,6 +193,14 @@ class Vocabulary:
         self.words = tuple(w for w in words if forms(w))
         self.index = pronounce.Index([forms(w) for w in self.words])
         self.keys = {key(w.spelling) for w in self.words}
+        self.fixed: dict[str, list[int]] = {}  # each fixed spelling's words, by its key
+        for i, w in enumerate(self.words):
+            if w.casing == "fixed":
+                self.fixed.setdefault(key(w.spelling), []).append(i)
+        self.fixed_tokens = max(
+            (len(_WORD.findall(self.words[ids[0]].spelling)) for ids in self.fixed.values()),
+            default=0,
+        )
         self.said_in = [
             max(pronounce.said_words(w.spelling), pronounce.said_words(w.said_as or ""))
             for w in self.words
@@ -285,7 +296,7 @@ def find(
             )
             span.found.append(Candidate(span.start, end, word, similarity[i], i in same))
     _check(text, words, spans, scorer)
-    return _places(spans)
+    return _places(spans + _miscased(text, tokens, vocabulary))
 
 
 @dataclass
@@ -404,6 +415,24 @@ def _parts(text: str, i: int, start: int, end: int) -> list[_Span]:
         for y in range(x, len(parts)):
             if (x, y) != (0, len(parts) - 1) and parts[y][1] - parts[x][0] >= 2:
                 out.append(_Span(i, i, start + parts[x][0], start + parts[y][1]))
+    return out
+
+
+def _miscased(text: str, tokens: list[tuple[int, int]], vocabulary: Vocabulary) -> list[_Span]:
+    """Fixed spellings written in other capitals, each offered its word."""
+    out = []
+    for first in range(len(tokens)):
+        for last in range(first, min(len(tokens), first + vocabulary.fixed_tokens)):
+            start, end = tokens[first][0], tokens[last][1]
+            # "anthropic's" is Anthropic with its possessive, unless a word keeps its "'s".
+            ends = (end, end - 2) if _POSSESSIVE.search(text, start, end) else (end,)
+            for stop in ends:
+                written = text[start:stop]
+                for i in vocabulary.fixed.get(key(written), ()):
+                    word = vocabulary.words[i]
+                    if written != word.spelling:
+                        found = [Candidate(start, stop, word, 1.0, True)]
+                        out.append(_Span(first, last, start, stop, found=found))
     return out
 
 
