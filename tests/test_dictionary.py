@@ -105,6 +105,17 @@ def test_proposals_list_new_words_and_clearer_meanings_and_review_applies_the_in
         dictionary_changes.propose(current, Dictionary())
 
 
+def test_applying_a_build_records_where_it_found_the_words_the_dictionary_has() -> None:
+    current = dictionary(replace(JEV, evidence=(Evidence("s_1", 0, 4),)))
+    found = replace(current.words[0], evidence=(Evidence("s_1", 0, 4), Evidence("s_2", 5, 9)))
+    added = replace(word("Grafana"), needs_review=True, evidence=(Evidence("s_2", 0, 4),))
+    proposal = dictionary_changes.propose(current, dictionary(found, added))
+    assert [c.kind for c in proposal.changes] == ["add"]  # usage alone is no change to review
+    applied = dictionary_changes.review(current, proposal)
+    assert applied.words[0].evidence == found.evidence
+    assert dictionary_changes.review(current, proposal, []) == current
+
+
 def test_confirmed_corrections_add_the_words_the_person_meant_once() -> None:
     doc, added = add_corrections(
         dictionary(JEV), (Correction("Jev", heard=("Jeff",)), Correction("Groq", "a host"))

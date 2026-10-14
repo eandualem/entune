@@ -59,7 +59,8 @@ def propose(current: Dictionary, proposed: Dictionary, version: str = "") -> Pro
 
 def review(current: Dictionary, proposal: Proposal, selected: object = None) -> Dictionary:
     """Apply the included changes, as the review left them; a dismissed one changes
-    nothing. Applying a word is the person's check of it."""
+    nothing. Applying a word is the person's check of it, and applying anything also
+    records where the build found the words the dictionary has."""
     changes = {c.id: c for c in proposal.changes}
     if selected is None:
         selected = [{"id": c.id, "after": word_json(c.after)} for c in proposal.changes]
@@ -90,5 +91,10 @@ def review(current: Dictionary, proposal: Proposal, selected: object = None) -> 
                 " Dictionary page"
             )
         words[word.id] = replace(stored, meaning=word.meaning, needs_review=not word.meaning)
+    if seen:
+        for found in proposal.working.words:
+            if (stored := words.get(found.id)) is not None:
+                places = tuple(dict.fromkeys((*stored.evidence, *found.evidence)))
+                words[found.id] = replace(stored, evidence=places)
     updated = Dictionary(tuple(words.values()))
     return current if updated == current else validate(updated)

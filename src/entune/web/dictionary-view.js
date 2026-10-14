@@ -6,30 +6,24 @@ import { createDictionaryBuild } from "./dictionary-build.js";
 // The dictionary owns its document, revision and pending proposal. Model selection
 // stays in the app; getters read the current selection when an action is made.
 export function createDictionary({ getModel, getSettings, onSettingsChanged, openSettings }) {
-  // Words are defined once; a heard entry is the edit unit, keyed by its text in its scope.
-  let dict = { version: 3, words: [], pinned: [], learned: {} };
+  // The words the person uses, each defined once and shared by every speech model.
+  let dict = { version: 4, words: [] };
   let dictVersion = null; // the server's ETag for the document we edit; null after a failed load
   let savedText = ""; // the JSON view's last loaded or saved text
   let draftBase = null; // the revision the JSON view's unsaved text was started from
   let importing = false;
   let building = false;
   let run = { phase: "idle" };
-  let filter = "all";
+  let filter = "all"; // or "check": only the words still to check
   let query = "";
-  let openId = null; // the one entry shown expanded, as scope:heard text
-  let addPinned = false;
-  let draft = null; // the entry open in the editor panel
-  let editorError = ""; // a refused save, shown until the draft changes
+  let draft = null; // the word open in the editor: its ID and its JSON as opened (null for a new one)
   let saving = false; // one editor save at a time
   let proposalChanges = [];
-  let proposalWords = new Map(); // the words a proposal names, new ones as the review edits them
-  let proposalNew = new Set(); // the IDs of the words the proposal adds, as the server says
-  let proposalModel = null;
   let missingKey = false; // the saved dictionary model's provider has no key
   const modelSelect = el("dictionary-model");
   const buildStatus = el("build-status");
   const proposalBody = el("proposal-body");
-  const entryDrawer = el("entry-drawer");
+  const wordDrawer = el("word-drawer");
   const suggestDrawer = el("suggest-drawer");
   const jsonBox = el("dictionary");
   // The suggestion model's reasoning effort, by the provider's level names, remembered in
@@ -52,17 +46,12 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const builds = createDictionaryBuild({
     onBusy(value) { building = value; gate(); onboarding.setBuildBusy(value); lockEditors(); },
     onState(value) { showRun(value); },
-    // A proposal is reviewed against the dictionary as it is now: an agent may have
+    // A proposal is reviewed beside the dictionary as it is now: an agent may have
     // changed it since this page loaded it.
     async onProposal(value) { if (value) { await loadDictionary(false); renderProposal(value); } else { proposalChanges = []; el("proposal").hidden = true; } },
     onAccepted: () => loadDictionary(false),
-    getSelected: () => {
-      // Included changes, and each new word the included entries name, as the review left it.
-      const chosen = proposalChanges.filter(c => c.included);
-      const named = new Set(chosen.filter(c => c.kind !== "word").flatMap(c => (c.after?.candidates ?? []).map(x => x.word)));
-      return [...chosen.map(c => ({id: c.id, after: c.after})),
-        ...[...named].filter(isNewWord).map(wid => ({id: `word:${wid}`, after: proposalWords.get(wid)})).filter(x => x.after)];
-    },
+    // The included changes, as the review left them; the ones left out are dismissed.
+    getSelected: () => proposalChanges.filter((c) => c.included).map((c) => ({ id: c.id, after: c.after })),
     getRunSettings: runSettings,
   });
   // A radio group drawn as a segmented control: the selected segment is also the checked radio.
@@ -78,16 +67,15 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   });
   selectEffort(effort);
   checked(effortButtons);
-  // What the choice does, in one line; on a ChatGPT plan, also its limit per reply.
+  // What the choice does is in Help; only a ChatGPT plan's limit per reply is said here.
   function drawEffect() {
     const model = getSettings()?.dictionaryModel ?? "";
-    // What effort does is in Help; only a ChatGPT plan's limit per reply is said here.
     el("run-effect").textContent = model.startsWith("chatgpt:")
       ? "On a ChatGPT plan each reply must finish within about 15 minutes."
       : "";
     el("run-effect").hidden = !el("run-effect").textContent;
   }
-  // The speech model the dictionary is for: the same choice as the toolbar's default model.
+  // The speech model that transcribes audio: the same choice as the toolbar's default model.
   const speechSelect = el("suggest-speech");
   function fillSpeech() {
     const toolbar = el("model");
@@ -108,47 +96,20 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const button = (text, fn, cls = "btn ghost sm") => {
     const b = node("button", text, cls); b.type = "button"; b.addEventListener("click", fn); return b;
   };
-  const clone = () => JSON.parse(JSON.stringify(dict));
-  const id = (prefix) => `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
   const words = (text) => text.trim().split(/\s+/).join(" ");
-  // "AssemblyAI" from "AssemblyAI / universal-3-5-pro": the filter and Scope column name.
-  const shortName = (model) => model ? model.label.split(" / ")[0].replace(/\s*\(.*\)$/, "") : "Learned";
-  const speechName = (model) => model ? modelName(model.id, [model]) : "the selected speech model";
+  // "AssemblyAI" from "AssemblyAI / universal-3-5-pro".
+  const shortName = (model) => model.label.split(" / ")[0].replace(/\s*\(.*\)$/, "");
   const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const cap = (text) => text[0].toUpperCase() + text.slice(1);
   // A speech model that runs on this computer: transcribing costs time, never money.
   const isLocal = (id) => Boolean(id && getSettings()?.providers.find((p) => p.id === id.split("/")[0])?.local);
-
-  // A heard text is kept as written only when it is the word's own spelling: exactly
-  // for fixed capitals, ignoring case for a normal word. "anthropic" → "Anthropic" is a fix.
-  function isLiteral(word, text) {
-    const a = words(word?.spelling ?? ""), b = words(text ?? "");
-    if (!a || !b) return false;
-    return word.casing === "ordinary" ? a.toLowerCase() === b.toLowerCase() : a === b;
-  }
-  // Heard texts match ignoring case and spacing; one entry per text in each scope.
-  const textKey = (text) => words(text ?? "").toLowerCase();
-  const wordMap = (doc = dict) => new Map(doc.words.map((w) => [w.id, w]));
-  // The words an entry can stand for, in its order.
-  const named = (h, known = wordMap()) => h.candidates.map((c) => known.get(c.word) ?? { id: c.word, spelling: c.word, meaning: "", personal_context: null, casing: "fixed", needs_review: false });
-  const title = (h, known = wordMap()) => named(h, known).map((w) => w.spelling).join(" · ");
-  const attention = (h, known = wordMap()) => named(h, known).some((w) => w.needs_review || !w.meaning.trim());
-  // The letter a title is listed under: its first letter or digit, without accents.
+  // A word without a meaning, which Entune can't offer yet, or with one no one confirmed.
+  const toCheck = (w) => w.needs_review || !w.meaning.trim();
+  // How often the person used a word: the places suggestions found it in their dictations.
+  // A word added by hand or by an agent has none.
+  const usedText = (w) => w.evidence?.length ? `used ${w.evidence.length}×` : "added by you";
+  // The letter a word is listed under: its first letter or digit, without accents.
   const initial = (text) => (text.normalize("NFD").match(/[\p{L}\p{N}]/u)?.[0] ?? "#").toUpperCase();
-  // The entries that apply to the selected speech model: pinned, then its learned ones. A
-  // learned entry is not used while a pinned one has its text.
-  function visible() {
-    const model = getModel();
-    const pinnedTexts = new Set(dict.pinned.map((h) => textKey(h.text)));
-    return [...dict.pinned.map((h) => ({ h, scope: "pinned" })),
-      ...(model ? dict.learned[model.id] ?? [] : []).map((h) => ({ h, scope: "learned", superseded: pinnedTexts.has(textKey(h.text)) }))];
-  }
-  // Every entry that names a word, in every section: an edit to the word reaches them all.
-  function usesOf(wid, doc = dict) {
-    return [...doc.pinned.map((h) => ({ h, scope: "pinned", model: null })),
-      ...Object.entries(doc.learned).flatMap(([m, list]) => list.map((h) => ({ h, scope: "learned", model: m })))]
-      .filter((u) => u.h.candidates.some((c) => c.word === wid));
-  }
-  const whereUsed = (u) => `“${u.h.text}”${u.scope === "pinned" ? " (pinned)" : ` (${speechShort(u.model)})`}`;
 
   // ---- Toasts and confirmation ----
   let toastTimer;
@@ -170,7 +131,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     return new Promise((resolve) => dialog.addEventListener("close", () => resolve(dialog.returnValue === "ok"), { once: true }));
   }
   // A side panel closes from its button, Escape, or a click on the page beside it.
-  for (const drawer of [entryDrawer, suggestDrawer]) {
+  for (const drawer of [wordDrawer, suggestDrawer]) {
     drawer.addEventListener("click", (event) => { if (event.target === drawer) drawer.close(); });
   }
 
@@ -252,9 +213,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   // unreadable document after confirmation; list edits always need a loaded version.
   // Returns an error message, or "" when saved.
   // `base` is the revision `next` was made from, when that is older than the loaded one.
-  async function saveDictionary(next, fromEditor = false, base = dictVersion) {
+  async function saveDictionary(next, fromJson = false, base = dictVersion) {
     if (building) return "Apply or discard the open suggestions first.";
-    if (!base && !fromEditor) {
+    if (!base && !fromJson) {
       await loadDictionary();
       return dictVersion ? "Dictionary reloaded; please redo that change." : "The dictionary could not be loaded.";
     }
@@ -274,47 +235,38 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     return "";
   }
 
-  // Editing pauses while suggestions are open; the banner says why.
+  // Editing waits while suggestions are open: applying them needs the dictionary they read.
   function lockEditors() {
-    for (const field of document.querySelectorAll("#add-entry-btn, #add-row input, #add-advanced, #dict-rows .detail-actions button, #dict-rows .pin-meaning")) field.disabled = building;
+    el("add-word").disabled = building;
     jsonBox.readOnly = building;
     jsonDirty();
-    drawAdd();
-    editorStatus();
+    wordStatus();
     modelSelect.disabled = building || modelSelect.value === "";
   }
 
-  // ---- The table ----
-  const selectFilter = segmentedGroup({ all: el("filter-all"), pinned: el("filter-pinned"), learned: el("filter-learned"), attention: el("filter-attention") }, (name) => { filter = name; openId = null; renderRows(); });
+  // ---- The list ----
+  const selectFilter = segmentedGroup({ all: el("filter-all"), check: el("filter-check") }, (name) => { filter = name; renderRows(); });
   el("dict-search").addEventListener("input", (event) => { query = event.target.value; renderRows(); });
 
   function renderDictionary(jsonText) {
-    // Unsaved text in the JSON view survives a reload (a model change, a pin); only Save
-    // and Revert replace it.
+    // Unsaved text in the JSON view survives a reload (a model change, a word saved in the
+    // list); only Save and Revert replace it.
     if (jsonText !== undefined) {
-      const draft = jsonBox.value !== savedText;
+      const dirty = jsonBox.value !== savedText;
       savedText = jsonText;
-      if (!draft) { jsonBox.value = jsonText; draftBase = null; el("json-error").hidden = true; }
+      if (!dirty) { jsonBox.value = jsonText; draftBase = null; el("json-error").hidden = true; }
     }
-    const model = getModel();
-    const known = wordMap();
-    const entries = visible();
-    const learned = entries.filter((v) => v.scope === "learned").length;
-    if (filter === "learned" && !model) { filter = "all"; selectFilter("all"); }
-    const counts = { all: entries.length, pinned: dict.pinned.length, learned, attention: entries.filter((v) => attention(v.h, known)).length };
-    for (const [name, count] of Object.entries(counts)) el(`count-${name}`).textContent = count ? String(count) : "";
-    el("attention-dot").hidden = !counts.attention;
-    // "To check" shows only while something needs checking.
-    el("filter-attention").hidden = !counts.attention;
-    if (filter === "attention" && !counts.attention) { filter = "all"; selectFilter("all"); }
-    el("filter-learned").title = model ? `Learned only for ${speechName(model)}` : "Choose a speech model in the toolbar first";
-    el("filter-learned").disabled = !model;
-    el("dict-summary").textContent = [plural(entries.length, "entry", "entries"), `${dict.pinned.length} pinned for every speech model`,
-      ...(model ? [`${learned} learned for ${shortName(model)}`] : [])].join(" · ");
+    const total = dict.words.length;
+    const check = dict.words.filter(toCheck).length;
+    el("count-all").textContent = String(total);
+    el("count-check").textContent = String(check);
+    // The filter shows only while a word needs checking.
+    el("dict-filters").hidden = !check;
+    if (filter === "check" && !check) { filter = "all"; selectFilter("all"); }
+    el("dict-summary").textContent = total
+      ? [plural(total, "word"), ...(check ? [`${check} to check`] : []), "the same for every speech model"].join(" · ")
+      : "The names and terms you use, for every speech model";
     drawMenu();
-    el("learn-source").textContent = !model ? "Choose a speech model first."
-      : "Reads your newest transcripts not yet used by suggestions you applied, finds the words your speech model gets wrong, and improves the entries those transcripts show.";
-    if (proposalModel) proposalTitle();
     renderRows();
     fillModels();
     if (stage(run) === "setup") fillSpeech();
@@ -322,699 +274,177 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   }
 
   function renderRows() {
-    const model = getModel();
-    const known = wordMap();
     const q = query.trim().toLowerCase();
-    const shown = visible()
-      .filter((v) => filter === "all" || (filter === "attention" ? attention(v.h, known) : v.scope === filter))
-      .filter((v) => !q || [v.h.text, ...named(v.h, known).flatMap((w) => [w.spelling, w.meaning])].join(" ").toLowerCase().includes(q))
-      .map((v) => ({ ...v, name: title(v.h, known) || v.h.text }))
-      .sort((a, b) => initial(a.name).localeCompare(initial(b.name)) || a.name.localeCompare(b.name) || a.h.text.localeCompare(b.h.text));
-    // Entries under the first letter of their title, A to Z.
-    const letters = [];
-    for (const v of shown) {
-      const letter = initial(v.name);
-      if (letters.at(-1)?.letter !== letter) letters.push({ letter, items: node("div", "", "dict-group-items") });
-      letters.at(-1).items.append(entryRow(v, known));
+    const shown = dict.words
+      .filter((w) => (filter !== "check" || toCheck(w)) && (!q || [w.spelling, w.meaning, w.said_as ?? ""].join("\n").toLowerCase().includes(q)))
+      .sort((a, b) => initial(a.spelling).localeCompare(initial(b.spelling)) || a.spelling.localeCompare(b.spelling));
+    // Words under their first letter, A to Z.
+    const groups = [];
+    for (const w of shown) {
+      const letter = initial(w.spelling);
+      if (groups.at(-1)?.letter !== letter) groups.push({ letter, items: node("div", "", "dict-group-items") });
+      groups.at(-1).items.append(wordRow(w));
     }
-    el("dict-rows").replaceChildren(...letters.map(({ letter, items }) => {
+    el("dict-rows").replaceChildren(...groups.map(({ letter, items }) => {
       const group = node("div", "", "dict-group");
       group.append(node("span", letter, "dict-letter"), items);
       return group;
     }));
-    const empty = !shown.length;
-    el("dict-empty").hidden = !empty;
-    if (empty) {
-      const short = shortName(model);
-      const [heading, body] = q ? ["No matches", "Try a spelling, a heard text or a word from a description."]
-        : filter === "learned" ? [`Nothing learned for ${short} yet`, "Each speech model makes its own mistakes. Suggestions read its recent transcripts and propose first entries."]
-          : filter === "attention" ? ["Nothing needs attention", "Every word has a description."]
-            : filter === "pinned" ? ["No pinned entries", "Pin a learned entry to use it with every speech model, or add one yourself."]
-              : ["Your dictionary is empty", "Add a word, or get suggestions from your transcripts."];
-      el("empty-title").textContent = heading;
-      el("empty-body").textContent = body;
-      el("empty-suggest").hidden = Boolean(q) || filter === "attention";
-    }
-    lockEditors();
+    el("dict-empty").hidden = shown.length > 0;
+    el("empty-title").textContent = q ? "No matches" : "Your dictionary is empty";
+    el("empty-body").textContent = q ? "Try a spelling, a meaning, or how a word is said." : "Add the names and terms you use, or get suggestions from your transcripts.";
+    el("empty-suggest").hidden = Boolean(q);
   }
 
-  const PIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 1.5h4l-.6 4.5 2.8 2.5H3.8L6.6 6 6 1.5zM8 8.5V14.5"/></svg>';
-  const CHEVRON = '<svg class="i12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5L8 6l-3.5 3.5"/></svg>';
-  const ARROW = '<svg class="i14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 7h9M8 4l3 3-3 3"/></svg>';
-  const icon = (svg, cls) => { const span = node("span", "", cls); span.innerHTML = svg; return span; };
-  // One line per heard entry: the words it can mean, what was heard, a description and
-  // where it applies. A click shows the words in full underneath.
-  function entryRow({ h, scope, superseded, name: heading }, known) {
-    const model = getModel();
-    const item = node("div", "", "dict-entry");
-    const line = node("div", "", "dict-row");
-    const rowKey = `${scope}:${textKey(h.text)}`;
-    const open = openId === rowKey;
-    line.tabIndex = 0;
-    line.setAttribute("role", "button");
-    line.setAttribute("aria-expanded", String(open));
+  // One line per word: its spelling, meaning, how it is said, its capitals and how often you
+  // used it. A click opens it in the editor.
+  function wordRow(w) {
+    const row = node("button", "", "dict-row");
+    row.type = "button";
+    row.dataset.word = w.id;
+    row.setAttribute("aria-haspopup", "dialog");
     const name = node("span", "", "cell-title");
-    name.append(node("span", heading, "title-text"));
-    name.title = heading;
-    if (attention(h, known)) {
-      const dot = node("span", "", "attention-dot");
-      dot.title = named(h, known).some((w) => !w.meaning.trim()) ? "A word here needs a description before Entune can choose it" : "A description here is not confirmed yet: check it, then save the entry";
-      name.append(dot);
-    }
-    const heard = node("span", "", "cell-heard");
-    heard.title = h.text;
-    heard.append(node("code", h.text, "chip"));
-    // The description of what it was heard for first, then of the word kept as written.
-    const order = [...h.candidates.filter((c) => c.basis !== "literal"), ...h.candidates.filter((c) => c.basis === "literal")];
-    const description = order.map((c) => known.get(c.word)?.meaning.trim()).find(Boolean);
-    const what = node("span", superseded ? "Not used: pinned for every model" : description ?? "No description yet",
-      superseded ? "cell-desc faint" : description ? "cell-desc" : "cell-desc missing");
-    const where = node("span", "", "cell-scope");
-    if (scope === "pinned") where.innerHTML = PIN;
-    where.append(scope === "pinned" ? "Pinned" : shortName(model));
-    line.append(name, heard, what, where, icon(CHEVRON, "cell-chevron"));
-    const toggle = () => { openId = open ? null : rowKey; renderRows(); document.querySelector(`[data-entry="${CSS.escape(rowKey)}"] .dict-row`)?.focus(); };
-    line.addEventListener("click", toggle);
-    line.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } });
-    item.dataset.entry = rowKey;
-    item.classList.toggle("open", open);
-    item.append(line);
-    if (open) item.append(entryDetail(h, scope, superseded, known));
-    return item;
+    name.title = w.spelling;
+    name.append(node("span", w.spelling, "title-text"));
+    if (toCheck(w)) name.append(node("span", "to check", "check-tag"));
+    const meaning = node("span", w.meaning || "No meaning yet", w.meaning ? "cell-desc" : "cell-desc missing");
+    meaning.title = w.meaning;
+    row.append(name, meaning, node("span", w.said_as ? `said “${w.said_as}”` : "", "cell-said"),
+      node("span", w.casing === "fixed" ? "Exact capitals" : "Normal word", "cell-meta"), node("span", usedText(w), "cell-meta"));
+    row.addEventListener("click", () => openEditor(w));
+    return row;
   }
-
-  // Heard → written on the left, beside the words the decision model chooses from.
-  function entryDetail(h, scope, superseded, known) {
-    const model = getModel();
-    const detail = node("div", "", "dict-detail");
-    const forms = node("div", "", "detail-forms");
-    forms.append(node("p", model ? `When ${shortName(model)} hears` : "When the speech model hears", "detail-label"));
-    const line = node("div", "", "heard-line");
-    line.append(node("code", h.text, "heard"), icon(ARROW, "arrow"));
-    h.candidates.forEach((candidate, i) => {
-      const target = node("span", "", "target");
-      if (i) target.append(node("span", "or", "or"));
-      const literal = candidate.basis === "literal";
-      target.append(node("span", known.get(candidate.word)?.spelling ?? candidate.word, literal ? "word literal" : "word"));
-      if (literal) {
-        target.append(node("span", "as written", "note"));
-        target.title = "Left as written when this word fits the sentence";
-      }
-      line.append(target);
-    });
-    if (h.direct) {
-      const chip = node("span", "Always", "always-chip");
-      chip.title = `Always used, without reading the sentence: ${h.direct_reason}`;
-      line.append(chip);
-    }
-    forms.append(line);
-    if (superseded) forms.append(node("p", "Not used: a pinned entry hears the same words. Pin this one to add its words to that entry, or remove it.", "caption warn"));
-    const list = node("div", "", "detail-meanings");
-    list.append(node("p", h.candidates.length > 1 ? "Words · Entune picks one from the sentence" : "Word", "detail-label"));
-    named(h, known).forEach((word, i) => {
-      const card = node("div", "", "meaning-card");
-      const body = node("div", "", "meaning-body");
-      const head = node("div", "", "meaning-head");
-      head.append(node("b", word.spelling), node("span", word.casing === "fixed" ? "exact capitals" : "normal word", "casing"));
-      if (known.has(word.id)) {
-        const remove = button("Delete word", () => deleteWord(word), "btn link pin-meaning");
-        remove.title = `Delete ${word.spelling} from your dictionary and from every entry that uses it`;
-        head.append(remove);
-      }
-      body.append(head, node("p", word.meaning || "No description yet. Entune can't choose this word until it has one.", word.meaning ? "definition" : "definition missing"));
-      if (word.personal_context) {
-        const personal = node("p", "", "personal");
-        personal.append(node("span", "Personal · ", "faint"), word.personal_context);
-        body.append(personal);
-      }
-      // Where else the word is used, so the reach of an edit is clear.
-      const others = usesOf(word.id).filter((u) => u.h !== h);
-      if (others.length) body.append(node("p", `Also for ${others.slice(0, 3).map(whereUsed).join(", ")}${others.length > 3 ? ` and ${others.length - 3} more` : ""}`, "personal"));
-      card.append(node("span", String(i + 1), "meaning-n"), body);
-      list.append(card);
-    });
-    const unconfirmed = named(h, known).filter((w) => w.needs_review && w.meaning.trim());
-    if (unconfirmed.length) list.append(node("p", `Not confirmed yet: check the description and capitals of ${unconfirmed.map((w) => w.spelling).join(", ")}, then save the entry.`, "caption warn"));
-    const actions = node("div", "", "detail-actions");
-    actions.append(button("Edit", () => openEditor(scope, h), "btn fill sm"));
-    if (scope === "learned") {
-      const pin = button("Pin for every model", () => pinEntry(h), "btn sm");
-      pin.insertAdjacentHTML("afterbegin", PIN);
-      pin.title = "Use with every speech model and protect from suggestions";
-      actions.append(pin);
-    }
-    actions.append(button("Remove", () => removeEntry(scope, h), "btn ghost sm remove"), node("span", "", "spacer"),
-      node("span", scope === "pinned" ? "Pinned · used with every speech model" : `Learned · ${speechName(model)} only`, "caption"));
-    detail.append(forms, list, actions);
-    return detail;
-  }
-
-  async function pin(body, model = getModel()?.id) {
-    const res = await fetch("/api/dictionary/pin", {
-      method: "POST", headers: { "content-type": "application/json", "if-match": dictVersion },
-      body: JSON.stringify({ model, ...body }),
-    });
-    const text = await res.text();
-    if (!res.ok) { toast(text, "err"); await loadDictionary(); return false; }
-    dict = JSON.parse(text);
-    dictVersion = res.headers.get("etag");
-    renderDictionary(text);
-    return true;
-  }
-  // The server moves the learned entry, under the model it was learned for even if the
-  // toolbar selection changes meanwhile; a pinned one with its text gains its words.
-  async function pinEntry(h) {
-    if (!await pin({ text: h.text }, getModel()?.id)) return;
-    openId = `pinned:${textKey(h.text)}`;
-    renderRows();
-    toast(`Pinned “${h.text}” for every speech model`);
-  }
-
-  // Removing a heard entry never deletes a word: other entries may use it.
-  async function removeEntry(scope, h) {
-    const version = dictVersion; // a reload while confirming makes this a conflict, not an overwrite
-    const next = clone();
-    const list = scope === "pinned" ? next.pinned : next.learned[getModel()?.id] ?? [];
-    const at = list.findIndex((x) => textKey(x.text) === textKey(h.text));
-    if (at >= 0) list.splice(at, 1);
-    if (!await confirmAction(`Remove “${h.text}”?`, `Entune stops changing “${h.text}”. Its words stay in your dictionary.`, "Remove")) return;
-    const problem = await saveDictionary(next, false, version);
-    if (problem) { toast(problem, "err"); return; }
-    openId = null;
-    renderRows();
-    toast(`Removed “${h.text}”`);
-  }
-  // Deleting a word removes it from every entry that names it; an entry left with no word goes.
-  async function deleteWord(word) {
-    const version = dictVersion;
-    const next = clone();
-    const uses = usesOf(word.id, next);
-    next.words = next.words.filter((w) => w.id !== word.id);
-    let gone = 0;
-    for (const list of [next.pinned, ...Object.values(next.learned)]) {
-      for (let i = list.length - 1; i >= 0; i--) {
-        const h = list[i];
-        h.candidates = h.candidates.filter((c) => c.word !== word.id);
-        if (h.direct === word.id) { h.direct = null; h.direct_reason = ""; }
-        if (!h.candidates.length) { list.splice(i, 1); gone++; }
-      }
-    }
-    const body = uses.length ? `It is removed from ${plural(uses.length, "heard entry", "heard entries")}: ${uses.map(whereUsed).join(", ")}.${gone ? ` ${plural(gone, "entry", "entries")} left with no word ${gone === 1 ? "goes" : "go"} too.` : ""}` : "No heard entry uses it.";
-    if (!await confirmAction(`Delete the word “${word.spelling}”?`, body, "Delete")) return;
-    const problem = await saveDictionary(next, false, version);
-    if (problem) { toast(problem, "err"); return; }
-    renderRows();
-    toast(`Deleted ${word.spelling}`);
-  }
-
-  // ---- Add: one line for the simple case ----
-  const addRow = el("add-row");
-  const addFields = { spelling: el("add-spelling"), heard: el("add-heard"), desc: el("add-desc") };
-  const heardList = () => {
-    const seen = new Set();
-    return addFields.heard.value.split(",").map(words).filter((t) => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase()));
-  };
-  let addProblem = ""; // a refused save, shown until the line is edited
-  function drawAdd() {
-    const model = getModel();
-    if (!model) addPinned = true;
-    const scope = el("add-scope");
-    scope.innerHTML = PIN;
-    scope.append(addPinned ? "Pinned · every model" : `Learned · ${shortName(model)}`);
-    scope.title = addPinned ? (model ? "Used with every speech model. Click to use it only with this one." : "Used with every speech model") : `Only ${speechName(model)}. Click to pin it for every speech model.`;
-    scope.setAttribute("aria-pressed", String(addPinned));
-    scope.disabled = building || !model;
-    el("add-save").disabled = building || !words(addFields.spelling.value) || !heardList().length;
-    const hint = el("add-hint");
-    hint.classList.toggle("err", Boolean(addProblem));
-    hint.textContent = addProblem || "Separate heard texts with commas.";
-  }
-  function showAdd(open) {
-    addRow.hidden = !open;
-    el("add-entry-btn").setAttribute("aria-expanded", String(open));
-    if (open) { drawAdd(); addFields.spelling.focus(); }
-  }
-  function clearAdd() { for (const input of Object.values(addFields)) input.value = ""; addProblem = ""; }
-  el("add-entry-btn").addEventListener("click", () => { showView("list"); showAdd(addRow.hidden); });
-  el("add-cancel").addEventListener("click", () => showAdd(false));
-  el("add-scope").addEventListener("click", () => { addPinned = !addPinned; drawAdd(); });
-  for (const input of Object.values(addFields)) {
-    input.addEventListener("input", () => { addProblem = ""; drawAdd(); });
-    input.addEventListener("keydown", (event) => {
-      if (event.isComposing || event.keyCode === 229) return; // Enter confirms an input-method candidate
-      if (event.key === "Enter") { event.preventDefault(); quickAdd(); }
-      if (event.key === "Escape") showAdd(false);
-    });
-  }
-  el("add-save").addEventListener("click", quickAdd);
-  async function quickAdd() {
-    const spelling = words(addFields.spelling.value), heard = heardList(), description = words(addFields.desc.value);
-    if (!spelling || !heard.length || building) return;
-    const model = getModel();
-    const scope = addPinned || !model ? "pinned" : "learned";
-    const next = clone();
-    const pinnedTexts = new Set(next.pinned.map((h) => textKey(h.text)));
-    const clash = scope === "learned" && heard.find((text) => pinnedTexts.has(textKey(text)));
-    if (clash) { addProblem = `“${clash}” is pinned for every model; edit that entry instead.`; drawAdd(); return; }
-    const list = scope === "pinned" ? next.pinned : (next.learned[model.id] ??= []);
-    // A name is one word: the one already spelled exactly so, unless it is described otherwise.
-    let word = next.words.find((w) => w.spelling === spelling && (!description || !w.meaning || w.meaning === description));
-    if (word && description && !word.meaning) Object.assign(word, { meaning: description, needs_review: false });
-    if (!word) {
-      word = { id: id("w"), spelling, meaning: description, personal_context: null, casing: "fixed", needs_review: !description };
-      next.words.push(word);
-    }
-    // Each heard text is its own entry; one already in the list gains the word.
-    for (const text of heard) {
-      const candidate = { word: word.id, basis: isLiteral(word, text) ? "literal" : "user", evidence: [] };
-      const entry = list.find((h) => textKey(h.text) === textKey(text));
-      if (!entry) list.push({ text, candidates: [candidate], direct: null, direct_reason: "" });
-      else if (!entry.candidates.some((c) => c.word === word.id)) entry.candidates.push(candidate);
-    }
-    addProblem = await saveDictionary(next);
-    drawAdd();
-    if (addProblem) return;
-    clearAdd();
-    showAdd(false);
-    reveal(scope, heard[0]);
-    toast(`Added ${spelling}`);
-  }
-  // A saved entry opens expanded, whatever filter or search would have hidden it.
-  function reveal(scope, text) {
-    openId = `${scope}:${textKey(text)}`;
+  // A saved word is shown in the list, whatever the search or filter would have hidden.
+  function reveal(id) {
     query = ""; el("dict-search").value = "";
     if (filter !== "all") { filter = "all"; selectFilter("all"); }
     renderRows();
-    document.querySelector(`[data-entry="${CSS.escape(openId)}"]`)?.scrollIntoView({ block: "nearest" });
+    const row = el("dict-rows").querySelector(`[data-word="${CSS.escape(id)}"]`);
+    row?.scrollIntoView({ block: "nearest" });
+    row?.focus();
   }
-  el("add-advanced").addEventListener("click", () => {
-    const model = getModel();
-    const spelling = words(addFields.spelling.value);
-    const heard = heardList();
-    const description = words(addFields.desc.value);
-    // The same rule as the add line: a stored word only when it is not described otherwise.
-    const same = spelling && dict.words.find((w) => w.spelling === spelling && (!description || !w.meaning || w.meaning === description));
-    const word = same ? { ...same, meaning: same.meaning || description }
-      : { id: id("w"), spelling, meaning: description, personal_context: null, casing: "fixed", needs_review: false };
-    openEditor(addPinned || !model ? "pinned" : "learned", { text: heard[0] ?? "", candidates: [{ word: word.id, basis: "user", evidence: [] }], direct: null, direct_reason: "" },
-      true, model, [word], heard.slice(1));
+
+  // ---- The editor: one word, in a side panel ----
+  const fields = { spelling: el("word-spelling"), meaning: el("word-meaning"), said_as: el("word-said"), personal_context: el("word-context") };
+  const casingButtons = { fixed: el("casing-fixed"), ordinary: el("casing-ordinary") };
+  let casing = "fixed";
+  const selectCasing = segmentedGroup(casingButtons, (name) => { casing = name; checked(casingButtons); edited(); });
+  function openEditor(w = null) {
+    draft = { id: w?.id ?? null, seen: w ? JSON.stringify(w) : null, problem: "" };
+    el("word-title").textContent = w ? "Edit word" : "New word";
+    el("word-save").textContent = w ? "Save" : "Add word";
+    el("word-delete").hidden = !w;
+    fill(w);
+    if (!wordDrawer.open) wordDrawer.showModal();
+    fields.spelling.focus();
+  }
+  // The fields as the word is saved, and what is known about it.
+  function fill(w) {
+    for (const [key, field] of Object.entries(fields)) field.value = w?.[key] ?? "";
+    casing = w?.casing ?? "fixed";
+    selectCasing(casing);
+    checked(casingButtons);
+    const notice = el("word-notice");
+    notice.hidden = !w || !toCheck(w);
+    notice.textContent = w?.meaning ? "To check: confirm its spelling and meaning, then save." : "To check: give it a meaning. Until it has one, Entune can't offer it.";
+    el("word-used").textContent = !w ? "" : w.evidence?.length ? `Used ${w.evidence.length}× in the dictations suggestions read.` : "Added by you or an agent.";
+    wordStatus();
+  }
+  // Why saving waits, or what it would do.
+  function wordStatus() {
+    if (!draft) return;
+    const spelling = words(fields.spelling.value).toLowerCase();
+    const same = spelling && dict.words.find((w) => w.id !== draft.id && words(w.spelling).toLowerCase() === spelling);
+    const status = el("word-status");
+    status.textContent = building ? "Editing waits until the suggestions are applied or discarded."
+      : draft.problem || (same ? `${same.spelling} is already a word${same.meaning ? ` (${same.meaning})` : ""}; this adds another sense.` : "");
+    status.classList.toggle("err", building || Boolean(draft.problem));
+    el("word-save").disabled = building || saving || !spelling;
+    el("word-delete").disabled = building || saving;
+  }
+  function edited() { if (draft) draft.problem = ""; wordStatus(); }
+  for (const field of Object.values(fields)) field.addEventListener("input", edited);
+  // The meaning is one short line: Enter saves, as in the other fields.
+  fields.meaning.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return; // Enter confirms an input-method candidate
+    event.preventDefault();
+    el("word-form").requestSubmit();
   });
+  wordDrawer.addEventListener("close", () => { draft = null; });
+  el("word-close").addEventListener("click", () => wordDrawer.close());
+  el("word-cancel").addEventListener("click", () => wordDrawer.close());
+  el("add-word").addEventListener("click", () => { showView("list"); openEditor(); });
   el("empty-suggest").addEventListener("click", () => openSuggestions("history"));
 
-  // ---- The full editor, in a side panel ----
-  // One heard entry: its text, and the words it can stand for. A word is shared by every
-  // entry that names it, so its edits reach them all. A learned draft belongs to the speech
-  // model it was started for, even if the toolbar selection changes before it is saved.
-  const blankWord = () => ({ id: id("w"), spelling: "", meaning: "", personal_context: null, casing: "fixed", needs_review: false });
-  // A stored word in a draft keeps the copy it was taken from (`seen`): a save writes only
-  // a word the person changed, and a reload shows whether it changed elsewhere meanwhile.
-  const draftItem = (w, stored, basis = "user", evidence = []) => ({ key: id("c"), word: { ...w, personal_context: w.personal_context ?? "" },
-    stored, seen: stored ? JSON.stringify(w) : null, basis, evidence });
-  function edited(item) {
-    if (!item.stored) return true;
-    const before = JSON.parse(item.seen);
-    return words(item.word.spelling) !== before.spelling || item.word.meaning.trim() !== before.meaning
-      || (item.word.personal_context.trim() || null) !== before.personal_context || item.word.casing !== before.casing;
-  }
-  function openEditor(scope, entry, created = false, model = getModel(), fresh = [], more = []) {
-    editorError = "";
-    // `fresh`: words as the add line filled them in, over their stored copies.
-    const known = wordMap();
-    for (const w of fresh) known.set(w.id, w);
-    draft = {
-      created, scope, model,
-      notices: more.length ? [`Only “${entry.text}” is in this entry; add ${more.map((t) => `“${t}”`).join(", ")} as entries of their own.`] : [],
-      version: dictVersion, // the revision this draft was made from
-      original: structuredClone(entry),
-      text: entry.text, origText: created ? null : entry.text,
-      items: entry.candidates.map((c) => {
-        const w = known.get(c.word) ?? blankWord();
-        const stored = dict.words.find((x) => x.id === w.id);
-        return { ...draftItem(w, Boolean(stored), c.basis, c.evidence ?? []), seen: stored ? JSON.stringify(stored) : null };
-      }),
-      direct: entry.direct, direct_reason: entry.direct_reason ?? "",
-    };
-    el("entry-title").textContent = created ? "New entry" : "Edit entry";
-    el("entry-save").textContent = created ? "Add entry" : "Save";
-    drawEditor();
-    if (!entryDrawer.open) entryDrawer.showModal();
-    el("entry-body").scrollTop = 0;
-    el("entry-body").querySelector("input")?.focus();
-  }
-  function closeEditor() { if (entryDrawer.open) entryDrawer.close(); }
-  entryDrawer.addEventListener("close", () => { draft = null; });
-  el("entry-close").addEventListener("click", closeEditor);
-  el("entry-cancel").addEventListener("click", closeEditor);
-
-  // Clicks and structural changes redraw the draft; typing only updates it and refreshes
-  // what depends on the text, so the field being typed in is never replaced (native undo
-  // and input methods keep working).
-  function drawEditor() {
-    const body = el("entry-body");
-    const active = document.activeElement?.dataset?.key;
-    body.replaceChildren(...editorParts());
-    if (active) body.querySelector(`[data-key="${CSS.escape(active)}"]`)?.focus();
-    editorStatus();
-  }
-  const change = (fn) => { editorError = ""; fn(draft); drawEditor(); };
-  const part = (name, value) => el("entry-body").querySelector(`[data-part="${CSS.escape(`${name}:${value}`)}"]`);
-  const showError = (p, text) => { if (p) { p.textContent = text ?? ""; p.hidden = !text; } };
-  const spellingOf = (item) => item?.word.spelling || "(no spelling)";
-  // The heard text's own word, kept as written, is offered while no candidate is spelled so.
-  const canKeep = (d) => Boolean(words(d.text)) && !d.items.some((item) => textKey(item.word.spelling) === textKey(d.text));
-  function refresh() {
-    const d = draft;
-    const problems = editorProblems();
-    showError(part("error", "text"), problems.text);
-    for (const item of d.items) {
-      showError(part("error", `w:${item.key}`), problems.items.get(item.key));
-      part("literal", item.key)?.toggleAttribute("hidden", !literalItem(item));
-    }
-    const keep = part("keep", "text");
-    if (keep) { keep.hidden = !canKeep(d); keep.textContent = `+ keep “${words(d.text)}” as written`; }
-    showError(part("error", "reason"), problems.direct ? "Write a reason. Use this only when the words can never mean anything else." : "");
-    const reason = el("entry-body").querySelector('[data-key="reason"]');
-    if (reason) reason.placeholder = `Why can “${words(d.text)}” never mean anything else?`;
-    for (const option of part("target", "always")?.options ?? []) option.textContent = spellingOf(d.items.find((item) => item.word.id === option.value));
-    showError(part("error", "none"), problems.none ? "Add a word it can stand for." : "");
-    editorStatus();
-  }
-  // An always-replace approval was given for one heard text and one output; changing
-  // either clears it, and the panel says so.
-  function clearAlways(why) {
-    const notice = `“Always” on “${words(draft.text)}” was cleared because you changed ${why}. Turn it on again if it still applies.`;
-    draft.direct = null; draft.direct_reason = "";
-    part("always-box", "always")?.remove();
-    const always = part("always", "button");
-    always?.classList.remove("on");
-    always?.setAttribute("aria-pressed", "false");
-    if (draft.notices.includes(notice)) return;
-    draft.notices.push(notice);
-    part("notices", "all")?.append(node("p", notice, "editor-notice"));
-  }
-  function segmented(items, current, onPick, label) {
-    const group = node("div", "", "segmented small");
-    group.setAttribute("role", "radiogroup");
-    group.setAttribute("aria-label", label);
-    for (const [value, text, hint] of items) {
-      const b = button(text, () => onPick(value), "");
-      b.setAttribute("role", "radio");
-      b.setAttribute("aria-checked", String(value === current));
-      b.setAttribute("aria-selected", String(value === current));
-      if (hint) b.title = hint;
-      group.append(b);
-    }
-    return group;
-  }
-  function input(value, key, onInput, { placeholder = "", cls = "input", tag = "input", label = placeholder } = {}) {
-    const field = document.createElement(tag);
-    field.className = cls;
-    field.value = value ?? "";
-    field.placeholder = placeholder;
-    field.dataset.key = key;
-    field.setAttribute("aria-label", label);
-    if (tag === "textarea") field.rows = 2;
-    field.addEventListener("input", () => { editorError = ""; onInput(field.value); refresh(); });
-    return field;
-  }
-  const errorLine = (name, text = "") => {
-    const p = node("p", text, "field-error");
-    p.dataset.part = `error:${name}`;
-    p.hidden = !text;
-    return p;
-  };
-
-  // A stored "as written" candidate stays one while its heard text and word are unchanged;
-  // otherwise the spelling rule above decides.
-  function literalItem(item) {
-    const d = draft;
-    const old = words(d.text) === d.origText && item.basis === "literal" ? dict.words.find((w) => w.id === item.word.id) : null;
-    const same = old && words(old.spelling) === words(item.word.spelling) && old.casing === item.word.casing;
-    return Boolean(same) || isLiteral(item.word, d.text);
-  }
-
-  function editorProblems() {
-    const d = draft;
-    const problems = { text: "", items: new Map(), direct: false, none: false, count: 0 };
-    const text = textKey(d.text);
-    const list = d.scope === "pinned" ? dict.pinned : dict.learned[d.model?.id] ?? [];
-    const taken = list.some((h) => textKey(h.text) === text && (d.created || text !== textKey(d.origText)));
-    problems.text = !text ? "Write what the speech model writes."
-      : taken ? "Already an entry in this list; edit that one."
-        : d.scope === "learned" && (d.created || text !== textKey(d.origText)) && dict.pinned.some((h) => textKey(h.text) === text)
-          ? "Pinned for every model already; edit that entry." : "";
-    for (const item of d.items) if (!words(item.word.spelling)) problems.items.set(item.key, "Write how it should be spelled.");
-    problems.none = !d.items.length;
-    problems.direct = Boolean(d.direct) && !words(d.direct_reason);
-    problems.count = (problems.text ? 1 : 0) + problems.items.size + (problems.direct ? 1 : 0) + (problems.none ? 1 : 0)
-      + (d.scope === "learned" && !d.model ? 1 : 0);
-    return problems;
-  }
-  function editorStatus() {
-    if (!draft) return;
-    const problems = editorProblems();
-    const missing = draft.items.filter((item) => !words(item.word.meaning)).length;
-    const status = el("entry-status");
-    status.textContent = editorError || (problems.count ? plural(problems.count, "thing") + " to fix"
-      : missing ? `${missing} without a description` : "Ready to save");
-    status.classList.toggle("err", Boolean(editorError) || problems.count > 0);
-    el("entry-save").disabled = building || saving || problems.count > 0;
-  }
-
-  function editorParts() {
-    const d = draft;
-    const model = d.model;
-    const problems = editorProblems();
-    const parts = [];
-    if (d.created) {
-      parts.push(segmented([["pinned", "Every model · pinned", "Shared by every speech model, protected from suggestions"],
-        ...(model ? [["learned", `Only ${shortName(model)}`, `Learned for ${speechName(model)}`]] : [])], d.scope, (value) => change((dd) => { dd.scope = value; }), "Use with"));
-    } else {
-      parts.push(node("p", d.scope === "pinned" ? "Pinned · used with every speech model." : `Learned · used only with ${speechName(model)}. Pin it from the list to share it.`, "caption editor-scope"));
-    }
-    if (d.scope === "learned" && !model) parts.push(node("p", "Choose a speech model in the toolbar first.", "field-error"));
-    const notices = node("div", "", "editor-notices");
-    notices.dataset.part = "notices:all";
-    notices.append(...d.notices.map((notice) => node("p", notice, "editor-notice")));
-    parts.push(notices);
-
-    // Heard as: the one text this entry is for.
-    const heard = node("section", "", "editor-section");
-    const heardHead = node("div", "", "editor-head");
-    heardHead.append(node("h3", "Heard as"), node("span", `what ${model ? shortName(model) : "the speech model"} writes`, "caption"));
-    const card = node("div", "", "editor-card");
-    card.append(input(d.text, "text", (value) => {
-      if (d.direct) clearAlways("the heard text");
-      d.text = value;
-    }, { placeholder: "heard text", cls: "input mono heard-input", label: "Heard as" }), errorLine("text", problems.text));
-    heard.append(heardHead, card);
-    parts.push(heard);
-
-    // Written as: the words it can stand for, one card each.
-    const written = node("section", "", "editor-section");
-    const writtenHead = node("div", "", "editor-head");
-    writtenHead.append(node("h3", "Written as"), node("span", "the words it can stand for · the decision model picks one from the sentence", "caption"));
-    written.append(writtenHead);
-    for (const item of d.items) {
-      const wordCard = node("div", "", "editor-card");
-      const top = node("div", "", "editor-line");
-      // Changing a spelling or capitals clears an approval that names this word.
-      top.append(input(item.word.spelling, `w:${item.key}:spelling`, (value) => {
-        item.word.spelling = value;
-        if (d.direct === item.word.id) clearAlways(`${item.word.spelling || "the word"}'s spelling`);
-      }, { placeholder: "Spelling", cls: "input strong" }), segmented([["fixed", "Exact capitals", "Always exactly like this: names, acronyms"], ["ordinary", "Normal word", "Capitalised only at a sentence start"]],
-        item.word.casing, (value) => {
-          if (value === item.word.casing) return;
-          item.word.casing = value;
-          if (d.direct === item.word.id) clearAlways(`${item.word.spelling || "the word"}'s capitals`);
-          change(() => {});
-        }, "Capitals"));
-      const literal = node("span", "as written", "pill-note");
-      literal.dataset.part = `literal:${item.key}`;
-      literal.hidden = !literalItem(item);
-      literal.title = "Spelled like the heard text: left as written when this word fits the sentence";
-      top.append(literal);
-      const remove = button("×", () => change((dd) => {
-        dd.items = dd.items.filter((x) => x !== item);
-        if (dd.direct === item.word.id) { dd.direct = null; dd.direct_reason = ""; }
-      }), "btn-icon remove");
-      remove.setAttribute("aria-label", `Remove ${item.word.spelling || "this word"} from this entry`);
-      remove.title = "Remove this word from this entry; the word stays in your dictionary";
-      top.append(remove);
-      wordCard.append(top, errorLine(`w:${item.key}`, problems.items.get(item.key)));
-      const warn = node("p", "Without a description the decision model can't choose this word. You can save; the word is flagged.", "field-error");
-      warn.hidden = Boolean(words(item.word.meaning));
-      const description = input(item.word.meaning, `w:${item.key}:meaning`, (value) => { item.word.meaning = value; description.classList.toggle("missing", !words(value)); warn.hidden = Boolean(words(value)); },
-        { tag: "textarea", placeholder: "What it is and what it goes with. The decision model reads this.", label: "What it is" });
-      description.classList.toggle("missing", !words(item.word.meaning));
-      wordCard.append(description, warn,
-        input(item.word.personal_context, `w:${item.key}:context`, (value) => { item.word.personal_context = value; }, { placeholder: "How you use it (optional)", cls: "input small" }));
-      const self = (u) => !d.created && u.scope === d.scope && textKey(u.h.text) === textKey(d.origText) && (u.scope === "pinned" || u.model === d.model?.id);
-      const others = usesOf(item.word.id).filter((u) => !self(u));
-      if (others.length) wordCard.append(node("p", `Shared with ${others.slice(0, 3).map(whereUsed).join(", ")}${others.length > 3 ? ` and ${others.length - 3} more` : ""}: edits to this word apply there too.`, "caption"));
-      written.append(wordCard);
-    }
-    // More words: a new one, the heard text kept as written, or one already in the dictionary.
-    const more = node("div", "", "editor-line wrap");
-    more.append(button("+ New word", () => change((dd) => { dd.items.push(draftItem(blankWord(), false)); }), "btn link add-more"));
-    const keep = button(`+ keep “${words(d.text)}” as written`, () => change((dd) => {
-      const same = dict.words.find((w) => w.casing === "ordinary" && textKey(w.spelling) === textKey(dd.text) && !dd.items.some((item) => item.word.id === w.id));
-      dd.items.push(draftItem(same ?? { ...blankWord(), spelling: words(dd.text), casing: "ordinary" }, Boolean(same), "literal"));
-    }), "pill dashed");
-    keep.dataset.part = "keep:text";
-    keep.hidden = !canKeep(d);
-    keep.title = "Adds the word spelled exactly like this, so it's left alone when that sense fits";
-    more.append(keep);
-    const others = dict.words.filter((w) => !d.items.some((item) => item.word.id === w.id));
-    if (others.length) {
-      const pick = document.createElement("select");
-      pick.className = "pill dashed pick";
-      pick.setAttribute("aria-label", "Add a word from your dictionary");
-      pick.title = "Add a word already in your dictionary";
-      pick.add(new Option("+ existing word…", ""));
-      for (const w of [...others].sort((a, b) => a.spelling.localeCompare(b.spelling))) pick.add(new Option(`${w.spelling} — ${w.meaning || "no description yet"}`, w.id));
-      pick.addEventListener("change", () => {
-        const w = dict.words.find((x) => x.id === pick.value);
-        if (w) change((dd) => { dd.items.push(draftItem(w, true)); });
-      });
-      more.append(pick);
-    }
-    written.append(more, errorLine("none", problems.none ? "Add a word it can stand for." : ""));
-    parts.push(written);
-
-    // Always: replace without reading the sentence. Rare.
-    const always = node("section", "", "editor-section");
-    const toggle = button("Always", () => change((dd) => {
-      dd.direct = dd.direct ? null : dd.items[0]?.word.id ?? null;
-      if (!dd.direct) dd.direct_reason = "";
-    }), d.direct ? "pill always on" : "pill always");
-    toggle.dataset.part = "always:button";
-    toggle.disabled = !d.items.length;
-    toggle.setAttribute("aria-pressed", String(Boolean(d.direct)));
-    toggle.title = "Replace without reading the sentence. Rare.";
-    const line = node("div", "", "editor-line");
-    line.append(toggle);
-    always.append(line);
-    if (d.direct) {
-      const box = node("div", "", "always-box");
-      box.dataset.part = "always-box:always";
-      const line = node("div", "", "editor-line wrap");
-      const target = document.createElement("select");
-      target.className = "select";
-      target.dataset.part = "target:always";
-      target.setAttribute("aria-label", "Always write");
-      for (const item of d.items) target.add(new Option(spellingOf(item), item.word.id, false, item.word.id === d.direct));
-      target.addEventListener("change", () => change((dd) => { dd.direct = target.value; }));
-      line.append("Always write ", target, " without reading the sentence.");
-      box.append(line, input(d.direct_reason, "reason", (value) => { d.direct_reason = value; },
-        { placeholder: `Why can “${words(d.text)}” never mean anything else?`, cls: "input small", label: "Why this is always right" }),
-      errorLine("reason", problems.direct ? "Write a reason. Use this only when the words can never mean anything else." : ""));
-      always.append(box);
-    }
-    parts.push(always);
-    return parts;
-  }
-
-  // A draft is based on its entry and its stored words as they were when taken. After a
-  // reload it can still be saved if they are unchanged; a word the person did not edit just
-  // takes the saved version. Otherwise the saved version is shown, so a save never undoes a
-  // change made elsewhere.
-  function rebase(d) {
-    if (d.version === dictVersion) return true;
-    const known = wordMap();
-    if (!d.created) {
-      const list = d.scope === "pinned" ? dict.pinned : dict.learned[d.model.id] ?? [];
-      const fresh = list.find((h) => textKey(h.text) === textKey(d.origText));
-      if (!fresh) { closeEditor(); toast("This entry was removed elsewhere; nothing was saved.", "err"); return false; }
-      if (JSON.stringify(fresh) !== JSON.stringify(d.original)) {
-        openEditor(d.scope, fresh, false, d.model);
-        editorError = "This entry changed while you were editing and now shows the saved version. Redo your change.";
-        editorStatus();
-        return false;
-      }
-    }
-    let conflict = false;
-    for (const item of [...d.items]) {
-      if (!item.stored || JSON.stringify(known.get(item.word.id) ?? null) === item.seen) continue;
-      conflict ||= edited(item);
-      const fresh = known.get(item.word.id);
-      if (fresh) Object.assign(item, draftItem(fresh, true, item.basis, item.evidence), { key: item.key });
-      else d.items = d.items.filter((x) => x !== item);
-    }
-    d.version = dictVersion;
-    if (!conflict) return true;
-    editorError = "A word here changed elsewhere and now shows the saved version. Redo your change to it, then save.";
-    drawEditor();
+  // An edit is made on the word as the editor opened it. After a reload it still saves when
+  // that word is unchanged; otherwise the editor shows the saved version, so a save never
+  // undoes a change made elsewhere.
+  function unchanged(d) {
+    if (!d.seen) return true;
+    const stored = dict.words.find((w) => w.id === d.id);
+    if (!stored) { wordDrawer.close(); toast("This word was deleted elsewhere; nothing was saved.", "err"); return false; }
+    if (JSON.stringify(stored) === d.seen) return true;
+    d.seen = JSON.stringify(stored);
+    fill(stored);
+    d.problem = "This word changed elsewhere and now shows the saved version. Redo your change.";
+    wordStatus();
     return false;
   }
-
-  el("entry-save").addEventListener("click", saveEditor);
-  async function saveEditor() {
-    const d = draft;
-    if (!d || editorProblems().count || building || saving || !rebase(d)) return;
-    const text = words(d.text);
-    const sameText = !d.created && text === d.origText;
-    const next = clone();
-    // Words: an edited one replaces its stored copy everywhere; a new one is added.
-    const changedOutputs = new Set();
-    // Saving also confirms a word flagged for review once it has a description.
-    const confirmed = (item) => item.stored && JSON.parse(item.seen).needs_review && Boolean(words(item.word.meaning));
-    for (const item of d.items.filter((item) => edited(item) || confirmed(item))) {
-      const meaning = item.word.meaning.trim();
-      const word = { id: item.word.id, spelling: words(item.word.spelling), meaning, personal_context: item.word.personal_context.trim() || null,
-        casing: item.word.casing, needs_review: !meaning };
-      const at = next.words.findIndex((w) => w.id === word.id);
-      if (at < 0) { next.words.push(word); continue; }
-      const old = next.words[at];
-      if (old.spelling !== word.spelling || old.casing !== word.casing) changedOutputs.add(word.id);
-      next.words[at] = word;
-    }
-    const spelling = (wid) => next.words.find((w) => w.id === wid)?.spelling ?? "";
-    // Other entries naming a word whose output changed: an approval naming it is cleared, and a
-    // candidate no longer spelled like its heard text is the person's own, not as written.
-    for (const list of [next.pinned, ...Object.values(next.learned)]) {
-      for (const h of list) {
-        if (changedOutputs.has(h.direct)) { h.direct = null; h.direct_reason = ""; }
-        h.candidates = h.candidates.map((c) => c.basis === "literal" && changedOutputs.has(c.word) && textKey(spelling(c.word)) !== textKey(h.text)
-          ? { word: c.word, basis: "user", evidence: [] } : c);
-      }
-    }
-    const entry = {
-      text,
-      candidates: d.items.map((item) => {
-        // A changed heard text loses the evidence that located the old one in transcripts.
-        const old = sameText ? d.original.candidates.find((c) => c.word === item.word.id) : null;
-        const literal = textKey(spelling(item.word.id)) === textKey(text) && literalItem(item);
-        const basis = literal ? "literal" : old && old.basis !== "literal" ? old.basis : "user";
-        return { word: item.word.id, basis, evidence: old && old.basis === basis ? old.evidence : [] };
-      }),
-      direct: d.direct || null,
-      direct_reason: d.direct ? d.direct_reason.trim() : "",
-    };
-    const list = d.scope === "pinned" ? next.pinned : (next.learned[d.model.id] ??= []);
-    const at = d.created ? -1 : list.findIndex((h) => textKey(h.text) === textKey(d.origText));
-    if (at < 0) list.push(entry); else list[at] = entry;
-    const version = dictVersion;
+  async function write(d, next, base = dictVersion) {
     saving = true;
-    editorStatus();
-    const problem = await saveDictionary(next).finally(() => { saving = false; editorStatus(); });
-    // The panel may have been closed, or another entry opened, while this was saving.
-    const current = draft === d;
+    wordStatus();
+    const problem = await saveDictionary(next, false, base).finally(() => { saving = false; wordStatus(); });
+    // The panel may have been closed while this was saving.
+    if (problem && draft !== d) toast(problem, "err");
+    return problem;
+  }
+  el("word-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const d = draft;
+    const spelling = words(fields.spelling.value);
+    if (!d || !spelling || building || saving || !unchanged(d)) return;
+    const meaning = words(fields.meaning.value);
+    // Saving is the person's check of the word: only one without a meaning stays to check.
+    // Its places of use are kept as they are.
+    const word = { ...(d.seen ? JSON.parse(d.seen) : { id: `w_${crypto.randomUUID().replaceAll("-", "")}`, evidence: [] }), spelling, meaning, casing, needs_review: !meaning };
+    for (const key of ["said_as", "personal_context"]) {
+      const value = words(fields[key].value);
+      if (value) word[key] = value; else delete word[key];
+    }
+    if (JSON.stringify(word) === d.seen) { wordDrawer.close(); return; }
+    const next = structuredClone(dict);
+    const at = next.words.findIndex((w) => w.id === word.id);
+    if (at < 0) next.words.push(word); else next.words[at] = word;
+    const version = dictVersion;
+    const problem = await write(d, next);
     if (problem) {
-      if (!current) { toast(problem, "err"); return; }
-      // A refused save that reloaded the dictionary: keep the draft only if its entry is unchanged.
-      if (dictVersion !== version) {
-        if (!rebase(d)) return;
-        editorError = "The dictionary changed elsewhere and was reloaded. Save again to apply this.";
-      } else editorError = problem;
-      editorStatus();
+      if (draft !== d) return;
+      // Refused after a reload: the edit still applies if its word is unchanged.
+      if (dictVersion === version) d.problem = problem;
+      else if (unchanged(d)) d.problem = "The dictionary changed elsewhere and was reloaded. Save again to apply this.";
+      wordStatus();
       return;
     }
-    if (current) closeEditor();
-    if (current && d.created) { clearAdd(); showAdd(false); }
-    reveal(d.scope, text);
-    toast(`${d.created ? "Added" : "Saved"} “${text}”`);
-  }
+    if (draft === d) wordDrawer.close();
+    reveal(word.id);
+    toast(`${d.seen ? "Saved" : "Added"} ${spelling}`);
+  });
+  el("word-delete").addEventListener("click", async () => {
+    const d = draft;
+    if (!d?.seen || building || saving || !unchanged(d)) return;
+    const { spelling } = JSON.parse(d.seen);
+    // Made on the version shown now: a reload while confirming makes it a conflict, not an overwrite.
+    const version = dictVersion;
+    const next = { ...dict, words: dict.words.filter((w) => w.id !== d.id) };
+    if (!await confirmAction(`Delete “${spelling}”?`, "Entune stops offering it when your speech model is unsure of a word. Suggestions may add it again if you keep using it.", "Delete")) return;
+    const problem = await write(d, next, version);
+    if (problem) {
+      if (draft === d) { d.problem = problem; wordStatus(); }
+      return;
+    }
+    if (draft === d) wordDrawer.close();
+    toast(`Deleted ${spelling}`);
+  });
 
   // ---- List and JSON: two views of the same dictionary.json ----
   const selectView = segmentedGroup({ list: el("show-list"), json: el("show-json") }, (name) => showView(name));
@@ -1035,7 +465,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     el("revert-dictionary").disabled = building || !dirty;
     el("dictionary-status").textContent = building ? "Read-only while suggestions are open."
       : dirty ? "Unsaved changes."
-        : "dictionary.json in Entune's data folder, the same content as the list. Heard texts match whole words regardless of case.";
+        : "dictionary.json in Entune's data folder: the same words as the list.";
     return dirty;
   }
   // Text started before the dictionary loaded names no revision it could have seen:
@@ -1069,13 +499,14 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
   const menu = el("dict-menu");
   const menuButton = el("dict-menu-btn");
   function closeMenu() { menu.hidden = true; menuButton.setAttribute("aria-expanded", "false"); }
-  // What learning from audio costs depends on the speech model it is for.
+  // What learning from audio costs depends on the speech model that transcribes it.
   function drawMenu() {
     const model = getModel();
     const name = model ? shortName(model) : "your speech model";
+    const Name = cap(name);
     const local = isLocal(model?.id);
-    el("learn-pop-lead").textContent = `New speech model, or coming from another dictation app? Let ${name} listen to recordings you already have. It learns your names, your terms and the way you say them.`;
-    el("learn-step-1").textContent = `${model ? name : "Your speech model"} transcribes it again`;
+    el("learn-pop-lead").textContent = `Coming from another dictation app, or have recordings of you talking? ${Name} transcribes them, and Entune finds the names and terms you use.`;
+    el("learn-step-1").textContent = `${Name} transcribes it again`;
     el("learn-cost").textContent = !model ? "Transcribing takes time, and a cloud speech model charges for it."
       : local ? `Transcribing takes time, and a cloud speech model charges for it. ${name} runs on ${THIS_DEVICE}, so there's no charge.`
         : `Transcribing takes time, and ${name} charges for the audio it transcribes.`;
@@ -1144,16 +575,16 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     provider: "Learn from another dictation app", folder: "Learn from an audio folder" };
   // What the source is, and how it becomes suggestions, in the speech model's name.
   const LEAD = {
-    history: (m) => `Reads what ${m} already wrote and suggests entries for the words it got wrong.`,
-    entune: (m) => `Recordings you made in Entune with other speech models. ${m} transcribes them again, then Entune suggests entries for the words it gets wrong.`,
-    provider: (m) => `Recordings another dictation app keeps on ${THIS_DEVICE}. ${m} transcribes them, then Entune suggests entries for the words it gets wrong.`,
-    folder: (m) => `Audio of you talking, such as meetings or voice notes. ${m} transcribes it, then Entune suggests entries for the words it gets wrong.`,
+    history: (m) => `Reads what ${m} already wrote and suggests the names, products and terms you use, each with how often you used it.`,
+    entune: (m) => `Recordings you made in Entune with other speech models. ${m} transcribes them again, then Entune suggests the words you use in them.`,
+    provider: (m) => `Recordings another dictation app keeps on ${THIS_DEVICE}. ${m} transcribes them, then Entune suggests the words you use in them.`,
+    folder: (m) => `Audio of you talking, such as meetings or voice notes. ${m} transcribes it, then Entune suggests the words you use in it.`,
   };
   const HOW = {
     history: (m) => [`Get suggestions reads up to 300 of ${m}'s newest transcripts that suggestions you applied haven't used yet. A run you discard or stop uses none.`,
       "Each transcript is read once, so you don't pay twice for the same text. To read earlier ones again, open Advanced and choose a span."],
-    entune: (m) => [`Each speech model mishears different words, so what your other models learned doesn't carry over to ${m}. These recordings let ${m} catch up.`,
-      `The hours shown are recorded audio, not how long the run takes. ${m} transcribes first; then the suggestion model reads the new transcripts.`],
+    entune: (m) => [`Get suggestions reads only ${m}'s own transcripts. These recordings were transcribed by other speech models, so ${m} transcribes them first.`,
+      `The hours shown are recorded audio, not how long the run takes. ${cap(m)} transcribes first; then the suggestion model reads the new transcripts.`],
     provider: (m) => [`Import copies the audio that app keeps on ${THIS_DEVICE} into Entune's data folder. Its transcripts are never copied, and its own files stay as they are. Importing again adds only what's new.`,
       `Then ${m} transcribes the audio and the suggestion model reads the new transcripts, so moving from that app doesn't mean starting from scratch.`],
     folder: (m) => ["Choose a folder of recordings of you talking: WAV, MP3, M4A, FLAC, OGG or WebM. Each file is copied once into Entune's data folder; other files are skipped.",
@@ -1234,6 +665,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     const audio = setupSource !== "history";
     const model = getModel();
     const m = model ? shortName(model) : "your speech model";
+    const M = cap(m);
     const local = isLocal(model?.id);
     const sm = suggestionName();
     el("learn-source").textContent = model ? LEAD[setupSource](m) : "Choose a speech model first.";
@@ -1241,7 +673,7 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     tag.textContent = audio ? "Transcribes again" : "Nothing to transcribe";
     tag.classList.toggle("warn", audio);
     el("cost-note").textContent = !audio ? "Uses the transcripts you already have."
-      : local ? `${m} runs on ${THIS_DEVICE}: no charge, but it takes a while.` : `${m} charges for transcribing the audio you select.`;
+      : local ? `${M} runs on ${THIS_DEVICE}: no charge, but it takes a while.` : `${M} charges for transcribing the audio you select.`;
     el("speech-field").hidden = !audio;
     el("how-toggle").setAttribute("aria-expanded", String(howOpen));
     el("how-body").hidden = !howOpen;
@@ -1261,10 +693,10 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
         const took = plan.transcribe != null ? `about ${duration(plan.transcribe)}` : "not timed yet for this speech model";
         const transcribe = plan.unknown ? "Some recordings have no known length, so there is no time estimate."
           : local ? `${duration(plan.seconds)} of audio on ${THIS_DEVICE}, one recording at a time: ${took}. No charge.`
-            : `${m} bills you for ${duration(plan.seconds)} of audio. ${took[0].toUpperCase()}${took.slice(1)}${plan.workers > 1 ? `, ${plan.workers} recordings at a time` : ""}.`;
+            : `${M} bills you for ${duration(plan.seconds)} of audio. ${took[0].toUpperCase()}${took.slice(1)}${plan.workers > 1 ? `, ${plan.workers} recordings at a time` : ""}.`;
         const read = plan.unknown ? `${reader} reads the new transcripts in parts, starting while transcription runs.`
           : `${reader} reads the new transcripts in ${partsText(plan.parts, plan.perPart, plan.measuredOnce)}, starting while transcription runs.${plan.perPart ? "" : " Not timed yet with these settings."}`;
-        what = [{ title: `${m} transcribes again`, body: transcribe, extra: true, cls: "extra" }, { title: "Find suggestions", body: read }, review];
+        what = [{ title: `${M} transcribes again`, body: transcribe, extra: true, cls: "extra" }, { title: "Find suggestions", body: read }, review];
       }
       note = !model ? "Choose a speech model first." : !sm ? "Choose a suggestion model with a key first."
         : plan.available ? note : setupSource === "provider" ? "Import its recordings first." : setupSource === "folder" ? "Choose a folder first." : "";
@@ -1316,8 +748,8 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     items.push({ title: "You review", cls: now === "review" ? "active" : "pending",
       body: "Edit any suggestion or leave it out, then apply. Nothing in your dictionary changes until you do.",
       status: now !== "review" ? "" : !proposalChanges.length ? "No changes suggested."
-        : `${plural(proposalChanges.length, "suggestion")} ready: ${[plural(kinds("add"), "new entry", "new entries"), plural(kinds("update"), "change"),
-          ...(kinds("remove") ? [plural(kinds("remove"), "removal")] : []), ...(kinds("word") ? [plural(kinds("word"), "clearer meaning")] : [])].join(", ")}` });
+        : `${plural(proposalChanges.length, "suggestion")} ready: ${[...(kinds("add") ? [plural(kinds("add"), "new word")] : []),
+          ...(kinds("meaning") ? [plural(kinds("meaning"), "clearer meaning")] : [])].join(", ")}` });
     steps(el("run-steps"), items);
   }
 
@@ -1338,7 +770,6 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     // The panel shows the one stage the run is in.
     const titles = { setup: SETUP_TITLES[setupSource], running: "Getting suggestions", review: "Review suggestions", halted: "Suggestions stopped" };
     el("suggest-title").textContent = titles[now];
-    if (now === "review") proposalTitle();
     const model = getModel();
     el("suggest-sub").textContent = now === "setup" ? ""
       : `${plural(state.total ?? 0, state.source === "audio" ? "recording" : "transcript")} · ${modelName(state.model ?? "", model ? [model] : [])} → ${languageName(state.dictionaryModel) ?? "suggestion model"}`;
@@ -1387,164 +818,86 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
     lockEditors();
   }
 
-  // A suggestion names words by ID: a new one as the review edits it, a stored one as its
-  // included clearer meaning leaves it, else as saved.
-  const isNewWord = (wid) => proposalNew.has(wid);
-  const proposalWord = (wid) => isNewWord(wid) ? proposalWords.get(wid)
-    : proposalChanges.find((c) => c.kind === "word" && c.included && c.after.id === wid)?.after ?? wordMap().get(wid) ?? proposalWords.get(wid);
-  const savedWord = (wid) => wordMap().get(wid);
-  const label = (h) => h ? h.candidates.map((c) => proposalWord(c.word)?.spelling ?? c.word).join(" · ") : "";
-  const describe = (h, look = proposalWord) => h ? [`Heard as: ${h.text}`, ...h.candidates.map((c) => {
-    const w = look(c.word);
-    return `${w?.spelling ?? c.word}${c.basis === "literal" ? " (as written)" : ""}: ${w?.meaning || "no description yet"}`;
-  })].join("\n") : "";
-  const descriptions = (h) => h.candidates.map((c) => {
-    const w = proposalWord(c.word);
-    return `${w?.spelling ?? c.word}${isNewWord(c.word) ? " (new)" : ""}: ${w?.meaning || "no description yet"}`;
-  }).join(" · ");
-  // Suggestions belong to the speech model they were made for; say so when the toolbar
-  // shows another one, since applying still updates that model's dictionary.
-  let proposalLabel = "";
-  function proposalTitle() {
-    if (!proposalModel) return;
-    const model = getModel();
-    if (model?.id === proposalModel) proposalLabel = modelName(model.id, [model]);
-    el("suggest-title").textContent = model?.id === proposalModel ? "Review suggestions" : `Review suggestions for ${proposalLabel}`;
-  }
+  // ---- Review: new words you used, and clearer meanings for words still to check ----
   function renderProposal(p) {
-    proposalLabel = modelName(p.model, []);
-    proposalModel = p.model;
-    proposalWords = new Map(p.words.map((w) => [w.id, structuredClone(w)]));
-    proposalNew = new Set(p.newWords ?? []);
-    // An entry's words as suggested, so one left out while editing can be taken back.
-    proposalChanges = p.changes.map(c => ({...structuredClone(c), included: true, editing: false,
-      choices: c.kind !== "word" && c.after ? structuredClone(c.after.candidates) : []}));
+    proposalChanges = p.changes.map((c) => ({ ...structuredClone(c), included: true, editing: false }));
     drawProposal();
   }
-  // Each suggestion's summary shows what Apply submits, so it follows every edit, including
-  // edits to a new word that other suggestions name too.
-  function refreshSummaries() {
-    for (const change of proposalChanges) {
-      if (!change.after) continue;
-      const set = (part, text) => { const e = proposalBody.querySelector(`[data-summary="${CSS.escape(`${part}:${change.id}`)}"]`); if (e) e.textContent = text; };
-      if (change.kind === "word") { set("after", change.after.meaning || "No description yet."); continue; }
-      set("to", label(change.after));
-      set("after", describe(change.after));
-      set("desc", descriptions(change.after));
-    }
-  }
-  function field(parent, text, value, update, tag = "input") {
-    const wrap = node("label", text, "group-field");
-    const control = document.createElement(tag);
-    control.className = "input";
-    if (tag === "textarea") control.rows = 2;
-    control.value = value ?? ""; control.addEventListener("change", () => { update(control.value); refreshSummaries(); });
-    wrap.append(control); parent.append(wrap); return control;
-  }
-  function drawProposal() {
+  function drawProposal(focus = null) {
     proposalBody.replaceChildren();
-    for (const [kind, heading] of [["add", "New entries"], ["update", "Changes"], ["remove", "Remove"], ["word", "Clearer meanings"]]) {
-      const items = proposalChanges.filter(c => c.kind === kind);
-      if (!items.length) continue;
-      proposalBody.append(node("h3", `${heading} · ${items.length}`));
-      for (const change of items) {
-        const box = node("section", "", "proposal-change");
-        box.classList.toggle("dismissed", !change.included);
-        const head = node("div", "", "change-head");
-        const struck = kind === "remove" && change.included ? " struck" : "";
-        const summary = (element, part) => { element.dataset.summary = `${part}:${change.id}`; return element; };
-        const name = kind === "word" ? change.after.spelling : (change.after || change.before).text;
-        if (kind === "word") head.append(node("b", name), node("span", "", "spacer"));
-        else {
-          const h = change.after || change.before;
-          head.append(node("code", h.text, `heard${struck}`), node("span", "→", "arrow"),
-            summary(node("b", label(h), struck.trim()), "to"), node("span", "", "spacer"));
-        }
-        const toggle = change.included
-          ? button("×", () => { change.included = false; drawProposal(); }, "btn-icon remove")
-          : button("Include", () => { change.included = true; drawProposal(); }, "btn link");
-        toggle.setAttribute("aria-label", `${change.included ? "Leave out" : "Include"} ${kind === "word" ? "the clearer meaning of" : kind} ${name}`);
-        toggle.title = change.included ? "Leave this suggestion out; your current dictionary is kept as it is" : "Include this suggestion again";
-        head.append(toggle);
-        box.append(head);
-        if (kind === "word" || kind === "update") {
-          const compare = node("div", "", "compare");
-          const shown = (value, look) => kind === "word" ? value.meaning || "No description yet." : describe(value, look);
-          compare.append(node("span", "Now", "caption"), node("pre", shown(change.before, savedWord), "before"),
-            node("span", "Suggested", "suggested"), summary(node("pre", shown(change.after), "after"), "after"));
-          box.append(compare);
-        } else if (kind === "add") {
-          box.append(summary(node("p", descriptions(change.after), "change-desc"), "desc"));
-        } else {
-          box.append(node("p", "Removed only if you keep this suggestion when applying. Its words stay in your dictionary.", "caption"));
-        }
-        if (change.after && change.included) {
-          const editor = node("details", "", "proposal-editor");
-          editor.append(node("summary", "Edit this suggestion"));
-          editor.open = change.editing;
-          editor.addEventListener("toggle", () => { change.editing = editor.open; });
-          if (kind === "word") {
-            const row = node("div", "", "meaning-editor");
-            field(row, "What it is", change.after.meaning, value => { change.after.meaning = value.trim(); change.after.needs_review = !change.after.meaning; }, "textarea");
-            editor.append(row);
-          } else {
-            // The words it can stand for: one left out stays offered here; at least one stays.
-            const choices = node("div", "", "proposal-associations");
-            for (const choice of change.choices) {
-              const w = proposalWord(choice.word);
-              const wrap = node("label", "", "caption check");
-              const check = document.createElement("input"); check.type = "checkbox";
-              check.checked = change.after.candidates.some(c => c.word === choice.word);
-              check.disabled = check.checked && change.after.candidates.length === 1;
-              check.addEventListener("change", () => {
-                change.after.candidates = change.choices.filter(c => c.word === choice.word ? check.checked : change.after.candidates.some(x => x.word === c.word));
-                if (!change.after.candidates.some(c => c.word === change.after.direct)) { change.after.direct = null; change.after.direct_reason = ""; }
-                drawProposal();
-              });
-              wrap.append(check, `${w?.spelling ?? choice.word}${choice.basis === "literal" ? " (as written)" : ""} — ${w?.meaning || "no description yet"}`);
-              choices.append(wrap);
-            }
-            editor.append(choices);
-            // A new word is defined here, once, for every suggestion that names it.
-            for (const choice of change.choices.filter(c => isNewWord(c.word) && proposalWords.has(c.word))) {
-              const word = proposalWords.get(choice.word);
-              const row = node("div", "", "meaning-editor");
-              // Every suggestion naming the word shows its fields; an edit updates them all.
-              const sync = (name, value) => {
-                for (const control of proposalBody.querySelectorAll(`[data-word="${CSS.escape(word.id)}"][data-field="${name}"]`)) control.value = value ?? "";
-              };
-              const tag = (control, name) => { control.dataset.word = word.id; control.dataset.field = name; };
-              tag(field(row, "Write it as", word.spelling, value => {
-                word.spelling = value.trim();
-                // An "as written" candidate stays one only while it is spelled like its heard text.
-                const kept = (h, list) => list.map(x => x.word === word.id && x.basis === "literal" && textKey(word.spelling) !== textKey(h.text)
-                  ? {word: x.word, basis: "user", evidence: []} : x);
-                for (const c of proposalChanges) {
-                  if (c.kind === "word" || !c.after) continue;
-                  c.after.candidates = kept(c.after, c.after.candidates);
-                  c.choices = kept(c.after, c.choices);
-                }
-                sync("spelling", word.spelling);
-              }), "spelling");
-              tag(field(row, "What it is", word.meaning, value => { word.meaning = value.trim(); word.needs_review = !word.meaning; sync("meaning", word.meaning); }), "meaning");
-              tag(field(row, "How you use it (optional)", word.personal_context, value => { word.personal_context = value.trim() || null; sync("personal_context", word.personal_context); }), "personal_context");
-              editor.append(row);
-            }
-          }
-          box.append(editor);
-        }
-        proposalBody.append(box);
-      }
+    for (const [kind, heading] of [["add", "New words"], ["meaning", "Clearer meanings"]]) {
+      const items = proposalChanges.filter((c) => c.kind === kind);
+      if (items.length) proposalBody.append(node("h3", `${heading} · ${items.length}`), ...items.map(changeBox));
     }
-    const included = proposalChanges.filter(c => c.included).length;
+    if (!proposalChanges.length) proposalBody.append(node("p", "No changes suggested. Finish to close this review; the same dictations can be used again later.", "caption"));
+    const included = proposalChanges.filter((c) => c.included).length;
     el("accept-proposal").textContent = included ? `Apply ${plural(included, "change")}` : "Finish without changes";
     el("suggest-badge").textContent = String(included);
-    if (!proposalChanges.length) proposalBody.append(node("p", "No changes suggested. Finish to close this review; the same dictations can be used again later.", "caption"));
+    if (focus) proposalBody.querySelector(`[data-toggle="${CSS.escape(focus)}"]`)?.focus();
+  }
+  // One suggestion, as Apply would write it, with its editor while it is included. A new
+  // word keeps the places it was found; only its spelling, capitals and meaning can change.
+  function changeBox(change) {
+    const { before, after } = change;
+    const added = change.kind === "add";
+    const box = node("section", "", "proposal-change");
+    box.classList.toggle("dismissed", !change.included);
+    const name = node("b", after.spelling);
+    const facts = node("span", "", "caption");
+    const drawFacts = () => { facts.textContent = added ? `${after.casing === "fixed" ? "exact capitals" : "normal word"} · used ${after.evidence?.length ?? 0}×` : ""; };
+    drawFacts();
+    const toggle = change.included
+      ? button("×", () => { change.included = false; drawProposal(change.id); }, "btn-icon remove")
+      : button("Include", () => { change.included = true; drawProposal(change.id); }, "btn link");
+    toggle.dataset.toggle = change.id;
+    toggle.setAttribute("aria-label", `${change.included ? "Leave out" : "Include"} ${added ? "the new word" : "the clearer meaning of"} ${after.spelling}`);
+    toggle.title = change.included ? "Leave this suggestion out; your dictionary stays as it is" : "Include this suggestion again";
+    const head = node("div", "", "change-head");
+    head.append(name, facts, node("span", "", "spacer"), toggle);
+    const meaning = node(added ? "p" : "pre", after.meaning || "No meaning yet.", added ? "change-desc" : "after");
+    box.append(head);
+    if (added) box.append(meaning);
+    else {
+      const compare = node("div", "", "compare");
+      compare.append(node("span", "Now", "caption"), node("pre", before.meaning || "No meaning yet.", "before"), node("span", "Suggested", "suggested"), meaning);
+      box.append(compare);
+    }
+    if (!change.included) return box;
+    const editor = node("details", "", "proposal-editor");
+    editor.open = change.editing;
+    editor.addEventListener("toggle", () => { change.editing = editor.open; });
+    const form = node("div", "", "meaning-editor");
+    if (added) {
+      // A spelling is never empty: clearing it keeps the one before.
+      edit(form, "Spelling", "input", after.spelling, (value) => { after.spelling = words(value) || after.spelling; name.textContent = after.spelling; return after.spelling; });
+      edit(form, "Capitals", "select", after.casing, (value) => { after.casing = value; drawFacts(); return value; });
+    }
+    edit(form, "Meaning", "textarea", after.meaning, (value) => {
+      after.meaning = words(value);
+      after.needs_review ||= !after.meaning; // a word without a meaning stays to check
+      meaning.textContent = after.meaning || "No meaning yet.";
+      return after.meaning;
+    });
+    editor.append(node("summary", "Edit this suggestion"), form);
+    box.append(editor);
+    return box;
+  }
+  // A field of a suggestion's editor: a change updates what Apply sends, and shows it as kept.
+  function edit(parent, label, tag, value, update) {
+    const wrap = node("label", label, "group-field");
+    const control = document.createElement(tag);
+    control.className = tag === "select" ? "select" : "input";
+    if (tag === "select") control.append(new Option("Exact capitals: names, products, acronyms", "fixed"), new Option("Normal word: capitalised at a sentence start", "ordinary"));
+    if (tag === "textarea") { control.rows = 2; control.maxLength = 120; }
+    control.value = value ?? "";
+    control.addEventListener("change", () => { control.value = update(control.value); });
+    wrap.append(control);
+    parent.append(wrap);
   }
   el("build-dictionary").addEventListener("click", () => {
     const selection = historyReuse.selection();
     if (!selection) { flash(buildStatus, "The transcripts are still loading. Try again in a moment.", "err"); return; }
-    builds.start("history", {...selection, ...runSettings()});
+    builds.start("history", { ...selection, ...runSettings() });
   });
 
   return { load: loadDictionary, refreshAudio: () => onboarding.load() };
