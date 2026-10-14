@@ -443,7 +443,7 @@ def register(mcp: MCPServer, app: Entune) -> None:
     def recent_dictations(limit: int = 20) -> list[dict[str, Any]]:
         """How the person's latest dictations came out, newest first: the speech model,
         what it wrote, the text delivered, and each step's outcome. For the dictionary:
-        what it replaced, and how many matches it kept as heard or could not decide. Use
+        what it replaced, and how many places it kept as written or could not decide. Use
         it to see whether the dictionary helps and what to fix; nothing here needs the
         person."""
         with app.data.using_data("history listing"):
@@ -475,7 +475,7 @@ def register(mcp: MCPServer, app: Entune) -> None:
                 outcome: dict[str, Any] = {"status": stage.status, "error": stage.error}
                 if stage.status == "skipped" and not stage.error:
                     outcome["why"] = {
-                        "dictionary": "nothing to do: no dictionary entry matched",
+                        "dictionary": "nothing to do: no dictionary word in question",
                         "formatting": "nothing to do: nothing to format",
                         "cleanup": "nothing to do: no hesitation to remove",
                     }[name]

@@ -263,7 +263,7 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         )
         (latest,) = call(client, "recent_dictations", limit=5)
         assert latest["speech_model"] == "stub/good" and latest["raw_text"] == heard
-        assert latest["dictionary"]["why"] == "nothing to do: no dictionary entry matched"
+        assert latest["dictionary"]["why"] == "nothing to do: no dictionary word in question"
         assert latest["formatting"]["why"] == "the step is off"
         assert latest["processing_state"] == "processing" and latest["notice"] is None
 
