@@ -14,7 +14,7 @@ VOCABULARY = Vocabulary([ENTUNE, JEV, CLI, CANARY])
 def said(text: str, *unsure: str) -> list[candidates.Said]:
     """Every word sure, with one-second times, except those in `unsure`."""
     return [
-        (w, float(i), i + 0.9, 0.5 if w.strip(".,") in unsure else 1.0)
+        (w, float(i), i + 0.9, 0.5 if w.strip(".,'") in unsure else 1.0)
         for i, w in enumerate(text.split())
     ]
 
@@ -71,6 +71,12 @@ def test_times_without_confidence_still_allow_close_sounds() -> None:
     text = "I asked Jeff about it."
     timed = [(w, float(i), i + 0.9, None) for i, w in enumerate(text.split())]
     assert offered(text, candidates.find(text, timed, VOCABULARY)) == [("Jeff", "Jev")]
+
+
+def test_a_possessive_and_quotes_stay_outside_the_replaced_span() -> None:
+    text = "Ask 'Jeff' about intune's history."
+    places = candidates.find(text, said(text, "Jeff", "intune's"), VOCABULARY)
+    assert offered(text, places) == [("Jeff", "Jev"), ("intune", "Entune")]
 
 
 def test_a_word_said_only_as_its_said_as_is_kept() -> None:

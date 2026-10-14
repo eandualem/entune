@@ -131,7 +131,9 @@ SMALL_WORDS = frozenset(
     ]
 )
 HESITATIONS = frozenset(["um", "uh", "er", "erm", "ah", "hmm", "mm", "uhm"])
-_WORD = re.compile(r"[\w'\u2019]+(?:[.\-][\w'\u2019]+)*[+#]*")  # "C++" and "C#" whole
+# A word: apostrophes only inside it (quotes stay out), "C++" and "C#" whole.
+_WORD = re.compile(r"\w+(?:['\u2019.\-]\w+)*[+#]*")
+_POSSESSIVE = re.compile(r"['\u2019]s$")
 _BREAK = re.compile(r"[.!?,;:\n]")
 _PART = re.compile(r"[A-Z]{2,}(?![a-z])|[A-Z]?[a-z]+|[A-Z]|\d+")
 
@@ -219,6 +221,7 @@ class _Span:
     last: int
     start: int  # text offsets
     end: int
+    possessive: bool = False  # an "'s" follows, outside the span
     written: bool = False  # the span is a dictionary word as written
     found: list[Candidate] = field(default_factory=list)
 
@@ -246,6 +249,8 @@ def find(
             word = vocabulary.words[i]
             if similarity[i] <= 0 or key(word.spelling) == key(written_text):
                 continue
+            if span.possessive and _POSSESSIVE.search(word.spelling):
+                continue  # its own "'s" and the one kept would make two
             if _contains(written_text, word.spelling):
                 continue  # "the Canary" would lose its "the"
             if any(vocabulary.scores(s, n - 1)[0][i] >= similarity[i] for s in shorter):
@@ -310,7 +315,9 @@ def _spans(
             ):
                 continue
             start, end = tokens[first][0], tokens[last][1]
-            spans.append(_Span(first, last, start, end))
+            # "Intune's": the name is decided, its possessive stays.
+            possessive = bool(_POSSESSIVE.search(text, start, end))
+            spans.append(_Span(first, last, start, end - 2 if possessive else end, possessive))
             if first == last:
                 spans += _parts(text, first, start, end)
     return spans
