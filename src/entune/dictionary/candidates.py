@@ -131,7 +131,7 @@ SMALL_WORDS = frozenset(
     ]
 )
 HESITATIONS = frozenset(["um", "uh", "er", "erm", "ah", "hmm", "mm", "uhm"])
-_WORD = re.compile(r"[\w'\u2019]+(?:[.\-][\w'\u2019]+)*")
+_WORD = re.compile(r"[\w'\u2019]+(?:[.\-][\w'\u2019]+)*[+#]*")  # "C++" and "C#" whole
 _BREAK = re.compile(r"[.!?,;:\n]")
 _PART = re.compile(r"[A-Z]{2,}(?![a-z])|[A-Z]?[a-z]+|[A-Z]|\d+")
 
@@ -265,6 +265,7 @@ def _tokens(
     if said is None:
         return tokens, confidence, times
     starts = {s: i for i, (s, _) in enumerate(tokens)}
+    located = [False] * len(tokens)
     at = 0
     for word, start, end, sure in said:
         core = re.sub(r"^\W+|\W+$", "", word)
@@ -277,12 +278,15 @@ def _tokens(
         i = starts.get(found)
         if i is None:
             continue
-        confidence[i] = 1.0 if sure is None else sure
+        located[i] = True
+        confidence[i] = sure
         if start is not None and end is not None:
             times[i] = (start, end)
     if all(c is None for c in confidence):  # the model gave no confidence at all
-        return tokens, [None] * len(tokens), times
-    return tokens, [1.0 if c is None else c for c in confidence], times
+        return tokens, confidence, times
+    # A word the model's list does not hold is taken as sure; one it gave without a
+    # confidence stays unknown.
+    return tokens, [c if located[i] else 1.0 for i, c in enumerate(confidence)], times
 
 
 def _spans(

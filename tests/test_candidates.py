@@ -27,6 +27,8 @@ def test_a_name_is_said_as_its_spelling_suggests_and_acronyms_as_letters() -> No
     assert pronounce.readings("Entune") == pronounce.readings("in tune")
     assert pronounce.readings("see el eye")[0] in pronounce.readings("CLI")
     assert pronounce.said_words("GPT-5.5") == 6
+    assert pronounce.said_words("WSL") == 4  # "double you ess el"
+    assert pronounce.readings("I\u2019ll")[0] in pronounce.readings("aisle")
     sim = pronounce.Index([pronounce.readings("Jev")]).similarity(pronounce.readings("Jeff"))
     assert sim[0] > 0.8
 
@@ -58,6 +60,17 @@ def test_a_word_already_written_in_the_span_is_not_offered_there() -> None:
 def test_without_confidence_only_close_sounds_are_offered() -> None:
     text = "I asked Jeff and Java."
     assert offered(text, candidates.find(text, None, VOCABULARY)) == [("Jeff", "Jev")]
+
+
+def test_times_without_confidence_still_allow_close_sounds() -> None:
+    text = "I asked Jeff about it."
+    timed = [(w, float(i), i + 0.9, None) for i, w in enumerate(text.split())]
+    assert offered(text, candidates.find(text, timed, VOCABULARY)) == [("Jeff", "Jev")]
+
+
+def test_a_symbol_suffix_belongs_to_its_word() -> None:
+    vocabulary = Vocabulary([Word("w_cpp", "C++", "A programming language.")])
+    assert candidates.find("I use C++ daily.", None, vocabulary) == []
 
 
 class Audio:

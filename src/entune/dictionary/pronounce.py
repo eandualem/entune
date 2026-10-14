@@ -244,6 +244,9 @@ def _chunk(chunk: str) -> tuple[Phones, ...]:
 @lru_cache(maxsize=65536)
 def token(text: str, limit: int = 4) -> tuple[Phones, ...]:
     """The readings of one written token ("OpenAI's", "GPT-5.5", "entune.dev")."""
+    plain = text.lower().replace("\u2019", "'").strip(".-+")
+    if plain in _cmudict():  # "I'll", "don't" and other words with their apostrophe
+        return word(plain)
     return _join([r for r in map(_chunk, _chunks(text)) if r], limit)
 
 
@@ -267,7 +270,7 @@ def said_words(text: str) -> int:
             if chunk[0].isdigit():
                 count += len(_number(chunk))
             elif chunk.isupper() and chunk.isalpha() and len(chunk) <= 5 and chunk != "I":
-                count += len(chunk)
+                count += sum(_LETTERS[c].count("-") + 1 for c in chunk.lower())  # W: two
             else:
                 count += 1
     return count
