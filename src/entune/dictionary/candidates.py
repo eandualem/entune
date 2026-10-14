@@ -243,7 +243,9 @@ def find(
         written_text = text[span.start : span.end]
         # As written, with its "'s" when it has one ("McDonald's" is a word as written too).
         as_written = {key(written_text), key(text[span.start : span.end + 2 * span.possessive])}
-        span.written = bool(as_written & vocabulary.keys)
+        # A part of a word ("Intune" of "Intune.dev") is as written when its word is.
+        whole = key(text[tokens[span.first][0] : tokens[span.last][1]])
+        span.written = bool((as_written | {whole}) & vocabulary.keys)
         n = span.last - span.first + 1
         similarity, same = vocabulary.scores(written_text, n)
         shorter = _shorter(text, tokens, span)
@@ -288,7 +290,7 @@ def _tokens(text: str, said: Sequence[Said] | None) -> _Words:
     located = [False] * len(tokens)
     at = 0
     for word, start, end, sure in said:
-        core = re.sub(r"^\W+|\W+$", "", word)
+        core = re.sub(r"[^\w+#]+$", "", re.sub(r"^\W+", "", word))  # "C#" keeps its "#"
         if not core:
             continue
         found = text.find(core, at)

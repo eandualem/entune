@@ -97,6 +97,17 @@ def test_each_part_of_a_speech_model_word_gets_its_confidence() -> None:
     assert offered(text, places) == [("Jeff", "Jev"), ("Jeff", "Jev")]
 
 
+def test_a_part_of_a_written_dictionary_word_is_left_alone() -> None:
+    vocabulary = Vocabulary([ENTUNE, Word("w_dev", "Intune.dev", "A website.")])
+    text = "See Intune.dev now."
+    assert candidates.find(text, said(text, "Intune.dev"), vocabulary, Audio(-1.0)) == []
+    sharp = Vocabulary([Word("w_c", "C#", "A language."), Word("w_f", "F#", "A language.")])
+    text = "I use C# daily."
+    audio = Audio(-1.0)
+    candidates.find(text, said(text, "C#"), sharp, audio)
+    assert all(r.heard == "C#" for r in audio.asked)
+
+
 def test_a_word_said_only_as_its_said_as_is_kept() -> None:
     vocabulary = Vocabulary([Word("w_hi", "\u4f60\u597d", "A greeting.", said_as="nee how")])
     assert vocabulary.words
