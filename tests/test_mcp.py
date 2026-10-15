@@ -164,6 +164,11 @@ def test_a_refused_edit_leaves_the_dictionary_as_it_was(tmp_path: Path) -> None:
         # A speech model removed since still has its transcripts looked up.
         gone = call(client, "find_in_transcripts", text="cloud", speech_model="gone/model")
         assert gone == {"total": 0, "transcripts": 0, "searched": 0, "excerpts": []}
+        # A dictionary.json Entune cannot use says why, not only that the tool failed.
+        (tmp_path / "dictionary.json").write_text('{"version": 5, "words": []}')
+        for tool in ("read_dictionary", "entune_setup"):
+            error = call(client, tool)["error"]
+            assert "dictionary.json is not usable" in error and '"version": 4' in error
 
 
 def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(

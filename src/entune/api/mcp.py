@@ -64,7 +64,10 @@ def server(app: Entune) -> MCPServer:
     def read_dictionary() -> dict[str, Any]:
         """The dictionary with its version: the words the person uses, each with its
         meaning and where they used it. The same words serve every speech model."""
-        text, version = app.dictionary.dictionary_snapshot()
+        try:
+            text, version = app.dictionary.dictionary_snapshot()
+        except ValueError as exc:
+            raise ToolError(f"dictionary.json is not usable: {exc}") from exc
         return {"version": version, "words": json.loads(text)["words"]}
 
     @mcp.tool(annotations=READ)

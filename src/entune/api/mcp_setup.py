@@ -70,7 +70,10 @@ def register(mcp: MCPServer, app: Entune) -> None:
         dictionary, the dictionary's size and any dictionary build. `needs_person` lists
         the few things only the person can do, such as saving an API key in Settings;
         everything else, do yourself with these tools."""
-        dictionary = app.dictionary.dictionary()
+        try:
+            dictionary = app.dictionary.dictionary()
+        except ValueError as exc:
+            raise ToolError(f"dictionary.json is not usable: {exc}") from exc
         status = app.settings.jev_status()
         suggestion = app.settings.dictionary_model()
         speech = app.models.available_models()
