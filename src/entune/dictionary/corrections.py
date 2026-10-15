@@ -84,7 +84,7 @@ def add_corrections(
     for correction in corrections:
         if any(
             key(w.spelling) == key(correction.spelling)
-            and (not correction.description or w.meaning == correction.description)
+            and (not correction.description or key(w.meaning) == key(correction.description))
             for w in words.values()
         ):
             continue

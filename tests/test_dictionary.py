@@ -141,7 +141,10 @@ def test_confirmed_corrections_add_the_words_the_person_meant_once() -> None:
         ("Jev", JEV.meaning, False),
         ("Groq", "a host", False),
     ]
-    again, added = add_corrections(doc, (Correction("groq"), Correction("Soniox")))
+    again, added = add_corrections(
+        doc, (Correction("groq"), Correction("GROQ", "A  host"), Correction("Soniox"))
+    )
+    # The same description in other capitals or spacing is the same word.
     assert added == (Correction("Soniox"),) and again.words[-1].needs_review
     # Another description of the same spelling is another word.
     other, added = add_corrections(again, (Correction("Groq", "a model family"),))
