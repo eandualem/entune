@@ -251,8 +251,8 @@ def _problem(part: RetryPromptPart) -> str:
     """The rule a reply broke, in the words the model was shown."""
     if isinstance(part.content, str):
         return part.content
-    # A reply that fits no branch of a union reports every branch; the branch whose
-    # `basis` it did not claim says nothing useful.
+    # A reply that fits no branch of a union reports every branch; the branches whose
+    # literal value it did not claim say nothing useful.
     errors = [e for e in part.content if e["type"] != "literal_error"] or part.content
     return "; ".join(
         f"{'.'.join(str(p) for p in e['loc'] if not str(p)[:1].isupper())}: {e['msg']}"

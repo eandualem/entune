@@ -1,27 +1,25 @@
-"""dictionary.json: parse and validate the document, write it, read it back."""
+"""dictionary.json: parse and validate the document, write it, read it back.
+
+A file in an older format, from before the dictionary held only the words the person
+uses, is set aside as dictionary.pre-v4-<time>.json, and Entune starts with an empty
+dictionary.
+"""
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
-from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from entune.dictionary.entries import (
-    EMPTY,
-    Candidate,
-    Dictionary,
-    Entries,
-    Evidence,
-    Heard,
-    Word,
-    key,
-)
+from entune.dictionary.entries import EMPTY, Dictionary, Evidence, Word
 
 FILENAME = "dictionary.json"
-VERSION = 3
+VERSION = 4
+OLDER = "dictionary.pre-v4-*.json"  # an older file, set aside
 
 
 def _object(value: object, where: str, fields: set[str]) -> dict[str, Any]:
@@ -51,6 +49,18 @@ def _id(value: object, where: str) -> str:
     return result
 
 
+def parse_evidence(value: object, where: str) -> tuple[Evidence, ...]:
+    evidence = []
+    for i, item in enumerate(_list(value, where)):
+        loc = f"{where}[{i}]"
+        e = _object(item, loc, {"source", "start", "end"})
+        start, end = e.get("start"), e.get("end")
+        if type(start) is not int or type(end) is not int or not 0 <= start < end:
+            raise ValueError(f"{loc} needs valid character offsets")
+        evidence.append(Evidence(_string(e.get("source"), f"{loc}.source"), start, end))
+    return tuple(dict.fromkeys(evidence))
+
+
 def parse_words(value: object, where: str) -> tuple[Word, ...]:
     words = []
     ids: set[str] = set()
@@ -59,7 +69,16 @@ def parse_words(value: object, where: str) -> tuple[Word, ...]:
         w = _object(
             item,
             loc,
-            {"id", "spelling", "meaning", "personal_context", "casing", "needs_review", "said_as"},
+            {
+                "id",
+                "spelling",
+                "meaning",
+                "personal_context",
+                "casing",
+                "needs_review",
+                "said_as",
+                "evidence",
+            },
         )
         word_id = _id(w.get("id"), f"{loc}.id")
         if word_id in ids:
@@ -82,70 +101,15 @@ def parse_words(value: object, where: str) -> tuple[Word, ...]:
                 casing,
                 review,
                 _string(said_as, f"{loc}.said_as") if said_as is not None else None,
+                parse_evidence(w.get("evidence", []), f"{loc}.evidence"),
             )
         )
     return tuple(words)
 
 
-def parse_entries(value: object, where: str) -> Entries:
-    entries = []
-    texts: set[str] = set()
-    for i, item in enumerate(_list(value, where)):
-        loc = f"{where}[{i}]"
-        h = _object(item, loc, {"text", "candidates", "direct", "direct_reason"})
-        text = " ".join(_string(h.get("text"), f"{loc}.text").split())
-        if not re.match(r"\w", text):
-            raise ValueError(f"{loc}: a heard text must start with a letter or digit")
-        if key(text) in texts:
-            raise ValueError(f"{loc}: {text!r} is listed twice here")
-        texts.add(key(text))
-        candidates = []
-        for c in _list(h.get("candidates"), f"{loc}.candidates"):
-            c = _object(c, loc, {"word", "basis", "evidence"})
-            word = _id(c.get("word"), f"{loc}.word")
-            basis = c.get("basis", "user")
-            if basis not in ("text", "literal", "user"):
-                raise ValueError(f"{loc}: invalid candidate basis")
-            evidence = []
-            for e in _list(c.get("evidence", []), f"{loc}.evidence"):
-                e = _object(e, loc, {"source", "start", "end"})
-                start, end = e.get("start"), e.get("end")
-                if type(start) is not int or type(end) is not int or not 0 <= start < end:
-                    raise ValueError(f"{loc}: evidence needs valid character offsets")
-                evidence.append(Evidence(_string(e.get("source"), loc), start, end))
-            # A literal candidate is the word written as heard and never carries evidence.
-            candidates.append(Candidate(word, () if basis == "literal" else tuple(evidence), basis))
-        if not candidates or len({c.word for c in candidates}) != len(candidates):
-            raise ValueError(f"{loc}: candidates must be nonempty with unique words")
-        direct = h.get("direct")
-        note = _string(h.get("direct_reason", ""), f"{loc}.direct_reason", empty=True)
-        if direct is not None:
-            direct = _id(direct, f"{loc}.direct")
-            if not note or direct not in {c.word for c in candidates}:
-                raise ValueError(
-                    f"{loc}: direct mapping needs a candidate word and approval reason"
-                )
-        elif note:
-            raise ValueError(f"{loc}: direct_reason needs a direct word")
-        entries.append(Heard(text, tuple(candidates), direct, note))
-    return tuple(entries)
-
-
 def validate(dictionary: Dictionary) -> Dictionary:
-    words = {w.id: w for w in dictionary.words}
-    if len(words) != len(dictionary.words):
+    if len({w.id for w in dictionary.words}) != len(dictionary.words):
         raise ValueError("Each word needs its own ID")
-    for entries in (dictionary.pinned, *dictionary.learned.values()):
-        texts = [key(h.text) for h in entries]
-        if len(set(texts)) != len(texts):
-            raise ValueError("A heard text is listed once per section")
-        for heard in entries:
-            for candidate in heard.candidates:
-                word = words.get(candidate.word)
-                if word is None:
-                    raise ValueError(f"{heard.text!r} names a missing word {candidate.word}")
-                if candidate.basis == "literal" and key(heard.text) != key(word.spelling):
-                    raise ValueError("A literal candidate must be spelled like its heard text")
     return dictionary
 
 
@@ -156,38 +120,60 @@ def parse(text: str) -> Dictionary:
         raise ValueError(f"Not valid JSON: {exc.msg} (line {exc.lineno})") from None
     if not isinstance(data, dict):
         raise ValueError("The dictionary must be a JSON object")
-    obj = _object(data, "dictionary", {"version", "words", "pinned", "learned"})
+    obj = _object(data, "dictionary", {"version", "words"})
     if type(obj.get("version")) is not int or obj["version"] != VERSION:
         raise ValueError(f'The dictionary needs "version": {VERSION}')
-    learned = obj.get("learned", {})
-    if not isinstance(learned, dict) or not all(isinstance(k, str) and k.strip() for k in learned):
-        raise ValueError("learned must be an object keyed by speech model")
-    return validate(
-        Dictionary(
-            parse_words(obj.get("words", []), "words"),
-            parse_entries(obj.get("pinned", []), "pinned"),
-            {m: parse_entries(v, f"learned.{m}") for m, v in learned.items()},
-        )
-    )
+    return validate(Dictionary(parse_words(obj.get("words", []), "words")))
+
+
+def word_json(word: Word) -> dict[str, object]:
+    """A word as the file holds it: its optional notes only when it has them."""
+    body: dict[str, object] = {
+        "id": word.id,
+        "spelling": word.spelling,
+        "meaning": word.meaning,
+        "casing": word.casing,
+        "needs_review": word.needs_review,
+    }
+    if word.personal_context is not None:
+        body["personal_context"] = word.personal_context
+    if word.said_as is not None:
+        body["said_as"] = word.said_as
+    body["evidence"] = [{"source": e.source, "start": e.start, "end": e.end} for e in word.evidence]
+    return body
 
 
 def dumps(dictionary: Dictionary) -> str:
     return json.dumps(
-        {
-            "version": VERSION,
-            "words": [
-                {k: v for k, v in asdict(w).items() if k != "said_as" or v is not None}
-                for w in dictionary.words
-            ],
-            "pinned": [h.as_json() for h in dictionary.pinned],
-            "learned": {m: [h.as_json() for h in es] for m, es in dictionary.learned.items()},
-        },
+        {"version": VERSION, "words": [word_json(w) for w in dictionary.words]},
         indent=2,
         ensure_ascii=False,
     )
 
 
+def set_aside_older(data_dir: Path) -> Path | None:
+    """Move a dictionary.json in an older format aside, so Entune starts empty; return
+    where it went. A file this version cannot read for another reason stays, and its
+    reading fails with the reason."""
+    path = data_dir / FILENAME
+    try:
+        version = json.loads(path.read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if type(version) is not int or not 0 < version < VERSION:
+        return None
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    target = data_dir / OLDER.replace("*", stamp)
+    try:
+        os.replace(path, target)
+    except FileNotFoundError:
+        return None  # another reader set it aside first
+    logging.getLogger(__name__).info("Set aside the older dictionary.json as %s", target.name)
+    return target
+
+
 def load(data_dir: Path) -> Dictionary:
+    set_aside_older(data_dir)
     path = data_dir / FILENAME
     if not path.exists():
         return EMPTY

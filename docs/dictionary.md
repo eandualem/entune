@@ -1,247 +1,220 @@
-# Meaning-based dictionary
+# The personal dictionary
 
-For setup, start with [Choosing models](models.md) and [Using Entune](guide.md#personal-dictionary).
-The [fresh decision-model comparison](decision-model-results.md) measures actual
-replacements and formatting with Jev, OpenAI's Decisions API and Laya; this page describes the dictionary format and behavior.
+For setup, start with [Using Entune](guide.md#personal-dictionary) and
+[Choosing models](models.md). This page is the reference: the file, how a dictation is
+corrected, how suggestions build the dictionary, and what was measured.
 
-`dictionary.json` uses version 3. A **word** is one thing the person means: a stable
-ID, its exact spelling, casing, a short meaning (the description the decision model
-reads), optional personal context and a review flag. A word is defined once and shared
-by every speech model. A **heard entry** is what a speech model writes and the words it
-can stand for, its candidates. Heard entries are keyed by their text, ignoring case and
-spacing, within their scope: `pinned` (every speech model) or `learned`, keyed by the
-unchanged speech model identifier (`provider/model`).
+The dictionary holds the words you use that a speech model may get wrong: names,
+products, technical terms, acronyms. Each word is defined once, with its spelling and a
+short meaning, and serves every speech model. No mishearing is stored. Where the speech
+model was unsure of a word, Entune compares how the words there sound with every word in
+the dictionary, and a decision model reads the sentence and chooses one of your words or
+keeps the text as written. The decision model only chooses; Entune writes the stored
+spelling.
+
+## The file
+
+`dictionary.json`, in Entune's data folder, uses version 4:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "words": [
-    {"id": "w_jev", "spelling": "Jev", "meaning": "TypeSafe's contextual decision model.", "personal_context": "Used in Entune.", "casing": "fixed", "needs_review": false},
-    {"id": "w_jeff", "spelling": "Jeff", "meaning": "A person's given name.", "personal_context": null, "casing": "fixed", "needs_review": false}
-  ],
-  "pinned": [],
-  "learned": {
-    "parakeet/parakeet-tdt-0.6b-v3": [
-      {"text": "Jeff", "candidates": [
-        {"word": "w_jev", "basis": "user", "evidence": []},
-        {"word": "w_jeff", "basis": "literal", "evidence": []}
-      ], "direct": null, "direct_reason": ""}
-    ]
-  }
+    {
+      "id": "w_claude_code",
+      "spelling": "Claude Code",
+      "meaning": "Anthropic's coding agent",
+      "casing": "fixed",
+      "needs_review": false,
+      "evidence": [{"source": "s_3f9c0b6e2a7d41c58e0f9a12", "start": 4, "end": 14}]
+    },
+    {
+      "id": "w_kubectl",
+      "spelling": "kubectl",
+      "meaning": "Kubernetes command-line tool",
+      "casing": "fixed",
+      "needs_review": false,
+      "personal_context": "At work, for the staging cluster",
+      "said_as": "kube control",
+      "evidence": []
+    }
+  ]
 }
 ```
 
-A candidate makes one word eligible for one heard text. Its basis records why: `text`
-(seen in a transcript, with evidence), `literal` (the word is the heard text written as
-it is) or `user` (added by the person). A heard entry names only the words it was
-actually used for, plus the heard text's own word when the heard text is a real word:
-"cloud" can stay cloud, "gray fauna" offers only Grafana. An ID identifies a word
-independently of its spelling: edits keep IDs, and two senses may share a spelling.
-
-Pinning moves one heard entry from a model's learned section to `pinned`; words are never
-pinned. For a speech model, a pinned entry is used instead of a learned one with the same
-text, and pinning such a learned entry adds its words to the pinned one. Pinning protects
-an entry from generation; context still decides among its candidates. Removing a heard
-entry never removes a word. Deleting a word removes it from every entry that names it, and
-an entry left with no candidate goes too.
-
-A word is flagged for review (`needs_review`, shown as "To check") when it has no
-description yet, because the decision model cannot choose it, or when suggestions wrote
-its description and it is not confirmed: applying it in the review, saving the entry in
-the editor, or an edit through your agent confirms it.
-
-Definitions describe general meaning; optional personal usage is supporting context,
-not a condition. The hypothetical Jeff above supplies no personal fact about the user.
-Version 1 and version 2 files are refused; the editor offers to replace an unreadable
-file, and nothing is migrated.
-
-## Classification and exact output
-
-The matcher indexes the heard texts by first word and retrieves all eligible words
-and overlapping spans. Matching ignores case and allows whitespace between phrase
-words; it does not infer plurals or word boundaries. Costs include the size of the
-matching bucket: a larger dictionary is not automatically faster.
-
-A heard entry only catches a mishearing seen before, so a second matcher looks for new
-ones (`dictionary/sounds.py`). It compares every span of one to three words with each
-name or term whose spelling is fixed, whatever the speech model, by its Metaphone code
-(at least 0.75 alike) or its letters (at least 0.8 alike). Each word is compared the
-ways it is said as well as spelled: "GPT-5.5" as "gee pee tee five point five". The
-speech model's own confidence gates it: a span is offered only when one of its words
-is below 0.9, so a word the model was sure of stays out. A model that gives no
-confidence needs both the sound and half the letters alike. A span never starts or
-ends with a small word or a hesitation sound, never crosses a stop or a comma, and
-each of its words must bring it closer to the name; a name already spelled right is
-left whole, and a possessive stays outside the span. Where spans overlap, the closest
-is kept. The decision model then chooses between the
-words as written and up to five dictionary words, each with its meaning, and a word is
-replaced only at 0.6 or more; otherwise the text stays as the speech model wrote it.
-
-On the labelled October set (160 Parakeet dictations, 14,764 words, 94 term errors),
-with the speech model's confidence re-run locally:
-
-| | Errors with the meant word offered | Places asked per 1,000 words | Errors fixed by Jev | Changes outside the labelled errors |
-|---|---:|---:|---:|---:|
-| Heard entries only | 63 | 6.9 | 52 | 17 |
-| Plus sound and spelling | 70 | 8.5 | 55 | 17 |
-
-"Fixed" counts a labelled span whose corrected text is the intended one; 8 more were
-fixed with a wider span than labelled, in both rows. Without the confidence gate and
-with ordinary words indexed, the same generator offered 72 at 18 places per 1,000
-words, and Jev made 22 more wrong changes, such as "a career" to "career".
-
-With contextual correction enabled, one request supplies the original transcript,
-matched words, original character spans and surrounding context. The decision model
-chosen in Settings (Jev at TypeSafe, or Laya on this Mac) selects a semantic interpretation. For an isolated span that is one eligible word. An overlap
-can offer the whole multiword name or compatible word-level choices. Literal words
-are ordinary candidates: selecting the computing or weather sense of cloud outputs
-cloud; selecting Claude outputs Claude. There is no semantic replace/keep choice.
-
-A valid response always selects its highest-scoring eligible interpretation, even
-when probabilities are close. Meanings that output the same text are one option, which
-lists each of their definitions once. Exact ties honor the decision model's declared choice after validating
-that it is tied for highest. Only a span found by sound or spelling has a threshold: its
-word must reach 0.6. Invalid/failed responses fail the stage; missing
-usable definitions or overly complex overlaps remain visibly unresolved without an
-invented meaning. Scores are not acoustic accuracy measurements or proof of complete
-candidate coverage. Offline fixtures test these contracts, not live model quality.
-
-Code applies only stored spellings, once against disjoint original offsets. Fixed names
-and acronyms use exact casing (Jev, GIF, GitHub). Ordinary literal selections preserve
-original casing/spacing; changed ordinary words receive sentence-initial capitalization.
-Plural outputs must be stored explicitly, e.g. em dashes or CLIs; no inflection engine
-invents a missing output. Phrase mappings remain necessary for agentbackbone, back bone,
-exact names and meaningful phrase interactions. Context is not the replacement span.
-
-Overlapping spans are classified as bounded compatible interpretations. At more than
-12 overlapping spans or 32 interpretations the component remains unresolved; candidates
-are never silently truncated. This bounds combinatorial work at a coverage cost. Other
-disjoint components still run. Python character offsets never become browser edit offsets.
-
-## Direct mapping and recovery
-
-A single candidate or pinned status does not prove a mapping safe. An explicitly approved
-heard entry can specify `direct` as one of its candidate word IDs plus a nonempty
-`direct_reason`. The editor labels this as always using that word without context. Approval should cover
-literal/name/quotation negatives, model scope, boundaries, number and casing. Generation
-cannot grant, remove or change this policy. There are no automatically approved legacy
-or generated mappings. A competing output or overlapping span disables the fast path.
-Editing an output spelling or casing clears its approvals; save that edit before
-approving the revised mapping.
-
-Direct-only dictation needs no contextual request (cleanup/formatting may make their own).
-Mixed dictation still makes one request, with one focused Choice per occurrence;
-with Laya, which reads a short input, each occurrence is its own request. The
-state holds only an excerpt, about 160 characters either side of the span: it ends at the
-sentence boundary nearest that distance, at most 240 characters away, or else between
-words (at 160 characters in text without spaces). The span is marked ⟦ ⟧ and the other occurrences asked about in the same
-request ⟨ ⟩. Each option states its span, output spelling, definition and personal
-usage directly; for overlapping spans it also states how the marked words read with
-that choice.
-`tools/jev_eval.py` compares this request with the previous format, a variant that
-adds the whole transcript, and one with generic contrastive examples, on labelled
-occurrences with a fixed dictionary. It renders requests offline and calls Jev only
-with `--run`. Exact unchanged outputs need no decision call.
-When dictionary correction is off, the entire dictionary stage is disabled, including
-approved direct mappings. Explicit safe-copy recovery is a separate user action. Historical unconditional results retain
-their old method label and are not represented as approved direct work.
-
-Speech success and untouched provider text are saved before dictionary processing.
-The enabled stages run at once on the original transcript. A stage that fails keeps its
-own edits out; the others still apply theirs, and a noninterrupting notice names the
-failed stage. Cleanup and formatting report their exact changes, latency and failures
-separately from dictionary replacements. Raw text and completed stage outputs/provenance persist internally. History publishes
-only the final text after processing; pending results cannot be copied as final text.
-History and Settings separate decisions, direct replacements, unresolved occurrences,
-retries, failures, preserved spans and timings. Replacements count edited disjoint
-components, not words proven correct.
-
-Settings › Corrections & formatting › Advanced exposes the initial retry policy: **5 seconds total**
-across correction, cleanup and formatting, **3 seconds per attempt**, and **2 attempts
-per request**. These are configurable defaults, not measured provider
-service guarantees. Transient connection/read failures, timeouts and HTTP
-408/429/500/502/503/504/529 can retry with 0.15-second exponential backoff.
-Explicit insufficient-credit/quota and invalid-credential responses are terminal even
-when encoded as 429. Malformed successful responses fail without an invented decision.
-`Retry-After` is respected only when another attempt fits the remaining
-budget; longer waits return the original immediately. Authentication,
-request-validation and malformed-answer failures are not retried.
-Both decision models answer over TypeSafe's System One API, Laya through its own
-server on 127.0.0.1; [TypeSafe's API](https://docs.typesafe.ai/api) documents the
-response schema and rate-limit/overload errors.
-
-A reused asynchronous HTTP client runs on an owned event loop so the total
-deadline cancels ongoing I/O, including a response body that keeps dripping
-bytes. Per-operation HTTP timeouts alone do not establish that bound. The
-client closes on application shutdown; a pending speech result survives a
-restart as raw success with an interrupted-processing notice. The deadline
-covers optional processing, not speech recognition or native paste.
-
-**Copy original** copies untouched provider text. After a correction failure,
-**Apply safe mappings and copy** computes a derived result using only currently approved
-mappings for that attempt's speech model and reports unresolved components. It does not
-change history, overwrite the original, or paste into another application.
-
-## Historical binary evaluation (before version 2)
-
-These cached results describe the former term-versus-literal classifier, not the current
-meaning-based implementation or a qualified direct-mapping set.
-
-Measured on 2026-09-21 over this owner's 181 Parakeet transcripts, 48
-dictionary matches with the intended reading labelled from context:
-
-| | Right |
+| Field | What it holds |
 |---|---|
-| Plain replacement | 42 of 48 |
-| Jev, entries with descriptions | 48 of 48 |
+| `id` | A stable ID, kept through edits. It starts with a letter and has up to 64 letters, digits, `_` or `-`; Entune makes `w_` and 32 hex digits. Two senses of one spelling are two words with their own IDs. |
+| `spelling` | Exactly what is written when the word is chosen. |
+| `meaning` | A short phrase saying what the word is, which the decision model reads to choose. The page, agents and suggestions keep it to 120 characters. It may be empty only while `needs_review` is true. |
+| `casing` | `fixed` (the default): always written exactly so, for names, products and acronyms. `ordinary`: capitalised only at the start of a sentence. |
+| `needs_review` | Shown as **To check**: the word has no meaning yet, so Entune cannot offer it, or suggestions wrote its meaning and no one has confirmed it. Saving the word on the Dictionary page, applying it in a suggestions review, or an edit with a meaning by your agent confirms it. |
+| `personal_context` | Optional: how you use the word. The decision model reads it beside the meaning, as support, not as a condition. |
+| `said_as` | Optional: how the word is said, when its spelling does not tell ("kube control" for kubectl). The word is compared both ways. |
+| `evidence` | Where you used the word: a dictation (`source`, a hash of its text) and its characters `start` to `end`, as the speech model wrote them. In the example, characters 4 to 14 of "Ask cloud code to fix it" are "cloud code". Suggestions add these; the page shows the count as "used N×". |
 
-The six that plain replacement got wrong were a wrong learned entry that
-Jev vetoed every time; every intended term scored 0.91 or higher and every
-literal use 0.93 or higher, so any threshold between 0.5 and 0.9 gives the
-same result. The same prompt without descriptions, sent to Jev the day
-before, got 6 of 48: the description is what makes the decision easy.
+Unknown keys are refused, and each ID is used once. A meaning describes the word in
+general; anything personal goes in `personal_context`.
 
-On 2026-09-22, a larger private audio corpus was transcribed afresh with
-local Parakeet: 968 recordings, 20.8 hours, 11 empty results and no provider
-errors. A deterministic audio-hash split reserved 199 recordings before
-generation; 197 had text. The remaining 769 recordings supplied 760 nonempty
-training transcripts. Original third-party transcripts were not used.
+Entune reads the file on every dictation, so a hand edit counts at once. Writes are
+atomic and go through one lock, and a writer names the version it edited (a hash of the
+file), so a save on a stale copy is refused instead of losing what was added meanwhile.
+A broken file fails the dictionary step with the reason; the speech transcript is still
+saved and delivered.
 
-A 25-chunk build produced 313 entries, starting from the existing 45. It
-used GPT-6 Astra: high effort for the first 22 chunks and medium for the
-last three. Across the union of old and new dictionary matches in the
-held-out text, 436 occurrences were labelled from context; 16 unclear
-readings were excluded. Labels preceded their Jev requests. An intermediate
-22-chunk evaluation was inspected before completing the last three training
-chunks; the generation prompt stayed unchanged.
+**From an earlier version.** Versions 1 to 3 of the file stored mishearings: what
+speech models wrote, and the words each could stand for. The first time Entune reads
+such a file it moves it aside as `dictionary.pre-v4-<time>.json` and starts with an
+empty dictionary; nothing is migrated. **Get suggestions** builds the new dictionary
+from your history: what earlier suggestion runs read is no longer counted, so all of it
+can be read again. **Delete all Entune data** removes the set-aside copies too.
 
-| Output on the same 420 labelled occurrences | Correct |
-|---|---:|
-| Raw Parakeet | 299 |
-| Previous dictionary, plain replacement | 309 |
-| Previous dictionary, Jev | 310 |
-| Expanded dictionary, plain replacement | 113 |
-| Expanded dictionary, Jev | 405 |
+## How a dictation is corrected
 
-The expanded dictionary with Jev made ten wrong changes and missed five
-corrections. Six wrong changes collapsed plurals; two changed literal "me"
-to "main", one changed "pip" to "PyPI", and one changed "looks" to "logs".
-The median Jev request took 0.37 s across 124 clips with matches; decisions
-were reused when their full inputs were unchanged. On the separate, older 96-case
-regression set, it scored 87 versus the previous dictionary's 90. The
-experimental dictionary was therefore not adopted as the live default.
+With **Apply your dictionary** on (Settings › Corrections & formatting), the dictionary
+step runs on the speech model's raw text, at the same time as filler removal and
+formatting. It has three parts: where to look, which words to offer there, and the
+decision. The code is in `dictionary/candidates.py`, `dictionary/pronounce.py` and
+`processing/jev.py`.
 
-These are **context-labelled candidate-occurrence scores**, not
-audio-verified full-transcript word error rates. They measure both needed
-corrections and literal words that must stay unchanged, but cannot count
-errors outside dictionary matches. The larger training corpus and changed
-generation process were evaluated together; this does not isolate the
-effect of the new prompt or demonstrate a uniform accuracy improvement.
-Personal audio, labels and reproducible evaluation outputs remain local.
+### Where Entune looks
 
-The **previous formatter** changed 61 of 162 clips in that cached corpus at the 0.6 bar,
-with mixed results. Those cached observations do not evaluate the revised formatter or
-filler removal below.
+A place is a span of one to three words in which the speech model was unsure of a word:
+its confidence is below 0.995. Parakeet and AssemblyAI report a confidence for every
+word. A span may be longer, up to six words, for a dictionary word said in that many.
+
+- A span never crosses a comma or sentence punctuation.
+- A hesitation sound ("um") never starts or ends a span. A small word ("the", "in",
+  "is" and the like) may sit inside one, but starts or ends it only when it is itself
+  the unsure word.
+- A word written as several parts ("JFDemo", "entune.dev") is also looked at in its
+  parts.
+- A possessive stays outside the span ("Intune's": the name is decided, its "'s" stays),
+  unless the dictionary word has its own ("McDonald's").
+- With a speech model that reports no confidence, every span is looked at, and a
+  candidate needs a closer sound (below).
+
+A word whose spelling is fixed, written in other capitals ("github" for GitHub), is a
+place whatever the confidence: it was heard, and only its capitals are in doubt. The
+decision model still chooses, so "go" the verb can stay when the dictionary has the Go
+language.
+
+### Which words are offered
+
+Each span's pronunciation is compared with every dictionary word's. A word is looked up
+in the CMU Pronouncing Dictionary; a word it lacks, such as a name, is predicted by a
+small grapheme-to-phoneme model. Both are bundled with their licences, so nothing is
+downloaded. A spelling is read as it would be said: short capitals as letter names
+("CLI" as "see el eye"), two to five capitals also as a word ("NASA"), and camelCase,
+dots and digits split ("v2.dev" as "v two dot dev"). Similarity is 1 minus a weighted
+phoneme edit distance over the longer pronunciation: a vowel for another vowel, or a
+consonant for a near one (F and V, S and Z, M and N, ...), costs 0.4, dropping a vowel
+0.6, any other change 1.
+
+The ten closest words at a similarity of 0.5 or more are candidates, and a word said
+exactly alike (a homophone) always is. A candidate is dropped where it would swallow a
+neighbour or repeat what is written:
+
+- the word is already written inside the span ("the Canary" does not become "Canary",
+  losing its "the");
+- the word is already written around the span (".NET" is not offered for its "NET");
+- a shorter span is as close (the extra word is not part of the name).
+
+A span that is itself a dictionary word as written ("Jeff", with Jeff in the
+dictionary) is questioned only when the audio prefers another word. Overlapping spans
+make one place, with at most eight words, best first. Each word keeps its own span, so
+choosing it changes only its own words.
+
+### The audio check (Parakeet)
+
+With local Parakeet, each candidate is checked against the recording: the audio is
+scored with the span replaced by the word, reusing the encoder output of the
+transcription, and compared with the words as written. A candidate stays when that
+difference in log-probability plus 40 times its similarity reaches 13. A homophone skips
+the check, since audio cannot tell it apart, except at a span written as a dictionary
+word, where any candidate needs the audio to prefer it.
+
+Without the audio check (with every other speech model), a candidate needs a similarity
+of 0.8 or must be a homophone, and a span written as a dictionary word is not
+questioned.
+
+### The decision
+
+Each place becomes one question for the decision model chosen in Settings: the words as
+written, and each word offered there with its meaning and personal context. Words that
+would write the same text are one option. A word without a meaning is never offered:
+no meaning is made up for it. A word replaces the text only when its option gets a
+probability of at least 0.6 and is the most likely; otherwise the text stays as the
+speech model wrote it.
+
+The question shows the place in context: about 160 characters either side, ending at
+the sentence boundary nearest that distance and at most 240 characters away, or else
+between words. The place is marked ⟦ ⟧ and the other places asked about in the same
+request ⟨ ⟩. When a word would replace only part of the marked words, its option says
+how they would read. Jev, OpenAI's and Perplexity's decision models get all of a
+dictation's questions in one request; Laya, which reads a short input, gets one request
+per place. With fast mode, a place is asked while you still speak, once 240 more
+characters follow it, and the answer is reused after you stop.
+
+Entune writes the chosen word's stored spelling: a fixed spelling exactly, an ordinary
+word with a capital at the start of a sentence. Only the word's own span changes, so
+History shows "Jeff → Jev", not the whole place. There is no inflection: a plural you
+use ("CLIs") is a word of its own. An answer that cannot be used fails the dictionary
+step; its edits are left out and the other steps still apply theirs.
+
+The meaning is what makes the choice possible. In an early test (September 2026, 48
+dictionary matches in 181 Parakeet transcripts), Jev chose right at all 48 when each
+word had a description, and at 6 of 48 without one.
+
+### What was measured
+
+A held-out set: 210 Parakeet dictations from two days in October 2026 that were never
+used to tune anything, 24,857 words, with 115 term errors labelled before the run, 103
+of them for a word in the dictionary.
+
+| How places are found | Right word offered (of 103) | Places asked per 1,000 words |
+|---|---:|---:|
+| Stored mishearings (the earlier design) | 54 | 7.3 |
+| Pronunciation and the audio check | 98 (95%) | 16.7 |
+
+The audio check added a median 0.45 s per dictation. These counts say whether the right
+word was among the options at a place, not what the decision model then chose. In a
+first trial with Jev choosing, finding places by sound fixed fewer errors than the
+stored mishearings (36 against 41) and made more wrong changes, for three reasons the
+rules above remove: spans that swallowed a neighbouring word, correctly written words
+questioned against near-duplicates, and a dictionary holding words the speaker never
+used. The decision model's results on the final design have not been measured yet. The
+[decision-model comparison](decision-model-results.md) compares the decision models on
+the earlier design.
+
+## Processing, failures and time limits
+
+Speech success and the untouched provider text are saved before any processing. The
+enabled steps run at once on the original transcript, and their edits are applied
+together. A step that fails keeps its own edits out; the others still apply theirs, and
+a notice that does not interrupt names the failed step. History shows the final text
+and each step's exact changes, counts and timing; a result still being processed cannot
+be copied as final text. **Copy original** copies the untouched provider text.
+Replacement counts are edits made, not words proven correct.
+
+Settings › Corrections & formatting › Advanced sets the retry policy: **5 seconds
+total** across correction, cleanup and formatting, **3 seconds per attempt**, and **2
+attempts per request**. A dictation longer than 1,000 characters gets more: both limits
+grow by half for every 1,000 characters beyond that, up to three times the setting.
+These are configurable defaults, not service guarantees. Connection and read failures,
+timeouts and HTTP 408, 429, 500, 502, 503, 504 and 529 can be retried, with a 0.15-second
+backoff that doubles. Explicit insufficient-credit, quota and invalid-credential
+responses end at once, even when sent as 429. `Retry-After` is respected only when
+another attempt fits the remaining time. Authentication, request-validation and
+unusable answers are not retried. Jev and Laya answer over TypeSafe's System One API,
+Laya through its own server on 127.0.0.1; [TypeSafe's API](https://docs.typesafe.ai/api)
+documents the response schema and its rate-limit and overload errors.
+
+A reused asynchronous HTTP client runs on its own event loop, so the total deadline
+cancels a request in progress, including a response body that keeps dripping bytes. The
+client closes when the app shuts down; a result still being processed survives a
+restart as the raw transcript with a notice that processing was interrupted. The
+deadline covers the optional processing, not speech recognition or paste.
 
 ## Formatting and fillers
 
@@ -346,100 +319,93 @@ changed-span count are operations, not accuracy scores. Older formatting outcome
 `changes: null` (not recorded), not an invented zero; aggregate span counts cover recorded
 edits only. Mocked probability tests establish
 these boundaries and failure behavior, not acoustic truth or live decision-model
-classification quality. Paid evaluation needs separate authorization.
+classification quality.
 
-## Generation, editing and migration
+## Suggestions
 
-Every run does one job with one prompt: find the confusions the dictionary does not
-cover yet, which is the main job, and improve or remove the learned entries the
-dictations show. Each part sends its dictations, the heard entries for the run's speech
-model that occur in them (pinned and learned), other speech models' learned entries that
-occur in them, and the words those entries name, the dictations spell or a recorded
-decision chose. Words carry a short label (`w1`), their
-spelling and meaning; heard entries are named by their text, list their words' labels and
-say `pinned` when the person's own, or `other` when another speech model's: shown for
-its words, so a model that never writes a name correctly still reuses it. A run can add its
-own model's entry for that text, with evidence, but cannot change the other's. Stored IDs, evidence, approvals, casing and personal
-context stay in the app. Dictations carry a label (`d1`) and their raw text and, when the
-dictionary step ran and changed something, the text right after it and its per-span
-decisions (heard, written, method, words). Older attempts without recorded edits, failed
-or disabled steps and temporary audio transcripts send their text only; `legacy_final`
-history is marked as final text. Filler reduction, formatting and delivered text are
-never sent. Machine corrections are evidence of what the system did, not ground truth.
+A suggestion run asks the suggestion model you chose (Settings › Dictionary setup) for
+the words you use that the dictionary lacks, and for clearer meanings of words still to
+check. No model rewrites a dictation.
 
-The reply has four lists: new words (`n1`, spelling, meaning of at most 120 characters,
-casing), clearer meanings for shown words whose meaning is empty or not yet confirmed
-(the view marks them `review`; a meaning a person or their agent confirmed is refused),
-heard entries (new ones, and shown learned ones in full) and removals of shown learned
-entries by text. A false start the speaker corrects at once is not evidence. A candidate names a shown or new
-word and its basis: `text` with evidence (dictation label and character span), `literal`
-for the heard text's own word, or `existing` for a candidate the entry already had, whose
-stored evidence is restored. Pinned entries cannot be changed or removed, and a learned
-entry with a pinned entry's text cannot be added. A new word is the stored one when it is
-the same: a name spelled like a stored name (exactly, or else ignoring capitals when only
-one matches), or an ordinary word with the same spelling and meaning. A new word must be
-named by an entry of the reply. An addition whose candidates are all literal differs only
-in capitals and adds nothing; a revision that leaves a corrected entry with only its
-literal candidate removes the entry. A heard text the dictations use correctly is not a
-confusion, and a heard text that is a word, name or acronym in its own right keeps its
-literal candidate. Every occurrence of a new entry's text in the part's dictations is
-either cited as evidence or kept by its literal candidate. A new entry whose text stands
-as written at least four times, and four times as often as it is cited, is sent back
-for the longer heard text around the misrecognition ("first mode", not "first"). One
-message names every such entry.
+**What a run reads.** **Get suggestions** reads up to 300 of the default speech model's
+newest transcripts that no applied run has read; under **Advanced**, **Choose a span**
+reads a stretch you choose, including transcripts read before. **Learn from audio**
+first transcribes the recordings you choose with the default speech model; those
+transcripts stay in memory, are reused if you continue the run, and are cleared when you
+apply, discard, start another run or close Entune. The audio is kept. What applied runs
+have read is recorded per transcript and per recording, not per speech model, since the
+words serve every model.
 
-Default learning uses up to 300 recent, not-yet-covered attempts for this speech model;
-explicit All history includes older data. Applying a run consumes the inputs it fully
-covered. Audio learning uses selected saved/imported recordings,
-of any age. Temporary target-model transcripts stay in memory and are reused on retry;
-they never enter the database or ordinary history. Applying, discarding, replacing the
-workflow or closing the app clears them, while source audio remains. The generation
-provider receives the selected inputs and the pinned and working entries that occur in
-them.
-The configured model is honored, including a custom model ID. The
-[model guide](models.md#dictionary-generation) gives our current recommendation;
-the built-in suggested list can contain older models. The reasoning effort chosen in the
-setup (minimal, low, medium, high or xhigh; high by default) is requested by that name. No generation or classification model rewrites dictation.
+**What the model sees.** Transcripts go in parts of about 24,000 characters, one after
+another, each with the dictionary as the earlier parts left it. A part shows:
 
-Sequential steps contain about 24,000 transcript characters; the entries that occur in
-them add to that request size, however large the dictionary grows. Each step holds whole
-transcripts that no finished step has covered. A long transcript split across steps carries only its own
-span of the dictionary result. Step numbers stay in the app for progress and resume. Each
-reply may use up to 32,000 output tokens, including the model's thinking; a reply cut at
-that limit fails its step visibly. On a ChatGPT subscription the plan's own limit applies
-instead, and a reply it cuts fails the same way. Unmentioned knowledge remains. New words are assigned
-persistent IDs once; subsequent steps and editor changes retain them. Clearer meanings
-can be proposed for any shown word, pinned entries' words included, for review; pinned
-entries themselves are never changed. Separate editing is blocked from generation through
-review, while dictation continues; editing within the proposal is allowed. Additions,
-before/after updates, removals and clearer meanings can be dismissed individually, then
-applied together; a new word is applied with the entries that name it. No proposal is installed
-automatically. A revision check also rejects out-of-band file edits.
+- its dictations, each with a label (`d1`) and the raw text. When the dictionary step
+  recorded what it did there, the dictation also shows the text after it and each
+  decision: the words as heard, what was written, how it was decided, and the words
+  chosen. An older attempt without its raw text is marked as final text. Filler removal,
+  formatting and the delivered text are never sent;
+- the words those dictations bear on: written there as spelled or said, used there
+  (evidence), or chosen there by the dictionary step. Each has a label (`w1`), its spelling and meaning, and
+  `review` when its meaning may be revised. Only these words are shown, so a request
+  does not grow with the dictionary. IDs, casing, personal context and evidence stay in
+  Entune.
 
-Each validated batch checkpoints the working dictionary and its fully covered input
-IDs. Failure or Stop keeps completed proposals and excludes the failed batch. Continue
-resumes with the inputs not yet covered and the accumulated dictionary. Applying at least one
-actual change consumes only fully covered input IDs for that model; applying none
-consumes none. A transcript split across batches is covered only after its final segment
-succeeds. This ID-based record works even when selected inputs are not a chronological
-prefix, and never consumes new data created while the review is open.
+**The reply.** JSON with three lists: new words (`n1`, spelling, a meaning of at most 120
+characters, casing, and evidence: `{"dictation": "d3", "text": "the words as d3 writes
+them", "occurrence": 1}`, where `occurrence` says which of their occurrences in d3 it
+is, counting from 1), clearer meanings (`{"word": "w2", "meaning": ...}`) for shown words
+marked `review`, and uses of shown words (`{"word": "w1", "evidence": [...]}`), so the
+words you have keep counting where you use them.
 
-New inferred candidates need source snippet IDs and exact character offsets validated
-against supplied text, including whole-word boundaries. `basis: text` records textual
-provenance only, not acoustic verification. The heard text's own word uses
-`basis: literal`; manual and confirmed candidates use `user`. Only hashes/offsets remain
-as evidence: normal audio-build snippets are discarded. General definitions and optional
-personal usage remain as dictionary content. Old evidence can survive later chunks;
-new links cannot claim unavailable source text.
+**The rules Entune checks.**
 
-Words without a meaning are retained but cannot support contextual selection. Builds can
-propose deliberate removal/refinement; only acceptance changes learned data.
+- Every new word needs evidence of use: a dictation shown in this part, the words there
+  quoted as the dictation writes them, and which occurrence it is. The quoted words must
+  be the word or sound like it, as spelled or as said (`said_as`), at the candidate
+  finder's least similarity of 0.5 ("in tune" for Entune). Entune finds the place in the
+  text and keeps only that: the dictation's hash and character offsets. The uses listed
+  for shown words are checked the same way.
+- A new word that is a stored one is that word: a name spelled the same (exactly, or
+  ignoring capitals when only one name matches), or an ordinary word with the same
+  spelling and meaning. It gains the new places, and the meaning if it had none.
+- A clearer meaning is accepted only for a word marked `review`. A meaning a person or
+  their agent confirmed is refused.
+- Suggestions never remove a word and never change a spelling.
 
-The existing agents' confirmed-corrections request/response shape remains supported at
-its boundary; internally it names a word and adds pinned heard entries without granting
-direct replacement or priority. Whole-document editing uses version-3 JSON with ETag/If-Match.
-An agent connected over MCP edits one word or heard entry at a time, each change naming
-the version it read and validated like the page's
-([agents' API](agents-api.md#your-agent-runs-entune-for-you-mcp)).
-The file is read on each dictation and writes are atomic under the service lock. A broken
-dictionary is a correction failure, not a lost speech transcription.
+A reply that breaks a rule goes back to the model with the rule it broke, at most twice
+per part. A part is tried again, three attempts in all, after a passing failure such as
+a lost connection, a server error or a reply that ran into empty output, and once more
+after a reply that still broke a rule. Each reply may use up to 32,000 output tokens,
+including the model's reasoning, and 20 minutes (14.5 on a ChatGPT plan, which ends a
+request at about 15); a reply past either limit stops the run, and Entune asks for a
+lower reasoning effort or less audio before **Continue**. Refused keys, limits and
+quotas are not retried.
+
+**Review.** One run at a time, and dictation keeps working throughout. Each finished
+part is a checkpoint: **Stop** or a failure keeps the completed parts for review, and
+**Continue** goes on from there with the dictionary as they left it. Suggestions open
+beside the dictionary: new words, each with how often you used it, and clearer
+meanings. Edit any, leave out the ones you don't want, and apply the rest at once;
+nothing changes before that. Applying a word confirms it, and applying also records
+where the run found words the dictionary already has. Applying at least one change marks
+the fully read inputs as read; dismissing everything changes nothing and marks nothing.
+A transcript split across parts is read only once its last part has succeeded. Editing
+the dictionary elsewhere waits until you apply or discard, and a proposal is refused if
+the file changed outside the review meanwhile.
+
+## Corrections from other apps
+
+Apps and agents you dictate to can send the corrections you confirmed with them to
+`POST /api/dictionary/corrections` ([the agents' API](agents-api.md#corrections)). The
+word meant is added when the dictionary lacks it, marked to check when it comes without
+a description. Every correction received is logged, with what the speech model wrote
+instead; the dictionary itself stores no mishearings.
+
+## Editing
+
+The Dictionary page edits one word at a time, or the whole file in its JSON view. The
+API reads and writes the whole file with `ETag` and `If-Match`; an agent connected over
+MCP adds, edits and deletes one word at a time, each change naming the version it read
+([agents' API](agents-api.md#your-agent-runs-entune-for-you-mcp)). All of them are
+validated the same way. Deleting a word stops Entune offering it; suggestions may add it
+again if you keep using it.

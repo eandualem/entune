@@ -1,10 +1,7 @@
 Speech recognizer: $speech_model
 
-Words in these dictations or named by the heard entries below:
+Words in the dictionary that these dictations write or chose:
 $words
-
-Heard entries that occur in these dictations:
-$heard
 
 Dictations:
 $dictations

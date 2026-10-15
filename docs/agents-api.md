@@ -41,7 +41,7 @@ ready.
 
 | Tool | What it does |
 |---|---|
-| `dictionary_guide` | How to run Entune for the person: the setup steps, how the dictionary works, and what makes an entry right. The server's instructions point the agent to it first. |
+| `dictionary_guide` | How to run Entune for the person: the setup steps, how the dictionary works, and what makes a word right. The server's instructions point the agent to it first. |
 | `entune_setup` | How Entune is set up: speech models (cloud ones whose key is saved, local ones with their download state) and the default one, the decision model and its steps, the suggestion model, the dictionary's size, any build, and `needs_person`: what only you can do. |
 | `download_speech_model` | Download a local speech model in the background. |
 | `set_speech_model` | Make a ready speech model the default. |
@@ -49,25 +49,23 @@ ready.
 | `set_preferences` | Fast mode, leaving out long silences, and the suggestion model that builds the dictionary. |
 | `find_audio` | Which dictation apps keep recordings on this Mac, and what is already imported. |
 | `import_audio` | Import every recording a dictation app keeps, or audio files and folders. Only audio is copied, never another app's text. |
-| `start_dictionary_build` | Build the dictionary for the default speech model, in the background, from imported audio (and your Entune recordings) or your transcripts that model has not learned from yet; the reply says how much it reads. |
+| `start_dictionary_build` | Build the dictionary in the background: the words you use, found in imported audio (and, with `include_recordings`, your Entune recordings) transcribed with the default speech model, or in that model's transcripts. It reads only what the dictionary has not read yet, unless `reread`; the reply says how much it reads. |
 | `dictionary_build_status` | Where the build stands. |
 | `control_dictionary_build` | Stop a build, continue a stopped or failed one, or discard its suggestions. |
-| `read_suggestions` | A finished build's suggestions, each with its ID. |
-| `apply_suggestions` | Apply them, all or all but some. |
+| `read_suggestions` | A finished build's suggestions, each with its ID: new words (spelling, meaning, and at how many places the build found each) and clearer meanings for words still to check. |
+| `apply_suggestions` | Apply them, all or all but some (`leave_out`). |
 | `recent_dictations` | How your latest dictations came out: what the speech model wrote, what was delivered, and each step's outcome, including what the dictionary replaced or kept. |
-| `read_dictionary` | The dictionary with its `version`: every section (format 3: words, pinned entries, each speech model's learned entries), the speech models and the default one, the entries one speech model applies (`entries_in_use`, the default model's unless `speech_model` names another), and the words no entry uses any more. |
-| `find_in_transcripts` | Excerpts of your transcripts where a heard text occurs, newest first, for one speech model (the default one when omitted). |
-| `set_word` | Add a word, or edit one by `word_id`; the edit reaches every entry naming it. |
-| `set_heard_entry` | Add a heard entry in `pinned` or a speech model, or replace the words it can stand for; optionally approve one as Always, with a reason. |
-| `remove_heard_entry` | Remove a heard entry; its words stay. |
-| `pin_heard_entry` | Move a learned heard entry to pinned. |
-| `delete_word` | Delete a word from the dictionary and from every entry naming it. |
+| `read_dictionary` | The dictionary with its `version`: every word, with its meaning, casing, optional `said_as` and personal context, whether it is still to check, and where you used it. |
+| `find_in_transcripts` | How often a text occurs as whole words in your transcripts (`total`, in how many `transcripts` of those `searched`) and up to `limit` excerpts (10 by default, at most 50), newest first. It searches one speech model's transcripts, the default one's unless `speech_model` names another; a model that writes a word correctly often shows best how you use it. |
+| `set_word` | Add a word, or edit one by `word_id`: its spelling, a meaning of at most 120 characters, casing (`fixed` for a new word unless given), and optionally `said_as` ("kube control" for kubectl) and `personal_context`. An edit keeps what it leaves out, and `""` clears a note. Its places of use are kept. |
+| `delete_word` | Delete a word you don't use. |
 
-Each speech model has its own dictionary: the pinned entries, shared by every model,
-and its own learned entries, because every model mishears differently. Transcript
-lookups and learned entries are per speech model; the guide tells the agent to work on
-the model you dictate with unless you name another, and to pin an entry only when it
-should hold for every model, such as your own name.
+The dictionary is one list of words for every speech model. How a model mishears them
+is not stored: at each dictation Entune finds it from their sound
+([how a dictation is corrected](dictionary.md#how-a-dictation-is-corrected)). The guide
+tells the agent to add only words you use, with a meaning that sets each apart from
+everyday words that sound like it, and to ask you only for the spelling of a private
+name no transcript shows.
 
 Every change names the `version` the agent read and returns the new one. A change on
 an older version is refused, so nothing you or Entune added meanwhile is overwritten,
@@ -77,7 +75,7 @@ dictionary build runs or its suggestions wait to be applied.
 What the agent reads, transcript excerpts included, goes to your agent's model
 provider. A build's transcription is billed per minute of audio to your key with a cloud
 speech model and free with a local one, so the guide prefers a local one; the suggestion
-model that proposes the entries runs on your ChatGPT plan or API key. The endpoint has the same boundary as the rest of this API: this machine
+model that proposes the words runs on your ChatGPT plan or API key. The endpoint has the same boundary as the rest of this API: this machine
 only, no authentication.
 
 ## Corrections
@@ -91,15 +89,22 @@ curl -s -X POST localhost:4187/api/dictionary/corrections \
   -d '{"entries": [{"spelling": "Claude Code", "description": "Anthropic'"'"'s coding agent", "heard": ["cloud code"]}], "source": "my-agent"}'
 ```
 
-This confirmed-correction boundary still accepts `spelling`, optional `description`,
-and `heard`, or `replacements`/`terms`, and returns the same `added` shape. A definition
-is needed for contextual selection; otherwise the word is marked for review. Each heard
-phrase becomes a pinned heard entry shared across models, used instead of a learned entry
-with the same text. Pinning protects that knowledge from generation but grants neither
-semantic precedence nor direct-replacement approval. A correction names the word already
-spelled so (and described so, when a description is given); when several match, the one
-pinned entries already name. Repeated submissions are idempotent. The reply lists what was
-new:
+The body takes `entries`, each a `spelling`, an optional `description` and optional
+`heard` (what the speech model wrote), or else `terms` (spellings) and `replacements`
+(what the speech model wrote, mapped to the word meant), plus an optional `source`:
+
+```json
+{"terms": ["Grafana"], "replacements": {"kube control": "kubectl"}, "source": "my-agent"}
+```
+
+The word meant is added when the dictionary lacks it: a word spelled so, ignoring case
+and spacing, and described so when a description is given (another description adds
+another sense). Sent with a description, it is added as confirmed; without one, it is
+marked to check, and Entune cannot offer it until it has a meaning. What the speech
+model wrote is not stored in the dictionary, since Entune finds mishearings from the
+sound; every correction received is logged, and `GET /api/dictionary/corrections` lists
+them. Sending the same correction again adds nothing new. The reply lists the
+corrections that added a word:
 
 ```json
 {"added": [{"spelling": "Claude Code", "description": "Anthropic's coding agent", "heard": ["cloud code"]}]}
@@ -115,7 +120,7 @@ silently if Entune is not running.
 
 | Method and path | What |
 |---|---|
-| `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, dictionary model, fast mode, `removeSilence` (on unless turned off), `decisionModel` (`jev` or `laya`; on read, also Laya's state on this Mac), `jev` (the processing steps: TypeSafe key hint, `dictionary`, `cleanup` and `formatting` on or off, shared retry policy and the chosen decision model's stage summaries); each provider says whether it `streams` (fast mode) or is `local` |
+| `GET /api/settings`, `PUT /api/settings` | keys (masked hints on read), default model, shortcuts, the suggestion model (`dictionaryModel`), fast mode, `removeSilence` (on unless turned off), `decisionModel` (`jev`, `laya`, `openai` or `perplexity`; on read, also Laya's state on this Mac), `jev` (the processing steps: TypeSafe key hint, `dictionary`, `cleanup` and `formatting` on or off, shared retry policy and the chosen decision model's stage summaries); each provider says whether it `streams` (fast mode) or is `local` |
 | `GET /api/models` | the models of every provider that has a key, plus the downloaded local ones |
 | `GET /api/metrics` | the performance table: per model and mode, runs and successes, audio seconds, seconds of wait per minute of audio (with the number of timed runs), and dictionary replacements, the raw words they replaced, words, corrected and checked dictations |
 | `GET /api/usage` | what the dictations add up to: dictations and how many were transcribed, their audio seconds and words (and the words of those whose audio length is known), words in each of the last eight weeks (Monday to Sunday, local time) and the most in any earlier week, and the dictionary (raw words corrected), filler and layout steps' counts with their median time |
@@ -127,16 +132,15 @@ silently if Entune is not running.
 | `POST /api/recordings/{id}/transcriptions` | `{"model": "provider/model"}`: transcribe again |
 | `GET /api/recordings/{id}/audio` | the clip |
 | `POST /mcp` | the MCP endpoint above (streamable HTTP, stateless JSON replies) |
-| `GET /api/dictionary`, `PUT /api/dictionary` | the whole version-3 dictionary (words, pinned and learned heard entries) as JSON; the `ETag` names its version, and a `PUT` with `If-Match` set to a stale one gets 409 instead of overwriting what was added meanwhile |
-| `POST /api/dictionary/pin` | `{"model", "text"}` plus `If-Match`: move that model's learned heard entry to pinned, adding its words to a pinned entry with the same text; `{"model"}` explicitly pins all of the model's learned entries |
-| `GET /api/dictionary/corrections` | what agents sent and Entune pinned, newest first, with the `source` each gave |
+| `GET /api/dictionary`, `PUT /api/dictionary` | the whole dictionary as version-4 JSON ([the file](dictionary.md#the-file)); the `ETag` names its version, and a `PUT` with `If-Match` set to a stale one gets 409 instead of overwriting what was added meanwhile |
+| `GET /api/dictionary/corrections` | the latest 100 corrections received, newest first: `heard` (what the speech model wrote, or the term itself), `meant` (null for a term), the `source` each gave and `created_at` |
 | `GET /api/dictionary/history` | the default speech model (`model`) and its transcripts suggestions can read, oldest first (`items`: `id`, `created_at`, `characters`, `used` by suggestions applied before) |
 | `POST /api/dictionary/build` | `{"source": "history", "scope": "new" or "all"}`, with `"transcript_ids"` (IDs from the history listing) beside `"scope": "all"` to reuse only those, or `{"source": "audio", "audio_ids": [IDs from audio listing]}`, optionally `"effort"`: `"minimal"`, `"low"`, `"medium"`, `"high"` (default) or `"xhigh"`: start one exclusive frozen-model/revision workflow; 202 returns its `id` and status; 409 if a job or unreviewed proposal is already active. Dictation is not blocked |
 | `GET /api/dictionary/timing` | what the setup estimates from: `speech` (seconds of wait per minute of audio, per speech model), `suggestion` (median `secondsPerPart` and `parts` per `"model\|effort"`), `workers` (cloud recordings transcribed at once) and `local` (providers that take one at a time) |
 | `GET /api/dictionary/build` | lightweight current job progress (no transcript or proposal contents) |
-| `GET /api/dictionary/build/{id}` | named job status, including its proposal when ready; 409 if no longer current |
+| `GET /api/dictionary/build/{id}` | named job status, including its `proposal` when ready: its `changes`, each with an `id` (`word:<id>`), a `kind` (`add` for a new word, `meaning` for a clearer meaning), `before` (null for a new word) and `after`, in the file's word shape; 409 if no longer current |
 | `POST /api/dictionary/build/{id}/cancel` | request cancellation; in-flight synchronous speech may finish before cleanup; no new clips/chunks; validated completed proposals remain reviewable |
-| `POST /api/dictionary/build/{id}/accept` | `{"selected": [{"id": changeID, "after": editedEntryWordOrNull}]}` applies included proposals once: `heard:<text>` changes carry the edited heard entry (null for a proposed removal), `word:<id>` changes the edited word, and a `word:<id>` of a new word its edited definition. Omitted IDs are dismissed and an empty list changes nothing; a new word comes with the entries that name it. Omitted body includes all. Validates the original revision; 409 on stale revision or wrong state |
+| `POST /api/dictionary/build/{id}/accept` | `{"selected": [{"id": changeID, "after": editedWord}]}` applies the included changes once: a new word as edited (it keeps the places the build found), or a clearer meaning (only the meaning may change). Applying also records where the build found words the dictionary has. Omitted IDs are dismissed, and dismissing all of them changes nothing; an omitted body includes all. Validates the original revision; 409 on stale revision or wrong state |
 | `DELETE /api/dictionary/build/{id}` | discard a finished job/proposal; 409 during work/cleanup; actions on a replaced job ID also return 409 |
 | `POST /api/capture`, `GET`, `DELETE` | record a shortcut by pressing it (needs the menu-bar app) |
 
@@ -159,7 +163,9 @@ GET `/api/dictionary/audio` includes retained imports and ordinary recordings, k
 seconds, unknown-duration count and dates where known, and `apps`: the dictation apps
 whose recordings can be imported. POST `/api/dictionary/audio/apps/{app}` imports one
 app's audio (never its transcripts) and returns added, duplicate and empty counts. Temporary learning text is never
-persisted; per-model learning run/coverage metadata is persisted only on finish/discard.
+persisted. A run's receipt is saved when it is applied or discarded; what it read is
+recorded only when applying changed the dictionary, per transcript or recording, not per
+speech model.
 
 The window's Record button starts `POST /api/operations` before microphone capture, then sends its
 returned `id` as multipart `operation` with the audio. GET lists the active operation;

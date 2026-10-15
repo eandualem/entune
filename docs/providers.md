@@ -50,8 +50,8 @@ Parakeet's WAV decoder and resampling remain in its external helper.
 
 Whisper's saved provider ID remains "local", even though its display name
 is now Whisper.cpp. Parakeet keeps "parakeet"; model names and download
-paths are unchanged. These IDs scope saved settings, history and learned
-dictionaries and must not follow Python module or display-name changes.
+paths are unchanged. These IDs scope saved settings and history and must not
+follow Python module or display-name changes.
 
 Whisper imports its engine only when loading a model. Parakeet is available
 on Apple Silicon macOS; its download installs the pinned parakeet-mlx engine

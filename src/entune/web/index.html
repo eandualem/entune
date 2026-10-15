@@ -152,7 +152,7 @@
                   <svg class="i12" id="suggest-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M6 1v2M6 9v2M1 6h2M9 6h2M2.5 2.5l1.4 1.4M8.1 8.1l1.4 1.4M2.5 9.5l1.4-1.4M8.1 3.9l1.4-1.4"/></svg>
                   <span id="suggest-label">Get suggestions</span><span class="badge" id="suggest-badge" hidden></span>
                 </button>
-                <button type="button" class="btn accent add-btn" id="add-entry-btn" aria-expanded="false" aria-controls="add-row"><span class="plus" aria-hidden="true">+</span>Add word</button>
+                <button type="button" class="btn accent add-btn" id="add-word" aria-haspopup="dialog" aria-controls="word-drawer"><span class="plus" aria-hidden="true">+</span>Add word</button>
                 <div class="menu-wrap">
                   <button type="button" class="btn menu-btn" id="dict-menu-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="dict-menu" aria-label="Learn from audio" title="Learn from audio">
                     <svg class="i14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/><circle cx="11" cy="7" r="1.2"/></svg>
@@ -165,8 +165,8 @@
                       </div>
                       <p id="learn-pop-lead"></p>
                       <div class="learn-why" id="learn-why" hidden>
-                        <p>Each speech model mishears different words, so a dictionary learned with one doesn't carry over to another.</p>
-                        <p>Learning from audio lets a new model catch up on recordings you already have, so switching models or apps doesn't mean starting from scratch.</p>
+                        <p>Your dictionary is the words you use, and every speech model shares it.</p>
+                        <p>Learning from audio finds those words in recordings you already have, so moving from another dictation app doesn't mean starting from scratch.</p>
                         <button type="button" class="btn link" id="learn-guide">Read the guide</button>
                       </div>
                     </div>
@@ -193,15 +193,13 @@
             </div>
 
             <div class="dict-bar">
-              <div class="segmented dict-filters" role="tablist" aria-label="Show">
-                <button type="button" role="tab" id="filter-all" aria-selected="true" title="Pinned entries and the ones learned for this speech model">All<span class="count" id="count-all"></span></button>
-                <button type="button" role="tab" id="filter-pinned" aria-selected="false" title="Used with every speech model">Pinned<span class="count" id="count-pinned"></span></button>
-                <button type="button" role="tab" id="filter-learned" aria-selected="false">Learned<span class="count" id="count-learned"></span></button>
-                <button type="button" role="tab" id="filter-attention" aria-selected="false" title="Entries to check: a word without a description, which Entune can't choose yet, or a description you haven't confirmed" hidden>To check<span class="count" id="count-attention"></span><span class="attention-dot" id="attention-dot" hidden></span></button>
+              <div class="segmented dict-filters" id="dict-filters" role="tablist" aria-label="Show" hidden>
+                <button type="button" role="tab" id="filter-all" aria-selected="true">All<span class="count" id="count-all"></span></button>
+                <button type="button" role="tab" id="filter-check" aria-selected="false" title="Words without a meaning, which Entune can't offer yet, or with a meaning no one has confirmed">To check<span class="count" id="count-check"></span><span class="attention-dot" aria-hidden="true"></span></button>
               </div>
               <label class="dict-search">
                 <svg class="i12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="5" cy="5" r="3.6"/><path d="M8 8l3 3"/></svg>
-                <input class="input" type="search" id="dict-search" placeholder="Search words, heard texts, meanings" aria-label="Search spellings, heard texts and descriptions" />
+                <input class="input" type="search" id="dict-search" placeholder="Search words and meanings" aria-label="Search spellings, meanings and how words are said" />
               </label>
               <span class="spacer"></span>
               <div class="segmented dict-views" role="tablist" aria-label="View" title="Two views of the same dictionary.json">
@@ -212,22 +210,6 @@
           </div>
 
           <div class="dict-list" id="dict-list">
-            <div class="add-row" id="add-row" hidden>
-              <div class="add-fields">
-                <label>Written as<input class="input" id="add-spelling" placeholder="Kubernetes" /></label>
-                <label>Heard as<input class="input mono" id="add-heard" placeholder="cooper netties, kuber netties" aria-label="Heard as: what the speech model writes, separated by commas" /></label>
-                <label>What it is<input class="input" id="add-desc" placeholder="Runs containers: clusters, pods, kubectl" /></label>
-              </div>
-              <div class="add-hint">
-                <span id="add-hint" role="status"></span>
-                <button type="button" class="btn link" id="add-advanced">Several words, keep as written, always replace…</button>
-                <span class="add-buttons">
-                  <button type="button" class="btn sm scope-toggle" id="add-scope" aria-pressed="false"></button>
-                  <button type="button" class="btn ghost sm" id="add-cancel">Cancel</button>
-                  <button type="button" class="btn sm primary" id="add-save" disabled>Add</button>
-                </span>
-              </div>
-            </div>
             <div id="dict-rows"></div>
             <div class="dict-empty" id="dict-empty" hidden>
               <p class="empty-title" id="empty-title"></p>
@@ -248,59 +230,73 @@
           <dialog class="help-dialog" id="help-dialog" aria-labelledby="help-title">
             <form method="dialog" class="help-inner">
               <header class="dialog-head">
-                <div><h2 id="help-title">How the dictionary works</h2><p class="caption">A short guide to fixing the words your speech model gets wrong.</p></div>
+                <div><h2 id="help-title">How the dictionary works</h2><p class="caption">A short guide to your words and how Entune uses them.</p></div>
                 <button type="submit" class="btn-icon" aria-label="Close guide" value="close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
               </header>
               <article class="guide">
                 <h3 id="guide-about">What it's for</h3>
-                <p>Every speech model has words it keeps getting wrong: names, products, technical terms. Your dictionary remembers those mistakes and fixes them in each new dictation, before the text reaches you.</p>
-                <h3 id="guide-entry">How an entry works</h3>
-                <p>An entry pairs what the speech model <em>writes</em> with the words you might have <em>meant</em>. Say it often writes “cloud” when you said “Claude”. But sometimes you really mean a cloud. So the entry keeps both words:</p>
-                <div class="guide-example"><code>cloud</code> → <b>Claude</b>, an AI assistant you ask to write or code<br><code>cloud</code> → <b>cloud</b>, internet storage and servers</div>
-                <p>In “Ask cloud to draft the reply”, Entune writes <b>Claude</b>. In “The backups are in the cloud”, it leaves <b>cloud</b> alone. It chooses from the surrounding words, which is why each word has a short description: write what the thing is and what it goes with.</p>
-                <p>Each word is defined once and shared by every entry and every speech model that uses it: “clawed” → Claude and “cloud” → Claude name the same Claude. An entry lists only the words its heard text was actually used for, and the heard text itself when that is a real word.</p>
+                <p>Your dictionary is the words you use that a speech model may not know: names, products, technical terms. Each word has its spelling and a short meaning. The same words serve every speech model.</p>
+                <h3 id="guide-how">How it fixes a dictation</h3>
+                <p>When your speech model is unsure of a word, Entune compares how it sounds with the words in your dictionary. A decision model then reads the sentence and picks the word that fits, or leaves the text as it was:</p>
+                <div class="guide-example">“Ask cloud code to fix the test” → Ask <b>Claude Code</b> to fix the test<br>“The backups are in the cloud” → stays as it is</div>
+                <p>The decision model reads each word's meaning to choose, so write what the thing is: “Anthropic's coding agent”, “configuration file format”. Nothing about mishearings is stored: Entune works them out from the sound.</p>
+                <h3 id="guide-word">A word</h3>
+                <p><b>Exact capitals</b> keeps a name or acronym as spelled; a <b>normal word</b> is capitalised only at the start of a sentence. <b>Said as</b> is for a word whose spelling doesn't tell how you say it, such as “kube control” for kubectl. <b>How you use it</b> is a personal note the decision model reads too.</p>
+                <p>A word marked <b>to check</b> has no meaning yet, so Entune can't offer it, or a meaning no one has confirmed. Open it, check it and save.</p>
                 <h3 id="guide-suggestions">Getting suggestions</h3>
-                <p>Entune can build the dictionary for you. A suggestion model, the language model you choose with its key in Settings, reads what your speech model wrote and suggests entries for the words it gets wrong. For the entries those transcripts show, it also suggests more words a heard text was used for, clearer meanings, and removals. It reuses the words already in your dictionary instead of defining them again.</p>
+                <p>Entune can find your words for you. A suggestion model, the language model you choose with its key in Settings, reads what your speech model wrote and suggests the names, products and terms you use. It suggests a word only where you used it, and counts the places. For words still to check, it suggests a clearer meaning. It never removes a word, or changes one you confirmed.</p>
                 <p><b>Get suggestions</b> is the simple path: it reads up to 300 of your speech model's newest transcripts not yet used by suggestions you applied; a run you discard or stop uses none.</p>
                 <h3 id="guide-reuse">Reusing earlier transcripts</h3>
                 <p id="guide-reuse-state"></p>
                 <p>Each transcript is read once: after you apply a run's suggestions, the next <b>Get suggestions</b> reads only what you dictated since, so you don't pay twice for the same text. Under <b>Advanced</b>, <b>Choose a span</b> reads them again. The timeline shows every transcript of this speech model, oldest on the left, with the ones used before marked under the line; drag the handles to choose how much to read.</p>
-                <p>Reuse them when the earlier suggestions no longer stand for what those transcripts can teach: you cleared or rebuilt your dictionary, you chose a stronger suggestion model or a higher reasoning effort, an update improved how Entune suggests, or an earlier run's suggestions were poor. Reading again costs tokens again. Entries already in your dictionary are shown to the suggestion model beside the transcripts they occur in, so it improves them instead of adding them twice.</p>
+                <p>Reuse them when the earlier suggestions no longer stand for what those transcripts can teach: you cleared or rebuilt your dictionary, you chose a stronger suggestion model or a higher reasoning effort, an update improved how Entune suggests, or an earlier run's suggestions were poor. Reading again costs tokens again. Words already in your dictionary are shown to the suggestion model beside the transcripts they occur in, so it doesn't add them twice.</p>
                 <h3 id="guide-audio">Learning from audio</h3>
                 <p>The <b>⋯</b> menu learns from audio instead of transcripts, from one of three sources:</p>
-                <p><b>Your other models' recordings</b> are recordings already in Entune that this speech model hasn't transcribed. <b>Another dictation app</b>: Import copies the audio that app keeps on this Mac into Entune's data folder; its transcripts are never copied and its files stay as they are. Importing again adds only what is new. <b>An audio folder</b>: choose a folder of recordings of you talking, such as meetings or voice notes, in WAV, MP3, M4A, FLAC, OGG or WebM; each file is copied once.</p>
+                <p><b>Your other models' recordings</b> are recordings already in Entune that this speech model hasn't transcribed; <b>Get suggestions</b> reads only its own transcripts. <b>Another dictation app</b>: Import copies the audio that app keeps on this Mac into Entune's data folder; its transcripts are never copied and its files stay as they are. Importing again adds only what is new. <b>An audio folder</b>: choose a folder of recordings of you talking, such as meetings or voice notes, in WAV, MP3, M4A, FLAC, OGG or WebM; each file is copied once.</p>
                 <p>The hours and minutes are recorded audio: the length of the recordings you choose, not how long the run takes. Entune first <b>transcribes</b> that audio with your speech model, which a cloud provider charges for, then the suggestion model reads the new transcripts. <b>What happens</b>, under the timeline, shows both steps and their estimates. The timeline runs oldest on the left; drag the handles to choose how much to use, and each edge snaps to whole recordings. An hour or two of recent audio gives quick results.</p>
                 <h3 id="guide-time">Time and settings</h3>
-                <p>Text goes to the suggestion model in parts, one after another, because each part builds on the entries found so far. With audio, parts start as soon as enough is transcribed, while the rest is still transcribing. Cloud speech models transcribe several recordings at a time; a local model takes one at a time.</p>
+                <p>Text goes to the suggestion model in parts, one after another, because each part builds on the words found so far. With audio, parts start as soon as enough is transcribed, while the rest is still transcribing. Cloud speech models transcribe several recordings at a time; a local model takes one at a time.</p>
                 <p><b>Reasoning effort</b> is the level the suggestion model's provider names, from minimal to xhigh. Higher effort reasons longer and usually finds more; high is the default. A provider without a level maps it to one it has.</p>
                 <p>The estimate uses what Entune has measured: your speech model's transcription times, and the time per part of earlier runs with the same suggestion model and effort. A combination not used before says so.</p>
                 <p>Sometimes a reply starts and then sends only blank space. Entune stops it within a minute or two and tries that part again, three attempts in all. A ChatGPT plan also ends any single reply at about 15 minutes. If a part fails all its attempts, or runs past a time or length limit, Entune stops and keeps the finished parts. Choose a lower reasoning effort, or less audio, and press <b>Continue</b>: it picks up where it stopped. Transcripts made so far are kept for Continue while Entune stays open.</p>
                 <h3 id="guide-review">Reviewing suggestions</h3>
-                <p>Suggestions open in a panel beside your dictionary, grouped into new entries, changes, removals and clearer meanings. Edit any of them, leave out the ones you don't want with ×, and apply the rest in one step. Nothing is saved until you apply. Dictation keeps working the whole time; only editing the dictionary waits until you apply or discard.</p>
-                <p>Each speech model makes its own mistakes, so suggestions are kept for the speech model chosen when the run starts.</p>
-                <h3 id="guide-pinned">Pinned and learned entries</h3>
-                <p><b>Learned</b> entries are used only with the speech model they were learned for. <b>Pin</b> an entry to use it with every speech model; pinned entries are yours and suggestions leave them as they are. A pinned entry is used instead of a learned one with the same heard text. Words aren't pinned: each is shared by every entry that uses it. Pinning doesn't make an entry win: Entune still reads the sentence.</p>
-                <h3 id="guide-add">Adding an entry yourself</h3>
-                <p>Choose <b>Add word</b> and fill in one line: how it's written, what the speech model hears (several, separated by commas) and what it is. Each heard text becomes its own entry. For several words, a spelling kept as written, or always replacing, open the full editor from the link under that line. <b>Edit</b> on an entry opens the same editor; <b>Delete word</b> removes a word from every entry that uses it.</p>
+                <p>Suggestions open in a panel beside your dictionary: new words, each with how often you used it, and clearer meanings. Edit any of them, leave out the ones you don't want with ×, and apply the rest in one step. Nothing is saved until you apply. Dictation keeps working the whole time; only editing the dictionary waits until you apply or discard.</p>
+                <h3 id="guide-add">Adding a word yourself</h3>
+                <p>Choose <b>Add word</b>, write how it's spelled and what it is, and choose its capitals. Click a word in the list to edit or delete it.</p>
                 <p>Your coding agent can do this for you: connect it under <b>Settings › Integrations</b> and ask it to set up your dictionary.</p>
               </article>
             </form>
           </dialog>
 
-          <dialog class="drawer" id="entry-drawer" aria-labelledby="entry-title">
-            <div class="drawer-inner">
+          <dialog class="drawer" id="word-drawer" aria-labelledby="word-title">
+            <form class="drawer-inner" id="word-form" novalidate>
               <header class="drawer-head">
-                <div><h2 id="entry-title">Edit entry</h2><p class="caption">One heard text and the words it can stand for. A word is shared by every entry that uses it.</p></div>
-                <button type="button" class="btn-icon" id="entry-close" aria-label="Close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+                <div><h2 id="word-title">New word</h2><p class="caption">A word you use. It serves every speech model.</p></div>
+                <button type="button" class="btn-icon" id="word-close" aria-label="Close"><svg class="i14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
               </header>
-              <div class="drawer-body" id="entry-body"></div>
+              <div class="drawer-body word-fields">
+                <p class="word-notice" id="word-notice" hidden></p>
+                <label class="group-field">Spelling<input class="input strong" id="word-spelling" autocomplete="off" spellcheck="false" placeholder="Claude Code" /><span class="caption">Exactly what should be written.</span></label>
+                <div class="group-field">
+                  <span id="casing-label">Capitals</span>
+                  <div class="segmented small" id="word-casing" role="radiogroup" aria-labelledby="casing-label">
+                    <button type="button" role="radio" id="casing-fixed" title="Always written exactly like this: names, products, acronyms">Exact capitals</button>
+                    <button type="button" role="radio" id="casing-ordinary" title="Capitalised only at the start of a sentence">Normal word</button>
+                  </div>
+                </div>
+                <label class="group-field">Meaning<textarea class="input" id="word-meaning" rows="2" maxlength="120" placeholder="Anthropic's coding agent"></textarea><span class="caption">A short phrase saying what it is. The decision model reads it to pick the word that fits.</span></label>
+                <label class="group-field"><span>Said as <span class="optional">optional</span></span><input class="input" id="word-said" autocomplete="off" spellcheck="false" placeholder="kube control" /><span class="caption">Only when the spelling doesn't tell how you say it, as for kubectl.</span></label>
+                <label class="group-field"><span>How you use it <span class="optional">optional</span></span><input class="input" id="word-context" autocomplete="off" placeholder="At work, in code reviews" /><span class="caption">A personal note the decision model reads with the meaning.</span></label>
+                <p class="caption" id="word-used"></p>
+              </div>
               <footer class="drawer-foot">
-                <button type="button" class="btn primary" id="entry-save">Save</button>
-                <button type="button" class="btn ghost" id="entry-cancel">Cancel</button>
+                <button type="submit" class="btn primary" id="word-save">Save</button>
+                <button type="button" class="btn ghost" id="word-cancel">Cancel</button>
                 <span class="spacer"></span>
-                <span class="caption entry-status" id="entry-status" role="status"></span>
+                <button type="button" class="btn ghost word-delete" id="word-delete">Delete</button>
+                <p class="caption word-status" id="word-status" role="status"></p>
               </footer>
-            </div>
+            </form>
           </dialog>
 
           <dialog class="drawer sheet" id="suggest-drawer" aria-labelledby="suggest-title">
@@ -317,9 +313,9 @@
                     <div class="cost"><span class="cost-tag" id="cost-tag"></span><span class="cost-note" id="cost-note"></span></div>
                   </div>
                   <div class="learning-for" id="speech-field">
-                    <label for="suggest-speech">Learning for</label>
+                    <label for="suggest-speech">Transcribe with</label>
                     <select class="select" id="suggest-speech"></select>
-                    <span class="caption">What it learns is kept for this speech model.</span>
+                    <span class="caption">Also your default model. The words found serve every speech model.</span>
                   </div>
                   <div class="disclosure">
                     <button type="button" class="disclosure-toggle" id="how-toggle" aria-expanded="true" aria-controls="how-body"><svg class="disclosure-mark" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5L7 5 3.5 8.5"/></svg>How this works</button>
@@ -393,7 +389,7 @@
                   </div>
                 </div>
                 <div class="proposal" id="proposal" hidden>
-                  <p class="caption" id="proposal-title">Edit any suggestion, or leave it out with ×. Pinned entries are never changed by suggestions.</p>
+                  <p class="caption">Edit any suggestion, or leave it out with ×. Nothing changes until you apply.</p>
                   <div class="proposal-body" id="proposal-body"></div>
                 </div>
               </div>
@@ -556,7 +552,7 @@
               </div>
               <div class="scard">
                 <label class="srow check">
-                  <div><div class="name">Apply your dictionary</div><div class="caption">The decision model picks the meaning that fits each sentence. Off turns off every dictionary correction, including ones set to always apply.</div></div>
+                  <div><div class="name">Apply your dictionary</div><div class="caption">When your speech model is unsure of a word, the decision model picks the dictionary word that fits the sentence. Off turns off every dictionary correction.</div></div>
                   <input type="checkbox" id="jev-dictionary" />
                 </label>
                 <label class="srow check">
@@ -616,7 +612,7 @@
               </div>
               <h2 class="sec-label">Local API</h2>
               <div class="scard">
-                <div class="scard-head"><div class="caption">Apps and agents you dictate to can send corrections you have confirmed. Each one is added to your dictionary as a pinned entry.</div></div>
+                <div class="scard-head"><div class="caption">Apps and agents you dictate to can send corrections you have confirmed. The word meant is added to your dictionary when it isn't there yet, marked to check if it comes without a description.</div></div>
                 <div class="srow">
                   <div><div class="name">Endpoint</div><div class="caption">HTTP on this machine only. Nothing else is exposed.</div></div>
                   <div class="field copyable"><code class="code-line" id="agent-endpoint"></code><button type="button" class="btn copy-btn" data-copy="agent-endpoint">Copy</button></div>
@@ -629,7 +625,7 @@
               <h2 class="sec-label">Received corrections</h2>
               <div class="scard">
                 <div id="corrections-rows"></div>
-                <div class="srow foot"><span class="caption">Newest first. Each one is already in Pinned; remove it there if it's wrong.</span></div>
+                <div class="srow foot"><span class="caption">Newest first. The words they added are on the Dictionary page; delete one there if it's wrong.</span></div>
               </div>
               <h2 class="sec-label">Tracing</h2>
               <form class="scard" id="tracing-form">
@@ -690,7 +686,7 @@
                   <h3>The steps</h3>
                   <p>The steps you turned on all run at once on the transcript from the speech model: your dictionary, fillers, and paragraphs and bullets. Their changes are applied together. The original transcript is always kept in History, and you can copy it from there.</p>
                   <h3>Your dictionary</h3>
-                  <p>For each word your speech model often gets wrong, the decision model reads the sentence around it and picks the meaning that fits: “Ask cloud to draft it” becomes “Ask Claude to draft it”, while “the backups are in the cloud” stays. Entries set to always apply skip that choice. When no meaning can be chosen, the words stay as they were.</p>
+                  <p>When your speech model is unsure of a word, Entune compares how it sounds with the words in your dictionary, and the decision model reads the sentence around it and picks the one that fits: “Ask cloud code to fix it” becomes “Ask Claude Code to fix it”, while “the backups are in the cloud” stays. When none fits, the words stay as they were.</p>
                   <h3>Fillers and formatting</h3>
                   <p>Sounds such as “um” and “uh” are removed, and repeats such as “like like” become one, where the decision model hears hesitation; a sound that carries meaning, quoted text and code are left alone. Paragraph breaks and bullets are added only where the dictation clearly has them, and every word is kept.</p>
                   <h3>Waiting and failures</h3>
