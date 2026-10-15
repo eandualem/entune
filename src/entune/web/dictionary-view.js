@@ -829,9 +829,9 @@ export function createDictionary({ getModel, getSettings, onSettingsChanged, ope
       const items = proposalChanges.filter((c) => c.kind === kind);
       if (items.length) proposalBody.append(node("h3", `${heading} · ${items.length}`), ...items.map(changeBox));
     }
-    if (!proposalChanges.length) proposalBody.append(node("p", "No changes suggested. Finish to close this review; the same dictations can be used again later.", "caption"));
+    if (!proposalChanges.length) proposalBody.append(node("p", "No changes suggested. Finish records where these dictations used words your dictionary has.", "caption"));
     const included = proposalChanges.filter((c) => c.included).length;
-    el("accept-proposal").textContent = included ? `Apply ${plural(included, "change")}` : "Finish without changes";
+    el("accept-proposal").textContent = included ? `Apply ${plural(included, "change")}` : proposalChanges.length ? "Finish without changes" : "Finish";
     el("suggest-badge").textContent = String(included);
     if (focus) proposalBody.querySelector(`[data-toggle="${CSS.escape(focus)}"]`)?.focus();
   }

@@ -390,6 +390,8 @@ meanings. Edit any, leave out the ones you don't want, and apply the rest at onc
 nothing changes before that. Applying a word confirms it, and applying also records
 where the run found words the dictionary already has. Applying at least one change marks
 the fully read inputs as read; dismissing everything changes nothing and marks nothing.
+With nothing suggested, finishing records where the run found words the dictionary has,
+and marks the inputs read when it found any.
 A transcript split across parts is read only once its last part has succeeded. Editing
 the dictionary elsewhere waits until you apply or discard, and a proposal is refused if
 the file changed outside the review meanwhile.
