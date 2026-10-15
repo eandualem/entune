@@ -57,7 +57,7 @@ ready.
 | `recent_dictations` | How your latest dictations came out: what the speech model wrote, what was delivered, and each step's outcome, including what the dictionary replaced or kept. |
 | `read_dictionary` | The dictionary with its `version`: every word, with its meaning, casing, optional `said_as` and personal context, whether it is still to check, and where you used it. |
 | `find_in_transcripts` | How often a text occurs as whole words in your transcripts (`total`, in how many `transcripts` of those `searched`) and up to `limit` excerpts (10 by default, at most 50), newest first. It searches one speech model's transcripts, the default one's unless `speech_model` names another; a model that writes a word correctly often shows best how you use it. |
-| `set_word` | Add a word, or edit one by `word_id`: its spelling, a meaning of at most 120 characters, casing, and optionally `said_as` ("kube control" for kubectl) and `personal_context`. Its places of use are kept. |
+| `set_word` | Add a word, or edit one by `word_id`: its spelling, a meaning of at most 120 characters, casing (`fixed` for a new word unless given), and optionally `said_as` ("kube control" for kubectl) and `personal_context`. An edit keeps what it leaves out, and `""` clears a note. Its places of use are kept. |
 | `delete_word` | Delete a word you don't use. |
 
 The dictionary is one list of words for every speech model. How a model mishears them
