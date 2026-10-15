@@ -9,6 +9,12 @@ Perplexity left the most dictations formatted exactly as judged. These are
 decisions at dictionary matches and sentence boundaries, not an overall
 speech-recognition accuracy score.
 
+This test used the earlier dictionary design, which stored what a speech model wrote
+and the words it could stand for. Today's dictionary holds only the words you use and
+finds the places to ask about from how they sound ([the dictionary](dictionary.md)),
+but each place is still the same kind of question for the decision model. Read these
+numbers as a comparison of decision models, not as a measurement of today's dictionary.
+
 ## The data
 
 Measured October 7, 2026, with Entune 0.4.0, on one person's own dictation: the
@@ -72,8 +78,8 @@ model is for. 107 of the 121 places were real choices between meanings; at the o
 “Correct” judges the meaning the model chose. The learned dictionary spelled the
 product name **Intune**, because the recordings only ever say it; 15 of the 47 places
 that should change take that entry, which gives the right meaning but not the right
-spelling.
-Pin the spellings you care about; a pinned entry is not learned again.
+spelling. Correct a spelling on the Dictionary page; suggestions never change a
+word's spelling.
 
 ### What the dictionary itself caught
 
@@ -82,8 +88,10 @@ got a name or term wrong** (for example “in tune” for Entune, “Jeff” for
 “cloud” for Claude, “open A” for OpenAI). The learned dictionary covered **39** of
 them and missed 55: it never learned Jev, which the training recordings mention only a
 few times, and some errors never occurred in training at all. A decision model can only
-choose among the dictionary's meanings, so this is where a better or pinned dictionary
-helps.
+choose among the dictionary's meanings, so this is where a better dictionary helps. The
+current way of finding places was built for this: on a later held-out set, at 103
+errors whose word the dictionary held, it offered the right word at 98, against 54 for
+stored mishearings ([the dictionary](dictionary.md#what-was-measured)).
 
 ## Formatting
 
@@ -142,8 +150,8 @@ answers are judgments of context, not audio-verified truth. Small samples have w
 uncertainty: one wrong replacement against eight is a clear difference here, one against
 three is not, and neither is a statistically established ranking.
 
-**One dictionary.** A different suggestion model, more training dictation or pinned
-entries would change what the dictionary offers, and so every row above.
+**One dictionary.** A different suggestion model, more training dictation or words
+added by hand would change what the dictionary offers, and so every row above.
 
 **Private data.** The recordings and their contents stay private, so the aggregate
 results are not an independently reproducible public dataset.

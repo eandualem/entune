@@ -21,7 +21,7 @@ src/entune/
                   model, shortcuts), decision_models.py (which one the steps ask, Laya's lifetime),
                   models.py (providers, local models, the default model), metrics.py,
                   dictation.py (record, transcribe, process), pieces.py (fast mode),
-                  dictionary_file.py (read, versioned save, pin, agent corrections),
+                  dictionary_file.py (read, versioned save, agent corrections),
                   learning.py and suggestion_runs.py (suggestion runs: input, job, apply),
                   audio_import.py, tracing.py (opt-in Langfuse tracing of suggestions),
                   capture.py, desktop_bridge.py, local_data.py (inventory, delete all),
@@ -36,7 +36,8 @@ src/entune/
                   resources.py: speech leases, local foreground priority, warming, cleanup
                   cloud/: adapters, HTTP response helpers and early connections
                   local/: Whisper.cpp and Parakeet, lifecycle capability, shared
-                  downloads; Parakeet's helper runs in its external engine
+                  downloads; Parakeet's helper runs in its external engine and also
+                  scores dictionary candidates against the recording
   processing/     after speech: pipeline.py runs the stages, results.py records them;
                   jev_client.py calls the decision model: Jev or Laya over TypeSafe's API,
                   or OpenAI's or Perplexity's Decisions API with the same questions in
@@ -44,10 +45,13 @@ src/entune/
                   laya.py runs Laya's server from its external engine; jev.py asks the
                   meaning, filler and paragraph questions; formatting.py, cleanup.py,
                   text_edits.py
-  dictionary/     entries.py: words and heard entries; document.py: dictionary.json;
-                  edits.py: single edits agents make;
-                  changes.py: pinning, proposals and review; matching.py: eligible words
-                  and exact edits; corrections.py: confirmed corrections from other apps
+  dictionary/     entries.py: words; document.py: dictionary.json (version 4; an older
+                  file is set aside); edits.py: single edits agents make;
+                  changes.py: proposals and review; candidates.py: where a transcript may
+                  hold a misheard word and which words it may be; pronounce.py:
+                  pronunciations (the bundled CMU Pronouncing Dictionary and a small
+                  grapheme-to-phoneme model in pronunciation/) and their similarity;
+                  corrections.py: confirmed corrections from other apps
   learning/       dictionary suggestions: suggestion_model/ (catalog, providers and one
                   Pydantic AI call), inputs.py, view.py (what the model sees of the
                   dictionary), batches.py (requests), replies.py (reply schema, parse
@@ -86,8 +90,8 @@ Data flow for a dictation: the hotkey listener's thread feeds the engine;
 the engine starts and stops the recorder; on stop, a persist worker writes
 the clip to disk and history at once, and one transcription worker takes
 it (a new recording is refused until the previous one is delivered): provider call, raw success persisted,
-the enabled stages (eligible meanings decided in original context, opt-in filler removal,
-formatting) run at once on the raw text, and their exact changes are applied together and
+the enabled stages (dictionary words chosen at the places the candidate finder offers
+them, opt-in filler removal, formatting) run at once on the raw text, and their exact changes are applied together and
 stored with each stage's outcome. The transcript is copied and
 pasted on the main thread, because HIToolbox insists on it. With fast mode
 on, the recorder's chunks are cut at natural pauses and each finished piece is
@@ -111,8 +115,8 @@ holds it from recording through the queued main-thread delivery; learning holds 
 through proposal review, apply or discard. Manual dictionary writes are blocked during
 learning. A job snapshots model/input/dictionary state and keeps each validated batch
 checkpoint. Stop/failure retains partial proposals and exact fully covered input IDs;
-accepting actual changes stores per-model coverage and a small run receipt. Empty
-application consumes nothing. Temporary audio transcripts survive retries in memory
+accepting actual changes records which inputs were read (per input, not per speech
+model) and a small run receipt. Empty application consumes nothing. Temporary audio transcripts survive retries in memory
 only; applying, discarding, replacing or closing the workflow clears them.
 
 SpeechResources grants one local operation at a time; waiting dictation precedes background
