@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import replace
 from typing import Any, Literal
 
@@ -88,13 +88,22 @@ def _meaning(text: str, spelling: str) -> str:
     return text
 
 
-def _same(spelling: str, meaning: str, casing: str, words: Sequence[Word]) -> Word | None:
+def _same(
+    spelling: str, meaning: str, casing: str, words: Sequence[Word], shown: Collection[str]
+) -> Word | None:
     """The stored word a new one is: a name is written one way, so a name spelled like a
     stored one is that word (exact spelling first, then one ignoring capitals); an
     ordinary word is the stored one only when its meaning is the same too, since the same
-    spelling can mean something else ("charge": a fee, or filling a battery)."""
+    spelling can mean something else ("charge": a fee, or filling a battery). A described
+    name the model was shown is the same only by its meaning too: proposing it anew is
+    another sense of it (Rust the game, beside Rust the language)."""
     if casing == "fixed":
-        names = [w for w in words if w.casing == "fixed"]
+        names = [
+            w
+            for w in words
+            if w.casing == "fixed"
+            and (w.id not in shown or not w.meaning or key(w.meaning) == key(meaning))
+        ]
         exact = [w for w in names if w.spelling == spelling]
         alike = [w for w in names if key(w.spelling) == key(spelling)]
         return exact[0] if exact else alike[0] if len(alike) == 1 else None
@@ -133,7 +142,9 @@ def parse_reply(
         if not spelling:
             raise ValueError(f"Word {label} needs a spelling")
         meaning = _meaning(item["meaning"], spelling)
-        same = _same(spelling, meaning, item["casing"], tuple(words.values()))
+        same = _same(
+            spelling, meaning, item["casing"], tuple(words.values()), shown.word_ids.values()
+        )
         # A stored word's evidence is checked as it is said, too.
         evidence = _evidence(item["evidence"], same or Word("", spelling, meaning), shown, supplied)
         if same is None:

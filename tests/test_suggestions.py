@@ -209,6 +209,14 @@ def test_stored_words_are_reused_never_defined_again() -> None:
     battery = {**new_word("charge", ("d1", "charge"), meaning="filling a battery")}
     result = parse(reply([{**battery, "casing": "ordinary"}]), ("charge it",), dictionary(charge))
     assert [w.meaning for w in result.words] == ["a fee", "filling a battery"]
+    # A name the model was shown, proposed anew with another meaning, is another sense.
+    rust = word("Rust", "a systems programming language")
+    text = "We survived another night in Rust"
+    game = new_word("Rust", ("d1", "Rust"), meaning="a multiplayer survival game")
+    language, played = parse(reply([game]), (text,), dictionary(rust)).words
+    assert language == rust and not language.evidence
+    assert played.id != rust.id and played.meaning == "a multiplayer survival game"
+    assert text[played.evidence[0].start : played.evidence[0].end] == "Rust"
 
 
 def test_a_stored_word_without_a_meaning_takes_the_one_suggested() -> None:
