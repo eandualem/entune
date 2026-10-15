@@ -44,9 +44,9 @@ spelling.
 
 | Field | What it holds |
 |---|---|
-| `id` | A stable ID, kept through edits. It starts with a letter and has up to 64 letters, digits, `_` or `-`; Entune makes `w_` and 32 hex digits. Two senses of one spelling are two words with their own IDs. |
+| `id` | A stable ID, kept through edits. It starts with a letter and has up to 64 letters, digits, `_` or `-`; Entune makes `w_` and hex digits. Two senses of one spelling are two words with their own IDs. |
 | `spelling` | Exactly what is written when the word is chosen. |
-| `meaning` | A short phrase saying what the word is, which the decision model reads to choose. The page, agents and suggestions keep it to 120 characters. It may be empty only while `needs_review` is true. |
+| `meaning` | A short phrase saying what the word is, which the decision model reads to choose. The Dictionary page's editors, an agent's `set_word` and suggestion replies keep it to 120 characters. It may be empty only while `needs_review` is true. |
 | `casing` | `fixed` (the default): always written exactly so, for names, products and acronyms. `ordinary`: capitalised only at the start of a sentence. |
 | `needs_review` | Shown as **To check**: the word has no meaning yet, so Entune cannot offer it, or suggestions wrote its meaning and no one has confirmed it. Saving the word on the Dictionary page, applying it in a suggestions review, or an edit with a meaning by your agent confirms it. |
 | `personal_context` | Optional: how you use the word. The decision model reads it beside the meaning, as support, not as a condition. |
