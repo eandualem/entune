@@ -14,18 +14,20 @@ already written inside the span ("the Canary"), nor in a longer span that is no 
 shorter one. A span that is itself a dictionary word as written is questioned only when the
 audio prefers another word.
 
-An audio scorer, when the speech model has one, then scores each candidate against the
-recording: `delta` is how much more (or less) likely the audio is with the span replaced by the
-word. A candidate stays when delta + AUDIO_WEIGHT * similarity reaches AUDIO_BAR; homophones
-skip the check, since audio cannot tell them apart. Without a scorer a candidate needs
-TEXT_SIMILAR. Overlapping spans make one place, with at most OPTIONS words, best first.
+An audio scorer, when the speech model has one (Parakeet), then scores each candidate against
+the recording: `delta` is how much more (or less) likely the audio is with the span replaced by
+the word as it would be written. A candidate stays when delta + AUDIO_WEIGHT * similarity
+reaches AUDIO_BAR; homophones skip the check, since audio cannot tell them apart. Without a
+scorer, or for a span its audio does not hold, a candidate needs TEXT_SIMILAR. Overlapping spans
+make one place, with at most OPTIONS words, best first.
 
 A word whose spelling is fixed, written in other capitals ("github" for GitHub), is offered
 there whatever the confidence: it was heard, and only its capitals are in doubt.
 
 Measured on 210 held-out Parakeet dictations (24,857 words, 103 term errors whose word was in
-the dictionary, October 2026): with the audio check the right word was among the options for
-98, at 16.7 places per 1,000 words; heard entries had offered it for 54.
+the dictionary of fixed spellings the person meant, October 2026): with Parakeet's audio check
+the right word was among the options for 98, at 20.4 places per 1,000 words and 0.3 s added
+per 100 words; by the text alone for 90, at 27.2; heard entries had offered it for 54.
 """
 
 from __future__ import annotations
@@ -35,10 +37,11 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
-from typing import Protocol
 
 from entune.dictionary import pronounce
 from entune.dictionary.entries import Word, key
+from entune.providers.contracts import Scorer as Scorer  # the audio check's contract,
+from entune.providers.contracts import ScoreRequest as ScoreRequest  # with the transcript's
 
 UNSURE = 0.995  # a word below this confidence may be misheard
 SIMILAR = 0.5  # least pronunciation similarity of a candidate
@@ -170,20 +173,6 @@ class Place:
     start: int
     end: int
     candidates: tuple[Candidate, ...]  # best first; each keeps its own span
-
-
-@dataclass(frozen=True)
-class ScoreRequest:
-    start: float  # seconds into the recording: the span's first word starts
-    end: float  # and its last word ends
-    heard: str  # the span as written
-    candidates: tuple[str, ...]  # spellings to put in its place
-
-
-class Scorer(Protocol):
-    def score(self, requests: Sequence[ScoreRequest]) -> Sequence[Sequence[float]]:
-        """For each request, each candidate's change in the audio's log-probability."""
-        ...
 
 
 class Vocabulary:
@@ -471,6 +460,7 @@ def _check(text: str, words: _Words, spans: list[_Span], scorer: Scorer | None) 
     asked = [
         s for s in spans if s.found and times[s.first] is not None and times[s.last] is not None
     ]
+    checked: set[int] = set()
     if scorer is not None and asked:
         requests = []
         for s in asked:
@@ -484,13 +474,16 @@ def _check(text: str, words: _Words, spans: list[_Span], scorer: Scorer | None) 
                     last[1],
                     text[whole_start:whole_end],
                     tuple(
-                        text[whole_start : c.start] + c.word.spelling + text[c.end : whole_end]
+                        text[whole_start : c.start] + c.written(text) + text[c.end : whole_end]
                         for c in s.found
                         if _scored(s, c)
                     ),
                 )
             )
         for s, deltas in zip(asked, scorer.score(requests), strict=True):
+            if deltas is None:
+                continue  # the audio does not hold this span: the text decides
+            checked.add(id(s))
             scored = iter(deltas)
             kept = []
             for c in s.found:
@@ -503,7 +496,6 @@ def _check(text: str, words: _Words, spans: list[_Span], scorer: Scorer | None) 
                 if c.homophone or delta + AUDIO_WEIGHT * c.similarity >= AUDIO_BAR:
                     kept.append(replace(c, delta=delta))
             s.found = kept
-    checked = {id(s) for s in asked} if scorer is not None else set()
     for s in spans:
         if id(s) in checked:
             continue

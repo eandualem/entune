@@ -1,231 +1,162 @@
 import json
-from dataclasses import asdict, replace
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from entune.dictionary import changes as dictionary_changes
 from entune.dictionary import document as dictionary_document
+from entune.dictionary import edits
 from entune.dictionary.corrections import Correction, add_corrections
-from entune.dictionary.entries import Candidate, Dictionary, Heard, Word
-from tests.dictionary_samples import CLOUD, JEV, dictionary, group
+from entune.dictionary.entries import Dictionary, Evidence
+from tests.dictionary_samples import CLAUDE, GIF, JEV, dictionary, word
 
 
-def test_round_trip_keeps_words_once_and_entries_per_scope(tmp_path: Path) -> None:
-    original = dictionary((JEV,), {"local/small.en": (CLOUD,)})
+def test_round_trip_keeps_words_with_their_notes_and_evidence(tmp_path: Path) -> None:
+    used = replace(JEV, said_as="jev", evidence=(Evidence("s_1", 4, 8),))
+    original = dictionary(used, GIF)
     dictionary_document.save(tmp_path, original)
     assert dictionary_document.load(tmp_path) == original
-    assert dictionary_document.parse(dictionary_document.dumps(original)) == original
     assert dictionary_document.load(tmp_path / "missing") == Dictionary()
-    assert len(original.words) == 6
+    body = json.loads((tmp_path / "dictionary.json").read_text())
+    assert body["version"] == 4 and set(body) == {"version", "words"}
+    # Optional notes are written only when a word has them.
+    assert "said_as" in body["words"][0] and "said_as" not in body["words"][1]
+    assert body["words"][0]["evidence"] == [{"source": "s_1", "start": 4, "end": 8}]
 
 
-def test_evidence_on_a_literal_candidate_is_dropped_on_load() -> None:
-    data = json.loads(dictionary_document.dumps(dictionary((group("Langfuse", "LogFuse"),))))
-    literal = data["pinned"][1]["candidates"][0]
-    literal["evidence"] = [{"source": "s_old", "start": 18, "end": 26}]
-    [entry] = [
-        h for h in dictionary_document.parse(json.dumps(data)).pinned if h.text == "Langfuse"
-    ]
-    assert [(c.basis, c.evidence) for c in entry.candidates] == [("literal", ())]
+def test_an_older_dictionary_is_set_aside_and_entune_starts_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    older = '{"version": 3, "words": [], "pinned": [], "learned": {}}'
+    (tmp_path / "dictionary.json").write_text(older)
+    assert dictionary_document.load(tmp_path) == Dictionary()
+    (aside,) = tmp_path.glob("dictionary.pre-v4-*.json")
+    assert aside.read_text() == older and not (tmp_path / "dictionary.json").exists()
+    # Another reader that set it aside first leaves this one an empty dictionary.
+    (tmp_path / "dictionary.json").write_text(older)
+
+    def gone(*_: object) -> None:
+        raise FileNotFoundError
+
+    monkeypatch.setattr("entune.dictionary.document.os.replace", gone)
+    assert dictionary_document.set_aside_older(tmp_path) is None
+    monkeypatch.undo()
+    (tmp_path / "dictionary.json").unlink()
+    # One this version cannot read for another reason stays, and says why.
+    (tmp_path / "dictionary.json").write_text('{"version": 5, "words": []}')
+    with pytest.raises(ValueError, match='needs "version": 4'):
+        dictionary_document.load(tmp_path)
+    assert (tmp_path / "dictionary.json").exists()
 
 
-def test_pin_moves_one_heard_entry_and_words_stay_shared() -> None:
-    doc = dictionary(learned={"one/model": (JEV,), "two/model": (CLOUD,)})
-    pinned = dictionary_changes.pin(doc, "one/model", "jeff")
-    assert [h.text for h in pinned.pinned] == ["Jeff"]
-    assert [h.text for h in pinned.learned_for("one/model")] == ["GIF", "Jif", "Jev"]
-    assert pinned.words == doc.words
-    assert dictionary_document.parse(dictionary_document.dumps(pinned)) == pinned
-    every = dictionary_changes.pin(doc, "one/model", None)
-    assert [h.text for h in every.pinned] == ["Jeff", "GIF", "Jif", "Jev"]
-    assert "one/model" not in every.learned and every.learned_for("two/model") == CLOUD.entries
-    with pytest.raises(ValueError, match="no longer present"):
-        dictionary_changes.pin(doc, "two/model", "Jeff")
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        ({"version": 4, "words": [], "pinned": []}, "unknown keys pinned"),
+        ({"version": 4, "words": [{"id": "1x", "spelling": "A", "meaning": "a"}]}, "stable ID"),
+        (
+            {"version": 4, "words": [{"id": "a", "spelling": "A", "meaning": "a"}] * 2},
+            "duplicate word ID",
+        ),
+        ({"version": 4, "words": [{"id": "a", "spelling": "A", "meaning": ""}]}, "meaning"),
+        (
+            {
+                "version": 4,
+                "words": [
+                    {"id": "a", "spelling": "A", "meaning": "a", "evidence": [{"source": "s"}]}
+                ],
+            },
+            "offsets",
+        ),
+    ],
+)
+def test_a_broken_document_is_refused_with_the_reason(body: object, reason: str) -> None:
+    with pytest.raises(ValueError, match=reason):
+        dictionary_document.parse(json.dumps(body))
 
 
-def test_a_pinned_entry_supersedes_and_absorbs_a_learned_one_with_the_same_text() -> None:
-    claude = Heard("CLOUD", (Candidate("a_claude"),))
-    doc = Dictionary(CLOUD.words, (claude,), {"m": CLOUD.entries})
-    merged = dictionary_changes.pin(doc, "m", "cloud")
-    assert merged.pinned[0].text == "CLOUD"
-    assert [c.word for c in merged.pinned[0].candidates] == ["a_claude", "b_cloud", "c_cloud"]
-    assert [h.text for h in merged.learned_for("m")] == ["Claude"]
+def test_a_word_to_check_may_have_no_meaning_yet() -> None:
+    body = {
+        "version": 4,
+        "words": [{"id": "a", "spelling": "A", "meaning": "", "needs_review": True}],
+    }
+    (unchecked,) = dictionary_document.parse(json.dumps(body)).words
+    assert unchecked.needs_review and not unchecked.meaning
 
 
-def test_proposals_list_entry_and_word_changes_and_refuse_other_sections() -> None:
-    current = dictionary(learned={"m": (CLOUD,)})
-    clearer = replace(CLOUD.words[0], meaning="Anthropic's AI model family.")
-    yaml = Word("w_yaml", "YAML", "YAML: configuration file format")
-    camel = Heard("camel", (Candidate("w_yaml", (), "user"),))
-    proposed = Dictionary((clearer, *CLOUD.words[1:], yaml), (), {"m": (CLOUD.entries[0], camel)})
-    proposal = dictionary_changes.propose(current, proposed, "m", "revision")
+def test_proposals_list_new_words_and_clearer_meanings_and_review_applies_the_included() -> None:
+    current = dictionary(replace(CLAUDE, needs_review=True))
+    added = replace(word("Grafana"), needs_review=True, evidence=(Evidence("s_1", 9, 19),))
+    clearer = replace(CLAUDE, meaning="Anthropic's AI model family", needs_review=True)
+    proposal = dictionary_changes.propose(current, dictionary(clearer, added), '"v1"')
     assert [(c.id, c.kind) for c in proposal.changes] == [
-        ("heard:camel", "add"),
-        ("heard:claude", "remove"),
-        ("word:a_claude", "word"),
+        ("word:a_claude", "meaning"),
+        ("word:a_grafana", "add"),
     ]
-    shown: dict[str, Any] = proposal.as_json()
-    assert shown["version"] == "revision"
-    assert [w["id"] for w in shown["words"]] == ["a_claude", "w_yaml"]
-    with pytest.raises(ValueError, match="only the learned entries"):
-        dictionary_changes.propose(current, replace(proposed, pinned=(camel,)), "m")
-
-
-def test_review_applies_included_changes_and_new_words_come_with_their_entries() -> None:
-    current = dictionary(learned={"m": (CLOUD,)})
-    yaml = Word("w_yaml", "YAML", "YAML: configuration file format")
-    unused = Word("w_toml", "TOML", "TOML: configuration file format")
-    camel = Heard("camel", (Candidate("w_yaml"),))
-    clearer = replace(CLOUD.words[0], meaning="Anthropic's AI model family.")
-    proposed = Dictionary((clearer, *CLOUD.words[1:], yaml, unused), (), {"m": (camel,)})
-    proposal = dictionary_changes.propose(current, proposed, "m")
-    everything = dictionary_changes.review(current, proposal)
-    assert [h.text for h in everything.learned_for("m")] == ["camel"]
-    assert [w.id for w in everything.words] == ["a_claude", "b_cloud", "c_cloud", "w_yaml"]
-    assert everything.words[0].meaning == "Anthropic's AI model family."
-    # Dismissed changes keep what is there; a new word comes as the review edited it.
-    edited = {**asdict(yaml), "spelling": "YAML 1.2"}
-    some = dictionary_changes.review(
-        current,
-        proposal,
-        [{"id": "heard:camel", "after": camel.as_json()}, {"id": "word:w_yaml", "after": edited}],
-    )
-    assert [h.text for h in some.learned_for("m")] == ["cloud", "Claude", "camel"]
-    assert some.words[-1].spelling == "YAML 1.2" and some.words[0] == CLOUD.words[0]
-    # A clearer meaning changes the description only.
-    respelled = {**asdict(clearer), "spelling": "Claudia"}
+    assert proposal.as_json()["version"] == '"v1"'
+    # Only what is included applies; applying is the person's check of it.
+    only = [{"id": "word:a_grafana", "after": dictionary_document.word_json(added)}]
+    applied = dictionary_changes.review(current, proposal, only)
+    assert applied.words == (current.words[0], replace(added, needs_review=False))
+    every = dictionary_changes.review(current, proposal)
+    assert every.words[0].meaning == "Anthropic's AI model family"
+    assert dictionary_changes.review(current, proposal, []) == current
+    # A review edits a new word's text, never its evidence, and a meaning only its meaning.
+    edited = {**dictionary_document.word_json(added), "spelling": "Graphana", "evidence": []}
+    (_, kept) = dictionary_changes.review(
+        current, proposal, [{"id": "word:a_grafana", "after": edited}]
+    ).words
+    assert kept.spelling == "Graphana" and kept.evidence == added.evidence
+    respelled = {**dictionary_document.word_json(clearer), "spelling": "Claud"}
     with pytest.raises(ValueError, match="description only"):
         dictionary_changes.review(current, proposal, [{"id": "word:a_claude", "after": respelled}])
-    assert dictionary_changes.review(current, proposal, []) is current
-    with pytest.raises(ValueError, match="heard text"):
-        dictionary_changes.review(
-            current, proposal, [{"id": "heard:camel", "after": {**camel.as_json(), "text": "came"}}]
-        )
-    with pytest.raises(ValueError, match="only be included or dismissed"):
-        dictionary_changes.review(
-            current, proposal, [{"id": "heard:claude", "after": camel.as_json()}]
-        )
     with pytest.raises(ValueError, match="at most once"):
-        dictionary_changes.review(current, proposal, [{"id": "heard:nothing", "after": None}])
+        dictionary_changes.review(current, proposal, [*only, *only])
+    with pytest.raises(ValueError, match="never remove"):
+        dictionary_changes.propose(current, Dictionary())
 
 
-def test_corrupt_references_duplicates_and_older_versions_are_rejected() -> None:
-    data = json.loads(dictionary_document.dumps(dictionary((JEV,))))
-    data["pinned"][0]["candidates"][0]["word"] = "missing"
-    with pytest.raises(ValueError, match="missing word"):
-        dictionary_document.parse(json.dumps(data))
-    data = json.loads(dictionary_document.dumps(dictionary((JEV,))))
-    data["pinned"][0]["direct"] = "a_jev"
-    with pytest.raises(ValueError, match="approval reason"):
-        dictionary_document.parse(json.dumps(data))
-    data = json.loads(dictionary_document.dumps(dictionary((JEV,))))
-    data["pinned"].append({**data["pinned"][0], "text": "JEFF"})
-    with pytest.raises(ValueError, match="listed twice"):
-        dictionary_document.parse(json.dumps(data))
-    data = json.loads(dictionary_document.dumps(dictionary((JEV,))))
-    data["pinned"][0]["candidates"][1]["word"] = "c_gif"
-    with pytest.raises(ValueError, match="spelled like its heard text"):
-        dictionary_document.parse(json.dumps(data))
-    for version in (1, 2):
-        with pytest.raises(ValueError, match='needs "version": 3'):
-            dictionary_document.parse(json.dumps({"version": version, "pinned": [], "learned": {}}))
-    with pytest.raises(ValueError, match="Not valid JSON"):
-        dictionary_document.parse("{")
-    with pytest.raises(ValueError, match="must be a JSON object"):
-        dictionary_document.parse("[]")
+def test_applying_a_build_records_where_it_found_the_words_the_dictionary_has() -> None:
+    current = dictionary(replace(JEV, evidence=(Evidence("s_1", 0, 4),)))
+    found = replace(current.words[0], evidence=(Evidence("s_1", 0, 4), Evidence("s_2", 5, 9)))
+    added = replace(word("Grafana"), needs_review=True, evidence=(Evidence("s_2", 0, 4),))
+    proposal = dictionary_changes.propose(current, dictionary(found, added))
+    assert [c.kind for c in proposal.changes] == ["add"]  # usage alone is no change to review
+    applied = dictionary_changes.review(current, proposal)
+    assert applied.words[0].evidence == found.evidence
+    assert dictionary_changes.review(current, proposal, []) == current
+    # A build that found only places of use has nothing to review: accepting records them.
+    usage = dictionary_changes.propose(current, dictionary(found))
+    assert usage.changes == () and dictionary_changes.review(current, usage).words == (found,)
 
 
-def test_confirmed_agent_boundary_is_idempotent_and_does_not_grant_precedence() -> None:
+def test_confirmed_corrections_add_the_words_the_person_meant_once() -> None:
     doc, added = add_corrections(
-        dictionary(learned={"m": (JEV,)}), (Correction("Jev", "A model.", ("Jeff",)),)
+        dictionary(JEV), (Correction("Jev", heard=("Jeff",)), Correction("Groq", "a host"))
     )
-    assert added == (Correction("Jev", "A model.", ("Jeff",)),)
-    assert not any(h.direct for h in doc.pinned)
-    # A heard text that is a described word itself keeps it, written as heard.
-    assert [(h.text, [c.basis for c in h.candidates]) for h in doc.pinned] == [
-        ("Jeff", ["user", "literal"]),
-        ("Jev", ["literal", "literal"]),
+    # Jev is in the dictionary already; what the speech model wrote is no word.
+    assert added == (Correction("Groq", "a host"),)
+    assert [(w.spelling, w.meaning, w.needs_review) for w in doc.words] == [
+        ("Jev", JEV.meaning, False),
+        ("Groq", "a host", False),
     ]
-    again, added = add_corrections(doc, (Correction("jev", heard=("JEFF",)),))
-    assert not added and again == doc
-    # A phrase given twice in other capitals is one entry.
-    twice, _ = add_corrections(
-        Dictionary(), (Correction("Groq", "a model host", ("grok", "GROK")),)
+    again, added = add_corrections(
+        doc, (Correction("groq"), Correction("GROQ", "A  host"), Correction("Soniox"))
     )
-    assert [h.text for h in twice.pinned] == ["grok", "Groq"]
-    # An existing word gains a heard entry; no new word is made for it.
-    more, added = add_corrections(doc, (Correction("GIF", heard=("jiff",)),))
-    assert added == (Correction("GIF", "", ("jiff",)),) and more.words == doc.words
-    # A word a correction made and the person renamed is not the target of that correction.
-    (made,) = [w for w in doc.words if w.meaning == "A model."]
-    # Renamed as the editor does it: its "as written" candidate becomes the person's own.
-    renamed = Dictionary(
-        tuple(replace(w, spelling="Jev2") if w is made else w for w in doc.words),
-        tuple(
-            replace(h, candidates=tuple(replace(c, basis="user") for c in h.candidates))
-            for h in doc.pinned
-        ),
-        doc.learned,
-    )
-    again, added = add_corrections(renamed, (Correction("Jev", "A model.", ("jeb",)),))
-    (jeb,) = [h for h in again.pinned if h.text == "jeb"]
-    assert added and {w.spelling for w in again.words if w.id == jeb.candidates[0].word} == {"Jev"}
-    assert len(again.words) == len(doc.words) + 1
-    # A term only learned so far is pinned with its own spelling, for every speech model.
-    pinned, added = add_corrections(doc, (Correction("GIF"),))
-    assert added == (Correction("GIF"),) and pinned.pinned[-1].text == "GIF"
+    # The same description in other capitals or spacing is the same word.
+    assert added == (Correction("Soniox"),) and again.words[-1].needs_review
+    # Another description of the same spelling is another word.
+    other, added = add_corrections(again, (Correction("Groq", "a model family"),))
+    assert added and [w.spelling for w in other.words].count("Groq") == 2
 
 
-def test_agent_edits_follow_the_pages_rules() -> None:
-    from entune.dictionary import edits
-
-    doc = dictionary(learned={"m": (CLOUD,)})
-    # A new word, then an entry naming it next to the heard text's own word.
-    code = Word("w_code", "Claude Code", "Anthropic's coding agent")
-    doc = edits.set_word(doc, code)
-    doc = edits.set_entry(doc, "m", "cloud code", ["w_code"])
-    (entry,) = [h for h in doc.learned_for("m") if h.text == "cloud code"]
-    assert [(c.word, c.basis) for c in entry.candidates] == [("w_code", "user")]
-    # Replacing an entry's words keeps what a kept candidate had; Always needs a reason.
-    cloud = next(h for h in doc.learned_for("m") if h.text == "cloud")
-    doc = edits.set_entry(doc, "m", "CLOUD", ["a_claude", "b_cloud"])
-    (kept,) = [h for h in doc.learned_for("m") if h.text == "cloud"]
-    assert kept.candidates == cloud.candidates[:2]
-    # A capitals correction the person added on the page stays theirs when an agent keeps it.
-    capitals = edits.set_word(doc, Word("w_anth", "Anthropic", "The AI company"))
-    added = Heard("anthropic", (Candidate("w_anth", (), "user"),))
-    capitals = replace(capitals, learned={"m": (*capitals.learned_for("m"), added)})
-    capitals = edits.set_entry(capitals, "m", "anthropic", ["w_anth"])
-    assert [h for h in capitals.learned_for("m") if h.text == "anthropic"] == [added]
-    with pytest.raises(ValueError, match="reason"):
-        edits.set_entry(doc, "m", "cloud", ["a_claude"], always="a_claude")
-    approved = edits.set_entry(doc, "m", "cloud", ["a_claude"], "a_claude", "Always Claude here")
-    assert (
-        edits.set_entry(approved, "m", "cloud", ["a_claude", "b_cloud"]).learned_for("m")[0].direct
-        == "a_claude"
-    )
-    assert (
-        edits.set_entry(approved, "m", "cloud", ["a_claude"], always="").learned_for("m")[0].direct
-        is None
-    )
-    # Renaming a word: an as-written candidate it no longer spells becomes the person's.
-    renamed = edits.set_word(approved, replace(CLOUD.words[0], spelling="Claudia"))
-    (claude,) = [h for h in renamed.learned_for("m") if h.text == "Claude"]
-    assert [c.basis for c in claude.candidates] == ["user"]
-    assert next(h for h in renamed.learned_for("m") if h.text == "cloud").direct is None
-    # Pinned entries keep their text for every model; removing never deletes a word.
-    with pytest.raises(ValueError, match="pinned"):
-        edits.set_entry(
-            edits.set_entry(doc, "pinned", "clod", ["a_claude"]), "m", "clod", ["a_claude"]
-        )
-    removed = edits.remove_entry(doc, "m", "cloud code")
-    assert "cloud code" not in [h.text for h in removed.learned_for("m")]
-    assert code in removed.words
-    with pytest.raises(ValueError, match="No heard entry"):
-        edits.remove_entry(removed, "m", "cloud code")
-    # Deleting a word removes it everywhere; an entry left with no word goes too.
-    deleted, touched = edits.delete_word(doc, "w_code")
-    assert touched == ["cloud code"] and code not in deleted.words
-    assert "cloud code" not in [h.text for h in deleted.learned_for("m")]
+def test_agent_edits_keep_a_words_evidence_and_delete_only_what_exists() -> None:
+    used = replace(JEV, evidence=(Evidence("s_1", 0, 4),))
+    doc = edits.set_word(dictionary(used), replace(JEV, meaning="A decision model."))
+    assert doc.words == (replace(used, meaning="A decision model."),)
+    doc = edits.set_word(doc, GIF)
+    assert [w.id for w in doc.words] == ["a_jev", "c_gif"]
+    assert edits.delete_word(doc, "c_gif").words == doc.words[:1]
+    with pytest.raises(ValueError, match="No word has the ID"):
+        edits.delete_word(doc, "absent")

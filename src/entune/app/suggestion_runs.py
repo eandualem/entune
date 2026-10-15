@@ -355,9 +355,7 @@ class DictionaryBuilds:
             with self._lock:
                 self._loop = self._task = None
         # Validate against the full scoped dictionary before advancing coverage.
-        proposal = dictionary_changes.propose(
-            spec.dictionary, proposed, spec.speech.id, f'"{spec.revision}"'
-        )
+        proposal = dictionary_changes.propose(spec.dictionary, proposed, f'"{spec.revision}"')
         with self._lock:
             self._working, self._proposal = proposed, proposal
             self._completed_batches = number
@@ -696,7 +694,7 @@ class DictionaryBuilds:
             # Continue found nothing new to read: the parts finished before are the result.
             with self._lock:
                 self._proposal = dictionary_changes.propose(
-                    spec.dictionary, self._working, spec.speech.id, f'"{spec.revision}"'
+                    spec.dictionary, self._working, f'"{spec.revision}"'
                 )
             return
         if self._skipped and not self._texts:

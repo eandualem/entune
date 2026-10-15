@@ -70,7 +70,10 @@ def register(mcp: MCPServer, app: Entune) -> None:
         dictionary, the dictionary's size and any dictionary build. `needs_person` lists
         the few things only the person can do, such as saving an API key in Settings;
         everything else, do yourself with these tools."""
-        dictionary = app.dictionary.dictionary()
+        try:
+            dictionary = app.dictionary.dictionary()
+        except ValueError as exc:
+            raise ToolError(f"dictionary.json is not usable: {exc}") from exc
         status = app.settings.jev_status()
         suggestion = app.settings.dictionary_model()
         speech = app.models.available_models()
@@ -127,11 +130,7 @@ def register(mcp: MCPServer, app: Entune) -> None:
             ],
             "fast_mode": app.settings.fast_mode(),
             "remove_silence": app.settings.remove_silence(),
-            "dictionary": {
-                "words": len(dictionary.words),
-                "pinned": len(dictionary.pinned),
-                "learned": {m: len(es) for m, es in dictionary.learned.items()},
-            },
+            "dictionary": {"words": len(dictionary.words)},
             "dictionary_build": _summary(app.learning.dictionary_build_status()),
             "needs_person": needs,
         }
@@ -300,26 +299,25 @@ def register(mcp: MCPServer, app: Entune) -> None:
         reread: bool = False,
         effort: str = DEFAULT_EFFORT,
     ) -> dict[str, Any]:
-        """Build the dictionary for the default speech model. With source "audio", the
-        imported audio this model has not learned from yet (all of it with `reread`) is
-        transcribed again with that model (with `include_recordings`, the person's own
-        Entune recordings too) and the suggestion model proposes entries while it runs;
-        with "history", it reads the person's transcripts not learned from yet (all of them
-        with `reread`). The reply says how many recordings or transcripts it reads. It runs in the
-        background: check dictionary_build_status, then read_suggestions and
+        """Build the dictionary: the words the person uses. With source "audio", the
+        imported audio the dictionary has not read yet (all of it with `reread`) is
+        transcribed with the default speech model (with `include_recordings`, the person's
+        own Entune recordings too) and the suggestion model proposes words while it runs;
+        with "history", it reads the default speech model's transcripts not read yet (all
+        of them with `reread`). The reply says how many recordings or transcripts it
+        reads. It runs in the background: check dictionary_build_status, then
+        read_suggestions and
         apply_suggestions. A local speech model costs nothing; a cloud one is billed per
         minute of audio to the person's key. `effort` is the suggestion model's reasoning:
         minimal, low, medium, high (default) or xhigh."""
         if effort not in EFFORTS:
             raise ToolError(f"Choose an effort: {', '.join(EFFORTS)}")
         audio_ids = None
-        model = ""
         seconds = 0.0
         unmeasured = 0
         by_source: Counter[str] = Counter()
         if source == "audio":
-            model = app.models.default_model() or ""  # the build must be for this one
-            learned = set() if reread else app.store.learning_covered(model, "audio")
+            learned = set() if reread else app.store.learning_covered("audio")
             with app.data.using_data("audio listing"):
                 chosen = [
                     a
@@ -329,8 +327,8 @@ def register(mcp: MCPServer, app: Entune) -> None:
                 ]
             if not chosen:
                 raise ToolError(
-                    "No audio this speech model has not learned from: import more, or pass"
-                    " reread to read it all again"
+                    "No audio the dictionary has not read: import more, or pass reread to"
+                    " read it all again"
                 )
             audio_ids = [a.id for a in chosen]
             seconds = sum(a.seconds or 0 for a in chosen)
@@ -352,11 +350,6 @@ def register(mcp: MCPServer, app: Entune) -> None:
             )
         except (JobConflict, Busy, ValueError) as exc:
             raise failed(exc) from exc
-        if source == "audio" and state.get("model") != model:
-            # The default changed between choosing the audio and starting: the audio was
-            # chosen for another model's dictionary, so this build stops at once.
-            app.learning.cancel_dictionary_build(str(state["id"]))
-            raise ToolError("The default speech model changed as the build started; start it again")
         summary = _summary(state)
         if source == "audio":
             summary["audio_minutes"] = round(seconds / 60)
@@ -400,51 +393,31 @@ def register(mcp: MCPServer, app: Entune) -> None:
     @mcp.tool(annotations=READ)
     def read_suggestions() -> dict[str, Any]:
         """The suggestions of a finished build, with the `build` to name when applying
-        them, each with its `id`: new and changed heard entries with the words they stand
-        for (spelling and meaning, `new` when the build defines it), entries to remove, and
-        clearer meanings for existing words."""
+        them, each with its `id`: new words the person used (spelling, meaning, and at how
+        many places the build found them), and clearer meanings for words still to
+        check."""
         proposal = _proposal(app)
-        words = {w["id"]: w for w in proposal["words"]}
-        stored = {w.id: w for w in app.dictionary.dictionary().words}
-        new = set(proposal.get("newWords", []))
-
-        def word(identity: str) -> dict[str, Any]:
-            found = words.get(identity) or (asdict(stored[identity]) if identity in stored else {})
-            return {
-                "spelling": found.get("spelling"),
-                "meaning": found.get("meaning"),
-                "new": identity in new,
-            }
-
         changes = []
         for change in proposal["changes"]:
-            item: dict[str, Any] = {"id": change["id"], "kind": change["kind"]}
-            if change["kind"] == "word":
-                item.update(
-                    spelling=change["after"]["spelling"],
-                    meaning_before=change["before"]["meaning"],
-                    meaning_after=change["after"]["meaning"],
-                )
+            after = change["after"]
+            item: dict[str, Any] = {
+                "id": change["id"],
+                "kind": change["kind"],
+                "spelling": after["spelling"],
+                "meaning": after["meaning"],
+            }
+            if change["kind"] == "add":
+                item["places_used"] = len(after["evidence"])
             else:
-                heard = change["after"] or change["before"]
-                item["text"] = heard["text"]
-                for side in ("before", "after"):
-                    if change[side] is not None:
-                        item[side] = [word(c["word"]) for c in change[side]["candidates"]]
-                if change["kind"] == "update" and item["before"] == item["after"]:
-                    item["note"] = "same words; only the evidence behind them changes"
+                item["meaning_before"] = change["before"]["meaning"]
             changes.append(item)
-        return {
-            "build": _token(app, proposal),
-            "speech_model": proposal["model"],
-            "changes": changes,
-        }
+        return {"build": _token(app, proposal), "changes": changes}
 
     @mcp.tool(annotations=EDIT)
     def apply_suggestions(build: str, leave_out: list[str] | None = None) -> dict[str, Any]:
         """Apply the suggestions of the `build` you read with read_suggestions, all of them
         or all but the `id`s in `leave_out`. Refine the result afterwards with the
-        dictionary tools, as you would any entry."""
+        dictionary tools, as you would any word."""
         state = app.learning.dictionary_build_status()
         proposal = _proposal(app)
         if _token(app, proposal) != build:
@@ -454,19 +427,7 @@ def register(mcp: MCPServer, app: Entune) -> None:
         if unknown:
             raise ToolError(f"No suggestion has the id {sorted(unknown)[0]}; see read_suggestions")
         chosen = [c for c in proposal["changes"] if c["id"] not in skipped]
-        words = {w["id"]: w for w in proposal["words"]}
-        named = dict.fromkeys(
-            c["word"]
-            for change in chosen
-            if change["kind"] != "word" and change["after"]
-            for c in change["after"]["candidates"]
-        )
         selected = [{"id": c["id"], "after": c["after"]} for c in chosen]
-        selected += [
-            {"id": f"word:{w}", "after": words[w]}
-            for w in named
-            if w in set(proposal.get("newWords", [])) and w in words
-        ]
 
         def unchanged(current: Proposal) -> bool:
             return _fingerprint(current.as_json()) == build.partition(":")[2]
@@ -475,11 +436,9 @@ def register(mcp: MCPServer, app: Entune) -> None:
             app.learning.accept_dictionary_build(str(state["id"]), selected, unchanged)
         except (JobConflict, DictionaryChanged, Busy, ValueError) as exc:
             raise failed(exc) from exc
-        dictionary = app.dictionary.dictionary()
         return {
             "applied": len(chosen),
-            "words": len(dictionary.words),
-            "learned": {m: len(es) for m, es in dictionary.learned.items()},
+            "words": len(app.dictionary.dictionary().words),
             "version": app.dictionary.dictionary_version(),
         }
 
@@ -487,7 +446,7 @@ def register(mcp: MCPServer, app: Entune) -> None:
     def recent_dictations(limit: int = 20) -> list[dict[str, Any]]:
         """How the person's latest dictations came out, newest first: the speech model,
         what it wrote, the text delivered, and each step's outcome. For the dictionary:
-        what it replaced, and how many matches it kept as heard or could not decide. Use
+        what it replaced, and how many places it kept as written or could not decide. Use
         it to see whether the dictionary helps and what to fix; nothing here needs the
         person."""
         with app.data.using_data("history listing"):
@@ -519,7 +478,7 @@ def register(mcp: MCPServer, app: Entune) -> None:
                 outcome: dict[str, Any] = {"status": stage.status, "error": stage.error}
                 if stage.status == "skipped" and not stage.error:
                     outcome["why"] = {
-                        "dictionary": "nothing to do: no dictionary entry matched",
+                        "dictionary": "nothing to do: no dictionary word in question",
                         "formatting": "nothing to do: nothing to format",
                         "cleanup": "nothing to do: no hesitation to remove",
                     }[name]
@@ -634,8 +593,8 @@ def _token(app: Entune, proposal: dict[str, Any]) -> str:
 
 
 def _fingerprint(proposal: dict[str, Any]) -> str:
-    """Everything applying writes: the entries and the new words' definitions."""
-    content = json.dumps([proposal["changes"], proposal["words"]], sort_keys=True).encode()
+    """Everything applying writes: the words and their definitions."""
+    content = json.dumps(proposal["changes"], sort_keys=True).encode()
     return hashlib.sha256(content).hexdigest()[:16]
 
 

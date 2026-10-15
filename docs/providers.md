@@ -50,8 +50,8 @@ Parakeet's WAV decoder and resampling remain in its external helper.
 
 Whisper's saved provider ID remains "local", even though its display name
 is now Whisper.cpp. Parakeet keeps "parakeet"; model names and download
-paths are unchanged. These IDs scope saved settings, history and learned
-dictionaries and must not follow Python module or display-name changes.
+paths are unchanged. These IDs scope saved settings and history and must not
+follow Python module or display-name changes.
 
 Whisper imports its engine only when loading a model. Parakeet is available
 on Apple Silicon macOS; its download installs the pinned parakeet-mlx engine
@@ -67,6 +67,11 @@ retries silently, or guesses a model. Use the provider's synchronous or file
 endpoint, never its streaming socket. If the provider keeps uploads, attempt
 deletion afterwards, as the Soniox and AssemblyAI long-form paths do. Cleanup
 can fail; a deletion request does not establish the provider's retention policy.
+
+A transcript may also carry `audio`, a scorer the dictionary step uses to check its
+candidate words against the recording (contracts.py: `Scorer`, `ScoreRequest`). Parakeet's
+helper keeps each transcription's encoder output and tokens for it, the newest ten minutes
+of audio, while the helper runs; other providers leave it None and the text decides.
 
 Tests use `httpx.MockTransport` to assert the request shape and the
 verbatim error; see `tests/test_providers.py`.

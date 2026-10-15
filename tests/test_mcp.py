@@ -23,7 +23,7 @@ from entune.providers.local.contracts import LocalModelStatus
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, wait_for_build
-from tests.dictionary_samples import CLOUD, document, proposed
+from tests.dictionary_samples import CLAUDE, document, proposed
 from tests.test_server import StubProvider
 
 HEADERS = {"accept": "application/json, text/event-stream", "content-type": "application/json"}
@@ -51,7 +51,7 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
     said = "Ask cloud code to review it. The files are in the cloud."
     store.add_transcription(recording.id, "stub", "good", "ok", said, None, raw_text=said)
     with closing(store), TestClient(create_app(app), base_url="http://localhost") as client:
-        assert client.put("/api/dictionary", json=document(learned={"stub/good": (CLOUD,)}))
+        assert client.put("/api/dictionary", json=document(CLAUDE))
         listed = client.post(
             "/mcp", headers=HEADERS, content='{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
         ).json()["result"]["tools"]
@@ -60,9 +60,6 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
             "read_dictionary",
             "find_in_transcripts",
             "set_word",
-            "set_heard_entry",
-            "remove_heard_entry",
-            "pin_heard_entry",
             "delete_word",
             # Running the rest of Entune for the person (api/mcp_setup.py).
             "entune_setup",
@@ -79,17 +76,10 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
             "apply_suggestions",
             "recent_dictations",
         }
-        assert "Candidates come from real usage" in call(client, "dictionary_guide")
+        assert "The person uses it" in call(client, "dictionary_guide")
         read = call(client, "read_dictionary")
-        assert read["default_speech_model"] == "stub/good"
-        assert "stub/good" in read["speech_models"]
-        assert read["dictionary"]["version"] == 3 and len(read["dictionary"]["words"]) == 3
-        # What the default speech model applies, each entry with its section.
-        assert read["speech_model"] == "stub/good" and read["unused_words"] == []
-        assert [(e["text"], e["scope"]) for e in read["entries_in_use"]] == [
-            ("cloud", "stub/good"),
-            ("Claude", "stub/good"),
-        ]
+        assert set(read) == {"version", "words"}
+        assert [w["spelling"] for w in read["words"]] == ["Claude"]
         found = call(client, "find_in_transcripts", text="cloud code")
         assert (found["total"], found["transcripts"], found["searched"]) == (1, 1, 1)
         assert found["excerpts"] == [
@@ -108,46 +98,40 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
             version=read["version"],
             spelling="Claude Code",
             meaning="Anthropic's coding agent",
-        )
-        entry = call(
-            client,
-            "set_heard_entry",
-            version=added["version"],
-            scope="stub/good",
-            text="cloud code",
-            words=[added["word_id"]],
+            said_as="clawed code",
         )
         stale = call(client, "set_word", version=read["version"], spelling="x", meaning="y")
         assert "The dictionary changed since that version was read" in stale["error"]
-        assert (
-            "Unknown speech model"
-            in call(client, "remove_heard_entry", version=entry["version"], scope="nope", text="x")[
-                "error"
-            ]
-        )
-        pinned = call(
-            client,
-            "pin_heard_entry",
-            version=entry["version"],
-            speech_model="stub/good",
-            text="cloud code",
-        )
-        deleted = call(client, "delete_word", version=pinned["version"], word_id=added["word_id"])
-        assert deleted["removed_from"] == ["cloud code"]
-        # Removing entries keeps their words; they show as unused for the person to decide.
-        version = deleted["version"]
-        for text in ("Claude", "cloud"):
-            version = call(
-                client, "remove_heard_entry", version=version, scope="stub/good", text=text
-            )["version"]
-        unused = call(client, "read_dictionary")["unused_words"]
-        assert [(w["id"], w["spelling"]) for w in unused] == [
-            ("a_claude", "Claude"),
-            ("b_cloud", "cloud"),
-            ("c_cloud", "cloud"),
+        (stored,) = [
+            w for w in call(client, "read_dictionary")["words"] if w["spelling"] != "Claude"
         ]
-        final = client.get("/api/dictionary").json()
-        assert final["pinned"] == [] and added["word_id"] not in {w["id"] for w in final["words"]}
+        assert stored["id"] == added["word_id"] and stored["said_as"] == "clawed code"
+        # An edit keeps what it leaves out; "" clears a note.
+        edited = call(
+            client,
+            "set_word",
+            version=added["version"],
+            word_id=added["word_id"],
+            spelling="Claude Code",
+            meaning="Anthropic's agent for coding",
+        )
+        (kept,) = [w for w in call(client, "read_dictionary")["words"] if w["id"] == stored["id"]]
+        assert (kept["said_as"], kept["casing"]) == ("clawed code", "fixed")
+        cleared = call(
+            client,
+            "set_word",
+            version=edited["version"],
+            word_id=added["word_id"],
+            spelling="Claude Code",
+            meaning="Anthropic's agent for coding",
+            said_as="",
+        )
+        (plain,) = [w for w in call(client, "read_dictionary")["words"] if w["id"] == stored["id"]]
+        assert "said_as" not in plain
+        deleted = call(client, "delete_word", version=cleared["version"], word_id=added["word_id"])
+        again = call(client, "delete_word", version=deleted["version"], word_id=added["word_id"])
+        assert "No word has the ID" in again["error"]
+        assert [w["spelling"] for w in client.get("/api/dictionary").json()["words"]] == ["Claude"]
 
         # A page from another site cannot reach it, nor a DNS-rebinding host.
         refused = client.post(
@@ -157,34 +141,34 @@ def test_an_agent_reads_looks_up_and_improves_the_dictionary(tmp_path: Path) -> 
         assert client.post("/mcp", headers={**HEADERS, "host": "evil.example"}).status_code == 403
 
 
-def test_edits_keep_the_file_readable_and_reach_a_removed_speech_models_entries(
-    tmp_path: Path,
-) -> None:
+def test_a_refused_edit_leaves_the_dictionary_as_it_was(tmp_path: Path) -> None:
     store = Store(tmp_path)
     app = Entune(store, [StubProvider()])
     with closing(store), TestClient(create_app(app), base_url="http://localhost") as client:
-        assert client.put("/api/dictionary", json=document(learned={"gone/model": (CLOUD,)}))
         version = call(client, "read_dictionary")["version"]
-        unreadable = call(
-            client,
-            "set_heard_entry",
-            version=version,
-            scope="gone/model",
-            text='"cloud"',
-            words=["a_claude"],
+        assert (
+            "spelling"
+            in call(client, "set_word", version=version, spelling=" ", meaning="y")["error"]
         )
-        assert "starts with a letter or digit" in unreadable["error"]
-        removed = call(
-            client, "remove_heard_entry", version=version, scope="gone/model", text="Claude"
+        long = call(client, "set_word", version=version, spelling="Groq", meaning="x" * 200)
+        assert "at most 120 characters" in long["error"]
+        assert call(client, "read_dictionary") == {"version": version, "words": []}
+        # A new word spelled and described as a stored one, as a retried call sends it,
+        # names that word to edit instead of adding it twice.
+        added = call(client, "set_word", version=version, spelling="Grafana", meaning="dashboards")
+        twice = call(
+            client, "set_word", version=added["version"], spelling="grafana", meaning="Dashboards"
         )
-        assert [
-            h["text"] for h in client.get("/api/dictionary").json()["learned"]["gone/model"]
-        ] == ["cloud"]
+        assert f"already the word {added['word_id']}" in twice["error"]
+        assert len(call(client, "read_dictionary")["words"]) == 1
+        # A speech model removed since still has its transcripts looked up.
         gone = call(client, "find_in_transcripts", text="cloud", speech_model="gone/model")
         assert gone == {"total": 0, "transcripts": 0, "searched": 0, "excerpts": []}
-        view = call(client, "read_dictionary", speech_model="gone/model")
-        assert [e["text"] for e in view["entries_in_use"]] == ["cloud"]
-        assert removed["version"] == call(client, "read_dictionary")["version"]
+        # A dictionary.json Entune cannot use says why, not only that the tool failed.
+        (tmp_path / "dictionary.json").write_text('{"version": 5, "words": []}')
+        for tool in ("read_dictionary", "entune_setup"):
+            error = call(client, tool)["error"]
+            assert "dictionary.json is not usable" in error and '"version": 4' in error
 
 
 def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
@@ -279,10 +263,13 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         assert status["phase"] == "ready" and status["next"]
         suggestions = call(client, "read_suggestions")
         (change,) = suggestions["changes"]
-        assert change["kind"] == "add" and change["text"] == "cloud code"
-        assert change["after"] == [
-            {"spelling": "Claude Code", "meaning": "The named tool Claude Code.", "new": True}
-        ]
+        assert change == {
+            "id": change["id"],
+            "kind": "add",
+            "spelling": "Claude Code",
+            "meaning": "The named tool Claude Code.",
+            "places_used": 1,
+        }
         build = suggestions["build"]
         assert "changed since" in call(client, "apply_suggestions", build="other")["error"]
         refused = call(client, "apply_suggestions", build=build, leave_out=["x"])
@@ -292,11 +279,11 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
             app.learning.accept_dictionary_build(build.partition(":")[0], None, lambda _: False)
         assert call(client, "dictionary_build_status")["phase"] == "ready"
         applied = call(client, "apply_suggestions", build=build)
-        assert applied["applied"] == 1 and applied["learned"] == {"stub/good": 1}
+        assert applied["applied"] == 1 and applied["words"] == 1
         assert call(client, "dictionary_build_status")["phase"] == "accepted"
         assert "No suggestions are waiting" in call(client, "read_suggestions")["error"]
-        # Audio this model learned from is not read again unless asked.
-        assert "has not learned from" in call(client, "start_dictionary_build")["error"]
+        # Audio the dictionary has read is not read again unless asked.
+        assert "has not read" in call(client, "start_dictionary_build")["error"]
         again = call(client, "start_dictionary_build", reread=True)
         assert again["recordings"]["of"] == 2
         assert wait_for_build(client)["phase"] == "ready"
@@ -311,7 +298,7 @@ def test_an_agent_sets_entune_up_and_builds_the_dictionary_without_the_person(
         )
         (latest,) = call(client, "recent_dictations", limit=5)
         assert latest["speech_model"] == "stub/good" and latest["raw_text"] == heard
-        assert latest["dictionary"]["why"] == "nothing to do: no dictionary entry matched"
+        assert latest["dictionary"]["why"] == "nothing to do: no dictionary word in question"
         assert latest["formatting"]["why"] == "the step is off"
         assert latest["processing_state"] == "processing" and latest["notice"] is None
 
@@ -347,33 +334,8 @@ def test_the_build_token_covers_the_new_words_definitions_too() -> None:
             return {"id": "b1"}
 
     app: Any = type("App", (), {"learning": Builds()})()
-    proposal = {"changes": [{"id": "heard:x"}], "words": [{"id": "n1", "meaning": "first"}]}
+    proposal = {"changes": [{"id": "word:n1", "after": {"meaning": "first"}}]}
     token = mcp_setup._token(app, proposal)
     assert token.startswith("b1:") and token == mcp_setup._token(app, proposal)
-    revised = {**proposal, "words": [{"id": "n1", "meaning": "revised"}]}
+    revised = {"changes": [{"id": "word:n1", "after": {"meaning": "revised"}}]}
     assert mcp_setup._token(app, revised) != token
-
-
-def test_a_build_for_audio_chosen_for_another_speech_model_is_refused(tmp_path: Path) -> None:
-    async def suggest(_: Request) -> str:
-        return json.dumps(proposed("hello there, I use cloud code"))
-
-    store = Store(tmp_path / "data")
-    app = Entune(store, [StubProvider()], llm_call=suggest)
-    app.settings.set_key("stub", "speech-key")
-    app.settings.set_key("openai", "suggestion-key")
-    app.models.set_default_model("stub/good")
-    with closing(store), TestClient(create_app(app), base_url="http://localhost") as client:
-        folder = tmp_path / "audio"
-        folder.mkdir()
-        (folder / "a.wav").write_bytes(wav_bytes(bytes([5, 9]) * 16))
-        call(client, "import_audio", paths=[str(folder)])
-        covered = app.store.learning_covered
-
-        def switched(model: str, source: str) -> set[str]:
-            app.models.set_default_model("stub/bad")  # changed while the audio is chosen
-            return covered(model, source)
-
-        app.store.learning_covered = switched  # type: ignore[method-assign]
-        assert "changed as the build started" in call(client, "start_dictionary_build")["error"]
-        assert wait_for_build(client)["phase"] == "cancelled"

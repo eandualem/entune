@@ -111,7 +111,7 @@ const DECISION_MODELS = { jev: "Jev", laya: "Laya", openai: "OpenAI", perplexity
 const took = (stage) => [DECISION_MODELS[stage.model] ?? "", stage.attempts > 1 ? `after ${plural(stage.attempts - 1, "retry", "retries")}` : "", stage.seconds ? `${stage.seconds.toFixed(1)} s` : ""].filter(Boolean).join(" · ");
 function summary(name, stage) {
   if (stage.status === "failed") return `Failed, so its changes are not in the text: ${stage.error}`;
-  if (stage.status === "skipped") return stage.error ? `Skipped: ${stage.error}` : name === "Dictionary" ? "No known confusions in this dictation" : "Nothing to change";
+  if (stage.status === "skipped") return stage.error ? `Skipped: ${stage.error}` : name === "Dictionary" ? "No dictionary word in question in this dictation" : "Nothing to change";
   if (stage.status === "pending") return "Not finished";
   const changes = stage.changes?.length ?? null;
   if (name === "Dictionary") {

@@ -1,18 +1,20 @@
-"""Confirmed corrections from other apps, added to the pinned dictionary.
+"""Confirmed corrections from other apps: the words the person meant.
 
 Agents and apps you dictate to post what the person confirmed (`POST
-/api/dictionary/corrections`); each names a word, and its heard phrases become pinned
-heard entries where it competes normally: no implicit priority.
+/api/dictionary/corrections`). Each names a word the person uses; one the dictionary lacks
+is added, marked to check when it comes without a description. What the speech model wrote
+instead is kept only in the log of corrections received: the dictionary stores no
+mishearings.
 """
 
 from __future__ import annotations
 
 import hashlib
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from entune.dictionary.document import validate
-from entune.dictionary.entries import Candidate, Dictionary, Heard, Word, key
+from entune.dictionary.entries import Dictionary, Word, key
 
 
 @dataclass(frozen=True)
@@ -63,8 +65,6 @@ def read_entries(value: object, where: str) -> tuple[Correction, ...]:
         if not isinstance(heard, list) or not all(isinstance(h, str) for h in heard):
             raise ValueError(f"{where}.heard must be a list of strings")
         phrases = {key(h): " ".join(h.split()) for h in heard if h.strip()}
-        if any(not h[0].isalnum() and h[0] != "_" for h in phrases.values()):
-            raise ValueError("A heard phrase must start with a letter or digit")
         result.append(Correction(spelling.strip(), description.strip(), tuple(phrases.values())))
     return tuple(result)
 
@@ -76,89 +76,26 @@ def _id(prefix: str, value: str) -> str:
 def add_corrections(
     dictionary: Dictionary, corrections: tuple[Correction, ...]
 ) -> tuple[Dictionary, tuple[Correction, ...]]:
-    """Preserve the confirmed-correction API without giving it implicit direct priority."""
+    """Add each correction's word unless the dictionary has it: a word spelled so, and
+    described so when a description is given. Returns the dictionary and the corrections
+    that added a word."""
     words = {w.id: w for w in dictionary.words}
-    pinned = {key(h.text): h for h in dictionary.pinned}
     added = []
     for correction in corrections:
-        # The word itself: the one already spelled so (and described so, when a
-        # description is given), else a new one.
-        same = [
-            w
+        if any(
+            key(w.spelling) == key(correction.spelling)
+            and (not correction.description or key(w.meaning) == key(correction.description))
             for w in words.values()
-            if key(w.spelling) == key(correction.spelling)
-            and (not correction.description or w.meaning == correction.description)
-        ]
-        if len(same) > 1:
-            # The one pinned for another heard text first (a confirmed confusion), then
-            # any one pinned entries name.
-            confirmed = {
-                c.word for h in pinned.values() for c in h.candidates if c.basis != "literal"
-            }
-            pinned_words = {c.word for h in pinned.values() for c in h.candidates}
-            same = (
-                [w for w in same if w.id in confirmed]
-                or [w for w in same if w.id in pinned_words]
-                or same
-            )
-        identity = _id("w_", key(correction.spelling) + "\n" + correction.description)
-        if len(same) == 1:
-            word = same[0]
-        elif words.get(identity) in same:
-            word = words[identity]
-        else:
-            # The word this correction made before was renamed or described otherwise
-            # since: it is another word now, so this one gets an ID of its own.
-            if identity in words:
-                identity = "w_" + uuid.uuid4().hex
-            word = Word(
-                identity,
-                correction.spelling,
-                correction.description,
-                needs_review=not correction.description,
-            )
-        is_new = word.id not in words
-
-        def named(text: str, word: Word = word) -> bool:
-            entry = pinned.get(key(text))
-            return entry is not None and any(c.word == word.id for c in entry.candidates)
-
-        # Each heard phrase once, whatever its capitals: as first given.
-        phrases: dict[str, str] = {}
-        for phrase in correction.heard:
-            if not named(phrase):
-                phrases.setdefault(key(phrase), phrase)
-        heard = tuple(phrases.values())
-        texts = list(heard)
-        # A confirmed name also corrects its own capitals in every speech model: its
-        # spelling, written as heard, pinned unless a pinned entry already names it so.
-        if (
-            (word.spelling[0].isalnum() or word.spelling[0] == "_")
-            and not named(word.spelling)
-            and key(word.spelling) not in map(key, heard)
         ):
-            texts.append(word.spelling)
-        links = [
-            (t, Candidate(word.id, basis="literal" if key(t) == key(word.spelling) else "user"))
-            for t in texts
-        ]
-        if not links and not is_new:
             continue
-        words[word.id] = word
-        for text, candidate in links:
-            entry = pinned.get(key(text))
-            if entry is None:
-                # A heard text that is a described word itself keeps that word as a
-                # candidate, written as heard: the new entry supersedes learned ones.
-                own = tuple(
-                    Candidate(w.id, basis="literal")
-                    for w in words.values()
-                    if w.id != candidate.word and w.meaning and key(w.spelling) == key(text)
-                )
-                pinned[key(text)] = Heard(text, (candidate, *own))
-            else:
-                pinned[key(text)] = replace(entry, candidates=(*entry.candidates, candidate))
-        added.append(Correction(word.spelling, correction.description, heard))
-    return validate(
-        Dictionary(tuple(words.values()), tuple(pinned.values()), dictionary.learned)
-    ), tuple(added)
+        identity = _id("w_", key(correction.spelling) + "\n" + correction.description)
+        if identity in words:  # that word was renamed or described otherwise since
+            identity = "w_" + uuid.uuid4().hex
+        words[identity] = Word(
+            identity,
+            correction.spelling,
+            correction.description,
+            needs_review=not correction.description,
+        )
+        added.append(correction)
+    return validate(Dictionary(tuple(words.values()))), tuple(added)

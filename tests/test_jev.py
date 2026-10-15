@@ -4,8 +4,8 @@ import asyncio
 import json
 import threading
 import time
-from collections.abc import AsyncIterator, Callable
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import AsyncIterator, Callable, Sequence
+from concurrent.futures import CancelledError, ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -20,10 +20,12 @@ from entune.dictionary.entries import Word
 from entune.processing import jev, jev_client, text_edits
 from entune.processing.pipeline import process_text, scaled
 from entune.processing.results import Processed
+from entune.providers.contracts import Clip, ScoreRequest, TranscribeResult, Transcript
+from entune.providers.contracts import Word as Said
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
-from tests.dictionary_samples import Active, document
+from tests.dictionary_samples import document
 from tests.test_server import StubProvider
 
 JEV = Word("a_jev", "Jev", "TypeSafe's contextual decision model.", "Used in Entune.")
@@ -350,6 +352,111 @@ def test_correction_failure_keeps_its_words_and_the_other_stages_still_apply() -
         assert missing.formatting.error == "no TypeSafe API key"
 
 
+def test_an_audio_check_that_fails_leaves_the_text_to_decide(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Gone:
+        def score(self, requests: Sequence[ScoreRequest]) -> list[list[float]]:
+            raise OSError("Parakeet's helper has stopped")
+
+    heard = [("Ask", 0.0, 0.3, 1.0), ("Jeff", 0.4, 0.7, 0.5), ("today.", 0.8, 1.1, 1.0)]
+    handler = answering(lambda *_: {"i1": 1.0})[1]
+    with closing(jev_client.Client(httpx.MockTransport(handler))) as client:
+        result = process_text(
+            "Ask Jeff today.",
+            WORDS,
+            contextual=True,
+            formatting=False,
+            key="ts-key",
+            client=client,
+            policy=jev_client.Policy(),
+            words=heard,
+            audio=Gone(),
+        )
+    assert result.text == "Ask Jev today." and result.correction.status == "succeeded"
+    assert "Audio check not made, text only: Parakeet's helper has stopped" in caplog.text
+
+
+def test_an_audio_check_is_bounded_by_the_stages_time_and_cancel(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    release = threading.Event()
+
+    class Slow:
+        def score(self, requests: Sequence[ScoreRequest]) -> list[list[float]]:
+            release.wait(5)
+            return [[0.0] * len(r.candidates) for r in requests]
+
+    heard = [("Ask", 0.0, 0.3, 1.0), ("Jeff", 0.4, 0.7, 0.5), ("today.", 0.8, 1.1, 1.0)]
+    handler = answering(lambda *_: {"i1": 1.0})[1]
+    try:
+        with closing(jev_client.Client(httpx.MockTransport(handler))) as c:
+            started = time.monotonic()
+            result = process_text(
+                "Ask Jeff today.",
+                WORDS,
+                contextual=True,
+                formatting=False,
+                key="ts-key",
+                client=c,
+                policy=jev_client.Policy(total_seconds=0.6, attempt_seconds=0.6),
+                words=heard,
+                audio=Slow(),
+            )
+            # The late check leaves the decision model time to answer from the text.
+            assert time.monotonic() - started < 2 and result.text == "Ask Jev today."
+            assert "Audio check not done in time" in caplog.text
+            cancel = threading.Event()
+            cancel.set()
+            with pytest.raises(CancelledError):
+                process_text(
+                    "Ask Jeff today.",
+                    WORDS,
+                    contextual=True,
+                    formatting=False,
+                    key="ts-key",
+                    client=c,
+                    policy=jev_client.Policy(),
+                    words=heard,
+                    audio=Slow(),
+                    cancel=cancel,
+                )
+    finally:
+        release.set()
+
+
+def test_the_speech_models_audio_reaches_the_dictionary_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[ScoreRequest] = []
+
+    class Audio:
+        def score(self, requests: Sequence[ScoreRequest]) -> list[list[float]]:
+            asked.extend(requests)
+            return [[0.5] * len(r.candidates) for r in requests]
+
+    class Speaking(StubProvider):
+        def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
+            words = (Said("Ask", 0.0, 0.3, 1.0), Said("Jeff.", 0.4, 0.7, 0.5))
+            return Transcript("Ask Jeff.", words, Audio())
+
+    with closing(Store(tmp_path)) as store:
+        service = Entune(store, [Speaking()])
+        service.settings.set_key("stub", "k")
+        service.models.set_default_model("stub/good")
+        seen: list[dict[str, Any]] = []
+
+        def correct(*args: object, **kwargs: Any) -> Processed:
+            seen.append(kwargs)
+            raise KeyError("stop here")
+
+        monkeypatch.setattr(service.dictation, "correct", correct)
+        service.dictation.record_and_transcribe(WEBM_HEADER, None, None)
+    (_, start, end, _) = seen[0]["words"][1]
+    assert seen[0]["audio"].score([ScoreRequest(start, end, "Jeff", ("Jev",))]) == [[0.5]]
+    assert [(r.start, r.end) for r in asked] == [(0.4, 0.7)]
+
+
 def test_formatter_failure_preserves_successful_correction() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         if "sentences" in json.loads(request.content)["state"]:
@@ -408,7 +515,7 @@ def test_saved_speech_outcomes_and_honest_settings_metrics(tmp_path: Path) -> No
                 ).status_code
                 == 200
             )
-            client.put("/api/dictionary", json=document(Active((CLAUDE_CODE,))))
+            client.put("/api/dictionary", json=document(CLAUDE_CODE))
             attempt = client.post(
                 "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}
             ).json()["transcriptions"][0]
@@ -578,10 +685,7 @@ def test_final_write_failure_preserves_completed_stage_evidence(
                     ).status_code
                     == 200
                 )
-                assert (
-                    client.put("/api/dictionary", json=document(Active((CLAUDE_CODE,)))).status_code
-                    == 200
-                )
+                assert client.put("/api/dictionary", json=document(CLAUDE_CODE)).status_code == 200
                 recording = client.post(
                     "/api/recordings",
                     files={
@@ -749,9 +853,9 @@ def test_disabled_dictionary_does_not_read_broken_file_or_run_approved_mappings(
         service.close()
 
 
-@pytest.mark.parametrize("unreadable", ["format 2", "not a file"])
+@pytest.mark.parametrize("unreadable", ["a later format", "not a file"])
 def test_an_unreadable_dictionary_fails_only_its_own_step(tmp_path: Path, unreadable: str) -> None:
-    # A 0.4 dictionary (format 2) after upgrading, or one that cannot be opened.
+    # A dictionary from a later Entune after going back, or one that cannot be opened.
     with closing(Store(tmp_path)) as store:
         client = jev_client.Client(httpx.MockTransport(lambda _: httpx.Response(500)))
         service = Entune(store, [StubProvider()], jev_client=client)
@@ -759,8 +863,8 @@ def test_an_unreadable_dictionary_fails_only_its_own_step(tmp_path: Path, unread
         service.models.set_default_model("stub/good")
         service.settings.set_key("typesafe", "k")
         service.settings.set_processing(model="jev", dictionary=True, formatting=True)
-        if unreadable == "format 2":
-            (tmp_path / "dictionary.json").write_text('{"version": 2, "entries": []}')
+        if unreadable == "a later format":
+            (tmp_path / "dictionary.json").write_text('{"version": 5, "words": []}')
         else:
             (tmp_path / "dictionary.json").mkdir()
         saved: list[Processed] = []
