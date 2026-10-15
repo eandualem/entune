@@ -175,9 +175,10 @@ of them for a word in the dictionary.
 | How places are found | Right word offered (of 103) | Places asked per 1,000 words |
 |---|---:|---:|
 | Stored mishearings (the earlier design) | 54 | 7.3 |
-| Pronunciation and the audio check | 98 (95%) | 16.7 |
+| Pronunciation alone | 90 | 27.2 |
+| Pronunciation and the audio check | 98 (95%) | 20.4 |
 
-The audio check added a median 0.45 s per dictation. These counts say whether the right
+The audio check added about 0.3 s per 100 words. These counts say whether the right
 word was among the options at a place, not what the decision model then chose. In a
 first trial with Jev choosing, finding places by sound fixed fewer errors than the
 stored mishearings (36 against 41) and made more wrong changes, for three reasons the
