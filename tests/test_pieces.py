@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Sequence
 
 import numpy as np
 import pytest
 
 from entune.app.pieces import Pieces
 from entune.audio.pauses import Pauses
-from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript, Word
+from entune.providers.contracts import (
+    Clip,
+    Failure,
+    ScoreRequest,
+    TranscribeResult,
+    Transcript,
+    Word,
+)
 from entune.providers.local.contracts import LocalModelStatus
 from entune.providers.registry import ModelRef
 from entune.providers.resources import SpeechResources
@@ -263,6 +271,44 @@ def test_the_pieces_words_are_timed_on_the_recording() -> None:
     assert result.words[0].start == pytest.approx(0.5)
     # The second piece starts where the first was cut, in the pause after 21 s.
     assert result.words[1].start == pytest.approx(21.3 + 0.5, abs=0.1)
+
+
+class Scored(Timed):
+    """Each piece's transcript scores against its own audio, in its own times."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.asked: list[tuple[int, ScoreRequest]] = []
+
+    def transcribe(self, clip: Clip, model: str, api_key: str) -> TranscribeResult:
+        result = super().transcribe(clip, model, api_key)
+        assert isinstance(result, Transcript)
+        provider, piece = self, len(self.seconds)
+
+        class Audio:
+            def score(self, requests: Sequence[ScoreRequest]) -> list[list[float]]:
+                provider.asked += [(piece, r) for r in requests]
+                return [[float(piece)] * len(r.candidates) for r in requests]
+
+        return Transcript(result.text, result.words, Audio())
+
+
+def test_each_piece_scores_the_spans_it_holds_in_its_own_audio() -> None:
+    provider = Scored()
+    recording = pieces(provider)
+    recording.feed(speech(21) + silence(0.6) + speech(2))
+    result = recording.finish()
+    assert result is not None and result.words is not None and result.audio is not None
+    first, second = result.words
+    assert first.start is not None and first.end is not None
+    assert second.start is not None and second.end is not None
+    asked = [
+        ScoreRequest(first.start, first.end, "piece1", ("x",)),
+        ScoreRequest(second.start, second.end, "piece2", ("y",)),
+        ScoreRequest(first.start, second.end, "piece1 piece2", ("z",)),  # across the cut
+    ]
+    assert result.audio.score(asked) == [[1.0], [2.0], None]
+    assert [(n, r.start, r.end) for n, r in provider.asked] == [(1, 0.5, 0.8), (2, 0.5, 0.8)]
 
 
 def test_a_word_of_no_length_at_a_cut_never_ends_before_it_starts() -> None:

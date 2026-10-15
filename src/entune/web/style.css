@@ -396,8 +396,8 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 #build-status:not(.show) { display: none; }
 .help-btn { font-size: var(--fs-12-5); color: var(--text-dim); }
 .help-btn[aria-expanded="true"] { color: var(--text); }
-/* A ledger of entries that follows the toolbar's speech model, under the first letter of
-   each title. A row opens in place; the editor and suggestions open in a side panel. */
+/* The words, under the first letter of each spelling. A word opens in the editor, and
+   suggestions in their own side panel. */
 #view-dictionary[data-active] { display: flex; flex-direction: column; overflow: hidden; }
 .dict { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .dict-top { flex: none; display: flex; flex-direction: column; gap: var(--sp-20); padding: var(--sp-28) 2.5rem 0; }
@@ -412,7 +412,6 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .dict-filters > button { gap: var(--sp-6); padding: 0 var(--sp-10); }
 .dict-filters .count { font-size: var(--fs-11); color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .dict-filters .count:empty { display: none; }
-.dict-filters > button:disabled { opacity: 0.45; }
 .dict-views > button { height: 1.5rem; font-size: var(--fs-12); }
 .attention-dot { flex: none; width: 0.375rem; height: 0.375rem; border-radius: 50%; background: var(--error); }
 .dict-search { position: relative; display: flex; align-items: center; }
@@ -466,77 +465,21 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .banner-text { flex: 1; min-width: 0; }
 .banner-action { padding: 0; border: 0; background: none; color: inherit; font-size: var(--fs-12-5); font-weight: 600; }
 
-/* The list: a letter, then the entries under it. */
+/* The list: a letter, then the words under it. */
 .dict-list { flex: 1; min-height: 0; overflow: auto; padding: var(--sp-4) 2.5rem 2.5rem; }
 .dict-group { display: grid; grid-template-columns: 2.5rem minmax(0, 1fr); gap: var(--sp-16); padding: var(--sp-10) 0; border-bottom: 1px solid var(--line-faint); }
 .dict-letter { position: sticky; top: 0; align-self: start; padding-top: 1.0625rem; font-size: var(--fs-13); font-weight: 600; color: var(--text-faint); }
 .dict-group-items { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
-.dict-entry { border-radius: var(--r-12); }
-.dict-entry.open { background: var(--card); box-shadow: 0 0 0 1px var(--line-soft), 0 10px 30px rgba(0, 0, 0, 0.28); }
-.dict-row { display: grid; grid-template-columns: minmax(0, 11.875rem) minmax(0, 15.625rem) minmax(0, 1fr) 5.75rem var(--i-12); gap: var(--sp-20); align-items: center; min-height: 3.375rem; padding: var(--sp-8) var(--sp-16); border-radius: var(--r-12); }
+.dict-row { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) minmax(0, 10rem) 6.25rem 5.5rem; gap: var(--sp-20); align-items: center; width: 100%; min-height: 3.375rem; padding: var(--sp-8) var(--sp-16); border: 0; border-radius: var(--r-12); background: none; color: inherit; font: inherit; text-align: left; }
 .dict-row:hover { background: var(--hover-wash); }
 .dict-row:focus-visible { box-shadow: none; background: var(--hover-wash); outline: 2px solid var(--accent-wash-hover); outline-offset: -2px; }
 .cell-title { min-width: 0; display: flex; align-items: center; gap: var(--sp-8); }
 .title-text { font-size: var(--fs-15); font-weight: 600; letter-spacing: -0.005em; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cell-heard { min-width: 0; display: flex; align-items: center; gap: var(--sp-6); overflow: hidden; }
-.cell-heard .chip { padding: var(--sp-2) 0.4375rem; border-radius: var(--r-6); background: var(--chip); box-shadow: inset 0 0 0 1px var(--line-soft); font-size: var(--fs-11-5); line-height: var(--lh-caption); color: var(--text-soft); white-space: nowrap; }
-.cell-heard .more { font-size: var(--fs-11-5); color: var(--text-faint); white-space: nowrap; }
+.check-tag { flex: none; height: 1.125rem; display: inline-flex; align-items: center; padding: 0 var(--sp-6); border-radius: 999px; background: var(--error-wash); color: var(--error); font-size: var(--fs-11); font-weight: 600; white-space: nowrap; }
 .cell-desc { min-width: 0; font-size: var(--fs-13); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell-desc.missing { color: var(--error); }
-.cell-desc.faint { color: var(--text-faint); }
-.cell-scope { display: flex; align-items: center; gap: 0.3125rem; min-width: 0; font-size: var(--fs-11-5); color: var(--text-dim); white-space: nowrap; overflow: hidden; }
-.cell-scope svg, .detail-actions svg, .scope-toggle svg { width: 0.625rem; height: 0.625rem; }
-.cell-chevron { color: var(--text-faint); transition: transform 0.15s; }
-.dict-entry.open .cell-chevron { transform: rotate(90deg); }
-
-/* An open entry: heard → written, beside the meanings the decision model chooses from. */
-.dict-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: var(--sp-20) 2.25rem; padding: var(--sp-8) var(--sp-16) var(--sp-16); -webkit-user-select: text; user-select: text; }
-.detail-forms { display: flex; flex-direction: column; gap: var(--sp-10); min-width: 0; }
-.detail-meanings { display: flex; flex-direction: column; gap: var(--sp-10); min-width: 0; }
-.detail-label { margin: 0 0 var(--sp-2); font-size: var(--fs-11); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
-.heard-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6) 0.5625rem; min-height: var(--h-26); }
-.heard-line .heard { padding: 3px var(--sp-8); border-radius: var(--r-6); background: var(--chip); box-shadow: inset 0 0 0 1px var(--line-soft); font-size: var(--fs-12-5); line-height: 1.4; color: var(--text-secondary); }
-.heard-line .arrow { color: var(--text-faint); }
-.heard-line .target { display: inline-flex; align-items: baseline; gap: var(--sp-6); }
-.heard-line .or, .heard-line .note { color: var(--text-faint); }
-.heard-line .or { font-size: var(--fs-11-5); }
-.heard-line .note { font-size: var(--fs-11); }
-.heard-line .word { font-size: var(--fs-13-5); font-weight: 600; color: var(--text-strong); }
-.heard-line .word.literal { font-weight: 400; color: var(--text-muted); }
-.always-chip { padding: var(--sp-2) var(--sp-6); border-radius: var(--sp-4); background: var(--accent-wash); color: var(--accent-text); font-size: 0.65625rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
-.meaning-card { display: grid; grid-template-columns: var(--sp-16) minmax(0, 1fr); gap: var(--sp-10); padding: 0.6875rem var(--sp-14); border-radius: var(--r-10); background: var(--hover-wash); box-shadow: inset 0 0 0 1px var(--line-soft); }
-.meaning-n { font-size: var(--fs-12); line-height: 1.25rem; color: var(--text-faint); font-variant-numeric: tabular-nums; }
-.meaning-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
-.meaning-body p { margin: 0; }
-.meaning-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-8); }
-.meaning-head b { font-size: var(--fs-14); font-weight: 600; color: var(--text-strong); }
-.meaning-head .casing { font-size: var(--fs-11); color: var(--text-faint); }
-.meaning-head .pin-meaning { margin-left: auto; font-size: var(--fs-12); }
-.meaning-body .definition { font-size: var(--fs-13); line-height: 1.5; color: var(--text-secondary); text-wrap: pretty; }
-.meaning-body .definition.missing { color: var(--error); }
-.meaning-body .personal { font-size: var(--fs-12); line-height: var(--lh-caption); color: var(--text-dim); }
-.meaning-body .personal .faint { color: var(--text-faint); }
-.detail-meanings > .caption { margin: 0; }
-.caption.warn { margin: 0; color: var(--error); }
-.detail-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); padding-top: var(--sp-14); border-top: 1px solid var(--line-faint); -webkit-user-select: none; user-select: none; }
-.detail-actions .caption { margin: 0; }
-.detail-actions .remove { color: var(--text-dim); }
-.detail-actions .remove:hover:not(:disabled) { color: var(--error); background: var(--error-wash); }
-
-/* Add: a small form above the list for the simple case. */
-.add-row { display: flex; flex-direction: column; gap: var(--sp-14); margin: var(--sp-16) 0 var(--sp-8) 3.5rem; padding: 1.125rem; border-radius: var(--r-12); background: var(--card); box-shadow: 0 0 0 1px var(--accent-ring), 0 10px 30px rgba(0, 0, 0, 0.28); }
-.add-fields { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr) minmax(0, 1.6fr); gap: var(--sp-12); }
-.add-fields label { display: flex; flex-direction: column; gap: var(--sp-6); font-size: var(--fs-11); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
-.add-fields .input { height: var(--h-32); min-width: 0; background: var(--well); border-color: var(--line-soft); color: var(--text); font-size: var(--fs-13); letter-spacing: 0; text-transform: none; }
-#add-spelling { color: var(--text-strong); font-size: var(--fs-14); font-weight: 600; }
-.add-fields .input.mono { font-family: var(--mono); font-size: var(--fs-12-5); color: var(--text-secondary); }
-.scope-toggle[aria-pressed="true"] { background: var(--accent-wash); color: var(--accent-text); border-color: transparent; }
-.add-hint { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); font-size: var(--fs-12); color: var(--text-dim); }
-.add-hint .err { color: var(--error); overflow-wrap: anywhere; }
-.add-hint .btn.link { font-size: inherit; }
-.add-buttons { display: flex; align-items: center; gap: var(--sp-8); margin-left: auto; }
-.add-hint .btn.sm { font-size: var(--fs-12); }
-.add-hint .btn.primary { padding: 0 var(--sp-14); }
+.cell-said { min-width: 0; font-size: var(--fs-12); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-meta { font-size: var(--fs-11-5); color: var(--text-faint); white-space: nowrap; }
 .dict-empty { display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); padding: 4.5rem var(--sp-16); text-align: center; }
 .dict-empty p { margin: 0; max-width: 22.5rem; }
 .dict-empty .caption { font-size: var(--fs-12-5); }
@@ -550,7 +493,7 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .json-error span { font-family: var(--mono); }
 .json-view .row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-10); }
 
-/* Side panels: the full entry editor, and suggestions from start to review. */
+/* Side panels: the word editor, and suggestions from start to review. */
 .drawer { position: fixed; inset: 0 0 0 auto; width: min(32rem, 100vw); height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-popover); }
 .drawer[open] { animation: slidein 0.18s ease-out; }
 .drawer::backdrop { background: rgba(0, 0, 0, 0.3); }
@@ -563,40 +506,22 @@ kbd:empty::before { content: attr(data-empty); color: var(--text-faint); }
 .drawer-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: var(--sp-14); padding: var(--sp-16) var(--sp-20); }
 .drawer-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); padding: var(--sp-12) var(--sp-20); border-top: 1px solid var(--line); }
 .drawer-foot #build-status { flex: 1 1 100%; margin: 0; }
-.entry-status.err { color: var(--error); }
-.editor-scope { margin: 0; }
-.editor-notices { display: flex; flex-direction: column; gap: var(--sp-6); }
-.editor-notices:empty { display: none; }
-.editor-notice { margin: 0; padding: var(--sp-6) var(--sp-10); border-radius: var(--r-8); background: var(--accent-wash); color: var(--accent-text); font-size: var(--fs-12); }
-.editor-section { display: flex; flex-direction: column; gap: var(--sp-6); }
-.editor-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-8); }
-.editor-head h3 { margin: 0; font-size: var(--fs-13); font-weight: 600; }
-.editor-card { display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-8) var(--sp-10); border-radius: var(--r-8); background: var(--card); box-shadow: var(--shadow-card); }
-.editor-line { display: flex; align-items: center; gap: var(--sp-6); }
-.editor-line.wrap { flex-wrap: wrap; }
-.editor-line.grow { flex: 1; min-width: 0; }
-.editor-card .input { height: var(--h-28); font-size: var(--fs-12-5); }
-.editor-card .input.strong { flex: 1; min-width: 7rem; font-weight: 600; }
-.editor-card .input.small { height: var(--h-26); font-size: var(--fs-12); }
-.editor-card .input.missing { border-color: var(--error); }
-.editor-card textarea.input { height: auto; padding: var(--sp-6) var(--sp-8); line-height: var(--lh-caption); resize: vertical; }
-.editor-card .heard-input { flex: none; width: 9rem; font-family: var(--mono); font-size: var(--fs-12); }
+/* The word editor: one field a line, each saying what it is for. */
+.word-fields { gap: var(--sp-4); }
+.word-fields .group-field { margin: var(--sp-6) 0; font-size: var(--fs-12-5); font-weight: 500; color: var(--text-secondary); }
+.word-fields .group-field .caption { font-weight: 400; }
+.word-fields .input.strong { font-size: var(--fs-14); font-weight: 600; color: var(--text-strong); }
+.word-fields textarea.input { height: auto; padding: var(--sp-6) var(--sp-10); line-height: var(--lh-caption); resize: none; }
+.word-fields > .caption { margin: var(--sp-6) 0 0; }
+.optional { font-weight: 400; color: var(--text-faint); }
+.word-notice { margin: 0; padding: var(--sp-6) var(--sp-10); border-radius: var(--r-8); background: var(--error-wash); color: var(--error); font-size: var(--fs-12); }
+.word-delete:hover:not(:disabled) { color: var(--error); background: var(--error-wash); }
+.word-status { flex: 1 1 100%; margin: 0; overflow-wrap: anywhere; }
+.word-status:empty { display: none; }
+.word-status.err { color: var(--error); }
 .segmented.small { padding: 2px; }
 .segmented.small > button { height: 1.375rem; padding: 0 var(--sp-8); font-size: var(--fs-11-5); }
-.pill { display: inline-flex; align-items: center; height: 1.5rem; padding: 0 var(--sp-8); border: 1px solid var(--line-strong); border-radius: var(--r-6); background: none; color: var(--text-dim); font-size: var(--fs-12); white-space: nowrap; }
-.pill.on { border-color: transparent; background: var(--accent-wash); color: var(--accent-text); font-weight: 500; }
-.pill.dashed { border-style: dashed; font-size: var(--fs-11-5); }
-.pill:disabled { opacity: 0.45; }
-select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
-.pill-note { font-weight: 400; opacity: 0.75; }
-.pill.external { gap: var(--sp-2); padding-right: var(--sp-2); }
-.pill-remove { padding: 0 var(--sp-4); border: 0; background: none; color: inherit; }
 .btn-icon.remove:hover { color: var(--error); }
-.always-box { display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-8) var(--sp-10); border-radius: var(--r-7); background: var(--well); font-size: var(--fs-12); color: var(--text-muted); }
-.always-box .select { height: var(--h-26); }
-.field-error { margin: 0; font-size: var(--fs-11-5); color: var(--error); }
-.btn.link.add-more { align-self: flex-start; color: var(--text-muted); font-size: var(--fs-12); }
-.btn.link.add-more:hover { color: var(--text); }
 /* Suggestions: one sheet per source. What it is and costs, how it works, what to read,
    what happens; the rarely changed settings fold away under Advanced. */
 .drawer.sheet { inset: var(--toolbar) 0 0 auto; width: min(30rem, 100%); height: calc(100% - var(--toolbar)); background: var(--card); border-left: 1px solid var(--line-soft); box-shadow: -24px 0 60px rgba(0, 0, 0, 0.45); }
@@ -734,9 +659,6 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 .proposal-change.dismissed { opacity: 0.5; }
 .proposal-change .caption { margin: 0; }
 .change-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6); }
-.change-head .heard { color: var(--text-soft); }
-.change-head .arrow { color: var(--text-faint); }
-.change-head .struck { text-decoration: line-through; }
 .change-desc { margin: 0; color: var(--text-secondary); }
 .compare { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: var(--sp-2) var(--sp-8); font-size: var(--fs-12); }
 .compare .caption { font-size: inherit; }
@@ -745,9 +667,8 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
 .compare .suggested { color: var(--accent-text); }
 .proposal-editor summary { font-size: var(--fs-12); color: var(--accent-text); cursor: default; }
 .proposal-editor .meaning-editor { display: grid; gap: var(--sp-6); padding: var(--sp-8) 0; border-bottom: 1px solid var(--line-faint); }
-.proposal-associations { display: grid; gap: var(--sp-4); }
 
-/* Confirmation before removing an entry or discarding suggestions; toasts afterwards. */
+/* Confirmation before deleting a word or discarding suggestions; toasts afterwards. */
 .confirm-dialog { width: min(23rem, calc(100vw - 2rem)); padding: 0; border: 0; border-radius: var(--r-12); background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-popover); }
 .confirm-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 .confirm-inner { display: flex; flex-direction: column; gap: var(--sp-8); margin: 0; padding: var(--sp-16) var(--sp-20); }
@@ -768,11 +689,8 @@ select.pill { appearance: none; -webkit-appearance: none; max-width: 9rem; }
   .menu-wrap { position: static; }
   .learn-pop { left: 0; right: auto; }
   .dict-group { grid-template-columns: 1.25rem minmax(0, 1fr); gap: var(--sp-8); }
-  .dict-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--i-12); gap: var(--sp-12); padding: var(--sp-8) var(--sp-10); }
-  .dict-row > .cell-desc, .dict-row > .cell-scope { display: none; }
-  .add-row { margin-left: 0; }
-  .add-fields { grid-template-columns: minmax(0, 1fr); }
-  .dict-detail { grid-template-columns: minmax(0, 1fr); padding: var(--sp-8) var(--sp-10) var(--sp-12); }
+  .dict-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-12); padding: var(--sp-8) var(--sp-10); }
+  .dict-row > .cell-said, .dict-row > .cell-meta { display: none; }
 }
 
 /* Settings */
