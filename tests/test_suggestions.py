@@ -217,6 +217,15 @@ def test_stored_words_are_reused_never_defined_again() -> None:
     assert language == rust and not language.evidence
     assert played.id != rust.id and played.meaning == "a multiplayer survival game"
     assert text[played.evidence[0].start : played.evidence[0].end] == "Rust"
+    # So is a second sense of a name this reply added before it.
+    both = "Compile Rust for speed. We survived another night in Rust."
+    second = {**game, "id": "n2"}
+    second["evidence"] = [{"dictation": "d1", "text": "Rust", "occurrence": 2}]
+    first = new_word("Rust", ("d1", "Rust"), meaning="a systems programming language")
+    language, played = parse(reply([first, second]), (both,)).words
+    assert [(e.start, e.end) for e in language.evidence] == [(8, 12)]
+    assert played.meaning == "a multiplayer survival game"
+    assert [(e.start, e.end) for e in played.evidence] == [(53, 57)]
 
 
 def test_a_stored_word_without_a_meaning_takes_the_one_suggested() -> None:

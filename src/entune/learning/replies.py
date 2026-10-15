@@ -95,7 +95,7 @@ def _same(
     stored one is that word (exact spelling first, then one ignoring capitals); an
     ordinary word is the stored one only when its meaning is the same too, since the same
     spelling can mean something else ("charge": a fee, or filling a battery). A described
-    name the model was shown is the same only by its meaning too: proposing it anew is
+    name the model knows of is the same only by its meaning too: proposing it anew is
     another sense of it (Rust the game, beside Rust the language)."""
     if casing == "fixed":
         names = [
@@ -133,6 +133,8 @@ def parse_reply(
     supplied = sources(transcripts)
     words = {w.id: w for w in working.words}
     labels: set[str] = set()
+    # Words the model knows of: those shown, and those this reply added before.
+    known = set(shown.word_ids.values())
     for item in data["words"]:
         label = item["id"]
         if label in shown.word_ids or label in labels:
@@ -142,9 +144,7 @@ def parse_reply(
         if not spelling:
             raise ValueError(f"Word {label} needs a spelling")
         meaning = _meaning(item["meaning"], spelling)
-        same = _same(
-            spelling, meaning, item["casing"], tuple(words.values()), shown.word_ids.values()
-        )
+        same = _same(spelling, meaning, item["casing"], tuple(words.values()), known)
         # A stored word's evidence is checked as it is said, too.
         evidence = _evidence(item["evidence"], same or Word("", spelling, meaning), shown, supplied)
         if same is None:
@@ -166,6 +166,7 @@ def parse_reply(
                 evidence=tuple(dict.fromkeys((*same.evidence, *evidence))),
             )
         words[word.id] = word
+        known.add(word.id)
 
     described: set[str] = set()
     for item in data["meanings"]:
