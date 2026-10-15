@@ -153,6 +153,14 @@ def test_a_refused_edit_leaves_the_dictionary_as_it_was(tmp_path: Path) -> None:
         long = call(client, "set_word", version=version, spelling="Groq", meaning="x" * 200)
         assert "at most 120 characters" in long["error"]
         assert call(client, "read_dictionary") == {"version": version, "words": []}
+        # A new word spelled and described as a stored one, as a retried call sends it,
+        # names that word to edit instead of adding it twice.
+        added = call(client, "set_word", version=version, spelling="Grafana", meaning="dashboards")
+        twice = call(
+            client, "set_word", version=added["version"], spelling="grafana", meaning="Dashboards"
+        )
+        assert f"already the word {added['word_id']}" in twice["error"]
+        assert len(call(client, "read_dictionary")["words"]) == 1
         # A speech model removed since still has its transcripts looked up.
         gone = call(client, "find_in_transcripts", text="cloud", speech_model="gone/model")
         assert gone == {"total": 0, "transcripts": 0, "searched": 0, "excerpts": []}

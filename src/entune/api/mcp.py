@@ -26,7 +26,7 @@ from entune.app.dictionary_file import DictionaryChanged
 from entune.app.entune import Entune
 from entune.dictionary import document as dictionary_document
 from entune.dictionary import edits
-from entune.dictionary.entries import Dictionary
+from entune.dictionary.entries import Dictionary, key
 from entune.learning import view
 from entune.learning.replies import occurrences
 
@@ -148,6 +148,20 @@ def server(app: Entune) -> MCPServer:
                 raise ValueError(
                     f"Keep the meaning to a short phrase of at most {view.MEANING_CHARS} characters"
                 )
+            # A new word spelled and described as one the dictionary has (a retried call)
+            # is that word: edit it instead.
+            same = next(
+                (
+                    w
+                    for w in dictionary.words
+                    if word_id is None
+                    and key(w.spelling) == key(word.spelling)
+                    and key(w.meaning) == key(word.meaning)
+                ),
+                None,
+            )
+            if same is not None:
+                raise ValueError(f"{same.spelling} is already the word {same.id}; edit that one")
             return edits.set_word(dictionary, word)
 
         return {"word_id": identity, "version": change(update, version)}
