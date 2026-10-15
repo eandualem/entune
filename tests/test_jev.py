@@ -388,8 +388,9 @@ def test_an_audio_check_is_bounded_by_the_stages_time_and_cancel(
             return [[0.0] * len(r.candidates) for r in requests]
 
     heard = [("Ask", 0.0, 0.3, 1.0), ("Jeff", 0.4, 0.7, 0.5), ("today.", 0.8, 1.1, 1.0)]
+    handler = answering(lambda *_: {"i1": 1.0})[1]
     try:
-        with closing(jev_client.Client(httpx.MockTransport(lambda r: httpx.Response(500)))) as c:
+        with closing(jev_client.Client(httpx.MockTransport(handler))) as c:
             started = time.monotonic()
             result = process_text(
                 "Ask Jeff today.",
@@ -398,11 +399,12 @@ def test_an_audio_check_is_bounded_by_the_stages_time_and_cancel(
                 formatting=False,
                 key="ts-key",
                 client=c,
-                policy=jev_client.Policy(total_seconds=0.3, attempt_seconds=0.3),
+                policy=jev_client.Policy(total_seconds=0.6, attempt_seconds=0.6),
                 words=heard,
                 audio=Slow(),
             )
-            assert time.monotonic() - started < 2 and result.text == "Ask Jeff today."
+            # The late check leaves the decision model time to answer from the text.
+            assert time.monotonic() - started < 2 and result.text == "Ask Jev today."
             assert "Audio check not done in time" in caplog.text
             cancel = threading.Event()
             cancel.set()

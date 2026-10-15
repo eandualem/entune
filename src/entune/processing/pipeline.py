@@ -172,18 +172,26 @@ def _correction(
     )
 
 
+# The audio check takes at most this share of the step's remaining time, so one that runs
+# late still leaves the decision model time to answer with the text alone.
+AUDIO_SHARE = 0.5
+
+
 class _AudioCheck:
-    """The speech model's audio check, within the stage's deadline and cancel. A check
-    that fails or is not done in time leaves the text to decide, and is logged; a cancel
-    stops the stage. A check left running finishes on its own and its answer is dropped."""
+    """The speech model's audio check, within AUDIO_SHARE of the stage's remaining time
+    and its cancel. A check that fails or is not done in time leaves the text to decide,
+    and is logged; a cancel stops the stage. A check left running finishes on its own and
+    its answer is dropped."""
 
     def __init__(self, audio: Scorer, call: jev_client.Call) -> None:
         self._audio, self._call = audio, call
 
     def score(self, requests: Sequence[ScoreRequest]) -> Sequence[Sequence[float] | None]:
         unchecked: list[Sequence[float] | None] = [None] * len(requests)
-        if time.monotonic() >= self._call.deadline:
+        now = time.monotonic()
+        if now >= self._call.deadline:
             return unchecked
+        until = now + AUDIO_SHARE * (self._call.deadline - now)
         done = threading.Event()
         answers: list[Sequence[Sequence[float] | None]] = []
         failed: list[Exception] = []
@@ -201,7 +209,7 @@ class _AudioCheck:
         while not done.wait(0.05):
             if cancel is not None and cancel.is_set():
                 raise CancelledError()
-            if time.monotonic() >= self._call.deadline:
+            if time.monotonic() >= until:
                 _log.warning("Audio check not done in time, text only")
                 return unchecked
         if failed:
