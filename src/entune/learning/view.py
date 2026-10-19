@@ -22,13 +22,18 @@ from entune.processing import text_edits
 
 MEANING_CHARS = 120  # a meaning is a short phrase, not an explanation
 
+# Whole words: an apostrophe between letters is inside a word ("I'm", "don't"), so no
+# word starts or ends there, except that a possessive "'s" may follow one ("Laya's").
+WORD_START = r"(?<!\w)(?<!\w['\u2019])"
+WORD_END = r"(?!\w)(?!['\u2019](?!s\b)\w)"
+
 
 def occurs(text: str, phrase: str) -> bool:
     """Whether `phrase` occurs in `text` as whole words, ignoring case and spacing."""
     words = phrase.split()
     if not words:
         return False
-    pattern = r"(?<!\w)" + r"\s+".join(re.escape(w) for w in words) + r"(?!\w)"
+    pattern = WORD_START + r"\s+".join(re.escape(w) for w in words) + WORD_END
     return any(key(m.group()) == key(phrase) for m in re.finditer(pattern, text, re.IGNORECASE))
 
 

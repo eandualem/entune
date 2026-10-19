@@ -297,6 +297,13 @@ def test_overlapping_occurrences_are_found_and_a_text_may_start_with_punctuation
     assert replies.occurrences("We use .NET daily.", ".NET") == [(7, 11)]
 
 
+def test_an_apostrophe_between_letters_is_inside_a_word() -> None:
+    assert replies.occurrences("I'm here", "m") == []
+    assert replies.occurrences("I don\u2019t know", "don") == []
+    assert not view.occurs("I'm here", "m")
+    assert replies.occurrences("Laya's answer", "Laya") == [(0, 4)]  # a possessive follows
+
+
 def test_propose_uses_chosen_model_and_does_not_change_the_live_dictionary() -> None:
     seen: dict[str, str] = {}
 

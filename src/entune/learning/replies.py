@@ -247,7 +247,8 @@ def occurrences(source: str, text: str) -> list[tuple[int, int]]:
         return []
     body = r"\s+".join(re.escape(w) for w in words)
     spans = []
-    for match in re.finditer(rf"(?=((?<!\w){body}(?!\w)))", source, re.IGNORECASE):
+    pattern = rf"(?=({view.WORD_START}{body}{view.WORD_END}))"
+    for match in re.finditer(pattern, source, re.IGNORECASE):
         if key(match.group(1)) == key(text):
             spans.append((match.start(1), match.end(1)))
     return spans
