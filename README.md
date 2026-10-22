@@ -21,6 +21,10 @@ A 42-second tour of Entune on a Mac:
 
 https://github.com/user-attachments/assets/bcbc632c-c74e-441f-a802-a3b9f4fe6d5f
 
+Watch the [candle-shop dictionary demo](https://youtu.be/xiBObz8Ugm8),
+[archived 0.3.0 tour](https://youtu.be/4V297JsJ46U), or
+[Entune playlist](https://www.youtube.com/playlist?list=PLYvbVQAyQrzY).
+
 ## Install
 
 With [uv](https://docs.astral.sh/uv/getting-started/installation/), one command
