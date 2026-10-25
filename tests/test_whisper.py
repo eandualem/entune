@@ -167,16 +167,27 @@ def test_supported_wav_rates_keep_duration_and_signal(rate: int) -> None:
     assert np.allclose(audio[100:-100], 0.5, atol=0.001)
 
 
-def test_wav_header_cannot_request_an_oversized_decoding_buffer() -> None:
+def test_unknown_length_wav_from_ffmpeg_uses_the_actual_samples(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import struct
 
-    from entune.providers.local.whisper import MAX_AUDIO_SAMPLES
+    data = bytearray(wav_bytes(b"\x00\x40" * 1_600))
+    struct.pack_into("<I", data, 4, 0xFFFFFFFF)
+    struct.pack_into("<I", data, 40, 0xFFFFFFFF)
+    monkeypatch.setattr(
+        "entune.providers.local.whisper.to_wav_with_ffmpeg", lambda *args, **kwargs: bytes(data)
+    )
+    audio = pcm16k(Clip(b"ID3converted-audio", "audio/mpeg"))
+    assert len(audio) == 1_600 and float(audio[0]) == 0.5
 
-    data = bytearray(wav_bytes(b"\0\0" * 2))
-    struct.pack_into("<I", data, 4, 36 + (MAX_AUDIO_SAMPLES + 1) * 2)
-    struct.pack_into("<I", data, 40, (MAX_AUDIO_SAMPLES + 1) * 2)
+
+def test_wav_decoding_rejects_actual_samples_over_the_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("entune.providers.local.whisper.MAX_AUDIO_SAMPLES", 16)
     with pytest.raises(ValueError, match="decoder's sample limit"):
-        pcm16k(Clip(bytes(data), "audio/wav"))
+        pcm16k(Clip(wav_bytes(b"\0\0" * 17), "audio/wav"))
 
 
 @pytest.mark.parametrize(

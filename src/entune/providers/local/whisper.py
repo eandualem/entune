@@ -232,11 +232,13 @@ def pcm16k(clip: Clip) -> Any:
         channels, width, rate = wav.getnchannels(), wav.getsampwidth(), wav.getframerate()
         if not MIN_SAMPLE_RATE <= rate <= MAX_SAMPLE_RATE:
             raise ValueError(f"Unsupported WAV sample rate: {rate} Hz (8000-192000 supported)")
-        if wav.getnframes() * channels > MAX_AUDIO_SAMPLES:
+        if width != 2:
+            raise ValueError(f"{width * 8}-bit WAV; only 16-bit is supported")
+        # Piped ffmpeg output uses an unknown-length header. Bound the read itself,
+        # then check actual samples rather than trusting the declared frame count.
+        frames = wav.readframes(MAX_AUDIO_SAMPLES // channels + 1)
+        if len(frames) // width > MAX_AUDIO_SAMPLES:
             raise ValueError("WAV exceeds the local decoder's sample limit")
-        frames = wav.readframes(wav.getnframes())
-    if width != 2:
-        raise ValueError(f"{width * 8}-bit WAV; only 16-bit is supported")
     samples = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
     if channels > 1:
         samples = samples.reshape(-1, channels).mean(axis=1)
