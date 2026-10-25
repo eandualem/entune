@@ -6,6 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from entune.audio.formats import wav_bytes
+
 # Launched from the Dock, Entune's PATH has no Homebrew directories; look there too.
 FFMPEG_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 AFCONVERT = "/usr/bin/afconvert"  # part of every macOS: AAC/M4A, MP3, FLAC, CAF, AIFF
@@ -27,27 +29,29 @@ def to_wav_with_ffmpeg(data: bytes, *, sample_rate: int, max_samples: int | None
     with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as source:
         source.write(data)
     try:
-        command = [ffmpeg, "-v", "error", "-i", source.name, "-ac", "1"]
-        if max_samples is not None:
-            # Count samples after resampling, independent of input timestamps. The
-            # extra sample lets the decoder reject excess audio instead of truncating it.
-            command += [
-                "-af",
-                f"aresample={sample_rate},atrim=end_sample={max_samples + 1}",
-                "-map_metadata",
-                "-1",
-                "-c:a",
-                "pcm_s16le",
-            ]
-        command += ["-ar", str(sample_rate), "-f", "wav", "-"]
-        result = subprocess.run(command, capture_output=True, timeout=300)
+        command = [ffmpeg, "-v", "error", "-i", source.name, "-ac", "1", "-ar", str(sample_rate)]
+        if max_samples is None:
+            result = subprocess.run([*command, "-f", "wav", "-"], capture_output=True, timeout=300)
+            converted = bytes(result.stdout)
+        else:
+            # A muxer byte limit survives filter reinitialization on changing-rate input.
+            # ffmpeg may overshoot it by a packet: spool to disk and bound the read too.
+            max_bytes = 2 * max_samples
+            command += ["-f", "s16le", "-c:a", "pcm_s16le", "-fs", str(max_bytes + 2), "-"]
+            with tempfile.TemporaryFile() as pcm:
+                result = subprocess.run(command, stdout=pcm, stderr=subprocess.PIPE, timeout=300)
+                pcm.seek(0)
+                raw = pcm.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                raise ValueError("Converted audio exceeds the local decoder's sample limit")
+            converted = wav_bytes(raw, sample_rate=sample_rate)
     finally:
         Path(source.name).unlink(missing_ok=True)
     if result.returncode != 0:
         # ffmpeg's own words say what is wrong with the file; the command line does not.
         message = result.stderr.decode(errors="replace").strip() or f"exit {result.returncode}"
         raise RuntimeError(f"ffmpeg could not read the audio: {message}")
-    return bytes(result.stdout)
+    return converted
 
 
 def _to_wav_with_afconvert(

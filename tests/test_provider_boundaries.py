@@ -103,12 +103,47 @@ def test_ffmpeg_caps_converted_samples_after_resampling() -> None:
     from entune.audio.formats import wav_bytes
 
     source = wav_bytes(bytes(48_000 * 2), sample_rate=48_000)
-    for frames in (1_600, 16_000):
-        decoded = convert.to_wav_with_ffmpeg(source, sample_rate=16_000, max_samples=frames)
-        with wave.open(io.BytesIO(decoded)) as wav:
-            assert wav.getframerate() == 16_000 and wav.getsampwidth() == 2
-            # At the boundary the complete audio survives; above it, one sentinel sample.
-            assert len(wav.readframes(20_000)) // 2 == min(frames + 1, 16_000)
+    decoded = convert.to_wav_with_ffmpeg(source, sample_rate=16_000, max_samples=16_000)
+    with wave.open(io.BytesIO(decoded)) as wav:
+        assert wav.getframerate() == 16_000 and wav.getsampwidth() == 2
+        assert len(wav.readframes(20_000)) // 2 == 16_000
+    with pytest.raises(ValueError, match="decoder's sample limit"):
+        convert.to_wav_with_ffmpeg(source, sample_rate=16_000, max_samples=1_600)
+
+
+@pytest.mark.skipif(convert._ffmpeg() is None, reason="ffmpeg is not installed")
+def test_ffmpeg_output_bound_survives_changing_input_sample_rates() -> None:
+    ffmpeg = convert._ffmpeg()
+    assert ffmpeg is not None
+    parts = []
+    for rate in (16_000, 48_000):
+        parts.append(
+            subprocess.run(
+                [
+                    ffmpeg,
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"sine=frequency=440:sample_rate={rate}:duration=0.5",
+                    "-c:a",
+                    "libmp3lame",
+                    "-write_xing",
+                    "0",
+                    "-id3v2_version",
+                    "0",
+                    "-f",
+                    "mp3",
+                    "-",
+                ],
+                capture_output=True,
+                check=True,
+                timeout=10,
+            ).stdout
+        )
+    with pytest.raises(ValueError, match="decoder's sample limit"):
+        convert.to_wav_with_ffmpeg(b"".join(parts) * 16, sample_rate=16_000, max_samples=10_000)
 
 
 def test_afconvert_does_not_load_an_oversized_output(
