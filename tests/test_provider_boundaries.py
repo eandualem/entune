@@ -93,3 +93,31 @@ def test_a_mac_without_ffmpeg_decodes_m4a_with_afconvert(
     monkeypatch.setattr("entune.audio.convert.FFMPEG_DIRS", ())
     decoded = convert.to_wav_with_ffmpeg(m4a.read_bytes(), sample_rate=16_000)
     assert decoded[:4] == b"RIFF" and decoded[8:12] == b"WAVE"
+
+
+@pytest.mark.skipif(convert._ffmpeg() is None, reason="ffmpeg is not installed")
+def test_ffmpeg_caps_converted_samples_after_resampling() -> None:
+    import io
+    import wave
+
+    from entune.audio.formats import wav_bytes
+
+    source = wav_bytes(bytes(48_000 * 2), sample_rate=48_000)
+    for frames in (1_600, 16_000):
+        decoded = convert.to_wav_with_ffmpeg(source, sample_rate=16_000, max_samples=frames)
+        with wave.open(io.BytesIO(decoded)) as wav:
+            assert wav.getframerate() == 16_000 and wav.getsampwidth() == 2
+            # At the boundary the complete audio survives; above it, one sentinel sample.
+            assert len(wav.readframes(20_000)) // 2 == min(frames + 1, 16_000)
+
+
+def test_afconvert_does_not_load_an_oversized_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        Path(command[-1]).write_bytes(bytes(100_000))
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr("entune.audio.convert.subprocess.run", run)
+    with pytest.raises(ValueError, match="decoder's size limit"):
+        convert._to_wav_with_afconvert(b"audio", sample_rate=16_000, max_samples=16)

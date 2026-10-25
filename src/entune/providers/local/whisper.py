@@ -227,7 +227,7 @@ def pcm16k(clip: Clip) -> Any:
 
     data = clip.data
     if sniff_mime(data) != "audio/wav":
-        data = to_wav_with_ffmpeg(data, sample_rate=WHISPER_RATE)
+        data = to_wav_with_ffmpeg(data, sample_rate=WHISPER_RATE, max_samples=MAX_AUDIO_SAMPLES)
     with wave.open(io.BytesIO(data), "rb") as wav:
         channels, width, rate = wav.getnchannels(), wav.getsampwidth(), wav.getframerate()
         if not MIN_SAMPLE_RATE <= rate <= MAX_SAMPLE_RATE:
