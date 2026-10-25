@@ -238,7 +238,7 @@ model you have used, with fast mode apart. Across is the wait after you stop for
 minute of audio, from successful runs whose length and wait were both measured (it
 covers the speech step, not later processing). Up is the share of words your
 dictionary did not need to correct, in dictations where the dictionary step ran; it
-reflects the confusions the dictionary knows, not overall accuracy. **Reported** plots
+reflects the words your dictionary holds, not overall accuracy. **Reported** plots
 every model on published benchmarks instead, the same figures Cloud providers and
 Local models show beside each model, with their sources. Models › Usage adds up your
 dictations: how many were transcribed, the hours of audio, words per week, and what
@@ -328,16 +328,33 @@ in this window.
 
 ## Personal dictionary
 
-Speech models mishear names, products and everyday words. The Dictionary tab lists
-heard entries: what a speech model writes, and the words it can stand for. A word is
-defined once, with its exact spelling and a description, and shared by every entry and
-every speech model that uses it. An entry's words compete for it; context decides which
-one applies. Edit entries directly, or ask the configured language model to
-suggest them: **Get suggestions** reads this speech model's raw history, finds the
-words it gets wrong, and can also improve or remove the entries those transcripts show,
-judging what the dictionary step made of each one. **Help**, next to **Add**, opens a short guide.
-Additions, before/after updates, and explicit removals start included. Edit them, dismiss unwanted proposals with ×,
-then apply the remainder once. Dismissing a proposal does not delete active knowledge.
+Speech models get names, products and technical terms wrong: "cloud code" for Claude
+Code, "gray fauna" for Grafana. The Dictionary tab lists the words you use, A to Z, each
+with its spelling, a short meaning, how its capitals are written, optionally how it is
+said, and how often you used it. The same words serve every speech model, so changing
+speech models keeps your dictionary. Nothing about how a speech model mishears a word is
+stored: each time you dictate, Entune works that out from how the words sound.
+
+- **Add word** adds one by hand: its spelling, its meaning (a short phrase the decision
+  model reads to choose, such as "Anthropic's coding agent"), and its capitals: **Exact
+  capitals** for names and acronyms, **Normal word** for a word capitalised only to start
+  a sentence. **Said as** is only for a word whose spelling doesn't tell how you say it,
+  such as "kube control" for kubectl. **How you use it** is a personal note the decision
+  model reads with the meaning.
+- Click a word to edit or delete it. The search finds spellings, meanings and "said as"
+  text. **To check** lists the words without a meaning, which Entune can't offer yet, and
+  the words whose meaning suggestions wrote and no one has confirmed; saving the word
+  confirms it.
+- **JSON** shows the whole `dictionary.json` to edit as text; [the dictionary
+  reference](dictionary.md#the-file) describes its fields.
+- **Help** opens a short guide.
+
+**Get suggestions** asks a suggestion model, the language model you choose with its key,
+to read what your speech model wrote and propose the words you used that the dictionary
+lacks, each with the places it found them, and clearer meanings for words still to
+check. It never removes a word or changes a meaning you confirmed. Suggestions open
+beside your dictionary: edit any of them, leave out the ones you don't want with ×, and
+apply the rest in one step. Nothing changes until you apply.
 
 Your coding agent can do all of this for you: connect it over MCP (**Settings ›
 Integrations** has the endpoint and the Claude Code command) and ask it to set up your
@@ -345,21 +362,24 @@ dictionary. It imports the recordings your other dictation apps keep, builds the
 dictionary, refines it and tells you when it's ready; later it can check your recent
 dictations and fix what they show. See
 [your agent runs Entune for you](agents-api.md#your-agent-runs-entune-for-you-mcp).
+Apps and agents you dictate to can also send corrections you confirmed through the
+[local API](agents-api.md#corrections).
 
-Learned entries stay specific to the speech model. Pinning moves one heard entry to
-every speech model and protects it from suggestions, without giving a word priority over
-its competitors; a pinned entry is used instead of a learned one with the same text.
-Confirmed agent corrections still use the existing local API. The dictionary model is chosen on
-the Dictionary page and serves every learning run; keys are added in Settings.
-The dictionary model can come from Anthropic, OpenAI, Google Gemini, Groq or Mistral;
-Groq uses the same key as Groq speech. ChatGPT sign-in can stand in for an API key
-(see [how it works](models.md#dictionary-generation)): choose OpenAI, then **ChatGPT subscription** under Access, then
-**Sign in with ChatGPT** and approve Entune on the OpenAI page your browser opens. The plan decides
-which models it allows. For our current recommendation and what the model selector accepts, see
+**Coming from an earlier version?** Its dictionary stored mishearings: what speech
+models wrote, and the words each could stand for. Entune moves that file aside as
+`dictionary.pre-v4-<time>.json` in its data folder and starts with an empty
+dictionary; **Get suggestions** builds the new one from your history, which it can read
+again in full.
+
+The suggestion model is chosen in **Settings › Dictionary setup**, or under **Advanced**
+when you get suggestions, and serves every run. It can come from Anthropic, OpenAI,
+Google Gemini, Groq or Mistral; Groq uses the same key as Groq speech. ChatGPT sign-in
+can stand in for an API key (see [how it works](models.md#dictionary-generation)):
+choose OpenAI, then **ChatGPT subscription** under Access, then **Sign in with ChatGPT**
+and approve Entune on the OpenAI page your browser opens. The plan decides which models
+it allows. For our current recommendation and what the model selector accepts, see
 [Choosing models](models.md#dictionary-generation). The built-in suggested-model list
-may contain older models; it also accepts a custom model ID. **Add word** creates entries by hand: a
-word with its spelling and description, and each heard text it stands for. **Delete
-word** removes a word from every entry that uses it; removing an entry keeps its words.
+may contain older models; it also accepts a custom model ID.
 
 **Learn from audio**, in the Dictionary tab, opens a dialog. Choose Entune recordings,
 import recordings from another dictation app on this Mac, or import an audio folder;
@@ -379,7 +399,7 @@ audio file was written. Reading `~/Documents` needs your permission in macOS. En
 audio file in `dictionary-audio/`, separate from recording history, and can reuse
 it when you select another speech model. WAV, MP3, M4A, FLAC, OGG and WebM files
 up to 199 MB can be uploaded; the chosen provider must support the audio format
-and length. A build uses the speech and dictionary models selected when it starts.
+and length. A build uses the speech and suggestion models selected when it starts.
 Freshly transcribed audio carries no record of what the dictionary did, so only its
 text is sent.
 A cloud speech model transcribes four recordings at a time; a local model takes one at a
@@ -412,7 +432,7 @@ audio it estimates the time from measurements only: the speech model's transcrip
 times from History, and the seconds per part of earlier runs with the same suggestion
 model and effort. A combination not yet timed says so.
 
-The dictionary model's reply must match the dictionary's format, which the provider
+The suggestion model's reply must match the dictionary's format, which the provider
 enforces where it can. When a reply still breaks one of the dictionary's rules, the
 model is shown the rule and asked for a corrected reply, at most twice per part. The
 progress line says so and names the rule, and **Stop** ends it. A part is tried again
@@ -426,27 +446,39 @@ as long again, so Entune asks for a lower reasoning effort or less audio, then
 **Continue**. Refused keys, limits and quotas (401, 403, 429) and other failed requests
 are never retried.
 
-Default history learning uses up to 300 recent, unprocessed attempts for the selected
-speech model; “All history” deliberately includes older/previously examined data.
-Each raw transcript is paired with the dictionary step's recorded result and
-decisions, which show what the system did, not confirmed intended wording. Filler
+**Get suggestions** reads up to 300 of the default speech model's newest transcripts that
+no applied run has read; under **Advanced**, **Choose a span** reads a stretch you choose
+again, including transcripts read before. Each raw transcript goes with what the
+dictionary step did to it, which shows what the system did, not what you meant. Filler
 removal, formatting and the delivered text are never sent. Older attempts without a
-recorded result, and freshly transcribed audio, are sent as raw text only. Applying at least one actual change marks only fully
-covered input IDs learned for that model. Applying none leaves them eligible. A
-partially processed transcript remains eligible. New dictations after selection and
-other models' boundaries are unaffected. Pinned definitions can be reviewed and updated;
-the agent cannot delete pinned meanings or remove any existing pinned variant.
+recorded result, and freshly transcribed audio, are sent as raw text only. Applying at
+least one change marks the transcripts and recordings the run read in full as read, for
+every speech model; applying none leaves them to read again, and a transcript read only
+in part stays unread. New dictations made while the review is open are never marked.
 
-
-### A decision model picks each meaning in context
+### How a dictation is corrected
 
 A decision model answers questions about the text with probabilities and never writes
-any. With contextual correction enabled, it classifies eligible meanings from the words
-around each occurrence; Entune applies the selected stored spelling. Besides the heard
-entries, a word the speech model was unsure of that sounds or is spelled like one of
-your names or terms is offered too, with the words as written as the other choice; it is
-replaced only on a clear choice. [The dictionary file](dictionary.md) has how and the
-measurements. Choose the decision model in Settings › Corrections & formatting:
+any. With **Apply your dictionary** on, each dictation goes through three steps:
+
+1. **Where to look.** Wherever the speech model was unsure of a word (Parakeet and
+   AssemblyAI say how sure they were of each one), Entune compares how the words there
+   sound with every word in your dictionary, and keeps the closest. A name with fixed
+   capitals written in other capitals ("github") is offered there too.
+2. **The audio check.** With Parakeet, each of those words is also checked against the
+   recording, and the ones the audio does not support are dropped. With other speech
+   models, a word must sound closer to be offered.
+3. **The decision.** The decision model reads the sentence around each place, the words
+   as written and the meaning of each word offered, and chooses. A word replaces the text
+   only on a clear choice; otherwise the text stays as the speech model wrote it.
+
+"Ask cloud code to fix it" becomes "Ask Claude Code to fix it", while "the backups are
+in the cloud" stays. A word without a meaning is never offered, so give each word a
+meaning that sets it apart from everyday words that sound like it. On a held-out test with
+Parakeet, the right word was among those offered at 98 of 103 errors, against 54 when the
+dictionary stored mishearings; [the dictionary reference](dictionary.md#how-a-dictation-is-corrected)
+has the rules and the measurements. Choose the decision model in Settings › Corrections
+& formatting:
 
 | Decision model | Where it runs | Setup |
 |---|---|---|
@@ -462,24 +494,17 @@ amount of text per question, 512 tokens including the question, so in a long dic
 its filler and paragraph decisions see only part of the transcript. All of them answer the
 same questions; History names the decision model each step asked.
 
-A literal Jeff or GIF is a meaning in its own right. Every valid response selects the
-highest-scoring eligible meaning, even when scores are close. Exact ties use the decision
-model's declared choice. Invalid responses fail the stage; scores are never invented.
-Meanings that write the same text are offered as one option.
+With **Apply your dictionary** off, the dictionary step does not run at all: nothing is
+replaced, and it adds no time. Finding the places and the audio check run on this
+machine; only the decision goes to the decision model you chose. History and Settings
+report the work done, rather than an accuracy score.
 
-Only explicitly approved, unambiguous direct mappings bypass classification. Pinning or
-having a single recorded candidate is not enough. With **Apply your dictionary** off,
-the dictionary step does not run at all: nothing is replaced, direct mappings included,
-and it adds no time. The previous binary classifier's cached accuracy and timings
-are documented separately; they do not establish the new classifier's quality or latency.
-History and Settings report work performed, including direct changes and abstentions,
-rather than an accuracy score. Optional formatting inserts paragraph breaks, numbered
-lists and bullets, including the first list item, while retaining existing structure and
-words. What you count out loud ("One… Second… Third…") becomes a numbered list, each
-number taking the place of its spoken ordinal, and a point's follow-up sentences stay in
-its entry. It also decides where a long run of words ends a sentence, and where a stop
-or a capital the speech model wrote does not belong; a long pause before a sentence is
-part of what it weighs.
+Optional formatting inserts paragraph breaks, numbered lists and bullets, including the
+first list item, while retaining existing structure and words. What you count out loud
+("One… Second… Third…") becomes a numbered list, each number taking the place of its
+spoken ordinal, and a point's follow-up sentences stay in its entry. It also decides
+where a long run of words ends a sentence, and where a stop or a capital the speech
+model wrote does not belong; a long pause before a sentence is part of what it weighs.
 
 **Remove fillers** is a separate opt-in. Code proposes English hesitation sounds (`um`,
 `uh`, `er`, `erm`, `ah`, `hmm`) and a word or short phrase said again at once ("I I", "I
@@ -493,22 +518,21 @@ is not yet measured (see [Formatting and fillers](dictionary.md#formatting-and-f
 Successful speech and its original text are saved before processing. The enabled
 stages run at the same time on the original text, and their edits are applied together.
 A stage that fails contributes no edits; the others still apply theirs, and a
-noninterrupting notice names the stage that failed. Every completed
-stage output and occurrence-selection provenance is saved internally. History shows
-only the final result for each attempt; canceled attempts show an audio-saved notice.
-Settings › Corrections & formatting › Advanced controls the processing wait: initially five seconds
-total across correction, cleanup and formatting, three per attempt, and at most two
-attempts per request. A dictation longer than 1,000 characters asks more and gets more:
-both limits grow by half for every 1,000 characters beyond that, up to three times the
-setting (at 3,000 characters, ten seconds and six per attempt). Each applicable stage sends one request before retries. Transient
-failures can retry within that shared deadline. Explicit exhausted-credit, authentication
-and authorization errors return immediately, including explicit credit failures in HTTP 429.
-These are configurable defaults, not an accuracy or end-to-end latency guarantee. **Copy original** in history
-copies the provider's text without altering history or already-pasted text. After a
-correction failure, **Apply safe mappings and copy** offers a derived result using only
-approved direct mappings; ambiguous spans remain untouched.
+noninterrupting notice names the stage that failed. Every completed stage's output and
+decisions are saved internally. History shows only the final result for each attempt;
+canceled attempts show an audio-saved notice. Settings › Corrections & formatting ›
+Advanced controls the processing wait: initially five seconds total across correction,
+cleanup and formatting, three per attempt, and at most two attempts per request. A
+dictation longer than 1,000 characters asks more and gets more: both limits grow by half
+for every 1,000 characters beyond that, up to three times the setting (at 3,000
+characters, ten seconds and six per attempt). Each applicable stage sends one request
+before retries. Transient failures can retry within that shared deadline. Explicit
+exhausted-credit, authentication and authorization errors return immediately, including
+explicit credit failures in HTTP 429. These are configurable defaults, not an accuracy or
+end-to-end latency guarantee. **Copy original** in History copies the provider's text
+without altering history or already-pasted text.
 
-Details: [the dictionary file](dictionary.md) and
+Details: [the dictionary reference](dictionary.md) and
 [the agents' API](agents-api.md).
 
 ### Tracing dictionary suggestions
@@ -560,7 +584,7 @@ Your recordings, models, keys and settings are stored separately and are kept.
 
 Standalone builds are signed ad hoc by default: macOS permissions may need granting
 again after every rebuild. To retain them, set up a local signing certificate
-once using [Signing, and keeping the permissions](packaging.md#signing-and-keeping-the-permissions).
+once using [Signing, and keeping the permissions](packaging.md#signing-a-standalone-build-and-keeping-the-permissions).
 This is optional for a first installation; a developer account is not required.
 The installer stops if certificate signing fails or an update would change an
 existing certificate identity, leaving the installed app in place. Restore
@@ -579,17 +603,17 @@ Enabled features determine what is sent out:
 - **Cloud speech:** the selected provider receives the audio clip; in fast mode,
   parts of it go while you are still speaking. Local Whisper.cpp and Parakeet transcribe
   on this machine, without sending audio to a speech service.
-- **Dictionary builds:** the chosen dictionary model's provider receives raw source
-  transcripts, beside the dictionary step's recorded result, and the pinned and working
-  entries that occur in each part's transcripts: spellings, meanings and heard forms,
-  never personal context or stored evidence.
+- **Dictionary builds:** the chosen suggestion model's provider receives raw source
+  transcripts, beside the dictionary step's recorded result, and the dictionary words
+  each part's transcripts bear on: their spellings and meanings, never personal context
+  or stored evidence.
 - **Tracing (off by default):** with Langfuse keys saved under **Settings →
   Integrations**, each dictionary-suggestion request and reply, including its
   transcripts and dictionary, also goes to the Langfuse host you set.
-- **Decision model:** for contextual correction it receives about 160 characters of the
-  original transcript either side of each matched occurrence, cut at a sentence or word
-  boundary, and each eligible
-  meaning's spelling, definition and personal context. Filler removal sends the transcript
+- **Decision model:** for dictionary correction it receives about 160 characters of the
+  original transcript either side of each place in question, cut at a sentence or word
+  boundary, and each word offered there with its spelling, meaning and personal
+  context. Filler removal sends the transcript
   and code-proposed deletion spans; formatting sends the transcript and its sentence
   spans. With Jev, all of this goes to TypeSafe, even when speech
   recognition is local. With OpenAI, it goes to OpenAI, and with Perplexity, to Perplexity. With Laya, it stays on your

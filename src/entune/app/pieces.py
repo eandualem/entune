@@ -21,7 +21,7 @@ from entune.app.ahead import Ahead
 from entune.audio.formats import wav_bytes
 from entune.audio.pauses import Pauses
 from entune.audio.silence import Shortened, shorten
-from entune.providers.contracts import Clip, Failure, TranscribeResult, Transcript
+from entune.providers.contracts import Clip, Failure, Joined, TranscribeResult, Transcript
 from entune.providers.registry import ModelRef
 from entune.providers.resources import SpeechResources
 
@@ -227,9 +227,12 @@ class _Halt(threading.Event):
 
 
 def joined(parts: list[Transcript]) -> Transcript:
-    """The pieces' transcripts as one, in order; words only when every piece gave them."""
+    """The pieces' transcripts as one, in order; words only when every piece gave them,
+    and the audio of each piece that has it."""
     words = [part.words for part in parts]
+    audio = [part.audio for part in parts if part.audio is not None]
     return Transcript(
         " ".join(part.text.strip() for part in parts),
         None if any(w is None for w in words) else tuple(w for ws in words if ws for w in ws),
+        Joined(audio) if audio else None,
     )

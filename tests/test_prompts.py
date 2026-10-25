@@ -21,7 +21,7 @@ def test_prompt_values_stay_literal_and_rendering_does_not_mutate_resources() ->
     assert "o1" in again["instructions"]["question"]
 
     snippet = batches.Snippet(batches.source_id(literal), "raw_speech", literal, None)
-    prompt = batches.user_prompt("local/base.en", view.build(dictionary((JEV,)), "m", [snippet]))
+    prompt = batches.user_prompt("local/base.en", view.build(dictionary(JEV), [snippet]))
     assert '"Jev \\"$term\\" {meaning}\\nአማርኛ"' in prompt
 
 
@@ -47,9 +47,9 @@ def test_the_worked_example_passes_the_real_parser() -> None:
     said, reply = example.split("\n{", 1)
     texts = [" ".join(t.split()) for t in re.findall(r'd\d "(.+?)"', said, flags=re.DOTALL)]
     snippets = [batches.Snippet(batches.source_id(t), "raw_speech", t, None) for t in texts]
-    shown = view.build(Dictionary(), "m", snippets)
+    shown = view.build(Dictionary(), snippets)
     reply = "{" + reply.split("\n\n")[0]
-    added = replies.parse_reply(reply, shown, Dictionary(), "m", transcripts=texts)
-    assert [w.spelling for w in added.words] == ["YAML", "camel", "Grafana"]
-    assert [h.text for h in added.learned_for("m")] == ["camel", "gray fauna"]
+    added = replies.parse_reply(reply, shown, Dictionary(), transcripts=texts)
+    assert [w.spelling for w in added.words] == ["YAML", "Grafana"]
+    assert [len(w.evidence) for w in added.words] == [1, 1]
     assert all(len(w.meaning) <= view.MEANING_CHARS for w in added.words)

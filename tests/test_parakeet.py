@@ -6,12 +6,13 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import httpx
 import pytest
 
 from entune.audio.formats import wav_bytes
-from entune.providers.contracts import Clip, Failure
+from entune.providers.contracts import Clip, Failure, ScoreRequest, Transcript
 from entune.providers.local import parakeet as parakeet_module
 from entune.providers.local.parakeet import ENGINE, ENGINE_DIR, FILES, INSTALLED, MODEL, Parakeet
 from tests.conftest import mock_client
@@ -259,3 +260,34 @@ def test_invalid_helper_answer_is_reported_and_does_not_leave_a_loaded_process(
         assert not parakeet._loaded and helper.poll() is not None
     finally:
         parakeet.unload()
+
+
+def test_a_transcript_is_scored_against_the_audio_its_helper_keeps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / MODEL).mkdir()
+    for name, _ in FILES:
+        (tmp_path / MODEL / name).write_bytes(b"x")
+    parakeet = Parakeet(tmp_path, engine=Path(sys.executable))
+    asked: list[dict[str, Any]] = []
+
+    def ask(request: dict[str, Any]) -> dict[str, Any]:
+        asked.append(request)
+        if request["op"] == "transcribe":
+            words = [["Ask", 0.0, 0.3, 1.0], ["Jeff.", 0.4, 0.7, 0.6]]
+            return {"text": "Ask Jeff.", "words": words}
+        return {"scores": [[1.5, -2.0]]}
+
+    monkeypatch.setattr(parakeet, "_ensure_loaded", lambda: {"ok": True})
+    monkeypatch.setattr(parakeet, "_ask_locked", ask)
+    result = parakeet.transcribe(Clip(wav_bytes(b"\x00\x00" * 16_000), "audio/wav"), MODEL, "")
+    assert isinstance(result, Transcript) and result.audio is not None
+    parakeet._helper, parakeet._loaded = Mock(poll=lambda: None), True
+    jeff = ScoreRequest(0.4, 0.7, "Jeff", ("Jev", "Jeff's"))
+    assert result.audio.score([jeff, ScoreRequest(0.0, 0.3, "Ask", ())]) == [[1.5, -2.0], []]
+    assert result.audio.score([jeff]) == [[1.5, -2.0]]  # remembered, not asked again
+    spans = [{"start": 0.4, "end": 0.7, "heard": "Jeff", "candidates": ["Jev", "Jeff's"]}]
+    assert asked[0]["keep"] == 1 and asked[1:] == [{"op": "score", "keep": 1, "spans": spans}]
+    assert not parakeet_module._scores(spans, [[1.5]])  # one score short: an invalid answer
+    parakeet._helper = None  # another model was chosen: the audio is gone, not failed
+    assert result.audio.score([ScoreRequest(0.0, 0.3, "Ask", ("Axe",))]) == [None]

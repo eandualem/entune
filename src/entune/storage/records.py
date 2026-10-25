@@ -37,7 +37,7 @@ class Transcription:
 
 @dataclass(frozen=True)
 class Correction:
-    """One entry an agent sent and Entune pinned: a term (no `meant`) or a replacement."""
+    """One entry an agent sent: a term (no `meant`) or a replacement."""
 
     id: int
     created_at: str

@@ -60,11 +60,13 @@ CREATE TABLE IF NOT EXISTS learning_runs (
     outcome TEXT NOT NULL,
     details TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS learning_coverage (
-    model TEXT NOT NULL,
+-- The inputs applied suggestions have read. They were counted per speech model while each
+-- model had its own dictionary; the words-only dictionary reads every input afresh.
+DROP TABLE IF EXISTS learning_coverage;
+CREATE TABLE IF NOT EXISTS dictionary_coverage (
     source TEXT NOT NULL,
     input_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
-    PRIMARY KEY (model, source, input_id)
+    PRIMARY KEY (source, input_id)
 );
 """

@@ -32,7 +32,7 @@ from entune.processing.jev_client import Client as JevClient
 from entune.processing.pipeline import process_text
 from entune.processing.results import Processed
 from entune.providers.cloud.contracts import Preconnects
-from entune.providers.contracts import Clip, Failure, Transcript
+from entune.providers.contracts import Clip, Failure, Scorer, Transcript
 from entune.providers.local.contracts import Downloadable
 from entune.providers.registry import ModelRef
 from entune.providers.resources import SpeechResources
@@ -102,6 +102,7 @@ class Dictation:
             self._vocabulary() if status.dictionary else NO_WORDS,
             status,
             words=_heard(transcript),
+            audio=transcript.audio,
             run=run,
             cancel=halt,
         )
@@ -359,6 +360,7 @@ class Dictation:
                             checkpoint=checkpoint,
                             operation=operation,
                             words=heard,
+                            audio=result.audio if isinstance(result, Transcript) else None,
                             run=Pass(memo),
                         )
                     )
@@ -425,6 +427,7 @@ class Dictation:
         checkpoint: Callable[[Processed], None] | None = None,
         operation: Operation | None = None,
         words: Sequence[Heard] | None = None,
+        audio: Scorer | None = None,
         run: Pass = WHOLE,
         cancel: threading.Event | None = None,
     ) -> Processed:
@@ -446,6 +449,7 @@ class Dictation:
             check=operation.check if operation else None,
             cancel=operation.cancel if operation else cancel,
             words=words,
+            audio=audio,
             run=run,
         )
 

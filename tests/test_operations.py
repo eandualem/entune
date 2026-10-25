@@ -19,7 +19,7 @@ from entune.dictionary import document as dictionary_document
 from entune.processing import jev_client
 from entune.providers.contracts import Clip, Transcript
 from entune.server import create_app
-from tests.dictionary_samples import JEV, Active, dictionary
+from tests.dictionary_samples import JEV, dictionary
 from tests.test_app import FakeActions, FakePlatform, make, wait_for
 
 
@@ -75,7 +75,7 @@ def test_cancel_inflight_jev_closes_requests_and_keeps_raw(
     monkeypatch.setattr(
         service.providers[0], "transcribe", lambda *args: Transcript("Use Jeff to classify this.")
     )
-    dictionary_document.save(service.store.data_dir, dictionary((Active(JEV.words[:1]),)))
+    dictionary_document.save(service.store.data_dir, dictionary(JEV))
     service.store.set_setting("jev_dictionary", "1")
     service.store.set_setting("jev_formatting", "1")
     service.settings.set_key("typesafe", "synthetic")

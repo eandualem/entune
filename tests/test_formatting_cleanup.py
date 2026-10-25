@@ -17,7 +17,7 @@ from entune.providers.contracts import Transcript
 from entune.server import create_app
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER
-from tests.dictionary_samples import JEV, Active, document
+from tests.dictionary_samples import JEV, document
 from tests.test_jev import answering, call
 from tests.test_server import StubProvider
 
@@ -512,10 +512,7 @@ def test_raw_speech_is_durable_and_stage_edits_round_trip_separately(
                 ).status_code
                 == 200
             )
-            assert (
-                client.put("/api/dictionary", json=document(Active(JEV.words[:1]))).status_code
-                == 200
-            )
+            assert client.put("/api/dictionary", json=document(JEV)).status_code == 200
             result = client.post(
                 "/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")}
             ).json()

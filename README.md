@@ -12,10 +12,10 @@
 Entune is an open-source dictation app for macOS, Windows and Linux. It runs as its
 own app: hold a shortcut in any app, speak, and the text is pasted where you are.
 Choose a cloud or local speech model, and keep your recordings on your computer.
-Its personal dictionary learns from your dictation; a decision model chooses
-when a dictionary replacement actually fits the sentence, and where paragraphs and
-bullets belong. Connect your coding agent over **MCP**, and it builds and refines
-that dictionary for you. Learn more at **[entune.app](https://entune.app)**.
+Its personal dictionary holds the words you use, learned from your dictation. Where
+the speech model was unsure of a word, a decision model chooses whether one of your
+words fits the sentence; it also decides where paragraphs and bullets belong. Connect
+your coding agent over **MCP**, and it builds and refines that dictionary for you. Learn more at **[entune.app](https://entune.app)**.
 
 A 42-second tour of Entune on a Mac:
 
@@ -105,7 +105,7 @@ apps keep on your Mac, builds your dictionary from them, refines the result, and
 you when it's ready. You don't review anything. It leaves you only what has to be yours:
 saving an API key in Settings, signing in, granting a permission. A build transcribes
 the imported recordings: a cloud speech model bills that per minute of audio to your
-key, a local model does it for free. The suggestion model that proposes the entries
+key, a local model does it for free. The suggestion model that proposes the words
 runs on your ChatGPT plan or API key. Later, ask it how Entune is doing: it reads your
 recent dictations and fixes what they show.
 
@@ -116,15 +116,20 @@ lost. What it reads, transcript excerpts included, goes to your agent's model pr
 [The agents' API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md#your-agent-runs-entune-for-you-mcp)
 lists the tools.
 
-## A dictionary match should not always become a replacement
+## A word that sounds like yours should not always become it
 
 A recognizer might write “cloud” when you meant “Claude.” But replacing every
-“cloud” would also damage a sentence about cloud storage. Entune stores both
-meanings and asks a decision model which fits the surrounding words.
+“cloud” would also damage a sentence about cloud storage. Entune looks only where
+the speech model was unsure of a word, compares how it sounds with the words in your
+dictionary, and asks a decision model which fits the sentence: one of your words, or
+the text as written.
 
-The decision model **selects from your dictionary**. It does not generate or
-rewrite your dictation. Entune applies the stored spelling you can inspect
-and edit.
+The decision model **selects**. It does not generate or rewrite your dictation;
+Entune writes the stored spelling you can inspect and edit. With local Parakeet, each
+word offered is first checked against the recording. On 210 Parakeet dictations held
+out from tuning, the right word was offered at 98 of the 103 errors whose word was in
+the dictionary; storing mishearings, as Entune did before, had offered it at 54. See
+[how a dictation is corrected](https://github.com/eandualem/entune/blob/develop/docs/dictionary.md#how-a-dictation-is-corrected).
 
 ### 72 wrong replacements become 1 with Jev, in our test
 
@@ -165,7 +170,9 @@ OpenAI 8 with 1, and Laya 5 with 37, turning two whole dictations into bullet li
 Perplexity, 0.34 s with OpenAI and 0.54 s with Jev for corrections.
 
 This is one person's dictation judged from the text by one reviewer, not an overall
-transcription-accuracy claim. Read the [data, method and limits](https://github.com/eandualem/entune/blob/develop/docs/decision-model-results.md),
+transcription-accuracy claim. It ran on the earlier dictionary design, which stored
+mishearings, so it compares how the decision models choose at a place, which today's
+dictionary still relies on. Read the [data, method and limits](https://github.com/eandualem/entune/blob/develop/docs/decision-model-results.md),
 including what the learned dictionary missed and an earlier test with the same direction.
 
 ## Choose the models that suit you
@@ -197,13 +204,15 @@ limits of our recommendations.
 
 ## Teach Entune your vocabulary
 
-Use **Dictionary → Get suggestions** to learn from the selected speech
-model's history. Or choose **Learn from audio** to import recordings from
-another dictation app or an audio folder. Entune transcribes imported audio
-with your chosen speech model, then proposes entries for review.
+Your dictionary is the names, products and terms you use, each with a short meaning.
+Use **Dictionary → Get suggestions** to find them in the selected speech model's
+history. Or choose **Learn from audio** to import recordings from another dictation
+app or an audio folder. Entune transcribes imported audio with your chosen speech
+model, then proposes words for review, each with the places you used it. You can also
+add words by hand.
 
 **Dictionary generation takes time.** Text goes to the suggestion model in parts,
-one after another, each with the dictionary entries that occur in its text. Large
+one after another, each with the dictionary words that occur in its text. Large
 histories take longer; in our October test, 7.5 hours of dictation (387 transcripts)
 took **39 minutes** in 10 parts with GPT-6 Astra at high effort on a ChatGPT plan. Imported audio is transcribed first, several recordings at a
 time with a cloud speech model, and parts start as soon as enough text is ready. The
@@ -211,15 +220,17 @@ setup lets you choose the reasoning effort, and estimates the time from
 what Entune has measured. This is separate from the fast decision step on each new
 dictation.
 
-Review the proposed entries before applying them. You can stop a build and review
+Review the suggestions before applying them. You can stop a build and review
 completed parts, or continue from where it stopped, with other settings if a part
 was too slow. Dictation keeps working throughout; only separate dictionary editing
 waits until the proposal is applied or discarded.
 
-Learned entries belong to their speech model: a Parakeet dictionary is not
-automatically an AssemblyAI dictionary. Pin entries you deliberately want to
-share. Later suggestions can revise learned entries; more suggestion runs do not
-guarantee a better dictionary.
+One dictionary serves every speech model: switch models and your words still apply.
+Suggestions add only words you used and clearer meanings for words still to check;
+they never remove a word. More suggestion runs do not guarantee a better dictionary.
+Updating from an earlier version, which stored mishearings, sets the old
+`dictionary.json` aside and starts an empty dictionary; **Get suggestions** builds
+it again from your history.
 
 ## Keep control of your recordings
 
@@ -244,7 +255,7 @@ guarantee a better dictionary.
 - **Drop audio to transcribe it:** drop files anywhere on the window, such as a
   recording another app could not transcribe.
 - **Anonymous mode:** the eye switch blurs transcripts for screen recordings.
-- **For agents and tools:** besides [MCP](#your-agent-builds-and-refines-your-dictionary), a
+- **For agents and tools:** besides [MCP](#your-agent-sets-entune-up-for-you), a
   [local API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md)
   accepts corrections you have confirmed, and optional
   [Langfuse tracing](https://github.com/eandualem/entune/blob/develop/docs/guide.md#tracing-dictionary-suggestions)
@@ -253,8 +264,8 @@ guarantee a better dictionary.
 There is no Entune account, telemetry or hosted history. Cloud speech sends
 audio to your chosen provider; dictionary generation sends its selected
 transcripts and dictionary to the chosen language-model provider. **Jev sends
-matched context to TypeSafe, OpenAI's Decisions API to OpenAI and Perplexity's to
-Perplexity, even when speech recognition is local.** Laya keeps that step local. See [data and privacy](https://github.com/eandualem/entune/blob/develop/docs/guide.md#data-and-privacy).
+the context of each word in question to TypeSafe, OpenAI's Decisions API to OpenAI
+and Perplexity's to Perplexity, even when speech recognition is local.** Laya keeps that step local. See [data and privacy](https://github.com/eandualem/entune/blob/develop/docs/guide.md#data-and-privacy).
 
 Entune is for a trusted, single-user machine. Its loopback API has no
 authentication: other local processes can read or change data through it.
@@ -265,7 +276,7 @@ Do not expose its port to a network or tunnel.
 - [Using Entune](https://github.com/eandualem/entune/blob/develop/docs/guide.md): permissions, shortcuts, imports, updates and troubleshooting.
 - [Choosing models](https://github.com/eandualem/entune/blob/develop/docs/models.md): cloud and local setup, recommendations and generation time.
 - [Decision-model results](https://github.com/eandualem/entune/blob/develop/docs/decision-model-results.md): what changed, how it was measured, and limitations.
-- [Dictionary reference](https://github.com/eandualem/entune/blob/develop/docs/dictionary.md): meanings, matching, learning and the file format.
+- [Dictionary reference](https://github.com/eandualem/entune/blob/develop/docs/dictionary.md): the file, how places and words are found, suggestions, and what was measured.
 - [Building Entune.app](https://github.com/eandualem/entune/blob/develop/docs/packaging.md), [local API](https://github.com/eandualem/entune/blob/develop/docs/agents-api.md), and [architecture](https://github.com/eandualem/entune/blob/develop/docs/architecture.md).
 
 To work on Entune, clone the repository and run `uv sync`, then `uv run entune`.

@@ -31,7 +31,7 @@ from entune.server import create_app
 from entune.storage.records import Transcription
 from entune.storage.store import Store
 from tests.conftest import WEBM_HEADER, mock_client, wait_for_build
-from tests.dictionary_samples import JEV, document, group, proposed
+from tests.dictionary_samples import JEV, document, proposed, word
 
 
 class StubProvider:
@@ -358,15 +358,10 @@ CLAUDE_CODE = {"spelling": "Claude Code", "description": "the agent", "heard": [
 
 
 def test_the_dictionary_is_read_and_saved_as_one_document(client: TestClient) -> None:
-    assert client.get("/api/dictionary").json() == {
-        "version": 3,
-        "words": [],
-        "pinned": [],
-        "learned": {},
-    }
-    bad = client.put("/api/dictionary", content='{"pinned":[]}')
+    assert client.get("/api/dictionary").json() == {"version": 4, "words": []}
+    bad = client.put("/api/dictionary", content='{"words":[]}')
     assert bad.status_code == 400 and 'needs "version"' in bad.text
-    body = document(group("Claude Code", "cloud code"), learned={"stub/bad": (group("Hi", "hi"),)})
+    body = document(word("Claude Code"), JEV)
     saved = client.put("/api/dictionary", json=body)
     assert saved.status_code == 200, saved.text
     assert client.get("/api/dictionary").json() == body
@@ -602,20 +597,18 @@ def test_build_dictionary_explains_what_is_missing_then_returns_a_proposal(
     assert res.status_code == 400 and "No new transcripts to learn from for Stub / good" in res.text
 
     client.post("/api/recordings", files={"audio": ("clip", WEBM_HEADER, "")})
-    client.put("/api/dictionary", json=document(group("Entune", "in tune")))
+    client.put("/api/dictionary", json=document(word("Entune")))
     res = client.post("/api/dictionary/build", json={"source": "history"})
     assert res.status_code == 202, res.text
     first = wait_for_build(client)
     proposal = first["proposal"]
     assert calls == [("openai:gpt-6-astra", "sk-1")]
-    assert proposal["model"] == "stub/good"
     assert len(proposal["changes"]) == 1
-    assert proposal["changes"][0]["after"]["text"] == "cloud code"
-    assert [w["spelling"] for w in proposal["words"]] == ["Claude Code"]
+    assert proposal["changes"][0]["after"]["spelling"] == "Claude Code"
     assert proposal["version"] == client.get("/api/dictionary").headers["etag"]
     assert proposal["changes"][0]["kind"] == "add" and proposal["changes"][0]["before"] is None
     # Nothing is saved until the page accepts.
-    assert client.get("/api/dictionary").json()["learned"] == {}
+    assert [w["spelling"] for w in client.get("/api/dictionary").json()["words"]] == ["Entune"]
     # Separate edits are blocked during generation and review. Out-of-process file
     # changes still invalidate a snapshot; this is a final guard, not merge UX.
     assert client.delete(f"/api/dictionary/build/{first['id']}").status_code == 200
@@ -665,7 +658,7 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
     bad = client.post("/api/dictionary/corrections", json={"entries": [{"heard": ["x"]}]})
     assert bad.status_code == 400 and "entries.spelling" in bad.text
 
-    client.put("/api/dictionary", json=document(group("Claude Code", "cloud code")))
+    client.put("/api/dictionary", json=document(word("Claude Code")))
     res = client.post(
         "/api/dictionary/corrections",
         json={
@@ -677,24 +670,17 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
         },
     )
     assert res.status_code == 200
-    # What the user already pinned is not added again; the rest is pinned.
+    # A word the dictionary has is not added again; what the speech model wrote is no word.
     assert res.json() == {
-        "added": [
-            {"spelling": "Wispr Flow", "description": "an app", "heard": ["whisper flow"]},
-            {"spelling": "Claude Code", "description": "", "heard": ["claud code"]},
-        ]
+        "added": [{"spelling": "Wispr Flow", "description": "an app", "heard": ["whisper flow"]}]
     }
-    stored = client.get("/api/dictionary").json()
-    assert [w["spelling"] for w in stored["words"]] == ["Claude Code", "Wispr Flow"]
-    assert [h["text"] for h in stored["pinned"]] == [
-        "cloud code",
-        "Claude Code",
-        "whisper flow",
-        "Wispr Flow",
-        "claud code",
+    stored = client.get("/api/dictionary").json()["words"]
+    assert [(w["spelling"], w["meaning"], w["needs_review"]) for w in stored] == [
+        ("Claude Code", "The named tool Claude Code.", False),
+        ("Wispr Flow", "an app", False),
     ]
-    assert all(not h["direct"] for h in stored["pinned"])
-    # The earlier shape, terms and replacements, is still taken.
+    # The earlier shape, terms and replacements, is still taken; a word without a
+    # description is marked to check.
     again = client.post(
         "/api/dictionary/corrections", json={"terms": ["Soniox"], "replacements": {"a": "b"}}
     )
@@ -704,15 +690,19 @@ def test_agents_post_confirmed_corrections(client: TestClient, stub: StubProvide
             {"spelling": "b", "description": "", "heard": ["a"]},
         ]
     }
+    stored = client.get("/api/dictionary").json()["words"]
+    assert [w["needs_review"] for w in stored[2:]] == [True, True]
     assert client.post("/api/dictionary/corrections", json={"terms": ["soniox"]}).json() == {
         "added": []
     }
-    # What arrived is kept, newest first, with its source, for the Agents page.
+    # Everything that arrived is kept, newest first, with its source, for the Agents page.
     received = client.get("/api/dictionary/corrections").json()
     assert [(c["heard"], c["meant"], c["source"]) for c in received] == [
+        ("soniox", None, None),
         ("Soniox", None, None),
         ("a", "b", None),
-        ("claud code", "Claude Code", "entune-agent"),
+        ("claud code", "claude code", "entune-agent"),
+        ("cloud code", "claude code", "entune-agent"),
         ("whisper flow", "Wispr Flow", "entune-agent"),
     ]
 
@@ -750,7 +740,7 @@ def test_streamed_requests_cannot_bypass_the_size_limit(
     body = b'{"terms":["' + b"a" * 100 + b'"]}'
     response = client.post("/api/dictionary/corrections", content=iter([body[:50], body[50:]]))
     assert response.status_code == 413
-    assert client.get("/api/dictionary").json()["pinned"] == []
+    assert client.get("/api/dictionary").json()["words"] == []
     multipart = (
         b'--clip\r\nContent-Disposition: form-data; name="audio"; filename="clip.webm"\r\n'
         b"Content-Type: audio/webm\r\n\r\n" + WEBM_HEADER + b"\r\n--clip--\r\n"
@@ -1007,7 +997,7 @@ def test_a_stale_dictionary_save_is_refused_and_a_fresh_one_accepted(client: Tes
     client.post("/api/dictionary/corrections", json={"terms": ["Soniox"], "source": "agent"})
     stale = client.put(
         "/api/dictionary",
-        json=document(group("Entune", "in tune")),
+        json=document(word("Entune")),
         headers={"if-match": version},
     )
     assert stale.status_code == 409 and "changed" in stale.text
@@ -1015,14 +1005,10 @@ def test_a_stale_dictionary_save_is_refused_and_a_fresh_one_accepted(client: Tes
     fresh = client.get("/api/dictionary")
     current, fresh_version = fresh.json(), fresh.headers["etag"]
     assert fresh_version != version
-    entune = document(group("Entune", "in tune"))
+    entune = document(word("Entune"))
     ok = client.put(
         "/api/dictionary",
-        json={
-            **current,
-            "words": [*current["words"], *entune["words"]],
-            "pinned": [*current["pinned"], *entune["pinned"]],
-        },
+        json={**current, "words": [*current["words"], *entune["words"]]},
         headers={"if-match": fresh_version},
     )
     assert ok.status_code == 200 and ok.headers["etag"] != fresh_version
@@ -1088,33 +1074,6 @@ def test_slow_settings_catalogue_does_not_block_other_requests(
         finally:
             release.set()
         assert waiting.result(timeout=1).status_code == 200
-
-
-def test_pin_endpoint_needs_revision_and_moves_heard_entries(client: TestClient) -> None:
-    response = client.put("/api/dictionary", json=document(learned={"stub/good": (JEV,)}))
-    body = {"model": "stub/good", "text": "jeff"}
-    assert client.post("/api/dictionary/pin", json=body).status_code == 400
-    result = client.post(
-        "/api/dictionary/pin", json=body, headers={"If-Match": response.headers["etag"]}
-    )
-    assert result.status_code == 200, result.text
-    assert [h["text"] for h in result.json()["pinned"]] == ["Jeff"]
-    assert [h["text"] for h in result.json()["learned"]["stub/good"]] == ["GIF", "Jif", "Jev"]
-    stale = client.post(
-        "/api/dictionary/pin",
-        json={**body, "text": "GIF"},
-        headers={"If-Match": response.headers["etag"]},
-    )
-    assert stale.status_code == 409
-
-    shared = client.post(
-        "/api/dictionary/pin",
-        json={"model": "stub/good"},
-        headers={"If-Match": result.headers["etag"]},
-    )
-    assert shared.status_code == 200 and not shared.json()["learned"]
-    assert [h["text"] for h in shared.json()["pinned"]] == ["Jeff", "GIF", "Jif", "Jev"]
-    assert shared.json()["words"] == response.json()["words"]
 
 
 def test_speed_and_corrections_use_only_measured_evidence(tmp_path: Path) -> None:
