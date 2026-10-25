@@ -9,7 +9,7 @@ import pytest
 
 from entune.audio.formats import wav_bytes
 from entune.providers.contracts import Clip, Failure, Transcript
-from entune.providers.local.whisper import CATALOGUE, WhisperCpp, pcm16k
+from entune.providers.local.whisper import CATALOGUE, WhisperCpp, pcm16k, resample
 from entune.providers.registry import resolve_model
 from tests.conftest import mock_client
 
@@ -144,6 +144,54 @@ def test_transcribe_resamples_and_needs_the_file(tmp_path: Path) -> None:
 def test_pcm16k_mixes_stereo_and_keeps_16k_as_is() -> None:
     mono = pcm16k(Clip(wav_bytes(b"\x00\x40" * 16_000, sample_rate=16_000), "audio/wav"))
     assert len(mono) == 16_000 and abs(float(mono[0]) - 0.5) < 0.01
+
+
+@pytest.mark.parametrize("rate", [1, 7_999, 192_001, 1_000_000_000])
+def test_extreme_wav_rates_fail_before_loading_the_engine(tmp_path: Path, rate: int) -> None:
+    engine = FakeEngine()
+    local = WhisperCpp(tmp_path, load_model=lambda path: engine)
+    (tmp_path / "ggml-base.en.bin").write_bytes(b"model")
+    result = local.transcribe(
+        Clip(wav_bytes(b"\0\0" * 16, sample_rate=rate), "audio/wav"), "base.en", ""
+    )
+    assert isinstance(result, Failure) and "Unsupported WAV sample rate" in result.error
+    assert engine.calls == []
+
+
+@pytest.mark.parametrize("rate", [8_000, 16_000, 44_100, 48_000, 192_000])
+def test_supported_wav_rates_keep_duration_and_signal(rate: int) -> None:
+    import numpy as np
+
+    audio = pcm16k(Clip(wav_bytes(b"\x00\x40" * rate, sample_rate=rate), "audio/wav"))
+    assert len(audio) == 16_000
+    assert np.allclose(audio[100:-100], 0.5, atol=0.001)
+
+
+def test_wav_header_cannot_request_an_oversized_decoding_buffer() -> None:
+    import struct
+
+    from entune.providers.local.whisper import MAX_AUDIO_SAMPLES
+
+    data = bytearray(wav_bytes(b"\0\0" * 2))
+    struct.pack_into("<I", data, 4, 36 + (MAX_AUDIO_SAMPLES + 1) * 2)
+    struct.pack_into("<I", data, 40, (MAX_AUDIO_SAMPLES + 1) * 2)
+    with pytest.raises(ValueError, match="decoder's sample limit"):
+        pcm16k(Clip(bytes(data), "audio/wav"))
+
+
+@pytest.mark.parametrize(
+    ("count", "rate", "error"),
+    [(1 << 24, 8_000, "sample limit"), (1 << 24, 48_000, "FFT limit")],
+)
+def test_resampler_rejects_oversized_arrays_before_allocating(
+    count: int, rate: int, error: str
+) -> None:
+    class UnallocatedSamples:
+        def __len__(self) -> int:
+            return count
+
+    with pytest.raises(ValueError, match=error):
+        resample(UnallocatedSamples(), rate, 16_000)
 
 
 def test_warm_loads_a_downloaded_model_once_and_ignores_the_rest(tmp_path: Path) -> None:

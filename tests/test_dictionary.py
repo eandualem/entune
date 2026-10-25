@@ -21,6 +21,22 @@ def test_round_trip_keeps_words_once_and_entries_per_scope(tmp_path: Path) -> No
     assert len(original.words) == 6
 
 
+def test_overlong_spellings_are_rejected_on_parse_and_save(tmp_path: Path) -> None:
+    from entune.dictionary.entries import MAX_SPELLING_CHARS
+
+    accepted = Dictionary((Word("w_phrase", "A" * MAX_SPELLING_CHARS, "A phrase."),))
+    dictionary_document.save(tmp_path, accepted)
+    assert dictionary_document.load(tmp_path) == accepted
+    rejected = replace(
+        accepted, words=(replace(accepted.words[0], spelling="A" * (MAX_SPELLING_CHARS + 1)),)
+    )
+    with pytest.raises(ValueError, match="spelling must be at most 256 characters"):
+        dictionary_document.parse(dictionary_document.dumps(rejected))
+    with pytest.raises(ValueError, match="spelling must be at most 256 characters"):
+        dictionary_document.save(tmp_path, rejected)
+    assert dictionary_document.load(tmp_path) == accepted
+
+
 def test_evidence_on_a_literal_candidate_is_dropped_on_load() -> None:
     data = json.loads(dictionary_document.dumps(dictionary((group("Langfuse", "LogFuse"),))))
     literal = data["pinned"][1]["candidates"][0]

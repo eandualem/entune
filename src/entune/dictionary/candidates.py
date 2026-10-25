@@ -38,7 +38,7 @@ from functools import lru_cache
 from typing import Protocol
 
 from entune.dictionary import pronounce
-from entune.dictionary.entries import Word, key
+from entune.dictionary.entries import MAX_SPELLING_CHARS, Word, key
 
 UNSURE = 0.995  # a word below this confidence may be misheard
 SIMILAR = 0.5  # least pronunciation similarity of a candidate
@@ -426,6 +426,10 @@ def _miscased(text: str, tokens: list[tuple[int, int]], vocabulary: Vocabulary) 
     for first in range(len(tokens)):
         for last in range(first, min(len(tokens), first + vocabulary.fixed_tokens)):
             start, end = tokens[first][0], tokens[last][1]
+            # Bound copying/normalization even for a vocabulary built without validation.
+            # Allow the possessive suffix that is stripped below.
+            if end - start > MAX_SPELLING_CHARS + 2:
+                break
             # "anthropic's" is Anthropic with its possessive, unless a word keeps its "'s".
             ends = (end, end - 2) if _POSSESSIVE.search(text, start, end) else (end,)
             for stop in ends:

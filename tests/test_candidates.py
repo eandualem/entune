@@ -1,5 +1,7 @@
 from collections.abc import Sequence
 
+import pytest
+
 from entune.dictionary import candidates, pronounce
 from entune.dictionary.candidates import ScoreRequest, Vocabulary
 from entune.dictionary.entries import Word
@@ -197,6 +199,38 @@ def test_a_fixed_spelling_in_other_capitals_is_offered_whatever_the_confidence()
     text = "I asked anthropic's team. Anthropic agreed."
     places = candidates.find(text, said(text), Vocabulary([anthropic, ENTUNE]))
     assert offered(text, places) == [("anthropic", "Anthropic")]
+
+
+def test_case_matching_bounds_work_even_for_an_unvalidated_vocabulary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from entune.dictionary.entries import MAX_SPELLING_CHARS, key
+
+    vocabulary = Vocabulary([Word("w_phrase", "A " * 300, "A phrase.")])
+    text = "a " * 1_000
+    tokens = [(m.start(), m.end()) for m in candidates._WORD.finditer(text)]
+    calls = 0
+
+    def bounded_key(written: str) -> str:
+        nonlocal calls
+        calls += 1
+        assert len(written) <= MAX_SPELLING_CHARS + 2
+        return key(written)
+
+    monkeypatch.setattr(candidates, "key", bounded_key)
+    assert candidates._miscased(text, tokens, vocabulary) == []
+    assert calls <= len(tokens) * (MAX_SPELLING_CHARS + 2)
+
+
+def test_case_matching_keeps_a_phrase_and_its_possessive_at_the_length_limit() -> None:
+    from entune.dictionary.entries import MAX_SPELLING_CHARS
+
+    spelling = "Alpha " + "B" * (MAX_SPELLING_CHARS - 6)
+    vocabulary = Vocabulary([Word("w_phrase", spelling, "A long name.")])
+    text = spelling.lower() + "'s"
+    tokens = [(m.start(), m.end()) for m in candidates._WORD.finditer(text)]
+    (span,) = candidates._miscased(text, tokens, vocabulary)
+    assert text[span.start : span.end] == spelling.lower()
 
 
 def test_a_word_already_written_around_the_span_is_not_offered_there() -> None:

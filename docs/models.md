@@ -29,6 +29,11 @@ Entune records WAV. Importing MP3, M4A, FLAC, Ogg or WebM for a local model
 requires [ffmpeg](https://ffmpeg.org/); with Homebrew, install it using
 `brew install ffmpeg`.
 
+Whisper.cpp accepts 16-bit WAV at 8,000-192,000 Hz. Its local decoder and
+resampler limit decoded samples (across channels), output samples and FFT size
+to 16,777,216 elements each. Oversized clips fail with a visible error; split
+them into smaller files before retrying. These limits do not apply to cloud providers.
+
 ## Dictionary generation
 
 Our current recommendation is **GPT-6 Astra (`gpt-6-astra`) at high reasoning
@@ -166,4 +171,3 @@ about each match separately. Those observations came from normal machine load, n
 speed benchmark, and are not end-to-end dictation times. Read the
 [complete comparison](decision-model-results.md) before interpreting the counts
 or using them to choose a model.
-

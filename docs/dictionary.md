@@ -37,6 +37,8 @@ it is) or `user` (added by the person). A heard entry names only the words it wa
 actually used for, plus the heard text's own word when the heard text is a real word:
 "cloud" can stay cloud, "gray fauna" offers only Grafana. An ID identifies a word
 independently of its spelling: edits keep IDs, and two senses may share a spelling.
+Spellings are limited to 256 characters. Case matching also bounds each transcript
+span to that length, plus a possessive suffix, to keep local processing bounded.
 
 Pinning moves one heard entry from a model's learned section to `pinned`; words are never
 pinned. For a speech model, a pinned entry is used instead of a learned one with the same
