@@ -52,7 +52,10 @@ export function whenLabel(iso) {
 }
 // "Parakeet · tdt-0.6b-v3" rather than "Parakeet / parakeet-tdt-0.6b-v3".
 function shortModel(name, provider, model) {
-  return `${name} · ${model.replace(new RegExp(`^${provider}[-_]`, "i"), "")}`;
+  const prefix = model.slice(0, provider.length);
+  const separator = model[provider.length];
+  const repeated = prefix.toLowerCase() === provider.toLowerCase() && (separator === "-" || separator === "_");
+  return `${name} · ${repeated ? model.slice(provider.length + 1) : model}`;
 }
 // A saved `provider/model` id in short form, named from the known models when possible.
 export function modelName(id, models) {

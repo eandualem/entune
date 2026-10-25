@@ -27,6 +27,11 @@ from entune.providers.local.downloads import DOWNLOAD_TIMEOUT, Download
 
 MODELS_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 WHISPER_RATE = 16_000
+# Bound metadata-driven expansion before NumPy allocates decoded/FFT/output arrays.
+MIN_SAMPLE_RATE = 8_000
+MAX_SAMPLE_RATE = 192_000
+MAX_AUDIO_SAMPLES = 1 << 24
+MAX_FFT_SIZE = 1 << 24
 LEADING_PUNCTUATION = " .,;:!?"  # whisper.cpp also starts a first segment with ". " at times
 
 
@@ -222,12 +227,18 @@ def pcm16k(clip: Clip) -> Any:
 
     data = clip.data
     if sniff_mime(data) != "audio/wav":
-        data = to_wav_with_ffmpeg(data, sample_rate=WHISPER_RATE)
+        data = to_wav_with_ffmpeg(data, sample_rate=WHISPER_RATE, max_samples=MAX_AUDIO_SAMPLES)
     with wave.open(io.BytesIO(data), "rb") as wav:
         channels, width, rate = wav.getnchannels(), wav.getsampwidth(), wav.getframerate()
-        frames = wav.readframes(wav.getnframes())
-    if width != 2:
-        raise ValueError(f"{width * 8}-bit WAV; only 16-bit is supported")
+        if not MIN_SAMPLE_RATE <= rate <= MAX_SAMPLE_RATE:
+            raise ValueError(f"Unsupported WAV sample rate: {rate} Hz (8000-192000 supported)")
+        if width != 2:
+            raise ValueError(f"{width * 8}-bit WAV; only 16-bit is supported")
+        # Piped ffmpeg output uses an unknown-length header. Bound the read itself,
+        # then check actual samples rather than trusting the declared frame count.
+        frames = wav.readframes(MAX_AUDIO_SAMPLES // channels + 1)
+        if len(frames) // width > MAX_AUDIO_SAMPLES:
+            raise ValueError("WAV exceeds the local decoder's sample limit")
     samples = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
     if channels > 1:
         samples = samples.reshape(-1, channels).mean(axis=1)
@@ -246,17 +257,23 @@ def resample(samples: Any, rate: int, target: int) -> Any:
     """
     import numpy as np
 
+    if not all(MIN_SAMPLE_RATE <= r <= MAX_SAMPLE_RATE for r in (rate, target)):
+        raise ValueError("Unsupported resampling rate (8000-192000 Hz supported)")
+    count = len(samples) * target // rate
+    if len(samples) > MAX_AUDIO_SAMPLES or count > MAX_AUDIO_SAMPLES:
+        raise ValueError("Audio exceeds the local resampler's sample limit")
     if target < rate:
         cutoff = 0.45 * target / rate  # fraction of the input rate, a little under Nyquist
-        taps = 64 * int(np.ceil(rate / target)) + 1
+        taps = 64 * ((rate + target - 1) // target) + 1
+        size = 1 << (len(samples) + taps - 1).bit_length()
+        if size > MAX_FFT_SIZE:
+            raise ValueError("Audio exceeds the local resampler's FFT limit")
         n = np.arange(taps) - (taps - 1) / 2
         kernel = 2 * cutoff * np.sinc(2 * cutoff * n) * np.hamming(taps)
         kernel /= kernel.sum()
-        size = 1 << int(np.ceil(np.log2(len(samples) + taps)))
         filtered = np.fft.irfft(np.fft.rfft(samples, size) * np.fft.rfft(kernel, size), size)
         samples = filtered[(taps - 1) // 2 : (taps - 1) // 2 + len(samples)]
     ratio = rate / target
     if ratio == int(ratio):
         return samples[:: int(ratio)]
-    count = int(len(samples) / ratio)
     return np.interp(np.linspace(0, len(samples) - 1, count), np.arange(len(samples)), samples)

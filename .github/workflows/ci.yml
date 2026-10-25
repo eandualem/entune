@@ -29,6 +29,8 @@ jobs:
         run: uv run ruff check . && uv run ruff format --check .
       - name: Types
         run: uv run mypy
+      - name: Web helper tests
+        run: node --test tests/test_ui.mjs
       - name: Tests
         shell: bash
         run: |

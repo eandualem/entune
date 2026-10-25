@@ -11,6 +11,7 @@ from typing import Any
 
 from entune.dictionary.entries import (
     EMPTY,
+    MAX_SPELLING_CHARS,
     Candidate,
     Dictionary,
     Entries,
@@ -51,6 +52,13 @@ def _id(value: object, where: str) -> str:
     return result
 
 
+def _spelling(value: object, where: str) -> str:
+    result = _string(value, where)
+    if len(result) > MAX_SPELLING_CHARS:
+        raise ValueError(f"{where} must be at most {MAX_SPELLING_CHARS} characters")
+    return result
+
+
 def parse_words(value: object, where: str) -> tuple[Word, ...]:
     words = []
     ids: set[str] = set()
@@ -76,7 +84,7 @@ def parse_words(value: object, where: str) -> tuple[Word, ...]:
         words.append(
             Word(
                 word_id,
-                _string(w.get("spelling"), f"{loc}.spelling"),
+                _spelling(w.get("spelling"), f"{loc}.spelling"),
                 _string(w.get("meaning"), f"{loc}.meaning", empty=review),
                 _string(context, f"{loc}.personal_context") if context is not None else None,
                 casing,
@@ -132,6 +140,8 @@ def parse_entries(value: object, where: str) -> Entries:
 
 
 def validate(dictionary: Dictionary) -> Dictionary:
+    for w in dictionary.words:
+        _spelling(w.spelling, f"{w.id}.spelling")
     words = {w.id: w for w in dictionary.words}
     if len(words) != len(dictionary.words):
         raise ValueError("Each word needs its own ID")

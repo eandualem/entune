@@ -13,6 +13,8 @@ uv run ruff format .    # format
 uv run mypy             # types, strict
 ```
 
+For web helper changes, also run `node --test tests/test_ui.mjs` (Node.js 18+).
+
 All four pass before a commit. Commits follow conventional commits
 (`feat:`, `fix:`, `docs:`, `chore:`, `test:`) with a body that says why.
 

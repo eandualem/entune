@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 _SPECIAL = str.maketrans({"\u0130": "i", "\u0131": "i", "\u017f": "s", "\u212a": "k"})
+MAX_SPELLING_CHARS = 256
 
 
 def key(text: str) -> str:

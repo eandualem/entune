@@ -20,6 +20,14 @@ belong to Entune rather than Python or a terminal. A second open brings the
 window forward (`POST /api/window`); quitting the launcher asks Entune to quit
 first, so audio is saved.
 
+The launcher trusts preferences and the external Python installation. It does not
+protect against another process already running as the same macOS user: that
+process can change `LaunchCommand`, Python or its imported modules without
+changing the signed launcher. Replacement code may then use privacy permissions
+attributed to Entune. Restricting the command's path or arguments alone would not
+protect the imported code. This trust boundary is retained in the current
+installation design; the launcher is not a sandbox for its child process.
+
 The bundle is signed ad hoc on every Mac, and none of its files depend on the
 Entune version, so every installation and upgrade has the same code identity
 and the permissions stay granted without any certificate.
